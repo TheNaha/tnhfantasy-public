@@ -1,7 +1,9 @@
 # Environments
 .env
 backend_venv/
+backend_v2/venv/
 node_modules/
+venv/
 dist/
 __pycache__/
 
