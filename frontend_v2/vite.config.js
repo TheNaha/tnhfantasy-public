@@ -4,6 +4,17 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'xml'],
+      include: ['src/**/*.js', 'src/**/*.jsx'],
+      exclude: ['src/test/**', 'src/main.jsx'],
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 5174,
