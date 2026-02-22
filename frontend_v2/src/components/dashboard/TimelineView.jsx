@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
@@ -140,17 +140,12 @@ export function TimelineView({
                                             ) : (
                                                 <TimelineImageCard
                                                     item={item}
-                                                    onClick={() => {
-                                                        if (selectionMode) {
-                                                            onToggleSelection?.(item.name);
-                                                        } else {
-                                                            onImageClick?.(item);
-                                                        }
-                                                    }}
+                                                    onImageClick={onImageClick}
+                                                    onToggleSelection={onToggleSelection}
                                                     selectionMode={selectionMode}
                                                     isSelected={selectedFiles.has(item.name)}
                                                     isFavorite={isFavorite?.(item.name)}
-                                                    onToggleFavorite={() => onToggleFavorite?.(item.name)}
+                                                    onToggleFavorite={onToggleFavorite}
                                                 />
                                             )}
                                         </motion.div>
@@ -182,9 +177,10 @@ export function TimelineView({
 /**
  * TimelineImageCard - Individual image card for timeline view
  */
-function TimelineImageCard({
+const TimelineImageCard = memo(function TimelineImageCard({
     item,
-    onClick,
+    onImageClick,
+    onToggleSelection,
     selectionMode,
     isSelected,
     isFavorite,
@@ -198,13 +194,21 @@ function TimelineImageCard({
         minute: '2-digit'
     });
 
+    const handleClick = () => {
+        if (selectionMode) {
+            onToggleSelection?.(item.name);
+        } else {
+            onImageClick?.(item);
+        }
+    };
+
     return (
         <div
             className={`group relative bg-gray-800 rounded-lg border transition-all cursor-pointer hover:shadow-lg hover:shadow-blue-500/10 ${isSelected
                 ? 'border-blue-500 ring-2 ring-blue-500/50'
                 : 'border-gray-700 hover:border-gray-600'
                 }`}
-            onClick={onClick}
+            onClick={handleClick}
         >
             <div className="flex gap-4 p-4">
                 {/* Image Preview */}
@@ -247,7 +251,7 @@ function TimelineImageCard({
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            onToggleFavorite();
+                                            onToggleFavorite(item.name);
                                         }}
                                         className="p-1.5 rounded-full hover:bg-gray-700 transition-colors"
                                         title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -293,4 +297,4 @@ function TimelineImageCard({
             </div>
         </div>
     );
-}
+});

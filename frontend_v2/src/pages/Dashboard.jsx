@@ -51,6 +51,21 @@ export default function Dashboard() {
         queryClient.invalidateQueries(['gallery']);
     }, [storeDeleteJob, queryClient]);
 
+    // Stable handler for toggling favorite
+    const handleToggleFavorite = useCallback((filename) => {
+        toggleFavorite(filename);
+        toast.success(
+            isFavorite(filename) ? "Removed from favorites" : "Added to favorites",
+            { icon: isFavorite(filename) ? '💔' : '⭐' }
+        );
+    }, [toggleFavorite, isFavorite]);
+
+    // Stable handler for job click
+    const handleJobClick = useCallback((job) => {
+        const jobId = typeof job === 'string' ? job : job?.id;
+        if (jobId) setSelectedJobId(jobId);
+    }, []);
+
     // Local State
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
     const [selectedImage, setSelectedImage] = useState(null);
@@ -439,11 +454,13 @@ export default function Dashboard() {
     }, [metadata, navigate, settings.ui.toastSuccessDuration]);
 
     const toggleSelection = useCallback((filename) => {
-        const newSet = new Set(selectedFiles);
-        if (newSet.has(filename)) newSet.delete(filename);
-        else newSet.add(filename);
-        setSelectedFiles(newSet);
-    }, [selectedFiles]);
+        setSelectedFiles(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(filename)) newSet.delete(filename);
+            else newSet.add(filename);
+            return newSet;
+        });
+    }, []);
 
     const handleBatchDelete = useCallback(() => {
         setConfirmModal({
@@ -846,18 +863,12 @@ export default function Dashboard() {
                         <TimelineView
                             items={displayedItems}
                             onImageClick={setSelectedImage}
-                            onJobClick={(job) => setSelectedJobId(typeof job === 'string' ? job : job?.id)}
+                            onJobClick={handleJobClick}
                             selectionMode={selectionMode}
                             selectedFiles={selectedFiles}
                             onToggleSelection={toggleSelection}
                             isFavorite={isFavorite}
-                            onToggleFavorite={(filename) => {
-                                toggleFavorite(filename);
-                                toast.success(
-                                    isFavorite(filename) ? "Removed from favorites" : "Added to favorites",
-                                    { icon: isFavorite(filename) ? '💔' : '⭐' }
-                                );
-                            }}
+                            onToggleFavorite={handleToggleFavorite}
                         />
                     ) : (
                         <div className="space-y-8">

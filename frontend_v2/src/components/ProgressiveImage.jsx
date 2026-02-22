@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { Blurhash } from 'react-blurhash';
 
 /**
@@ -11,7 +11,7 @@ import { Blurhash } from 'react-blurhash';
  * - Smooth fade-in transition
  * - Support for different sizes (medium/full)
  */
-export default function ProgressiveImage({
+const ProgressiveImage = memo(function ProgressiveImage({
     blurhash,
     src,
     medium,
@@ -22,22 +22,21 @@ export default function ProgressiveImage({
     onLoad,
 }) {
     const [isLoaded, setIsLoaded] = useState(false);
-    const [isInView, setIsInView] = useState(false);
+    const shouldLoadImmediately = size === 'full';
+    // Initialize with shouldLoadImmediately to avoid effect update on mount if true
+    const [hasBeenInView, setHasBeenInView] = useState(shouldLoadImmediately);
+    const isInView = shouldLoadImmediately || hasBeenInView;
+
     const imgRef = useRef(null);
     const containerRef = useRef(null);
 
     // Determine which image to load based on size
     const imageSrc = size === 'medium' ? (medium || src) : src;
 
-    // For full-size images (lightbox), load immediately without waiting for IntersectionObserver
-    // This fixes the issue where lightbox images appear blank
-    const shouldLoadImmediately = size === 'full';
-
     // Intersection Observer for lazy loading (only for thumbnails/medium size)
     useEffect(() => {
-        // If should load immediately, skip the observer
-        if (shouldLoadImmediately) {
-            setIsInView(true);
+        // If already in view or should load immediately, skip the observer
+        if (isInView) {
             return;
         }
 
@@ -46,7 +45,7 @@ export default function ProgressiveImage({
         const observer = new IntersectionObserver(
             ([entry]) => {
                 if (entry.isIntersecting) {
-                    setIsInView(true);
+                    setHasBeenInView(true);
                     observer.disconnect();
                 }
             },
@@ -58,7 +57,7 @@ export default function ProgressiveImage({
         observer.observe(containerRef.current);
 
         return () => observer.disconnect();
-    }, [shouldLoadImmediately]);
+    }, [isInView]);
 
 
     // Handle image load
@@ -108,4 +107,6 @@ export default function ProgressiveImage({
             )}
         </div>
     );
-}
+});
+
+export default ProgressiveImage;
