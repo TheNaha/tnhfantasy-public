@@ -1,5 +1,6 @@
 # Job API tests
 import pytest
+from infrastructure.request_dedup import clear_dedup_cache
 
 
 def test_health_check(client):
@@ -32,13 +33,20 @@ def test_list_jobs_empty(client):
 
 def test_list_jobs_with_data(client, sample_job_data):
     """Test listing jobs with data."""
+    # Clear deduplication cache to avoid stale results from previous tests
+    clear_dedup_cache()
+
     # Create a job first
-    client.post("/api/jobs", json=sample_job_data)
+    create_response = client.post("/api/jobs", json=sample_job_data)
+    assert create_response.status_code == 200, f"Create job failed: {create_response.text}"
+
+    # Clear cache again just to be safe (though POST doesn't use it, create might affect list)
+    clear_dedup_cache()
     
     response = client.get("/api/jobs")
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 1
+    assert data["total"] == 1, f"Expected 1 job, got {data['total']}. Response: {data}"
     assert len(data["jobs"]) == 1
 
 
@@ -88,6 +96,9 @@ def test_clear_jobs(client, sample_job_data):
     data = response.json()
     assert data["deleted"] == 2
     
+    # Clear cache before verifying
+    clear_dedup_cache()
+
     # Verify empty
     list_response = client.get("/api/jobs")
     assert list_response.json()["total"] == 0

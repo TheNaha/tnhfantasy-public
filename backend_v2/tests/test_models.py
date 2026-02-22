@@ -1,73 +1,81 @@
-# Model API tests
+# Model API V2 tests
 import pytest
-
 
 def test_list_models_empty(client):
     """Test listing models when empty."""
-    response = client.get("/api/models")
+    response = client.get("/api/v2/models")
+    assert response.status_code == 200
+    data = response.json()
+    assert "models" in data
+    assert isinstance(data["models"], dict)
+    assert len(data["models"]) == 0
+
+
+def test_add_model(client, sample_model_v2_data):
+    """Test adding a model."""
+    response = client.post("/api/v2/models", json=sample_model_v2_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Test Model V2"
+    assert data["civitai_model_id"] == 12345
+
+
+def test_list_models(client, sample_model_v2_data):
+    """Test listing models grouped by directory."""
+    # Add a model
+    client.post("/api/v2/models", json=sample_model_v2_data)
+    
+    # List models
+    response = client.get("/api/v2/models")
     assert response.status_code == 200
     data = response.json()
     assert "models" in data
 
-
-def test_add_model(client, sample_model_data):
-    """Test adding a model."""
-    response = client.post("/api/models", json=sample_model_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "test-model.safetensors"
-    assert data["directory"] == "checkpoints"
+    # Checkpoints should be present (based on type "Checkpoint")
+    assert "checkpoints" in data["models"]
+    assert len(data["models"]["checkpoints"]) == 1
+    assert data["models"]["checkpoints"][0]["name"] == "Test Model V2"
 
 
-def test_list_models_by_directory(client, sample_model_data):
-    """Test listing models by directory."""
+def test_list_all_models(client, sample_model_v2_data):
+    """Test listing all models."""
     # Add a model
-    client.post("/api/models", json=sample_model_data)
+    client.post("/api/v2/models", json=sample_model_v2_data)
     
-    # List by directory
-    response = client.get("/api/models/directory/checkpoints")
+    # List all
+    response = client.get("/api/v2/models/all")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
+    assert data[0]["name"] == "Test Model V2"
 
 
-def test_get_model_cache(client, sample_model_data):
-    """Test getting model cache."""
+def test_get_model(client, sample_model_v2_data):
+    """Test getting a specific model."""
     # Add a model
-    client.post("/api/models", json=sample_model_data)
+    create_response = client.post("/api/v2/models", json=sample_model_v2_data)
+    model_id = create_response.json()["id"]
     
-    # Get cache
-    response = client.get("/api/models/cache")
+    # Get it
+    response = client.get(f"/api/v2/models/{model_id}")
     assert response.status_code == 200
     data = response.json()
-    assert "models" in data
+    assert data["id"] == model_id
+    assert data["name"] == "Test Model V2"
+    assert "versions" in data
+    assert len(data["versions"]) == 1
 
 
-def test_update_provider_status(client, sample_model_data):
-    """Test updating model provider status."""
-    # Add a model
-    client.post("/api/models", json=sample_model_data)
-    
-    # Update status
-    response = client.put(
-        "/api/models/checkpoints/test-model.safetensors/providers/modal-test/status",
-        json={"status": "installed"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "modal-test" in data["provider_statuses"]
-    assert data["provider_statuses"]["modal-test"]["status"] == "installed"
-
-
-def test_delete_model(client, sample_model_data):
+def test_delete_model(client, sample_model_v2_data):
     """Test deleting a model."""
     # Add a model
-    client.post("/api/models", json=sample_model_data)
+    create_response = client.post("/api/v2/models", json=sample_model_v2_data)
+    model_id = create_response.json()["id"]
     
-    # Delete
-    response = client.delete("/api/models/checkpoints/test-model.safetensors")
+    # Delete it
+    response = client.delete(f"/api/v2/models/{model_id}")
     assert response.status_code == 200
     
-    # Verify it's removed
-    list_response = client.get("/api/models/directory/checkpoints")
-    assert len(list_response.json()) == 0
+    # Verify it's gone
+    get_response = client.get(f"/api/v2/models/{model_id}")
+    assert get_response.status_code == 404

@@ -126,4 +126,4 @@ class TestLoadBalancer:
         stats = lb.get_stats()
         
         assert "strategy" in stats
-        assert "provider_count" in stats or "providers" in stats
+        assert "provider_stats" in stats

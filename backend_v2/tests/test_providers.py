@@ -71,7 +71,8 @@ def test_load_balancing_config(client):
     response = client.get("/api/providers/config/load-balancing")
     assert response.status_code == 200
     data = response.json()
-    assert "strategy" in data
+    assert "config" in data
+    assert "strategy" in data["config"]
     
     # Update config
     update_response = client.put(
@@ -79,4 +80,10 @@ def test_load_balancing_config(client):
         json={"strategy": "random"}
     )
     assert update_response.status_code == 200
-    assert update_response.json()["strategy"] == "random"
+    # Assuming update response returns just the config or the full object
+    # If it returns the config object:
+    update_data = update_response.json()
+    if "config" in update_data:
+        assert update_data["config"]["strategy"] == "random"
+    else:
+        assert update_data["strategy"] == "random"

@@ -1,5 +1,6 @@
 # Pytest configuration and fixtures
 import pytest
+from typing import Dict, Any, List
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
@@ -91,4 +92,46 @@ def sample_model_data():
         "url": "https://example.com/model.safetensors",
         "source": "custom",
         "metadata": {"size": 1000000}
+    }
+
+
+@pytest.fixture
+def sample_model_v2_data():
+    """Sample model V2 creation data."""
+    return {
+        "civitai_data": {
+            "id": 12345,
+            "name": "Test Model V2",
+            "type": "Checkpoint",
+            "nsfw": False,
+            "creator": {"username": "testuser"},
+            "description": "Test description",
+            "stats": {"downloadCount": 100},
+            "tags": ["anime", "style"],
+            "modelVersions": [
+                {
+                    "id": 67890,
+                    "name": "v1.0",
+                    "baseModel": "SD 1.5",
+                    "files": [
+                        {
+                            "name": "model.safetensors",
+                            "sizeKB": 2048000,
+                            "type": "Model",
+                            "metadata": {"format": "SafeTensor", "size": "pruned", "fp": "fp16"},
+                            "pickleScanMessage": "No Pickle imports",
+                            "virusScanMessage": "No virus found",
+                            "scannedAt": "2023-01-01T00:00:00.000Z",
+                            "hashes": {"AutoV2": "1234567890"},
+                            "downloadUrl": "https://civitai.com/api/download/models/67890",
+                            "primary": True
+                        }
+                    ],
+                    "images": []
+                }
+            ]
+        },
+        "selected_versions": [
+            {"version_id": 67890, "is_default": True}
+        ]
     }
