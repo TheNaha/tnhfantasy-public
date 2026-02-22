@@ -1,0 +1,67 @@
+"""
+Shared Pydantic models for provider workers.
+These models define the API contract for all provider worker endpoints.
+"""
+
+from pydantic import BaseModel
+from typing import Dict, Any, Optional
+
+
+class InferenceRequest(BaseModel):
+    """Request for running ComfyUI workflow inference."""
+    workflow: Dict[str, Any]
+    use_snapshot: bool = False
+    job_id: Optional[str] = None
+
+
+class CancelJobRequest(BaseModel):
+    """Request for cancelling a running job."""
+    job_id: str
+
+
+class DownloadRequest(BaseModel):
+    """Request for downloading a model file."""
+    url: str
+    path: str
+    token: Optional[str] = None
+    preview_url: Optional[str] = None
+    metadata: Optional[Dict] = None
+    info: Optional[Dict] = None
+
+
+class ListModelsRequest(BaseModel):
+    """Request for listing models in a directory."""
+    directory: str
+
+
+class DeleteModelRequest(BaseModel):
+    """Request for deleting a model file."""
+    path: str
+
+
+class UploadFileRequest(BaseModel):
+    """Request for uploading a file to provider storage."""
+    filename: str
+    content_base64: str
+    directory: str = "input"
+
+
+class ValidateModelsRequest(BaseModel):
+    """Request for validating models in a directory."""
+    directory: str = "models/checkpoints"
+    delete_invalid: bool = False
+
+
+# Model directories used across providers
+MODEL_DIRECTORIES = [
+    "models/checkpoints",
+    "models/loras",
+    "models/vae",
+    "models/controlnet",
+    "models/unet",
+    "models/clip",
+    "models/upscale_models",
+    "models/embeddings",
+    "models/hypernetworks",
+    "models/motion_modules",
+]

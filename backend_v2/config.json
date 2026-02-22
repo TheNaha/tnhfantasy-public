@@ -1,0 +1,55 @@
+{
+  "worker": {
+    "poll_interval": 0.3,
+    "retry_delay": 5,
+    "poll_limit": 50
+  },
+  "jobs": {
+    "default_limit": 20,
+    "max_in_memory": 100,
+    "max_concurrent": 5
+  },
+  "model_sync": {
+    "interval": 300,
+    "retry_delay": 10,
+    "reconciliation_interval": 120
+  },
+  "sse": {
+    "poll_interval": 0.5,
+    "error_retry_delay": 1,
+    "heartbeat_interval": 30
+  },
+  "downloads": {
+    "chunk_size": 8192,
+    "auto_remove_delay": 5
+  },
+  "modal": {
+    "timeout": 300,
+    "max_containers": 1,
+    "scaledown_window": 5
+  },
+  "api": {
+    "cors_origins": [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:8000",
+      "http://100.70.0.0:5174"
+    ],
+    "gzip_minimum_size": 1000
+  },
+  "jobs_cleanup": {
+    "max_age_hours": 24,
+    "auto_cleanup": false,
+    "cleanup_interval": 3600
+  },
+  "image_processing": {
+    "thumbnail_sizes": {
+      "thumb": 256,
+      "medium": 512
+    },
+    "thumbnail_quality": 85,
+    "blurhash_components_x": 4,
+    "blurhash_components_y": 3,
+    "blurhash_resize_max": 400
+  }
+}

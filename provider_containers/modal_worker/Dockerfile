@@ -1,0 +1,38 @@
+# Dockerfile for Modal Provider Worker
+# This container runs isolated Modal SDK calls with its own credentials
+# Build context: provider_containers/ (to access shared provider_core package)
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install Modal SDK and FastAPI for HTTP server
+RUN pip install --no-cache-dir \
+    modal \
+    fastapi \
+    uvicorn \
+    httpx \
+    python-multipart \
+    tenacity
+
+# Copy shared provider_core package (available since build context is provider_containers/)
+COPY provider_core/ /app/provider_core/
+
+# Copy worker script
+COPY modal_worker/worker.py .
+
+# Copy modal_app.py for deployment
+COPY modal_worker/modal_app.py .
+
+# Copy memory_snapshot_helper (required by modal_app.py for snapshot mode)
+COPY modal_worker/memory_snapshot_helper/ /app/memory_snapshot_helper/
+
+# Expose HTTP port
+EXPOSE 8000
+
+# Health check using urllib (no extra deps)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+# Run worker HTTP server
+CMD ["uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8000"]

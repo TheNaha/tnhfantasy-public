@@ -1,0 +1,537 @@
+# Statistics routes - Analytics and usage data
+# Full implementation with timeline, correlations, prompt analytics, and performance metrics
+import os
+import json
+import re
+from datetime import datetime
+from typing import Dict, Any, List
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/api/statistics", tags=["statistics"])
+
+# Output directory - will be configured via environment or settings
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
+
+
+@router.get("")
+async def get_statistics():
+    """Generate comprehensive statistics from image metadata files."""
+    from infrastructure.image_processor import read_image_metadata
+    import glob
+    
+    stats = {
+        "total_images": 0,
+        "models": {},
+        "loras": {},
+        "samplers": {},
+        "schedulers": {},
+        "avg_generation_time": 0,
+        "total_generation_time": 0,
+        "images_by_date": {},
+        "popular_settings": {
+            "steps": {},
+            "cfg": {},
+            "resolution": {}
+        },
+        "enriched_metadata_count": 0,
+        "legacy_metadata_count": 0,
+    }
+    
+    total_duration = 0
+    duration_count = 0
+    
+    # Scan all PNG files recursively (supports hierarchical date-based folders)
+    try:
+        if not os.path.exists(OUTPUT_DIR):
+            return stats
+        
+        # Find all PNG files recursively
+        for pattern in ["*.png", "**/*.png"]:
+            for filepath in glob.glob(os.path.join(OUTPUT_DIR, pattern), recursive=True):
+                # Skip thumbnails and special files
+                filename = os.path.basename(filepath)
+                if filename.endswith('.preview.png') or '.thumb.' in filename or '.medium.' in filename:
+                    continue
+                if '/thumb/' in filepath:
+                    continue
+                if not os.path.isfile(filepath):
+                    continue
+                
+                try:
+                    # Read embedded metadata from PNG
+                    meta = read_image_metadata(filepath)
+                    if not meta:
+                        continue
+                    
+                    stats["total_images"] += 1
+                    
+                    # Track metadata version
+                    if meta.get("metadata_version") == "2.0":
+                        stats["enriched_metadata_count"] += 1
+                    else:
+                        stats["legacy_metadata_count"] += 1
+                    
+                    # Model usage - handle both string and dict formats
+                    checkpoint = meta.get("checkpoint")
+                    if checkpoint:
+                        if isinstance(checkpoint, dict):
+                            model_name = checkpoint.get("name") or checkpoint.get("filename", "Unknown")
+                        else:
+                            model_name = str(checkpoint)
+                        stats["models"][model_name] = stats["models"].get(model_name, 0) + 1
+                    
+                    # LoRA usage
+                    loras = meta.get("loras")
+                    if loras and isinstance(loras, list):
+                        for lora in loras:
+                            if isinstance(lora, dict):
+                                lora_name = lora.get("name") or lora.get("filename", "Unknown")
+                            else:
+                                lora_name = str(lora)
+                            stats["loras"][lora_name] = stats["loras"].get(lora_name, 0) + 1
+                    
+                    # Sampler usage
+                    if "sampler" in meta:
+                        sampler = meta["sampler"]
+                        stats["samplers"][sampler] = stats["samplers"].get(sampler, 0) + 1
+                    
+                    # Scheduler usage
+                    if "scheduler" in meta:
+                        scheduler = meta["scheduler"]
+                        stats["schedulers"][scheduler] = stats["schedulers"].get(scheduler, 0) + 1
+                    
+                    # Generation time
+                    job = meta.get("job")
+                    if job and isinstance(job, dict):
+                        duration = job.get("duration_seconds")
+                        if duration is not None and duration > 0:
+                            total_duration += duration
+                            duration_count += 1
+                    
+                    # Settings popularity
+                    if "steps" in meta:
+                        steps = str(meta["steps"])
+                        stats["popular_settings"]["steps"][steps] = stats["popular_settings"]["steps"].get(steps, 0) + 1
+                        
+                    if "cfg" in meta:
+                        cfg = str(meta["cfg"])
+                        stats["popular_settings"]["cfg"][cfg] = stats["popular_settings"]["cfg"].get(cfg, 0) + 1
+                        
+                    if "width" in meta and "height" in meta:
+                        res = f"{meta['width']}x{meta['height']}"
+                        stats["popular_settings"]["resolution"][res] = stats["popular_settings"]["resolution"].get(res, 0) + 1
+                    
+                    # Images by date
+                    if job and isinstance(job, dict):
+                        completed_at = job.get("completed_at")
+                        if completed_at:
+                            try:
+                                date = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d")
+                                stats["images_by_date"][date] = stats["images_by_date"].get(date, 0) + 1
+                            except:
+                                pass
+                        
+                except Exception as e:
+                    print(f"Error reading metadata {filepath}: {e}")
+                    continue
+    except Exception as e:
+        print(f"Error scanning output directory: {e}")
+    
+    # Calculate averages
+    if duration_count > 0:
+        stats["avg_generation_time"] = round(total_duration / duration_count, 2)
+        stats["total_generation_time"] = round(total_duration, 2)
+    
+    # Sort dictionaries by count (descending)
+    stats["models"] = dict(sorted(stats["models"].items(), key=lambda x: x[1], reverse=True))
+    stats["loras"] = dict(sorted(stats["loras"].items(), key=lambda x: x[1], reverse=True))
+    stats["samplers"] = dict(sorted(stats["samplers"].items(), key=lambda x: x[1], reverse=True))
+    stats["schedulers"] = dict(sorted(stats["schedulers"].items(), key=lambda x: x[1], reverse=True))
+    
+    # Sort settings
+    for key in stats["popular_settings"]:
+        stats["popular_settings"][key] = dict(sorted(
+            stats["popular_settings"][key].items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        ))
+    
+    # Sort dates
+    stats["images_by_date"] = dict(sorted(stats["images_by_date"].items()))
+    
+    return stats
+
+
+@router.get("/detailed")
+async def get_detailed_statistics():
+    """
+    Extended statistics with data optimized for charts and visualizations.
+    Provides timeline data, distributions, and advanced analytics.
+    """
+    # Initialize detailed stats structure
+    detailed_stats = {
+        # Timeline data
+        "timeline": {
+            "daily": {},      # date: count
+            "hourly": {},     # hour (0-23): count
+            "weekday": {},    # 0-6 (Mon-Sun): count
+        },
+        
+        # Model usage with detailed stats
+        "models": {
+            "checkpoints": {},    # name: count
+            "loras": {},          # name: count
+            "lora_weights": [],   # [{name, avg_weight, count}]
+            "vaes": {},           # name: count
+            "samplers": {},       # name: count
+            "schedulers": {}      # name: count
+        },
+        
+        # Settings distributions
+        "settings": {
+            "steps": {},          # steps: count
+            "cfg": {},            # cfg: count
+            "resolutions": {},    # "widthxheight": count
+            "seeds_random": 0,
+            "seeds_fixed": 0
+        },
+        
+        # Prompt analytics
+        "prompts": {
+            "keywords": {},       # word: frequency
+            "lengths": [],        # list of prompt lengths
+            "negative_usage": 0,
+            "total": 0,
+            "common_tags": {}     # common prompt tags
+        },
+        
+        # Performance metrics
+        "performance": {
+            "by_model": {},       # model: {total_time, count, avg}
+            "by_resolution": {},  # resolution: {total_time, count, avg}
+            "by_steps": {},       # steps: {total_time, count, avg}
+            "fastest": None,
+            "slowest": None,
+            "total_time": 0,
+            "avg_time": 0
+        },
+        
+        # Advanced analytics
+        "model_sampler_matrix": {},   # {model: {sampler: count}}
+        "correlations": {
+            "steps_cfg": [],              # [{steps, cfg, count}]
+            "model_resolution": []        # [{model, resolution, count}]
+        },
+        
+        # Metadata
+        "total_images": 0,
+        "enriched_count": 0,
+        "legacy_count": 0
+    }
+    
+    # For tracking lora weights
+    lora_data = {}  # {lora_name: [weights]}
+    
+    # Performance tracking
+    all_durations = []
+    
+    # Common stop words for prompt analysis
+    stop_words = {
+        'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'her', 
+        'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 
+        'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 
+        'its', 'let', 'put', 'say', 'she', 'too', 'use', 'with', 'from', 'that',
+        'this', 'will', 'have', 'been', 'more', 'when', 'into', 'some', 'than'
+    }
+    
+    from infrastructure.image_processor import read_image_metadata
+    import glob
+    
+    # Scan all PNG files recursively (supports hierarchical date-based folders)
+    try:
+        if not os.path.exists(OUTPUT_DIR):
+            return detailed_stats
+        
+        # Track seen files to avoid duplicates from glob patterns
+        seen_files = set()
+        
+        for pattern in ["*.png", "**/*.png"]:
+            for filepath in glob.glob(os.path.join(OUTPUT_DIR, pattern), recursive=True):
+                if filepath in seen_files:
+                    continue
+                seen_files.add(filepath)
+                
+                # Skip thumbnails and special files
+                filename = os.path.basename(filepath)
+                if filename.endswith('.preview.png') or '.thumb.' in filename or '.medium.' in filename:
+                    continue
+                if '/thumb/' in filepath:
+                    continue
+                if not os.path.isfile(filepath):
+                    continue
+                
+                try:
+                    # Read embedded metadata from PNG
+                    meta = read_image_metadata(filepath)
+                    if not meta:
+                        continue
+                
+                    detailed_stats["total_images"] += 1
+                
+                    # Track metadata version
+                    if meta.get("metadata_version") == "2.0":
+                        detailed_stats["enriched_count"] += 1
+                    else:
+                        detailed_stats["legacy_count"] += 1
+                
+                    # === TIMELINE DATA ===
+                    if "job" in meta and isinstance(meta["job"], dict):
+                        completed_at = meta["job"].get("completed_at")
+                        if completed_at:
+                            try:
+                                dt = datetime.fromtimestamp(completed_at)
+                                
+                                # Daily
+                                date_str = dt.strftime("%Y-%m-%d")
+                                detailed_stats["timeline"]["daily"][date_str] = \
+                                    detailed_stats["timeline"]["daily"].get(date_str, 0) + 1
+                                
+                                # Hourly
+                                hour = str(dt.hour)
+                                detailed_stats["timeline"]["hourly"][hour] = \
+                                    detailed_stats["timeline"]["hourly"].get(hour, 0) + 1
+                                
+                                # Weekday (0=Monday, 6=Sunday)
+                                weekday = str(dt.weekday())
+                                detailed_stats["timeline"]["weekday"][weekday] = \
+                                    detailed_stats["timeline"]["weekday"].get(weekday, 0) + 1
+                            except:
+                                pass
+                    
+                    # === MODEL DATA ===
+                    # Checkpoints
+                    if "checkpoint" in meta and isinstance(meta["checkpoint"], dict):
+                        checkpoint_name = meta["checkpoint"].get("name", "Unknown")
+                        detailed_stats["models"]["checkpoints"][checkpoint_name] = \
+                            detailed_stats["models"]["checkpoints"].get(checkpoint_name, 0) + 1
+                    
+                    # LoRAs with weights
+                    if "loras" in meta and isinstance(meta["loras"], list):
+                        for lora in meta["loras"]:
+                            if isinstance(lora, dict):
+                                lora_name = lora.get("name", "Unknown")
+                                lora_weight = lora.get("weight", 1.0)
+                                
+                                detailed_stats["models"]["loras"][lora_name] = \
+                                    detailed_stats["models"]["loras"].get(lora_name, 0) + 1
+                                
+                                # Track weights for averaging
+                                if lora_name not in lora_data:
+                                    lora_data[lora_name] = []
+                                lora_data[lora_name].append(float(lora_weight))
+                    
+                    # VAE
+                    if "vae" in meta:
+                        vae_name = meta["vae"] if isinstance(meta["vae"], str) else \
+                                   meta["vae"].get("name", "Unknown") if isinstance(meta["vae"], dict) else "Unknown"
+                        detailed_stats["models"]["vaes"][vae_name] = \
+                            detailed_stats["models"]["vaes"].get(vae_name, 0) + 1
+                    
+                    # Sampler
+                    if "sampler" in meta:
+                        sampler = meta["sampler"]
+                        detailed_stats["models"]["samplers"][sampler] = \
+                            detailed_stats["models"]["samplers"].get(sampler, 0) + 1
+                    
+                    # Scheduler
+                    if "scheduler" in meta:
+                        scheduler = meta["scheduler"]
+                        detailed_stats["models"]["schedulers"][scheduler] = \
+                            detailed_stats["models"]["schedulers"].get(scheduler, 0) + 1
+                    
+                    # === SETTINGS DATA ===
+                    if "steps" in meta:
+                        steps = str(meta["steps"])
+                        detailed_stats["settings"]["steps"][steps] = \
+                            detailed_stats["settings"]["steps"].get(steps, 0) + 1
+                    
+                    if "cfg" in meta:
+                        cfg = str(float(meta["cfg"]))  # Normalize floats
+                        detailed_stats["settings"]["cfg"][cfg] = \
+                            detailed_stats["settings"]["cfg"].get(cfg, 0) + 1
+                    
+                    if "width" in meta and "height" in meta:
+                        resolution = f"{meta['width']}x{meta['height']}"
+                        detailed_stats["settings"]["resolutions"][resolution] = \
+                            detailed_stats["settings"]["resolutions"].get(resolution, 0) + 1
+                    
+                    # Seed tracking
+                    if "seed" in meta:
+                        seed = meta["seed"]
+                        if seed == -1 or seed is None:
+                            detailed_stats["settings"]["seeds_random"] += 1
+                        else:
+                            detailed_stats["settings"]["seeds_fixed"] += 1
+                    
+                    # === PROMPT ANALYTICS ===
+                    if "prompt" in meta:
+                        prompt = str(meta["prompt"])
+                        detailed_stats["prompts"]["total"] += 1
+                        detailed_stats["prompts"]["lengths"].append(len(prompt))
+                        
+                        # Extract keywords (simple word frequency)
+                        words = re.findall(r'\b[a-zA-Z]{3,}\b', prompt.lower())
+                        for word in words:
+                            if word not in stop_words:
+                                detailed_stats["prompts"]["keywords"][word] = \
+                                    detailed_stats["prompts"]["keywords"].get(word, 0) + 1
+                    
+                    if "negativePrompt" in meta and meta["negativePrompt"]:
+                        detailed_stats["prompts"]["negative_usage"] += 1
+                    
+                    # === PERFORMANCE METRICS ===
+                    if "job" in meta and isinstance(meta["job"], dict):
+                        duration = meta["job"].get("duration_seconds")
+                        if duration and duration > 0:
+                            all_durations.append(duration)
+                            
+                            # By model
+                            if "checkpoint" in meta and isinstance(meta["checkpoint"], dict):
+                                model_name = meta["checkpoint"].get("name")
+                                if model_name:
+                                    if model_name not in detailed_stats["performance"]["by_model"]:
+                                        detailed_stats["performance"]["by_model"][model_name] = {
+                                            "total_time": 0, "count": 0, "avg": 0
+                                        }
+                                    detailed_stats["performance"]["by_model"][model_name]["total_time"] += duration
+                                    detailed_stats["performance"]["by_model"][model_name]["count"] += 1
+                            
+                            # By resolution
+                            if "width" in meta and "height" in meta:
+                                res = f"{meta['width']}x{meta['height']}"
+                                if res not in detailed_stats["performance"]["by_resolution"]:
+                                    detailed_stats["performance"]["by_resolution"][res] = {
+                                        "total_time": 0, "count": 0, "avg": 0
+                                    }
+                                detailed_stats["performance"]["by_resolution"][res]["total_time"] += duration
+                                detailed_stats["performance"]["by_resolution"][res]["count"] += 1
+                            
+                            # By steps
+                            if "steps" in meta:
+                                steps = str(meta["steps"])
+                                if steps not in detailed_stats["performance"]["by_steps"]:
+                                    detailed_stats["performance"]["by_steps"][steps] = {
+                                        "total_time": 0, "count": 0, "avg": 0
+                                    }
+                                detailed_stats["performance"]["by_steps"][steps]["total_time"] += duration
+                                detailed_stats["performance"]["by_steps"][steps]["count"] += 1
+                    
+                    # === ADVANCED ANALYTICS ===
+                    # Model-Sampler matrix
+                    if "checkpoint" in meta and "sampler" in meta:
+                        if isinstance(meta["checkpoint"], dict):
+                            model_name = meta["checkpoint"].get("name", "Unknown")
+                            sampler = meta["sampler"]
+                            
+                            if model_name not in detailed_stats["model_sampler_matrix"]:
+                                detailed_stats["model_sampler_matrix"][model_name] = {}
+                            
+                            detailed_stats["model_sampler_matrix"][model_name][sampler] = \
+                                detailed_stats["model_sampler_matrix"][model_name].get(sampler, 0) + 1
+                    
+                    # Steps-CFG correlation
+                    if "steps" in meta and "cfg" in meta:
+                        found = False
+                        for item in detailed_stats["correlations"]["steps_cfg"]:
+                            if item["steps"] == meta["steps"] and item["cfg"] == meta["cfg"]:
+                                item["count"] += 1
+                                found = True
+                                break
+                        if not found:
+                            detailed_stats["correlations"]["steps_cfg"].append({
+                                "steps": meta["steps"],
+                                "cfg": meta["cfg"],
+                                "count": 1
+                            })
+                
+                except Exception as e:
+                    print(f"Error processing {filename}: {e}")
+                    continue
+                
+    except Exception as e:
+        print(f"Error scanning output directory: {e}")
+    
+    # === POST-PROCESSING ===
+    
+    # Calculate LoRA weight averages
+    for lora_name, weights in lora_data.items():
+        avg_weight = sum(weights) / len(weights) if weights else 0
+        detailed_stats["models"]["lora_weights"].append({
+            "name": lora_name,
+            "avg_weight": round(avg_weight, 2),
+            "count": len(weights)
+        })
+    
+    # Sort lora_weights by count
+    detailed_stats["models"]["lora_weights"].sort(key=lambda x: x["count"], reverse=True)
+    
+    # Calculate performance averages
+    for model_data in detailed_stats["performance"]["by_model"].values():
+        if model_data["count"] > 0:
+            model_data["avg"] = round(model_data["total_time"] / model_data["count"], 2)
+    
+    for res_data in detailed_stats["performance"]["by_resolution"].values():
+        if res_data["count"] > 0:
+            res_data["avg"] = round(res_data["total_time"] / res_data["count"], 2)
+    
+    for steps_data in detailed_stats["performance"]["by_steps"].values():
+        if steps_data["count"] > 0:
+            steps_data["avg"] = round(steps_data["total_time"] / steps_data["count"], 2)
+    
+    # Overall performance
+    if all_durations:
+        detailed_stats["performance"]["total_time"] = round(sum(all_durations), 2)
+        detailed_stats["performance"]["avg_time"] = round(sum(all_durations) / len(all_durations), 2)
+        detailed_stats["performance"]["fastest"] = round(min(all_durations), 2)
+        detailed_stats["performance"]["slowest"] = round(max(all_durations), 2)
+    
+    # Sort top keywords (limit to top 100)
+    sorted_keywords = sorted(
+        detailed_stats["prompts"]["keywords"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:100]
+    detailed_stats["prompts"]["keywords"] = dict(sorted_keywords)
+    
+    # Calculate prompt length stats
+    if detailed_stats["prompts"]["lengths"]:
+        lengths = detailed_stats["prompts"]["lengths"]
+        detailed_stats["prompts"]["avg_length"] = round(sum(lengths) / len(lengths), 1)
+        detailed_stats["prompts"]["min_length"] = min(lengths)
+        detailed_stats["prompts"]["max_length"] = max(lengths)
+    else:
+        detailed_stats["prompts"]["avg_length"] = 0
+        detailed_stats["prompts"]["min_length"] = 0
+        detailed_stats["prompts"]["max_length"] = 0
+    
+    # Sort correlations by count
+    detailed_stats["correlations"]["steps_cfg"].sort(key=lambda x: x["count"], reverse=True)
+    
+    # Sort timeline data
+    detailed_stats["timeline"]["daily"] = dict(sorted(detailed_stats["timeline"]["daily"].items()))
+    
+    return detailed_stats
+
+
+@router.get("/summary")
+async def get_stats_summary():
+    """Quick summary statistics."""
+    base_stats = await get_statistics()
+    return {
+        "total_images": base_stats.get("total_images", 0),
+        "models_used": len(base_stats.get("models", {})),
+        "loras_used": len(base_stats.get("loras", {})),
+        "avg_generation_time": base_stats.get("avg_generation_time", 0),
+        "top_model": list(base_stats.get("models", {}).keys())[0] if base_stats.get("models") else None,
+        "top_sampler": list(base_stats.get("samplers", {}).keys())[0] if base_stats.get("samplers") else None,
+    }

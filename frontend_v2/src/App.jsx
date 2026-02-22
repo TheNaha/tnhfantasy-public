@@ -1,0 +1,141 @@
+import { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
+import { Toaster } from 'react-hot-toast';
+import Layout from './components/Layout';
+import ErrorBoundary from './components/ErrorBoundary';
+import { useSettings } from './store/settingsStore';
+import { BrandingProvider } from './context/BrandingContext';
+import { ConfirmationProvider } from './context/ConfirmationContext';
+import { useJobStore } from './store/jobStore';
+import useReconciliationStore from './store/reconciliationStore';
+import { useProviderStore } from './store/providerStore';
+import { useViewportHeight } from './hooks/useViewportHeight';
+import { useJobNotifications } from './hooks/useJobNotifications.jsx';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
+const AdvancedGenerator = lazy(() => import('./pages/AdvancedGenerator'));
+const Img2ImgGenerator = lazy(() => import('./pages/Img2ImgGenerator'));
+const InpaintGenerator = lazy(() => import('./pages/InpaintGenerator'));
+const ModelManager = lazy(() => import('./pages/ModelManager'));
+const Statistics = lazy(() => import('./pages/Statistics'));
+const DirectComfy = lazy(() => import('./pages/DirectComfy'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Providers = lazy(() => import('./pages/Providers'));
+
+function AnimatedRoutes() {
+    const location = useLocation();
+    return (
+        <AnimatePresence mode="wait">
+            <Routes location={location} key={location.pathname}>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/generate" element={<SimpleGenerator />} />
+                <Route path="/create" element={<SimpleGenerator />} />
+                <Route path="/img2img" element={<Img2ImgGenerator />} />
+                <Route path="/inpaint" element={<InpaintGenerator />} />
+                <Route path="/advanced" element={<AdvancedGenerator />} />
+                <Route path="/models" element={<ModelManager />} />
+                <Route path="/providers" element={<Providers />} />
+                <Route path="/statistics" element={<Statistics />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/comfy" element={<DirectComfy />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+        </AnimatePresence>
+    );
+}
+
+// Create QueryClient once at module load - NOT inside component
+// This prevents cache loss on every re-render
+const queryClient = new QueryClient({
+    defaultOptions: {
+        queries: {
+            staleTime: 1000 * 60 * 5, // 5 minutes default
+            gcTime: 1000 * 60 * 30,   // 30 minutes cache
+            retry: 1,
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: true,
+            networkMode: 'online',
+        },
+        mutations: {
+            retry: 1,
+            networkMode: 'online',
+        },
+    },
+});
+
+function App() {
+    const settings = useSettings();
+    const { connect: connectJobs, fetchJobs } = useJobStore();
+    const { connect: connectReconciliation } = useReconciliationStore();
+    const { connect: connectProviders } = useProviderStore();
+
+    // Initialize dynamic viewport height for iOS Safari
+    // This sets --vh CSS variable that works correctly with address bar
+    useViewportHeight();
+    
+    // Initialize global job notifications (toasts for completion, failures, etc.)
+    useJobNotifications();
+
+    // Initialize all WebSocket connections on app startup
+    // This ensures real-time updates work regardless of which page the user lands on
+    useEffect(() => {
+        // Connect all global stores
+        connectJobs();
+        connectReconciliation();
+        connectProviders();
+        
+        // Fetch initial data
+        fetchJobs();
+    }, [connectJobs, connectReconciliation, connectProviders, fetchJobs]);
+
+    return (
+        <ErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+                <BrandingProvider>
+                    <ConfirmationProvider>
+                        <Router>
+                            <Layout>
+                                <Suspense fallback={
+                                    <div className="flex items-center justify-center h-screen bg-gray-900">
+                                        <Loader2 className="animate-spin text-blue-500" size={48} />
+                                    </div>
+                                }>
+                                    <AnimatedRoutes />
+                                </Suspense>
+                            </Layout>
+                        </Router>
+                        <Toaster
+                            position="top-right"
+                            toastOptions={{
+                                className: '',
+                                style: {
+                                    background: '#1f2937',
+                                    color: '#f3f4f6',
+                                    border: '1px solid #374151',
+                                },
+                                success: {
+                                    iconTheme: {
+                                        primary: '#10b981',
+                                        secondary: '#1f2937',
+                                    },
+                                },
+                                error: {
+                                    iconTheme: {
+                                        primary: '#ef4444',
+                                        secondary: '#1f2937',
+                                    },
+                                },
+                            }}
+                        />
+                    </ConfirmationProvider>
+                </BrandingProvider>
+            </QueryClientProvider>
+        </ErrorBoundary>
+    );
+}
+
+export default App;

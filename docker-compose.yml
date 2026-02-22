@@ -1,0 +1,51 @@
+services:
+  backend_v2:
+    build: ./backend_v2
+    container_name: tnhcomfy-backend
+    ports:
+      - "8002:8002"
+    volumes:
+      # Input/Output directories - create these in project root
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./backend_v2:/app
+      - ./provider_containers:/app/provider_containers
+      # Docker socket mount:
+      # - Windows: Use //var/run/docker.sock:/var/run/docker.sock
+      # - Linux with Docker: /var/run/docker.sock:/var/run/docker.sock
+      # - Linux with Podman: /var/run/docker.sock:/run/podman/podman.sock
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env # Create .env file with HF_TOKEN, CIVITAI_TOKEN
+    environment:
+      - OUTPUT_DIR=/app/output
+      - INPUT_DIR=/app/input
+    privileged: true
+    security_opt:
+      - label=disable
+    networks:
+      - comfy-network
+    restart: unless-stopped
+
+  frontend_v2:
+    build: ./frontend_v2
+    container_name: tnhcomfy-frontend
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./frontend_v2:/app:z
+#      - /app/node_modules # Prevent node_modules from being overwritten
+    environment:
+      - VITE_API_URL=http://localhost:8002 # For browser-side SSE
+      - VITE_PROXY_TARGET=http://tnhcomfy-backend:8002 # For Vite server-side proxy
+      - CHOKIDAR_USEPOLLING=true # Enable file watching in container
+    depends_on:
+      - backend_v2
+    networks:
+      - comfy-network
+    restart: unless-stopped
+
+networks:
+  comfy-network:
+    name: comfy-network # Explicit name prevents docker-compose project prefix
+    driver: bridge

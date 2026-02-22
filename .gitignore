@@ -1,0 +1,22 @@
+# Environments
+.env
+backend_venv/
+node_modules/
+dist/
+__pycache__/
+
+# Output/Input directories created by user
+input/
+output/
+
+# IDE
+.vscode/
+.idea/
+
+# Backend Data
+backend_v2/data/*.db
+backend_v2/data/*.sqlite
+backend_v2/data/*.sqlite3
+backend_v2/input/
+backend_v2/output/
+backend_v2/cache/
