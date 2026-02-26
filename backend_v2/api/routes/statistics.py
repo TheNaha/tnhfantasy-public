@@ -3,9 +3,13 @@
 import os
 import json
 import re
+import glob
+import asyncio
 from datetime import datetime
 from typing import Dict, Any, List
 from fastapi import APIRouter
+from infrastructure.image_processor import read_image_metadata
+from infrastructure.cache import cache_stats
 
 router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 
@@ -13,12 +17,11 @@ router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
 
 
-@router.get("")
-async def get_statistics():
-    """Generate comprehensive statistics from image metadata files."""
-    from infrastructure.image_processor import read_image_metadata
-    import glob
-    
+def _calculate_statistics() -> Dict[str, Any]:
+    """
+    Synchronous worker function to calculate basic statistics.
+    Should be run in a thread pool to avoid blocking the event loop.
+    """
     stats = {
         "total_images": 0,
         "models": {},
@@ -162,11 +165,10 @@ async def get_statistics():
     return stats
 
 
-@router.get("/detailed")
-async def get_detailed_statistics():
+def _calculate_detailed_statistics() -> Dict[str, Any]:
     """
-    Extended statistics with data optimized for charts and visualizations.
-    Provides timeline data, distributions, and advanced analytics.
+    Synchronous worker function to calculate detailed statistics.
+    Should be run in a thread pool to avoid blocking the event loop.
     """
     # Initialize detailed stats structure
     detailed_stats = {
@@ -243,9 +245,6 @@ async def get_detailed_statistics():
         'its', 'let', 'put', 'say', 'she', 'too', 'use', 'with', 'from', 'that',
         'this', 'will', 'have', 'been', 'more', 'when', 'into', 'some', 'than'
     }
-    
-    from infrastructure.image_processor import read_image_metadata
-    import glob
     
     # Scan all PNG files recursively (supports hierarchical date-based folders)
     try:
@@ -521,6 +520,23 @@ async def get_detailed_statistics():
     detailed_stats["timeline"]["daily"] = dict(sorted(detailed_stats["timeline"]["daily"].items()))
     
     return detailed_stats
+
+
+@router.get("")
+@cache_stats
+async def get_statistics():
+    """Generate comprehensive statistics from image metadata files."""
+    return await asyncio.to_thread(_calculate_statistics)
+
+
+@router.get("/detailed")
+@cache_stats
+async def get_detailed_statistics():
+    """
+    Extended statistics with data optimized for charts and visualizations.
+    Provides timeline data, distributions, and advanced analytics.
+    """
+    return await asyncio.to_thread(_calculate_detailed_statistics)
 
 
 @router.get("/summary")
