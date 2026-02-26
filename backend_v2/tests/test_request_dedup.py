@@ -130,3 +130,92 @@ async def test_deduplicated_exception_handling():
     # The implementation doesn't cache exceptions explicitly, just successful results
     # checking the code: _result_cache[key] = result is inside try block, so exception skips it.
     assert stats["cache_size"] == 0
+
+@pytest.mark.asyncio
+async def test_deduplicated_cache_expiration():
+    """Test that the cache expires after the TTL (1.0s)."""
+    execution_count = 0
+
+    async def counting_coro():
+        nonlocal execution_count
+        execution_count += 1
+        return f"count_{execution_count}"
+
+    # First call
+    result1 = await deduplicated("key_ttl", counting_coro)
+    assert result1 == "count_1"
+    assert execution_count == 1
+
+    # Wait for TTL to expire (TTL is 1.0s)
+    await asyncio.sleep(1.1)
+
+    # Second call (should execute again)
+    result2 = await deduplicated("key_ttl", counting_coro)
+    assert result2 == "count_2"
+    assert execution_count == 2
+
+@pytest.mark.asyncio
+async def test_deduplicated_cancellation_cleanup():
+    """Test that cancellation cleans up the in-flight tracking."""
+    async def slow_coro():
+        await asyncio.sleep(1.0)
+        return "slow_result"
+
+    # Start a request
+    task = asyncio.create_task(deduplicated("key_cancel", slow_coro))
+
+    # Let it start
+    await asyncio.sleep(0.1)
+
+    # Verify it is in-flight
+    stats = get_dedup_stats()
+    assert stats["in_flight_count"] == 1
+
+    # Cancel the request
+    task.cancel()
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # Verify it is removed from in-flight
+    stats = get_dedup_stats()
+    assert stats["in_flight_count"] == 0
+
+@pytest.mark.asyncio
+async def test_deduplicated_factory_error():
+    """Test behavior when coro_factory raises an exception."""
+    def failing_factory():
+        raise ValueError("Factory failed")
+
+    with pytest.raises(ValueError, match="Factory failed"):
+        await deduplicated("key_factory_fail", failing_factory)
+
+    # Verify cleanup
+    stats = get_dedup_stats()
+    assert stats["in_flight_count"] == 0
+
+@pytest.mark.asyncio
+async def test_deduplicated_concurrent_failure():
+    """Test that concurrent requests waiting for a failing request also fail."""
+    async def failing_coro():
+        await asyncio.sleep(0.1)
+        raise ValueError("Concurrent failure")
+
+    # Start primary request
+    t1 = asyncio.create_task(deduplicated("key_concurrent_fail", failing_coro))
+
+    # Start secondary request (should wait for t1)
+    t2 = asyncio.create_task(deduplicated("key_concurrent_fail", failing_coro))
+
+    # Both should fail with same error
+    with pytest.raises(ValueError, match="Concurrent failure"):
+        await t1
+
+    with pytest.raises(ValueError, match="Concurrent failure"):
+        await t2
+
+    # Verify cleanup
+    stats = get_dedup_stats()
+    assert stats["in_flight_count"] == 0
