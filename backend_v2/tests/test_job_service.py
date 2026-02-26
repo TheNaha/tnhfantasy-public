@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from services.job_service import JobService
 from core.entities import Job, JobStatus
+from core.dtos import JobQueueItem
 from core.exceptions import NotFoundError
 
 
@@ -266,3 +267,63 @@ class TestJobServiceStats:
         assert "by_status" in stats
         assert "total" in stats
         assert "avg_durations" in stats
+
+
+class TestJobServiceQueueItems:
+    """Tests for optimized queue retrieval methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_queue_items_returns_lightweight_objects(self, session: Session, sample_workflow):
+        """Test that get_queue_items returns JobQueueItem objects with correct data."""
+        service = JobService(session)
+
+        # Create a job with heavy workflow
+        heavy_workflow = {"nodes": [{"id": i, "data": "x" * 1000} for i in range(100)]}
+        metadata = {"prompt": "test prompt", "seed": 123}
+
+        job = await service.create_job(workflow=heavy_workflow, metadata=metadata)
+
+        # Fetch using new optimized method
+        pending_items = service.get_pending_queue_items()
+
+        assert len(pending_items) == 1
+        item = pending_items[0]
+
+        assert isinstance(item, JobQueueItem)
+        assert item.id == job.id
+        assert item.status == JobStatus.PENDING
+        assert item.metadata_ == metadata
+        assert item.created_at is not None
+
+        # Ensure heavy workflow is NOT present in the DTO (it's not even a field)
+        assert not hasattr(item, "workflow")
+
+    @pytest.mark.asyncio
+    async def test_get_queue_items_running(self, session: Session, sample_workflow):
+        """Test retrieving running jobs."""
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        await service.update_job(job.id, status=JobStatus.RUNNING, overall_progress=50.0)
+
+        running_items = service.get_running_queue_items()
+
+        assert len(running_items) == 1
+        item = running_items[0]
+        assert item.status == JobStatus.RUNNING
+        assert item.overall_progress == 50.0
+
+    @pytest.mark.asyncio
+    async def test_queue_ordering(self, session: Session, sample_workflow):
+        """Test that queue items are ordered by created_at."""
+        service = JobService(session)
+
+        job1 = await service.create_job(workflow=sample_workflow, metadata={"i": 1})
+        import asyncio
+        await asyncio.sleep(0.01) # Ensure timestamp diff
+        job2 = await service.create_job(workflow=sample_workflow, metadata={"i": 2})
+
+        pending_items = service.get_pending_queue_items()
+
+        assert len(pending_items) == 2
+        assert pending_items[0].id == job1.id
+        assert pending_items[1].id == job2.id
