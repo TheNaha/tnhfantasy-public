@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useId } from 'react';
 import { useJobStore } from '../store/jobStore';
 import { Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const [queue, setQueue] = useState([]);
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const contentId = useId();
 
     // Use global WebSocket job store
     const { jobs: activeJobs } = useJobStore();
@@ -73,10 +74,12 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
             {/* Header */}
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
+                aria-expanded={!isCollapsed}
+                aria-controls={contentId}
                 className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-800/50 transition-colors"
             >
                 <div className="flex items-center gap-3">
-                    <Clock className="text-blue-400" size={18} />
+                    <Clock className="text-blue-400" size={18} aria-hidden="true" />
                     <span className="font-medium text-white">
                         Queue ({runningJobs.length} running, {pendingJobs.length} pending)
                     </span>
@@ -86,13 +89,17 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                         </span>
                     )}
                 </div>
-                {isCollapsed ? <ChevronDown size={18} className="text-gray-400" /> : <ChevronUp size={18} className="text-gray-400" />}
+                {isCollapsed ?
+                    <ChevronDown size={18} className="text-gray-400" aria-hidden="true" /> :
+                    <ChevronUp size={18} className="text-gray-400" aria-hidden="true" />
+                }
             </button>
 
             {/* Content */}
             <AnimatePresence>
                 {!isCollapsed && (
                     <motion.div
+                        id={contentId}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
@@ -100,7 +107,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                     >
                         <div className="px-4 pb-4 space-y-2">
                             {/* Timeline Bar - Using flex for proper job layout */}
-                            <div className="flex h-8 bg-gray-800 rounded-lg overflow-hidden gap-0.5">
+                            <div className="flex h-8 bg-gray-800 rounded-lg overflow-hidden gap-0.5" aria-hidden="true">
                                 {/* Running jobs */}
                                 {runningJobs.map((job, idx) => (
                                     <motion.div
@@ -142,20 +149,21 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                             {/* Job List with ETA */}
                             <div className="space-y-1 max-h-32 overflow-y-auto">
                                 {queue.map((job) => (
-                                    <div
+                                    <button
                                         key={job.id}
                                         onClick={() => onJobClick?.(job.id)}
-                                        className="flex items-center justify-between px-3 py-2 bg-gray-800/50 rounded-lg hover:bg-gray-700/50 cursor-pointer transition-colors"
+                                        className="w-full flex items-center justify-between px-3 py-2 bg-gray-800/50 rounded-lg hover:bg-gray-700/50 cursor-pointer transition-colors text-left group focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+                                        aria-label={`Job status: ${job.status}, Prompt: ${job.prompt || 'Generating'}, Progress: ${Math.round(job.progress || 0)}%`}
                                     >
                                         <div className="flex items-center gap-3 min-w-0">
                                             {job.status === 'running' ? (
-                                                <Loader2 className="flex-shrink-0 animate-spin text-blue-400" size={14} />
+                                                <Loader2 className="flex-shrink-0 animate-spin text-blue-400" size={14} aria-hidden="true" />
                                             ) : (
-                                                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-400">
+                                                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-400" aria-hidden="true">
                                                     {job.position}
                                                 </span>
                                             )}
-                                            <span className="text-sm text-gray-300 truncate">
+                                            <span className="text-sm text-gray-300 truncate group-hover:text-white transition-colors">
                                                 {job.prompt || 'Generating...'}
                                             </span>
                                         </div>
@@ -167,7 +175,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                                 ETA: {formatETA(job.eta_seconds)}
                                             </span>
                                         </div>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
 
