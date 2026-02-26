@@ -842,11 +842,38 @@ async def batch_get_metadata(request: BatchMetadataRequest):
     Returns:
         Dict mapping paths to their metadata
     """
-    import glob
     from infrastructure.image_processor import read_image_metadata
     
     results = {}
+    missing_files_map = {}  # path -> filename
     
+    def _get_metadata_result(full_path):
+        """Helper to extract metadata from a file."""
+        try:
+            metadata = read_image_metadata(full_path)
+            return {
+                "success": True,
+                "metadata": metadata,
+                "blurhash": metadata.get("blurhash")
+            }
+        except Exception:
+            # Fallback to sidecar JSON
+            meta_path = f"{full_path}.json"
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, 'r') as f:
+                        metadata = json.load(f)
+                    return {
+                        "success": True,
+                        "metadata": metadata,
+                        "blurhash": metadata.get("blurhash")
+                    }
+                except:
+                    return {"error": "metadata_read_failed"}
+            else:
+                return {"error": "metadata_not_found"}
+
+    # Phase 1: Check direct paths and collect missing files
     for path in request.paths:
         try:
             # Normalize path
@@ -862,47 +889,44 @@ async def batch_get_metadata(request: BatchMetadataRequest):
                 results[path] = {"error": "invalid_path"}
                 continue
 
-            if not os.path.exists(full_path):
-                # Search in date-based subdirectories
-                pattern = os.path.join(OUTPUT_DIR, "**", os.path.basename(filename))
-                matches = glob.glob(pattern, recursive=True)
-                # Filter out thumb directory
-                matches = [m for m in matches if "/thumb/" not in m]
-                
-                if matches:
-                    full_path = matches[0]
-                else:
-                    results[path] = {"error": "not_found"}
-                    continue
-            
-            # Read metadata from embedded PNG or sidecar JSON
-            try:
-                metadata = read_image_metadata(full_path)
-                results[path] = {
-                    "success": True,
-                    "metadata": metadata,
-                    "blurhash": metadata.get("blurhash")
-                }
-            except Exception as e:
-                # Fallback to sidecar JSON
-                meta_path = f"{full_path}.json"
-                if os.path.exists(meta_path):
-                    try:
-                        with open(meta_path, 'r') as f:
-                            metadata = json.load(f)
-                        results[path] = {
-                            "success": True,
-                            "metadata": metadata,
-                            "blurhash": metadata.get("blurhash")
-                        }
-                    except:
-                        results[path] = {"error": "metadata_read_failed"}
-                else:
-                    results[path] = {"error": "metadata_not_found"}
+            if os.path.exists(full_path):
+                results[path] = _get_metadata_result(full_path)
+            else:
+                # Add to missing files list for batch search
+                # Map original path -> basename (what we look for)
+                missing_files_map[path] = os.path.basename(filename)
                     
         except Exception as e:
             results[path] = {"error": str(e)}
     
+    # Phase 2: Single pass scan for missing files
+    if missing_files_map:
+        # Optimization: Scan OUTPUT_DIR once to find all missing files
+        found_files = {}  # filename -> full_path
+        target_filenames = set(missing_files_map.values())
+
+        # Walk the directory
+        for root, dirs, files in os.walk(OUTPUT_DIR):
+            # Skip thumb directory for efficiency
+            if "thumb" in dirs:
+                dirs.remove("thumb")
+
+            for f in files:
+                if f in target_filenames:
+                    found_files[f] = os.path.join(root, f)
+
+            # Optimization: Stop if we found all files
+            if len(found_files) == len(target_filenames):
+                break
+
+        # Fill results for missing files
+        for path, filename in missing_files_map.items():
+            if filename in found_files:
+                full_path = found_files[filename]
+                results[path] = _get_metadata_result(full_path)
+            else:
+                results[path] = {"error": "not_found"}
+
     return {
         "results": results,
         "total": len(request.paths),
