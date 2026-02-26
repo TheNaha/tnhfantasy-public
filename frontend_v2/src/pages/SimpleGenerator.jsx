@@ -1196,10 +1196,10 @@ export default function SimpleGenerator() {
                                     <button
                                         key={p.label}
                                         onClick={() => setResolution(p.w, p.h)}
-                                        aria-label={`Set resolution to ${p.w}x${p.h} (${p.label})`}
-                                        title={`Set resolution to ${p.w}x${p.h} (${p.label})`}
+                                        aria-label={`Set aspect ratio ${p.label}, ${p.w}x${p.h} pixels`}
+                                        title={`Set aspect ratio ${p.label} (${p.w}x${p.h})`}
                                         aria-pressed={width === p.w && height === p.h}
-                                        className={`flex flex-col items-center justify-center gap-0.5 p-1.5 rounded-lg transition-all border focus-visible:ring-2 focus-visible:ring-blue-500 outline-none ${width === p.w && height === p.h ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-300'}`}
+                                        className={`flex flex-col items-center justify-center gap-0.5 p-1.5 rounded-lg transition-all border focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none ${width === p.w && height === p.h ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-300'}`}
                                     >
                                         <div className="w-5 h-5 flex items-center justify-center">
                                             <div
