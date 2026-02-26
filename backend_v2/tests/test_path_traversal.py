@@ -45,6 +45,10 @@ def setup_directories():
     if os.path.exists(hacked_path):
         os.remove(hacked_path)
 
+    hacked_filename_path = os.path.abspath("hacked_filename.txt")
+    if os.path.exists(hacked_filename_path):
+        os.remove(hacked_filename_path)
+
 def test_view_file_traversal(client: TestClient):
     """
     Test that path traversal in /api/view/{path} is blocked.
@@ -99,3 +103,44 @@ def test_batch_delete_traversal(client: TestClient):
 
     # Check response indicates failure or partial success (depending on impl)
     # But critical check is file existence
+
+def test_upload_filename_traversal(client: TestClient):
+    """
+    Test that path traversal via filename in /api/upload is blocked.
+    """
+    # Try to upload a file where filename contains traversal characters
+    # e.g. filename="../../hacked_filename.txt"
+    response = client.post(
+        "/api/upload",
+        files={"file": ("../../hacked_filename.txt", b"hacked content")},
+        data={"path": "input"}
+    )
+
+    hacked_path = os.path.abspath("hacked_filename.txt")
+
+    # Check if vulnerability exists (file created in root)
+    if os.path.exists(hacked_path):
+        os.remove(hacked_path) # Cleanup
+        pytest.fail(f"VULNERABILITY DETECTED: File created at {hacked_path}")
+
+    # The file should be sanitized and saved in TEST_OUTPUT_DIR/input/hacked_filename.txt
+    # Or rejected.
+
+    assert not os.path.exists(hacked_path), "Path traversal succeeded via filename"
+
+def test_upload_mask_traversal(client: TestClient):
+    """
+    Test that path traversal via source_filename in /api/upload/mask is blocked.
+    """
+    payload = {
+        "mask_data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNiAAAABgADNjd8qAAAAABJRU5ErkJggg==",
+        "source_filename": "../../hacked_mask.png"
+    }
+
+    response = client.post("/api/upload/mask", json=payload)
+
+    if response.status_code == 200:
+        data = response.json()
+        path = data.get("path", "")
+        # If vulnerable, path might contain traversal
+        assert "../" not in path, "Path traversal characters returned in path"

@@ -472,11 +472,14 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
         upload_dir = get_safe_path(OUTPUT_DIR, path)
         os.makedirs(upload_dir, exist_ok=True)
         
-        file_path = os.path.join(upload_dir, file.filename)
+        # Sanitize filename to prevent path traversal
+        filename = os.path.basename(file.filename)
+
+        file_path = os.path.join(upload_dir, filename)
         with open(file_path, 'wb') as f:
             f.write(content)
         
-        return {"status": "success", "filename": file.filename}
+        return {"status": "success", "filename": filename}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -623,6 +626,10 @@ async def upload_mask_image(
     mask_data = request.get("mask_data")
     source_filename = request.get("source_filename", "")
     
+    # Sanitize source filename
+    if source_filename:
+        source_filename = os.path.basename(source_filename)
+
     if not mask_data:
         raise HTTPException(status_code=400, detail="mask_data is required")
     
