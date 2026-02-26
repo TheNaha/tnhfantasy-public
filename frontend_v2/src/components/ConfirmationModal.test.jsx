@@ -81,4 +81,28 @@ describe('ConfirmationModal', () => {
         expect(screen.getByText('Yes, do it')).toBeInTheDocument();
         expect(screen.getByText('No, wait')).toBeInTheDocument();
     });
+
+    it('has accessible attributes', () => {
+        render(
+            <ConfirmationModal
+                isOpen={true}
+                title="Accessible Title"
+                message="Accessible Message"
+                onConfirm={() => {}}
+                onClose={() => {}}
+            />
+        );
+
+        const dialog = screen.getByRole('dialog');
+        expect(dialog).toBeInTheDocument();
+        expect(dialog).toHaveAttribute('aria-modal', 'true');
+
+        const title = screen.getByText('Accessible Title');
+        const message = screen.getByText('Accessible Message');
+
+        expect(dialog).toHaveAttribute('aria-labelledby', title.id);
+        expect(dialog).toHaveAttribute('aria-describedby', message.id);
+
+        expect(screen.getByLabelText('Close')).toBeInTheDocument();
+    });
 });

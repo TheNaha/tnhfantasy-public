@@ -1,5 +1,6 @@
+import { useId } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 
 export default function ConfirmationModal({
     isOpen,
@@ -12,6 +13,9 @@ export default function ConfirmationModal({
     cancelText = "Cancel",
     isDangerous = false
 }) {
+    const titleId = useId();
+    const descriptionId = useId();
+
     const handleCancel = () => {
         if (onCancel) onCancel();
         else if (onClose) onClose();
@@ -29,7 +33,11 @@ export default function ConfirmationModal({
                     className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
                     onClick={handleCancel}
                 >
-                    <motion.div
+                    <Motion.div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby={titleId}
+                        aria-describedby={descriptionId}
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
@@ -43,11 +51,12 @@ export default function ConfirmationModal({
                                     <AlertTriangle size={24} />
                                 </div>
                                 <div className="flex-1">
-                                    <h3 className="text-lg font-bold text-white">{title}</h3>
-                                    <p className="text-gray-400 mt-1 text-sm leading-relaxed">{message}</p>
+                                    <h3 id={titleId} className="text-lg font-bold text-white">{title}</h3>
+                                    <p id={descriptionId} className="text-gray-400 mt-1 text-sm leading-relaxed">{message}</p>
                                 </div>
                                 <button
                                     onClick={handleCancel}
+                                    aria-label="Close"
                                     className="text-gray-500 hover:text-white transition-colors"
                                 >
                                     <X size={20} />
@@ -72,7 +81,7 @@ export default function ConfirmationModal({
                                 </button>
                             </div>
                         </div>
-                    </motion.div>
+                    </Motion.div>
                 </div>
             )}
         </AnimatePresence>
