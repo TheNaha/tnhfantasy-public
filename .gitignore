@@ -29,3 +29,4 @@ backend_v2/data/*.sqlite3
 backend_v2/input/
 backend_v2/output/
 backend_v2/cache/
+.coverage
