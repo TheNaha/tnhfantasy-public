@@ -54,15 +54,12 @@ class JobService:
         """
         jobs, total = self.repo.get_all(limit=limit, offset=offset)
         
-        # Calculate queue positions for pending jobs
-        pending_jobs = self.repo.get_pending()
-        position_map = {job.id: i + 1 for i, job in enumerate(pending_jobs)}
-        
         jobs_data = []
         for job in jobs:
             job_dict = self._job_to_dict(job)
             if job.status == JobStatus.PENDING:
-                job_dict["queue_position"] = position_map.get(job.id, 0)
+                # Calculate position on demand instead of fetching all pending jobs
+                job_dict["queue_position"] = self.repo.get_queue_position(job)
             jobs_data.append(job_dict)
         
         return {"jobs": jobs_data, "total": total}

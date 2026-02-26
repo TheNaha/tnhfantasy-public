@@ -1,6 +1,6 @@
 # Job Repository - Data access layer for jobs
 from sqlmodel import Session, select, col
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -49,6 +49,26 @@ class JobRepository:
         """Get all pending jobs, ordered by creation time (FIFO)."""
         stmt = select(Job).where(Job.status == JobStatus.PENDING).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
+
+    def get_queue_position(self, job: Job) -> int:
+        """
+        Get the queue position for a pending job.
+        Returns the number of pending jobs created before this one + 1.
+        Returns 0 if job is not pending or not found.
+        """
+        if not job or job.status != JobStatus.PENDING:
+            return 0
+
+        # Count pending jobs created before this one
+        stmt = select(func.count()).select_from(Job).where(
+            Job.status == JobStatus.PENDING,
+            or_(
+                Job.created_at < job.created_at,
+                and_(Job.created_at == job.created_at, Job.id < job.id)
+            )
+        )
+        count = self.session.exec(stmt).one()
+        return count + 1
     
     def get_by_status(self, status: JobStatus) -> List[Job]:
         """Get all jobs with a specific status."""
