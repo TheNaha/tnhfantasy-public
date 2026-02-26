@@ -147,8 +147,8 @@ async def get_queue_status(session: Session = Depends(get_session)):
     """
     service = get_job_service(session)
     
-    pending = service.get_pending_jobs()
-    running = service.get_running_jobs()
+    pending = service.get_pending_queue_items()
+    running = service.get_running_queue_items()
     avg_duration = service.get_average_duration()
     
     # Build queue items with ETA

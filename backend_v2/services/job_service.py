@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlmodel import Session
 
 from core.entities import Job, JobStatus
+from core.dtos import JobQueueItem
 from core.events import event_bus, Event, EventType, emit_job_event
 from core.exceptions import NotFoundError, JobError
 from infrastructure.repositories import JobRepository
@@ -118,6 +119,14 @@ class JobService:
     def get_running_jobs(self) -> List[Job]:
         """Get all running/processing jobs."""
         return self.repo.get_by_statuses([JobStatus.RUNNING, JobStatus.PROCESSING])
+
+    def get_pending_queue_items(self) -> List[JobQueueItem]:
+        """Get pending queue items (lightweight)."""
+        return self.repo.get_queue_items([JobStatus.PENDING])
+
+    def get_running_queue_items(self) -> List[JobQueueItem]:
+        """Get running/processing queue items (lightweight)."""
+        return self.repo.get_queue_items([JobStatus.RUNNING, JobStatus.PROCESSING])
     
     def get_average_duration(self, sample_size: int = 10) -> float:
         """

@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from core.entities import Job, JobStatus
+from core.dtos import JobQueueItem
 
 
 class JobRepository:
@@ -79,6 +80,36 @@ class JobRepository:
         """Get all jobs with any of the specified statuses."""
         stmt = select(Job).where(Job.status.in_(statuses)).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
+
+    def get_queue_items(self, statuses: List[JobStatus]) -> List[JobQueueItem]:
+        """
+        Get lightweight queue items for specified statuses.
+        Avoids loading heavy workflow JSON.
+        """
+        stmt = (
+            select(
+                Job.id,
+                Job.status,
+                Job.created_at,
+                Job.overall_progress,
+                Job.metadata_
+            )
+            .where(Job.status.in_(statuses))
+            .order_by(Job.created_at)
+        )
+
+        rows = self.session.exec(stmt).all()
+
+        return [
+            JobQueueItem(
+                id=row[0],
+                status=row[1],
+                created_at=row[2],
+                overall_progress=row[3],
+                metadata_=row[4] or {}
+            )
+            for row in rows
+        ]
     
     def get_recently_completed(self, limit: int = 10) -> List[Job]:
         """Get recently completed jobs, ordered by completion time descending."""
