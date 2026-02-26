@@ -1,4 +1,16 @@
-# Model routes V2 - Version-aware model management
+# Model routes V2 - Version-aware model management using the normalized schema
+#
+# These routes operate on the V2 model schema (models_v2, model_versions,
+# model_files, provider_version_status) which stores full CivitAI metadata
+# with per-version and per-file granularity.
+#
+# KEY ENDPOINTS:
+#   POST   /api/v2/models                        – Import a CivitAI model
+#   GET    /api/v2/models                        – List models with per-provider status
+#   GET    /api/v2/models/{id}                   – Get single model details
+#   DELETE /api/v2/models/{id}                   – Delete model + all provider statuses
+#   GET    /api/v2/models/external/civitai       – Search CivitAI for new models
+#   PATCH  /api/v2/models/{id}/versions/{vid}/status/{pid} – Update provider file status
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session

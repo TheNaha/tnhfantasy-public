@@ -1,4 +1,11 @@
 # Provider Repository - Data access layer for providers
+#
+# Provides typed CRUD operations for the `providers` and
+# `load_balancing_config` tables.
+#
+# The repository is session-scoped – callers should create a new instance
+# per request.  The LoadBalancingRepository is a separate class that manages
+# the singleton load-balancing configuration row.
 from sqlmodel import Session, select
 from typing import Optional, List, Dict, Any
 

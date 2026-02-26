@@ -1,54 +1,110 @@
 /**
- * Providers API
- * Provider management API calls.
+ * providers.js - Provider management API helpers
+ *
+ * A "provider" is a serverless compute backend (e.g. Modal, Beam) that runs
+ * ComfyUI inside a container.  Multiple providers can be configured, and the
+ * load balancer routes jobs between them.
+ *
+ * Container lifecycle (start / stop / restart / logs) is also managed here.
+ * Modal-specific deployment operations use dedicated endpoints.
  */
 
 import api from './client';
 
 export const providersApi = {
-    // List all providers
+    /** Fetch all configured providers. */
     list: () => api.get('/api/providers'),
 
-    // Get single provider
+    /**
+     * Get a single provider by its unique ID.
+     * @param {string} providerId - e.g. "modal-primary"
+     */
     get: (providerId) => api.get(`/api/providers/${providerId}`),
 
-    // Create provider
+    /**
+     * Register a new provider.
+     * @param {object} config - Provider configuration including `id`, `type`,
+     *   `credentials`, and `config` fields.
+     */
     create: (config) => api.post('/api/providers', config),
 
-    // Update provider
+    /**
+     * Partially update a provider's configuration.
+     * @param {string} providerId - Provider to update.
+     * @param {object} updates    - Fields to change (only supplied fields are modified).
+     */
     update: (providerId, updates) => api.patch(`/api/providers/${providerId}`, updates),
 
-    // Delete provider
+    /**
+     * Delete a provider and cascade-remove all its model status records.
+     * @param {string} providerId - Provider to remove.
+     */
     delete: (providerId) => api.delete(`/api/providers/${providerId}`),
 
-    // Get load balancing config
+    // -------------------------------------------------------------------------
+    // Load Balancing
+    // -------------------------------------------------------------------------
+
+    /** Get the current load balancing strategy configuration. */
     getLoadBalancing: () => api.get('/api/providers/load-balancing'),
 
-    // Update load balancing config
+    /**
+     * Update the load balancing strategy.
+     * @param {object} config - e.g. { strategy: 'least-connections' }
+     */
     updateLoadBalancing: (config) => api.put('/api/providers/load-balancing', config),
 
-    // Reconcile models for provider
+    /**
+     * Trigger a full model reconciliation for a single provider.
+     * Reconciliation compares what models the provider has on disk against the
+     * database and downloads/deletes as needed.
+     * @param {string} providerId
+     */
     reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile`),
 
-    // Get provider status/health
+    /** Get health/status summary for a single provider. */
     getStatus: (providerId) => api.get(`/api/providers/${providerId}/status`),
 
-    // Alias for backward compatibility (uses backend_v2 path)
+    // Aliases kept for backward compatibility with older call-sites
     getLoadBalancerConfig: () => api.get('/api/providers/config/load-balancing'),
-
-    // Alias for Providers.jsx compatibility
     updateLoadBalancerConfig: (config) => api.put('/api/providers/load-balancing', config),
 
+    // -------------------------------------------------------------------------
     // Container management
+    // -------------------------------------------------------------------------
+
+    /** Get the running/stopped status of a single provider's container. */
     getContainerStatus: (providerId) => api.get(`/api/providers/${providerId}/container/status`),
+
+    /** Get container statuses for all providers in a single request. */
     getAllContainerStatuses: () => api.get('/api/providers/containers/status'),
+
+    /** Start the Docker/Podman container for a provider. */
     startContainer: (providerId) => api.post(`/api/providers/${providerId}/container/start`),
+
+    /** Stop the container for a provider. */
     stopContainer: (providerId) => api.post(`/api/providers/${providerId}/container/stop`),
+
+    /** Restart the container for a provider (stop then start). */
     restartContainer: (providerId) => api.post(`/api/providers/${providerId}/container/restart`),
+
+    /** Tail recent container logs (useful for debugging startup failures). */
     getContainerLogs: (providerId) => api.get(`/api/providers/${providerId}/container/logs`),
 
+    // -------------------------------------------------------------------------
     // Modal-specific operations
+    // -------------------------------------------------------------------------
+
+    /**
+     * Deploy the latest worker image to Modal.
+     * This runs `modal deploy` internally and may take several minutes.
+     */
     deploy: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
+
+    /**
+     * Run initial Modal setup (create volumes, upload base files, etc.).
+     * Only needed once when a Modal provider is first configured.
+     */
     setup: (providerId) => api.post(`/api/providers/${providerId}/setup`),
 };
 

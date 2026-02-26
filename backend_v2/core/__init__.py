@@ -1,4 +1,12 @@
 # Core module exports
+#
+# The `core` package contains pure domain objects with no framework dependencies:
+#   entities    – SQLModel ORM models (database tables)
+#   entities_v2 – Normalized V2 schema for richer model metadata
+#   dtos        – Lightweight data-transfer objects (not persisted)
+#   events      – EventBus and typed event constants for real-time pub/sub
+#   exceptions  – Typed exceptions mapped to HTTP status codes
+#   workflow_parser – Extracts model references from ComfyUI workflow JSON
 from .entities import (
     Job, JobStatus,
     Provider,

@@ -1,4 +1,11 @@
 # Model Repository - Data access layer for models
+#
+# Provides typed CRUD operations for the `models` table (V1 flat schema).
+# For the normalized V2 schema (models_v2, model_versions, model_files,
+# provider_version_status) see `model_repo_v2.py`.
+#
+# The repository is session-scoped – callers should create a new instance
+# per request using the FastAPI dependency in `api/deps.py`.
 from sqlmodel import Session, select, col, and_
 from typing import Optional, List, Dict, Any
 from datetime import datetime

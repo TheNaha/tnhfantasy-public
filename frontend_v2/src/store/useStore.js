@@ -1,3 +1,20 @@
+/**
+ * useStore.js - Gallery UI state and collections store
+ *
+ * Combines several related concerns into one persisted store:
+ *
+ *   Gallery UI state   – viewMode, selectionMode, selectedFiles (ephemeral)
+ *   Favorites          – local-only list of favorited image filenames
+ *   Collections        – server-side albums with local cache and lazy image loading
+ *
+ * Collections are persisted on the server (see `api/collectionsApi.js`) and
+ * automatically migrated from any legacy localStorage data on first load.
+ *
+ * NOTE: Job state lives in `jobStore.js`; file listing is handled by the
+ * `useGallery` React Query hook – this store only tracks UI preferences and
+ * collection membership.
+ */
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import * as collectionsApi from '../api/collectionsApi';

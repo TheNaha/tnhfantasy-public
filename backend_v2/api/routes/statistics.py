@@ -1,5 +1,12 @@
 # Statistics routes - Analytics and usage data
-# Full implementation with timeline, correlations, prompt analytics, and performance metrics
+#
+# Provides aggregated statistics computed from the output image gallery and
+# job database.  Data is cached for 5 minutes (see `cache_stats` decorator)
+# to avoid expensive file-system scans on every request.
+#
+# KEY ENDPOINTS:
+#   GET /api/statistics          – Overall usage summary (job counts, generation stats)
+#   GET /api/statistics/timeline – Daily generation counts for chart rendering
 import os
 import json
 import re

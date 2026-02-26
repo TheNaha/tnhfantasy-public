@@ -1,4 +1,17 @@
 # API Dependency Injection
+#
+# FastAPI uses these callables as dependencies (via `Depends(...)`).
+# They provide request-scoped service instances so each HTTP request gets
+# a fresh database session and the correct service objects.
+#
+# PATTERN:
+#   Each route that needs database access declares:
+#       session: Session = Depends(get_session)
+#   Then creates services via:
+#       service = get_job_service(session)
+#
+# The ContainerManager is a singleton because it holds a Docker/Podman client
+# connection that is expensive to create on every request.
 from functools import lru_cache
 from typing import Generator, Optional
 
@@ -10,7 +23,7 @@ from services.provider_service import ProviderService
 from services.model_service import ModelService
 from core.events import event_bus, EventBus
 
-# Singleton container manager (initialized lazily)
+# Singleton container manager (initialized lazily on first use)
 _container_manager = None
 
 

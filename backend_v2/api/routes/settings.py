@@ -1,4 +1,15 @@
-# Settings routes - Full config management, Branding, Presets, Session
+# Settings routes - Runtime configuration management
+#
+# Allows reading and updating backend configuration at runtime without
+# restarting the server.  Settings are persisted to `config.json` so they
+# survive restarts.  Environment variables (COMFY_*) take precedence.
+#
+# KEY ENDPOINTS:
+#   GET  /api/settings           – Read current configuration
+#   PUT  /api/settings           – Update configuration (partial update)
+#   POST /api/settings/reset     – Reset to compiled-in defaults
+#   GET  /api/settings/branding  – Read UI branding configuration
+#   PUT  /api/settings/branding  – Update branding (name, logo, theme)
 import os
 import json
 from typing import Dict, Any, Optional

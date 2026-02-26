@@ -1,4 +1,17 @@
-# Prompts API - CRUD operations with FTS5 search
+# Prompts API - Saved prompt library with CRUD and FTS5 full-text search
+#
+# Prompts are server-side (SQLite `prompts` table) for cross-device sync.
+# SQLite FTS5 virtual table (`prompts_fts`) keeps the full-text search index
+# automatically up to date via INSERT/UPDATE/DELETE triggers.
+#
+# KEY ENDPOINTS:
+#   GET    /api/prompts          – List / search prompts (supports q, category, favorite)
+#   POST   /api/prompts          – Create a new prompt
+#   GET    /api/prompts/{id}     – Get a single prompt
+#   PUT    /api/prompts/{id}     – Replace a prompt
+#   DELETE /api/prompts/{id}     – Delete a prompt
+#   POST   /api/prompts/{id}/use – Increment usage counter
+#   GET    /api/prompts/categories – List all distinct categories
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, or_
 from sqlalchemy import text

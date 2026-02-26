@@ -1,4 +1,13 @@
-# Download routes
+# Download routes - Track and manage model download operations
+#
+# Downloads are initiated by the provider worker (not the backend directly).
+# These endpoints allow the worker to report progress and the UI to poll status.
+#
+# KEY ENDPOINTS:
+#   GET    /api/downloads          – List all active/recent downloads
+#   POST   /api/downloads          – Start a new tracked download
+#   PUT    /api/downloads/{id}     – Update download progress
+#   DELETE /api/downloads/{id}     – Remove a completed/failed download record
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi import APIRouter, Depends, Request, HTTPException

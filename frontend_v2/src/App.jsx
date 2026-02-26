@@ -1,3 +1,21 @@
+/**
+ * App.jsx - Root application component
+ *
+ * ARCHITECTURE OVERVIEW:
+ *   - Routing: React Router v6 with lazy-loaded page components to minimise
+ *     the initial JS bundle.  AnimatePresence wraps route transitions for
+ *     smooth page animations via Framer Motion.
+ *   - State: Zustand stores (jobStore, providerStore, reconciliationStore) are
+ *     initialised here so that WebSocket connections are established regardless
+ *     of which page the user lands on.
+ *   - Data fetching: React Query (QueryClient) provides server-state caching.
+ *   - Context providers (outermost → innermost):
+ *       ErrorBoundary → QueryClientProvider → BrandingProvider →
+ *       ConfirmationProvider → Router → Layout
+ *   - Notifications: react-hot-toast for user-facing toasts; positioned
+ *     top-right with a dark theme matching the overall UI.
+ */
+
 import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

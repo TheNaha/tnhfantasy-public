@@ -1,4 +1,22 @@
 # FastAPI Main Application
+#
+# STARTUP SEQUENCE (lifespan function):
+#   1. Initialize SQLite database and run schema migrations
+#   2. Load load-balancer state from DB
+#   3. Start the async job queue (worker pool)
+#   4. Recover PENDING/RUNNING jobs from DB (handles server restarts)
+#   5. Start background scheduler (periodic vacuum, reconciliation, etc.)
+#   6. Mount Socket.IO ASGI sub-app on /socket.io for WebSocket upgrades
+#
+# REQUEST FLOW (simplified):
+#   Client → POST /api/jobs → jobs.py → JobService.create_job → job_queue.enqueue
+#     → Worker coroutine picks job → _process_job() → _call_provider()
+#       → Modal/Beam worker HTTP/WS → images returned → ImageService.save()
+#       → job.status = COMPLETED → WebSocket event → frontend gallery refresh
+#
+# RETRY STRATEGY (for provider calls):
+#   Uses tenacity with exponential back-off (base 1 s, max 60 s).
+#   Non-retryable errors (e.g. 400 Bad Request from provider) bypass retries.
 import asyncio
 import json
 import os

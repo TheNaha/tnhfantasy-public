@@ -1,4 +1,18 @@
-# Collections API - CRUD operations for image collections
+# Collections API - CRUD for user-curated image collections (albums)
+#
+# Collections allow users to organise gallery images into named groups.
+# Images are linked via the `collection_images` join table – the actual
+# PNG files live in the output directory and are referenced by filename.
+#
+# KEY ENDPOINTS:
+#   GET    /api/collections                      – List all collections with image counts
+#   POST   /api/collections                      – Create a collection
+#   GET    /api/collections/{id}                 – Get collection (optionally with images)
+#   PUT    /api/collections/{id}                 – Update collection name/color/description
+#   DELETE /api/collections/{id}                 – Delete collection (images NOT deleted)
+#   POST   /api/collections/{id}/images          – Add images to collection
+#   DELETE /api/collections/{id}/images          – Remove images from collection
+#   POST   /api/collections/import               – Bulk import (for localStorage migration)
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy import text, func

@@ -1,3 +1,21 @@
+/**
+ * downloadStore.js - Real-time model download tracking store
+ *
+ * Subscribes to WebSocket "download.*" events emitted by the backend whenever
+ * a model download starts, progresses, completes, or fails.
+ *
+ * STATE SHAPE:
+ *   downloads     – Array of download objects (sorted newest-first).
+ *   isConnected   – Whether the WebSocket connection is live.
+ *   _wsInitialized – Internal flag; prevents duplicate subscriptions.
+ *   _unsubscribers – Cleanup functions returned by `ws.on()`.
+ *
+ * LIFECYCLE:
+ *   Call `connect()` once at app startup (done in App.jsx via providerStore or
+ *   a dedicated model-manager hook).  The store will stay in sync via WebSocket
+ *   events and a one-time initial HTTP fetch.
+ */
+
 import { create } from 'zustand';
 import * as ws from '../api/websocket';
 import { api } from '../api';
