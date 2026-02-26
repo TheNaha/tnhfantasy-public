@@ -1,3 +1,4 @@
+import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import ModelSelector from "./ModelSelector";
@@ -99,5 +100,48 @@ describe("ModelSelector Accessibility", () => {
 
     const infoButton = screen.getByLabelText(/View details for/i);
     expect(infoButton).toBeInTheDocument();
+  });
+
+  it("closes modal on Escape key press", async () => {
+    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+
+    const modal = screen.getByRole("dialog");
+    expect(modal).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes modal when clicking on the backdrop", async () => {
+    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+
+    const modal = screen.getByRole("dialog");
+    expect(modal).toBeInTheDocument();
+
+    // Click on the backdrop (the dialog itself)
+    fireEvent.click(modal);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  it("does NOT close modal when clicking inside the content", async () => {
+    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+
+    const modal = screen.getByRole("dialog");
+    expect(modal).toBeInTheDocument();
+
+    // Find an element inside the modal (e.g., search input) and click it
+    const searchInput = screen.getByPlaceholderText(
+      "Search models by name, tags, description..."
+    );
+    fireEvent.click(searchInput);
+
+    // Modal should still be open
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
