@@ -1,0 +1,132 @@
+import pytest
+import asyncio
+from infrastructure.request_dedup import deduplicated, make_key, clear_dedup_cache, get_dedup_stats
+
+@pytest.fixture(autouse=True)
+async def cleanup_dedup_cache():
+    """Clear the deduplication cache before and after each test."""
+    clear_dedup_cache()
+    yield
+    clear_dedup_cache()
+
+def test_make_key_consistency():
+    """Test that make_key produces consistent keys for the same arguments."""
+    key1 = make_key("test", 1, {"a": 1})
+    key2 = make_key("test", 1, {"a": 1})
+    assert key1 == key2
+
+def test_make_key_distinctness():
+    """Test that make_key produces different keys for different arguments."""
+    key1 = make_key("test", 1)
+    key2 = make_key("test", 2)
+    assert key1 != key2
+
+def test_make_key_types():
+    """Test that make_key handles various types."""
+    key = make_key(1, "string", [1, 2], {"key": "value"})
+    assert isinstance(key, str)
+    assert len(key) == 16
+
+@pytest.mark.asyncio
+async def test_deduplicated_basic():
+    """Test basic execution of a deduplicated coroutine."""
+    async def simple_coro():
+        return "result"
+
+    result = await deduplicated("key1", simple_coro)
+    assert result == "result"
+
+    # Verify it's cached
+    stats = get_dedup_stats()
+    assert stats["cache_size"] == 1
+    assert stats["in_flight_count"] == 0
+
+@pytest.mark.asyncio
+async def test_deduplicated_concurrency():
+    """Test that concurrent requests with the same key are deduplicated."""
+    execution_count = 0
+
+    async def slow_coro():
+        nonlocal execution_count
+        execution_count += 1
+        await asyncio.sleep(0.1)
+        return "slow_result"
+
+    # Create tasks for concurrent execution
+    t1 = asyncio.create_task(deduplicated("key_concurrent", slow_coro))
+    t2 = asyncio.create_task(deduplicated("key_concurrent", slow_coro))
+    t3 = asyncio.create_task(deduplicated("key_concurrent", slow_coro))
+
+    # Wait for all to complete
+    results = await asyncio.gather(t1, t2, t3)
+
+    # All should return the same result
+    assert all(r == "slow_result" for r in results)
+
+    # The coroutine should have executed only once
+    assert execution_count == 1
+
+    # Should be cached now
+    stats = get_dedup_stats()
+    assert stats["cache_size"] == 1
+
+@pytest.mark.asyncio
+async def test_deduplicated_caching():
+    """Test that subsequent requests return the cached result."""
+    execution_count = 0
+
+    async def counting_coro():
+        nonlocal execution_count
+        execution_count += 1
+        return f"count_{execution_count}"
+
+    # First call
+    result1 = await deduplicated("key_cache", counting_coro)
+    assert result1 == "count_1"
+    assert execution_count == 1
+
+    # Second call (should use cache)
+    result2 = await deduplicated("key_cache", counting_coro)
+    assert result2 == "count_1"  # Returns cached result
+    assert execution_count == 1  # No new execution
+
+@pytest.mark.asyncio
+async def test_deduplicated_isolation():
+    """Test that requests with different keys are not deduplicated against each other."""
+    execution_count = 0
+
+    async def specific_coro(val):
+        nonlocal execution_count
+        execution_count += 1
+        await asyncio.sleep(0.05)
+        return val
+
+    # Launch two tasks with different keys
+    t1 = asyncio.create_task(deduplicated("key_A", lambda: specific_coro("A")))
+    t2 = asyncio.create_task(deduplicated("key_B", lambda: specific_coro("B")))
+
+    results = await asyncio.gather(t1, t2)
+
+    assert results == ["A", "B"]
+    assert execution_count == 2
+
+    stats = get_dedup_stats()
+    assert stats["cache_size"] == 2
+
+@pytest.mark.asyncio
+async def test_deduplicated_exception_handling():
+    """Test that exceptions are propagated and in-flight status is cleared."""
+    async def failing_coro():
+        raise ValueError("Something went wrong")
+
+    # Verify exception is raised
+    with pytest.raises(ValueError, match="Something went wrong"):
+        await deduplicated("key_fail", failing_coro)
+
+    # Verify cleanup
+    stats = get_dedup_stats()
+    assert stats["in_flight_count"] == 0
+    # Should not be in cache (or depends on implementation, likely not)
+    # The implementation doesn't cache exceptions explicitly, just successful results
+    # checking the code: _result_cache[key] = result is inside try block, so exception skips it.
+    assert stats["cache_size"] == 0
