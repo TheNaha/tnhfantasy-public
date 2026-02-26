@@ -589,25 +589,6 @@ async def cleanup_orphan_models(session: Session = Depends(get_session)):
     }
 
 
-@router.post("/migrate-unet")
-async def migrate_unet_models(session: Session = Depends(get_session)):
-    """
-    Migrate UNET-only models (Flux, AuraFlow, Pony V7) from 'checkpoints' to 'unet' directory.
-    
-    Run this once after upgrading to fix models that were added before the UNET routing was implemented.
-    Safe to run multiple times - only migrates models that need it.
-    """
-    service = get_model_service(session)
-    result = service.repo.migrate_unet_only_models()
-    
-    return {
-        "status": "success",
-        "message": f"Migrated {result['count']} models to unet directory",
-        "migrated": result["migrated"]
-    }
-
-
-
 @router.post("/{model_id}/check-dependencies")
 async def check_dependencies(
     model_id: int,
