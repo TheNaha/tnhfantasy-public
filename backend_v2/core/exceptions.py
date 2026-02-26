@@ -1,4 +1,17 @@
 # Custom exceptions for the application
+#
+# EXCEPTION HIERARCHY:
+#   ComfyError (base)
+#   ├── NotFoundError       - Resource not found (404)
+#   ├── ValidationError     - Invalid input or state (422)
+#   ├── ProviderError       - Serverless provider failure (e.g., Modal timeout)
+#   ├── ContainerError      - Local Docker/Podman container issue
+#   ├── JobError            - Job processing failure
+#   ├── DownloadError       - File download failure
+#   └── ConfigurationError  - Bad application configuration
+#
+# All exceptions carry a machine-readable `code` field so API error handlers
+# can produce consistent JSON responses without string matching.
 from typing import Optional
 
 

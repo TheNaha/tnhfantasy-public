@@ -1,4 +1,17 @@
 # Generation routes
+#
+# These endpoints create ComfyUI generation jobs and enqueue them for
+# processing.  The actual execution is handled asynchronously by the job
+# queue workers in `services/job_queue.py`.
+#
+# FLOW:
+#   POST /api/generate (or /api/generate/batch)
+#     → create Job record in DB (status=PENDING)
+#     → enqueue job ID into JobQueue (in-memory asyncio queue)
+#     → return job dict immediately (caller tracks progress via WebSocket)
+#
+# For workflow validation (check model availability before submitting)
+# use POST /api/jobs/validate (routes/jobs.py).
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlmodel import Session
@@ -11,8 +24,9 @@ router = APIRouter(prefix="/api", tags=["generation"])
 
 
 class GenerateRequest(BaseModel):
-    workflow: Dict[str, Any]
-    metadata: Dict[str, Any] = {}
+    """Request body for single-image generation."""
+    workflow: Dict[str, Any]   # Full ComfyUI workflow node graph
+    metadata: Dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
 
 
 @router.post("/generate")
@@ -58,7 +72,10 @@ async def generate_batch(
 ):
     """Create multiple generation jobs at once.
     
-    Accepts an array of workflows. Returns array of created jobs.
+    Accepts an array of workflows and creates one job per workflow.
+    Each job gets a `batch_index` and `batch_total` added to its metadata
+    so the UI can group the results.
+    Returns an array of created job records.
     """
     try:
         data = await request.json()

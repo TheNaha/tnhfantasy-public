@@ -1,7 +1,34 @@
+/**
+ * generatorStore.js - Image generation parameter store (persisted)
+ *
+ * Manages all user-facing generation settings and provides actions to mutate
+ * them.  The store is persisted to localStorage via Zustand's `persist`
+ * middleware so settings survive page refreshes.
+ *
+ * STATE GROUPS:
+ *   Generation params  – prompt, negativePrompt, seed, steps, cfg, sampler,
+ *                        scheduler, width, height, batchSize
+ *   Models             – selectedCheckpoint, selectedVae, selectedClip,
+ *                        selectedClip2, selectedLoras[], controlnets[]
+ *   Enhancements       – hiresFix settings, adetailer settings
+ *   Img2Img / Inpaint  – sourceImage, denoise, maskImage, maskBlur
+ *   Saved prompts      – savedPrompts[] (synced from server via promptStore)
+ *   Presets            – savedPresets[] (parameter bundles, local only)
+ *
+ * AUTO-APPLY:
+ *   When a checkpoint is selected and `autoApplyModelSettings` is true, the
+ *   store detects the base model type (illustrious, pony, sdxl, sd15, flux,
+ *   sd3) from the checkpoint metadata and applies the community-recommended
+ *   default settings for that architecture automatically.
+ */
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Base model default settings - curated from community best practices
+/**
+ * Community-recommended default generation settings per base model type.
+ * These are applied automatically when `autoApplyModelSettings` is enabled.
+ */
 const BASE_MODEL_SETTINGS = {
     illustrious: {
         steps: 25, cfg: 6.0, sampler: 'euler_ancestral', scheduler: 'normal',

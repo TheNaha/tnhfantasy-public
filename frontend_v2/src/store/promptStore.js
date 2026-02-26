@@ -1,3 +1,17 @@
+/**
+ * promptStore.js - Prompt library store (server-backed with FTS5 search)
+ *
+ * Manages the user's collection of saved prompts.  Prompts are stored on the
+ * server so they are available across devices and survive localStorage clears.
+ *
+ * MIGRATION: On first load, any prompts found in the legacy localStorage key
+ * (`prompt-library-storage`) are imported to the server, then the local copy
+ * is removed.  The `MIGRATION_KEY` flag prevents re-migration on subsequent loads.
+ *
+ * SEARCH: Full-text search is delegated to the backend which uses SQLite FTS5
+ * for sub-millisecond fuzzy matching across large libraries.
+ */
+
 import { create } from 'zustand';
 import * as promptsApi from '../api/promptsApi';
 

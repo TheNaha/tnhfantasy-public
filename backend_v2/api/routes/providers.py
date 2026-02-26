@@ -1,4 +1,15 @@
 # Provider routes - Complete implementation with feature parity to backend_v1
+#
+# KEY ENDPOINTS:
+#   GET    /api/providers              – List all configured providers
+#   POST   /api/providers              – Register a new provider
+#   GET    /api/providers/{id}         – Get provider details
+#   PATCH  /api/providers/{id}         – Update provider config/credentials
+#   DELETE /api/providers/{id}         – Remove provider + cascade status records
+#   GET    /api/providers/load-balancing – Current LB strategy
+#   PUT    /api/providers/load-balancing – Update LB strategy
+#   POST   /api/providers/{id}/reconcile – Trigger model sync
+#   GET/POST /api/providers/{id}/container/* – Container lifecycle management
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session

@@ -1,4 +1,16 @@
-# Job routes with event-driven SSE
+# Job routes - CRUD + validation endpoints for the job lifecycle
+#
+# KEY ENDPOINTS:
+#   POST   /api/jobs            – Create and enqueue a new job
+#   GET    /api/jobs            – List jobs with pagination
+#   GET    /api/jobs/{id}       – Get a single job by ID
+#   DELETE /api/jobs/{id}       – Delete a job record
+#   DELETE /api/jobs            – Clear all job records
+#   POST   /api/jobs/{id}/retry – Re-submit a failed job with the same workflow
+#   POST   /api/jobs/validate   – Pre-flight model-availability check
+#
+# Real-time updates are delivered via WebSocket (routes/websocket.py).
+# The job queue itself lives in services/job_queue.py.
 import json
 from typing import Optional, Dict, List, Any
 from fastapi import APIRouter, Depends, Request, HTTPException

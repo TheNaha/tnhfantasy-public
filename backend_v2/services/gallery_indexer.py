@@ -1,3 +1,22 @@
+# Gallery Indexer - In-memory index for fast image gallery browsing
+#
+# DESIGN:
+#   Instead of scanning the output directory on every gallery request (slow for
+#   thousands of images), GalleryIndexer maintains an in-memory dict of all
+#   known PNG files and uses watchdog to keep it up-to-date in real time.
+#
+#   The singleton instance is started once during application startup and stays
+#   alive for the lifetime of the process.
+#
+# INDEX STRUCTURE:
+#   files: { absolute_path -> file_data_dict }
+#   sorted_keys_date_desc: [absolute_path, ...] sorted newest-first
+#
+# THREAD SAFETY:
+#   All mutations to `files` and `sorted_keys_date_desc` are guarded by
+#   `self.lock` (threading.RLock) because watchdog fires events from a
+#   background thread while API requests read from the main thread.
+
 import os
 import glob
 import time
@@ -12,20 +31,28 @@ from infrastructure.logging import get_logger
 logger = get_logger("gallery_indexer")
 
 class _GalleryEventHandler(FileSystemEventHandler):
-    """Handles file system events for the gallery indexer."""
+    """
+    Watchdog event handler that forwards file-system events to GalleryIndexer.
+
+    Only PNG files outside thumb sub-directories are considered, because
+    thumbnails are generated derivatives and should not appear in the gallery.
+    """
     def __init__(self, indexer):
         self.indexer = indexer
 
     def on_created(self, event):
+        """Called when a new file is created in the watched directory tree."""
         if not event.is_directory and event.src_path.lower().endswith('.png'):
             if '/thumb/' not in event.src_path.replace('\\', '/'):
                 self.indexer.add_file(event.src_path)
 
     def on_deleted(self, event):
+        """Called when a file is removed from the watched directory tree."""
         if not event.is_directory and event.src_path.lower().endswith('.png'):
             self.indexer.remove_file(event.src_path)
 
     def on_moved(self, event):
+        """Called when a file is renamed/moved within the watched directory tree."""
         if not event.is_directory:
             if event.src_path.lower().endswith('.png'):
                 self.indexer.remove_file(event.src_path)
@@ -210,7 +237,28 @@ class GalleryIndexer:
                 logger.debug("gallery_indexer_removed", file=os.path.basename(filepath))
                 
     def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None):
-        """Query the in-memory index."""
+        """
+        Query the in-memory index with optional search, sort, and pagination.
+
+        Blocks for up to 5 seconds if the initial scan is still in progress,
+        then returns whatever is available.
+
+        Args:
+            limit:  Maximum number of file records to return (page size).
+            offset: Number of records to skip (for cursor-style pagination).
+            sort:   Sort order – one of:
+                    - "date_desc"  newest first (default)
+                    - "date_asc"   oldest first
+                    - "name_asc"   alphabetical A→Z
+                    - "name_desc"  reverse alphabetical Z→A
+            search: Optional string to filter results.  Matches against filename
+                    and any string-valued metadata field (case-insensitive).
+
+        Returns:
+            Dict with:
+                "files": list[dict]  – file records for the current page
+                "total": int         – total matching files (before pagination)
+        """
         # Optional wait if not ready
         wait_count = 0
         while not self.is_ready and wait_count < 50: # max wait 5 seconds

@@ -1,4 +1,15 @@
-# Model Service V2 - Version-aware business logic
+# Model Service V2 - Version-aware business logic for normalized model schema
+#
+# Operates on the V2 schema (models_v2, model_versions, model_files,
+# provider_version_status) which stores full CivitAI metadata with proper
+# relational structure.
+#
+# KEY RESPONSIBILITIES:
+#   - Import models from CivitAI with selected versions and files
+#   - Track per-provider, per-file download status
+#   - Provide reconciliation data (what each provider needs to download/delete)
+#   - Support version switching (set_default_version)
+#   - External search (proxy CivitAI/HuggingFace API calls)
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 

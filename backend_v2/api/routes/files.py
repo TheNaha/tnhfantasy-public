@@ -1,4 +1,17 @@
-# File routes - File listing, viewing, uploading, and deletion
+# File routes - Gallery file listing, viewing, upload and deletion
+#
+# Serves files from two directories:
+#   OUTPUT_DIR – generated images (PNG, organized by date)
+#   INPUT_DIR  – user-uploaded source images for Img2Img/Inpainting
+#
+# KEY ENDPOINTS:
+#   GET  /api/files                        – Paginated file listing (uses GalleryIndexer)
+#   GET  /api/files/{filename}             – Serve a raw file (full resolution)
+#   GET  /api/thumbnail/{size}/{filename}  – Serve a pre-generated WebP thumbnail
+#   POST /api/files/upload                 – Upload a file to OUTPUT_DIR
+#   POST /api/upload/input                 – Upload a source image (Img2Img)
+#   POST /api/upload/mask                  – Upload an inpainting mask (base64→PNG)
+#   DELETE /api/files/{filename}           – Delete a file and its thumbnail
 import os
 import json
 from typing import Optional
