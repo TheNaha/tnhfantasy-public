@@ -15,6 +15,11 @@ output/
 .vscode/
 .idea/
 
+#Vite deps
+frontend_v2/node_modules/
+frontend_v2/dist/
+.vite/
+
 # Backend Data
 backend_v2/data/*.db
 backend_v2/data/*.sqlite
