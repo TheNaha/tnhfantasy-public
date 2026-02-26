@@ -1169,7 +1169,10 @@ export default function SimpleGenerator() {
                                     <button
                                         key={p.label}
                                         onClick={() => setResolution(p.w, p.h)}
-                                        className={`flex flex-col items-center justify-center gap-0.5 p-1.5 rounded-lg transition-all border ${width === p.w && height === p.h ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-300'}`}
+                                        aria-label={`Set aspect ratio ${p.label}, ${p.w}x${p.h} pixels`}
+                                        title={`Set aspect ratio ${p.label} (${p.w}x${p.h})`}
+                                        aria-pressed={width === p.w && height === p.h}
+                                        className={`flex flex-col items-center justify-center gap-0.5 p-1.5 rounded-lg transition-all border focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none ${width === p.w && height === p.h ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-300'}`}
                                     >
                                         <div className="w-5 h-5 flex items-center justify-center">
                                             <div
@@ -1188,8 +1191,9 @@ export default function SimpleGenerator() {
                             {/* Width - Lock - Height row */}
                             <div className="flex items-end gap-2">
                                 <div className="flex-1">
-                                    <label className="block text-xs font-medium text-gray-500 mb-1">Width</label>
+                                    <label htmlFor="width-input" className="block text-xs font-medium text-gray-500 mb-1">Width</label>
                                     <input
+                                        id="width-input"
                                         type="number"
                                         value={width}
                                         onChange={(e) => handleDimensionChange('width', e.target.value)}
@@ -1200,12 +1204,15 @@ export default function SimpleGenerator() {
                                     onClick={() => setAspectRatioLocked(!aspectRatioLocked)}
                                     className={`no-touch-padding px-2.5 py-1.5 rounded-lg border transition-colors flex items-center justify-center ${aspectRatioLocked ? 'bg-blue-600 text-white border-blue-500' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'}`}
                                     title={aspectRatioLocked ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                                    aria-label={aspectRatioLocked ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                                    aria-pressed={aspectRatioLocked}
                                 >
                                     {aspectRatioLocked ? <Lock size={16} /> : <Unlock size={16} />}
                                 </button>
                                 <div className="flex-1">
-                                    <label className="block text-xs font-medium text-gray-500 mb-1">Height</label>
+                                    <label htmlFor="height-input" className="block text-xs font-medium text-gray-500 mb-1">Height</label>
                                     <input
+                                        id="height-input"
                                         type="number"
                                         value={height}
                                         onChange={(e) => handleDimensionChange('height', e.target.value)}
