@@ -25,6 +25,34 @@ class BatchDeleteRequest(BaseModel):
     files: List[str]
 
 
+def get_safe_path(base_dir: str, requested_path: str) -> str:
+    """
+    Resolve and validate a path to prevent directory traversal.
+
+    Args:
+        base_dir: The trusted base directory.
+        requested_path: The user-provided path component.
+
+    Returns:
+        The absolute resolved path if valid.
+
+    Raises:
+        HTTPException(403) if path traversal is detected.
+    """
+    # Remove leading slashes to prevent absolute path interpretation
+    clean_path = requested_path.lstrip("/\\")
+
+    # Resolve full path
+    full_path = os.path.abspath(os.path.join(base_dir, clean_path))
+    base_path = os.path.abspath(base_dir)
+
+    # Check if the resolved path starts with the base path
+    if os.path.commonpath([base_path, full_path]) != base_path:
+         raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
+
+    return full_path
+
+
 def encode_filename_for_header(filename: str) -> str:
     """Encode filename for Content-Disposition header using RFC 2231."""
     from urllib.parse import quote
@@ -263,7 +291,9 @@ async def view_file_endpoint(path: str):
     # Try local output first
     if path.startswith("output/"):
         filename = path.replace("output/", "")
-        local_path = os.path.join(OUTPUT_DIR, filename)
+
+        # Security check: ensure path is within OUTPUT_DIR
+        local_path = get_safe_path(OUTPUT_DIR, filename)
         
         if os.path.exists(local_path) and os.path.isfile(local_path):
             return FileResponse(
@@ -301,7 +331,9 @@ async def view_file_endpoint(path: str):
     # Try input directory for Img2Img/Inpaint source images
     if path.startswith("input/"):
         filename = path.replace("input/", "")
-        local_path = os.path.join(INPUT_DIR, filename)
+
+        # Security check: ensure path is within INPUT_DIR
+        local_path = get_safe_path(INPUT_DIR, filename)
         
         if os.path.exists(local_path) and os.path.isfile(local_path):
             return FileResponse(
@@ -331,6 +363,9 @@ async def serve_thumbnail(size: str, filename: str):
     
     if size not in ("medium",):
         raise HTTPException(status_code=400, detail="Size must be 'medium'")
+
+    # Security check: ensure filename path is safe
+    get_safe_path(OUTPUT_DIR, filename)
     
     # Extract just the filename for searching, ignoring path components
     # This ensures we find the file regardless of deep directory structure inputs
@@ -433,7 +468,8 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
         content = await file.read()
         
         # Save locally
-        upload_dir = os.path.join(OUTPUT_DIR, path)
+        # Security check: ensure upload path is within OUTPUT_DIR
+        upload_dir = get_safe_path(OUTPUT_DIR, path)
         os.makedirs(upload_dir, exist_ok=True)
         
         file_path = os.path.join(upload_dir, file.filename)
@@ -687,7 +723,11 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
             # Handle output directory (supports hierarchical date-based folders)
             if req.directory == "output":
                 # First try direct path
-                local_path = os.path.join(OUTPUT_DIR, filename)
+                try:
+                    local_path = get_safe_path(OUTPUT_DIR, filename)
+                except HTTPException:
+                    print(f"[Delete] Security warning: Attempt to delete file outside output dir: {filename}")
+                    continue
                 
                 if not os.path.exists(local_path):
                     # Search in date-based subdirectories (e.g., output/2025-12-07/filename.png)
@@ -722,7 +762,13 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         print(f"[Delete] Failed to delete {filename}: {e}")
             else:
                 # Handle model files
-                model_path = os.path.join(CACHE_DIR, req.directory, filename)
+                try:
+                    target_dir = os.path.join(CACHE_DIR, req.directory)
+                    model_path = get_safe_path(target_dir, filename)
+                except HTTPException:
+                    print(f"[Delete] Security warning: Attempt to delete file outside model dir: {filename}")
+                    continue
+
                 if os.path.exists(model_path):
                     try:
                         os.remove(model_path)
@@ -803,8 +849,12 @@ async def batch_get_metadata(request: BatchMetadataRequest):
                 filename = path
             
             # Try direct path first
-            full_path = os.path.join(OUTPUT_DIR, filename)
-            
+            try:
+                full_path = get_safe_path(OUTPUT_DIR, filename)
+            except HTTPException:
+                results[path] = {"error": "invalid_path"}
+                continue
+
             if not os.path.exists(full_path):
                 # Search in date-based subdirectories
                 pattern = os.path.join(OUTPUT_DIR, "**", os.path.basename(filename))
