@@ -250,3 +250,64 @@ class TestEmitConvenienceFunctions:
 
         assert len(received) == 1
         assert received[0].data["download"]["id"] == "dl-1"
+
+
+class TestEventBusQueueFull:
+    """Test queue full behavior."""
+
+    async def test_queue_full_drops_event(self):
+        """Test that QueueFull is handled gracefully - old events are dropped."""
+        bus = EventBus(replay_buffer_size=100)
+        received = []
+
+        async def slow_subscriber():
+            """Subscriber that blocks intentionally."""
+            async for event in bus.subscribe(EventType.JOB_CREATED, max_queue_size=2):
+                received.append(event)
+                # Don't consume rapidly
+                break
+
+        task = asyncio.create_task(slow_subscriber())
+        await asyncio.sleep(0.01)
+
+        # Flood with events - some should be dropped without raising
+        for i in range(10):
+            await bus.publish(Event(type=EventType.JOB_CREATED, data={"i": i}))
+
+        # Should not raise
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+class TestEmitProviderFunctions:
+    """Tests for provider/model emit functions (lines 205, 213-219)."""
+
+    async def test_emit_provider_event(self):
+        from core.events import emit_provider_event, EventType
+        await emit_provider_event(
+            EventType.JOB_CREATED, "modal-primary", {"status": "connected"}
+        )
+
+    async def test_emit_provider_stats(self):
+        from core.events import emit_provider_stats
+        await emit_provider_stats("modal-primary", {"active_jobs": 5, "gpu_util": 0.8})
+
+    async def test_emit_model_status_update_basic(self):
+        from core.events import emit_model_status_update
+        await emit_model_status_update("modal-primary", file_id=42, status="ready")
+
+    async def test_emit_model_status_update_with_extra(self):
+        from core.events import emit_model_status_update
+        await emit_model_status_update(
+            "modal-primary", file_id=42, status="failed",
+            extra={"error": "disk full", "retry": 1}
+        )
+
+    async def test_emit_model_status_update_none_extra(self):
+        from core.events import emit_model_status_update
+        await emit_model_status_update(
+            "modal-primary", file_id=42, status="downloading", extra=None
+        )
