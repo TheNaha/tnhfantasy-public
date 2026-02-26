@@ -9,6 +9,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 from typing import List
 import tempfile
+import asyncio
 
 from api.deps import get_session, get_provider_service
 
@@ -87,6 +88,61 @@ def matches_search(item, query):
         return query_lower in item.lower()
     
     return False
+
+
+def _scan_local_model_directory(model_type, search, sort, limit, offset):
+    """
+    Sync helper to scan model directory.
+    Run in thread pool to avoid blocking event loop.
+    """
+    try:
+        model_cache_dir = os.path.join(CACHE_DIR, "models", model_type)
+        if not os.path.exists(model_cache_dir):
+            return {"files": [], "total": 0}
+
+        entries = os.listdir(model_cache_dir)
+        valid_files = []
+
+        for name in entries:
+            if name.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin')):
+                if search and search.lower() not in name.lower():
+                    continue
+
+                full_path = os.path.join(model_cache_dir, name)
+                stat = os.stat(full_path)
+
+                # Load metadata if exists
+                metadata = {}
+                meta_path = full_path.replace(os.path.splitext(name)[1], '.json')
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, 'r') as f:
+                            metadata = json.load(f)
+                    except:
+                        pass
+
+                valid_files.append({
+                    "name": name,
+                    "size": stat.st_size,
+                    "modified_time": stat.st_mtime,
+                    "metadata": metadata,
+                    "preview": metadata.get("preview_url", "")
+                })
+
+        # Sort
+        if sort == "date_desc":
+            valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
+        elif sort == "name_asc":
+            valid_files.sort(key=lambda x: x.get("name", ""))
+
+        total = len(valid_files)
+        paginated = valid_files[offset:offset + limit]
+
+        return {"files": paginated, "total": total}
+
+    except Exception as e:
+        print(f"Model cache read failed: {e}")
+        return {"files": [], "total": 0}
 
 
 @router.get("/api/files")
@@ -231,54 +287,15 @@ async def list_files_endpoint(
             traceback.print_exc()
         
         # Fallback: try to read from local cache directory
-        model_cache_dir = os.path.join(CACHE_DIR, "models", model_type)
-        if os.path.exists(model_cache_dir):
-            try:
-                entries = os.listdir(model_cache_dir)
-                valid_files = []
-                
-                for name in entries:
-                    if name.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin')):
-                        if search and search.lower() not in name.lower():
-                            continue
-                        
-                        full_path = os.path.join(model_cache_dir, name)
-                        stat = os.stat(full_path)
-                        
-                        # Load metadata if exists
-                        metadata = {}
-                        meta_path = full_path.replace(os.path.splitext(name)[1], '.json')
-                        if os.path.exists(meta_path):
-                            try:
-                                with open(meta_path, 'r') as f:
-                                    metadata = json.load(f)
-                            except:
-                                pass
-                        
-                        valid_files.append({
-                            "name": name,
-                            "size": stat.st_size,
-                            "modified_time": stat.st_mtime,
-                            "metadata": metadata,
-                            "preview": metadata.get("preview_url", "")
-                        })
-                
-                # Sort
-                if sort == "date_desc":
-                    valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
-                elif sort == "name_asc":
-                    valid_files.sort(key=lambda x: x.get("name", ""))
-                    
-                total = len(valid_files)
-                paginated = valid_files[offset:offset + limit]
-                
-                return {"files": paginated, "total": total}
-                
-            except Exception as e:
-                print(f"Model cache read failed: {e}")
-        
-        # Return empty if no models found
-        return {"files": [], "total": 0}
+        # Run in thread pool to avoid blocking I/O
+        return await asyncio.to_thread(
+            _scan_local_model_directory,
+            model_type,
+            search,
+            sort,
+            limit,
+            offset
+        )
     
     return {"files": [], "total": 0}
 
