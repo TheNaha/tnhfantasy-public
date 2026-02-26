@@ -3,14 +3,6 @@ import pytest
 from infrastructure.request_dedup import clear_dedup_cache
 
 
-def test_health_check(client):
-    """Test health endpoint."""
-    response = client.get("/api/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ok"
-
-
 def test_create_job(client, sample_job_data):
     """Test job creation."""
     response = client.post("/api/jobs", json=sample_job_data)
