@@ -22,6 +22,8 @@ frontend_v2/dist/
 
 # Backend Data
 backend_v2/data/*.db
+backend_v2/data/*.db-shm
+backend_v2/data/*.db-wal
 backend_v2/data/*.sqlite
 backend_v2/data/*.sqlite3
 backend_v2/input/
