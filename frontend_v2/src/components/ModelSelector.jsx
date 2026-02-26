@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useRef, useMemo } from "react";
+import { useState, useEffect, memo, useRef, useMemo, useCallback } from "react";
 import {
   Search,
   Image as ImageIcon,
@@ -80,12 +80,26 @@ const ModelSelector = memo(function ModelSelector({
   }, [autoOpen]);
 
   // Handle modal close - notify parent if this was an auto-open
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setIsOpen(false);
     if (onAutoOpenComplete) {
       onAutoOpenComplete();
     }
-  };
+  }, [onAutoOpenComplete]);
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        handleClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, handleClose]);
 
   // Sort and Filter state
   const [sortBy, setSortBy] = useState("name"); // 'name', 'date', 'size', 'rating'
@@ -522,8 +536,12 @@ const ModelSelector = memo(function ModelSelector({
           role="dialog"
           aria-modal="true"
           aria-labelledby="model-selector-title"
+          onClick={handleClose}
         >
-          <div className="bg-gray-900 w-full max-w-4xl h-[80vh] rounded-2xl border border-gray-800 flex flex-col shadow-2xl">
+          <div
+            className="bg-gray-900 w-full max-w-4xl h-[80vh] rounded-2xl border border-gray-800 flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Header */}
             <div className="p-4 border-b border-gray-800 space-y-3">
               <div className="flex justify-between items-center gap-4">
