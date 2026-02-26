@@ -1231,6 +1231,8 @@ export default function SimpleGenerator() {
                                     onClick={() => setAspectRatioLocked(!aspectRatioLocked)}
                                     className={`no-touch-padding px-2.5 py-1.5 rounded-lg border transition-colors flex items-center justify-center ${aspectRatioLocked ? 'bg-blue-600 text-white border-blue-500' : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'}`}
                                     title={aspectRatioLocked ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                                    aria-label={aspectRatioLocked ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                                    aria-pressed={aspectRatioLocked}
                                 >
                                     {aspectRatioLocked ? <Lock size={16} /> : <Unlock size={16} />}
                                 </button>
