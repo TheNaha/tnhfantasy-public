@@ -9,6 +9,7 @@ import ModelMetadataModal from '../components/ModelMetadataModal';
 import PromptLibrary from '../components/generator/PromptLibrary';
 import PresetManager from '../components/generator/PresetManager';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
+import CollapsibleSection from '../components/CollapsibleSection';
 import { useNavigate } from 'react-router-dom';
 import { usePingProviders } from '../hooks/usePingProviders';
 import toast from 'react-hot-toast';
@@ -515,34 +516,6 @@ export default function SimpleGenerator() {
         } finally {
             setGenerating(false);
         }
-    };
-
-    // Collapsible section component for mobile-optimized layout (boxless styling)
-    const CollapsibleSection = ({ title, icon, defaultOpen = true, children, className = "" }) => {
-        const [isOpen, setIsOpen] = useState(defaultOpen);
-        return (
-            <div className={`border-b border-gray-800 ${className}`}>
-                <button 
-                    onClick={() => setIsOpen(!isOpen)} 
-                    className="w-full py-3 flex justify-between items-center hover:bg-gray-800/30 transition-colors rounded-lg"
-                    type="button"
-                >
-                    <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                        {icon}
-                        {title}
-                    </h3>
-                    <ChevronDown 
-                        size={20} 
-                        className={`text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} 
-                    />
-                </button>
-                {isOpen && (
-                    <div className="pb-4 pt-2 space-y-4">
-                        {children}
-                    </div>
-                )}
-            </div>
-        );
     };
 
     return (
