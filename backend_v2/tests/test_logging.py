@@ -10,6 +10,12 @@ from infrastructure.logging import (
     model_logger,
     download_logger,
     api_logger,
+    cache_logger,
+    db_logger,
+    scheduler_logger,
+    http_logger,
+    config_logger,
+    ws_logger,
     compact_renderer,
     Colors,
 )
@@ -65,6 +71,30 @@ class TestConvenienceLoggers:
 
     def test_api_logger(self):
         logger = api_logger()
+        assert logger is not None
+
+    def test_cache_logger(self):
+        logger = cache_logger()
+        assert logger is not None
+
+    def test_db_logger(self):
+        logger = db_logger()
+        assert logger is not None
+
+    def test_scheduler_logger(self):
+        logger = scheduler_logger()
+        assert logger is not None
+
+    def test_http_logger(self):
+        logger = http_logger()
+        assert logger is not None
+
+    def test_config_logger(self):
+        logger = config_logger()
+        assert logger is not None
+
+    def test_ws_logger(self):
+        logger = ws_logger()
         assert logger is not None
 
 

@@ -42,6 +42,9 @@ watchdog>=3.0.0
 # Structured Logging
 structlog>=23.2.0
 
+# Prometheus Metrics
+prometheus_client>=0.20.0
+
 # Retry with exponential backoff
 tenacity>=8.2.0
 

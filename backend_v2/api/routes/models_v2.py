@@ -19,6 +19,9 @@ from pydantic import BaseModel
 from api.deps import get_session
 from services.model_service_v2 import ModelServiceV2
 from core.exceptions import NotFoundError
+from infrastructure.logging import model_logger
+
+logger = model_logger()
 
 router = APIRouter(prefix="/api/v2/models", tags=["models-v2"])
 
@@ -189,7 +192,7 @@ async def add_model(
         )
     
     if already_installed:
-        print(f"[Model Import] Skipping already installed versions: {already_installed}")
+        logger.info("model_import_skip_installed", versions=already_installed)
     
     model = await service.add_model_from_civitai(
         civitai_data=request.civitai_data,

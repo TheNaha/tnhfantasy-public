@@ -17,6 +17,9 @@ from pydantic import BaseModel
 from api.deps import get_session, get_event_bus
 from services.download_service import DownloadService
 from core.events import EventBus
+from infrastructure.logging import api_logger
+
+logger = api_logger()
 
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
 
@@ -50,6 +53,7 @@ async def start_download(
         provider_id=request.provider_id,
         metadata=request.metadata
     )
+    logger.info("download_api_started", download_id=download.id, name=request.name)
     return service._download_to_dict(download)
 
 

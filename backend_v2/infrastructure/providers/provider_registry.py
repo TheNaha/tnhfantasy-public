@@ -5,6 +5,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Type, Callable
 
+from infrastructure.logging import provider_logger
+
+logger = provider_logger()
+
 
 @dataclass
 class ProviderTypeConfig:
@@ -95,7 +99,7 @@ class ProviderRegistry:
     def register(cls, config: ProviderTypeConfig) -> None:
         """Register a provider type configuration."""
         cls._types[config.type_name] = config
-        print(f"[ProviderRegistry] Registered provider type: {config.type_name}")
+        logger.info("provider_type_registered", type_name=config.type_name)
     
     @classmethod
     def get(cls, type_name: str) -> Optional[ProviderTypeConfig]:
@@ -128,7 +132,7 @@ class ProviderRegistry:
         """
         type_config = cls.get(provider.type)
         if not type_config:
-            print(f"[ProviderRegistry] Warning: Unknown provider type '{provider.type}'")
+            logger.warning("unknown_provider_type", provider_type=provider.type)
             return {}
         
         credentials = provider.credentials or {}

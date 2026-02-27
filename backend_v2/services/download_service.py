@@ -9,6 +9,10 @@ from core.entities import Download, Model, ModelStatus
 from core.events import event_bus, Event, EventType, emit_download_event
 from core.exceptions import NotFoundError, DownloadError
 from infrastructure.repositories import ModelRepository
+from infrastructure.logging import download_logger
+from infrastructure.metrics import metrics
+
+logger = download_logger()
 
 
 class DownloadService:
@@ -58,6 +62,10 @@ class DownloadService:
         
         # Track in memory
         self._active_downloads[download.id] = download
+        
+        logger.info("download_started", download_id=download.id, name=name, provider_id=provider_id)
+        metrics.track_download("started")
+        metrics.set_active_downloads(len(self._active_downloads))
         
         # Emit start event
         await emit_download_event(
@@ -109,10 +117,14 @@ class DownloadService:
         """Mark download as complete and update model status."""
         download = self._active_downloads.get(download_id)
         if not download:
+            logger.warning("download_complete_not_found", download_id=download_id)
             return None
         
         download.status = "completed"
         download.progress = 100.0
+        
+        logger.info("download_completed", download_id=download_id, name=download.name)
+        metrics.track_download("completed")
         
         # Update model status in database
         model = self.model_repo.upsert(
@@ -136,6 +148,7 @@ class DownloadService:
         
         # Remove from active downloads
         del self._active_downloads[download_id]
+        metrics.set_active_downloads(len(self._active_downloads))
         
         return download
     
@@ -147,10 +160,14 @@ class DownloadService:
         """Mark download as failed."""
         download = self._active_downloads.get(download_id)
         if not download:
+            logger.warning("download_fail_not_found", download_id=download_id)
             return None
         
         download.status = "failed"
         download.message = error
+        
+        logger.error("download_failed", download_id=download_id, name=download.name, error=error)
+        metrics.track_download("failed")
         
         # Emit failure event
         await emit_download_event(
@@ -160,6 +177,7 @@ class DownloadService:
         
         # Remove from active downloads
         del self._active_downloads[download_id]
+        metrics.set_active_downloads(len(self._active_downloads))
         
         return download
     

@@ -6,6 +6,10 @@ import asyncio
 from typing import Callable, Any, TypeVar, Coroutine
 import hashlib
 
+from infrastructure.logging import get_logger
+
+logger = get_logger("request_dedup")
+
 T = TypeVar('T')
 
 # Track in-flight requests to deduplicate concurrent identical requests
@@ -37,10 +41,12 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
     """
     # Check result cache first
     if key in _result_cache:
+        logger.debug("dedup_cache_hit", key=key)
         return _result_cache[key]
     
     # Check if same request is already in-flight
     if key in _in_flight:
+        logger.debug("dedup_in_flight", key=key)
         return await _in_flight[key]
     
     # Create new task for this request

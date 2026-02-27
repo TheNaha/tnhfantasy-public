@@ -10,6 +10,9 @@ from sqlmodel import Session, select
 from core.entities_v2 import ModelFile, ModelVersion, ModelV2, ProviderVersionStatus
 from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
+from infrastructure.logging import model_logger
+
+logger = model_logger()
 
 
 @dataclass
