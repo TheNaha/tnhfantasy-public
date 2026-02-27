@@ -310,5 +310,25 @@ class GalleryIndexer:
             import copy
             return {"files": copy.deepcopy(result), "total": total}
 
+    def get_all_files(self) -> List[Dict[str, Any]]:
+        """
+        Get all file metadata from the index.
+        Thread-safe method for statistics generation.
+
+        Returns:
+            List[Dict]: List of all file metadata dictionaries (shallow copies)
+        """
+        # Optional wait if not ready
+        wait_count = 0
+        while not self.is_ready and wait_count < 50: # max wait 5 seconds
+            time.sleep(0.1)
+            wait_count += 1
+
+        with self.lock:
+            # Return shallow copies as stats calculations don't modify the nested structure
+            # and performance is critical for large galleries.
+            # Using list(self.files.values()) is sufficient because callers only read.
+            return list(self.files.values())
+
 # Singleton instance
 gallery_indexer = GalleryIndexer()
