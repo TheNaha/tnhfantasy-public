@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sparkles, Sliders } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
+import NumberInput from '../common/NumberInput';
 
 export default function SettingsPanel({ upscalerModels, adetailerModels }) {
     const {
@@ -106,18 +107,13 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                     </div>
 
                     {/* Batch Size */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">Batch Size</label>
-                        <input
-                            type="number"
-                            inputMode="numeric"
-                            min="1"
-                            max="8"
-                            value={batchSize}
-                            onChange={(e) => setBatchSize(parseInt(e.target.value))}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                    </div>
+                    <NumberInput
+                        label="Batch Size"
+                        value={batchSize}
+                        onChange={setBatchSize}
+                        min={1}
+                        max={8}
+                    />
 
                     {/* Seed */}
                     <div>
@@ -142,29 +138,23 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                     </div>
 
                     {/* Steps */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">Steps</label>
-                        <input
-                            type="number"
-                            inputMode="numeric"
-                            value={steps}
-                            onChange={(e) => setSteps(parseInt(e.target.value))}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                    </div>
+                    <NumberInput
+                        label="Steps"
+                        value={steps}
+                        onChange={setSteps}
+                        min={1}
+                        max={100}
+                    />
 
                     {/* CFG */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">CFG Scale</label>
-                        <input
-                            type="number"
-                            inputMode="decimal"
-                            step="0.5"
-                            value={cfg}
-                            onChange={(e) => setCfg(parseFloat(e.target.value))}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white focus:ring-1 focus:ring-blue-500 outline-none"
-                        />
-                    </div>
+                    <NumberInput
+                        label="CFG Scale"
+                        value={cfg}
+                        onChange={setCfg}
+                        min={1}
+                        max={30}
+                        step={0.5}
+                    />
 
                     {/* Sampler */}
                     <div>
@@ -232,39 +222,30 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                 </select>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Scale</label>
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.1"
-                                        value={hiresUpscale}
-                                        onChange={(e) => setHiresUpscale(parseFloat(e.target.value))}
-                                        className="w-full bg-gray-800 rounded p-2 text-xs text-white border border-gray-600"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Denoise</label>
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.05"
-                                        value={hiresDenoise}
-                                        onChange={(e) => setHiresDenoise(parseFloat(e.target.value))}
-                                        className="w-full bg-gray-800 rounded p-2 text-xs text-white border border-gray-600"
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-500 mb-1">Steps</label>
-                                <input
-                                    type="number"
-                                    inputMode="numeric"
-                                    value={hiresSteps}
-                                    onChange={(e) => setHiresSteps(parseInt(e.target.value))}
-                                    className="w-full bg-gray-800 rounded p-2 text-xs text-white border border-gray-600"
+                                <NumberInput
+                                    label="Scale"
+                                    value={hiresUpscale}
+                                    onChange={setHiresUpscale}
+                                    min={1}
+                                    max={4}
+                                    step={0.1}
+                                />
+                                <NumberInput
+                                    label="Denoise"
+                                    value={hiresDenoise}
+                                    onChange={setHiresDenoise}
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
                                 />
                             </div>
+                            <NumberInput
+                                label="Steps"
+                                value={hiresSteps}
+                                onChange={setHiresSteps}
+                                min={0}
+                                max={50}
+                            />
                         </div>
                     </div>
 
@@ -315,27 +296,21 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                 />
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Steps</label>
-                                    <input
-                                        type="number"
-                                        inputMode="numeric"
-                                        value={adetailerSteps}
-                                        onChange={(e) => setAdetailerSteps(parseInt(e.target.value))}
-                                        className="w-full bg-gray-800 rounded p-2 text-xs text-white border border-gray-600"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Denoise</label>
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.05"
-                                        value={adetailerDenoise}
-                                        onChange={(e) => setAdetailerDenoise(parseFloat(e.target.value))}
-                                        className="w-full bg-gray-800 rounded p-2 text-xs text-white border border-gray-600"
-                                    />
-                                </div>
+                                <NumberInput
+                                    label="Steps"
+                                    value={adetailerSteps}
+                                    onChange={setAdetailerSteps}
+                                    min={1}
+                                    max={100}
+                                />
+                                <NumberInput
+                                    label="Denoise"
+                                    value={adetailerDenoise}
+                                    onChange={setAdetailerDenoise}
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                />
                             </div>
                             <div className="flex items-center gap-2 pt-1">
                                 <input
