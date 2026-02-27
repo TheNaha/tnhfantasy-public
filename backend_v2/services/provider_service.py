@@ -7,6 +7,9 @@ from core.entities import Provider, LoadBalancingConfig
 from core.events import event_bus, Event, EventType, emit_provider_event
 from core.exceptions import NotFoundError, ProviderError, ValidationError
 from infrastructure.repositories import ProviderRepository, LoadBalancingRepository
+from infrastructure.logging import provider_logger
+
+logger = provider_logger()
 
 
 class ProviderService:
@@ -41,6 +44,7 @@ class ProviderService:
         
         provider = self.repo.create(provider_data)
         
+        logger.info("provider_created", provider_id=provider.id, type=provider.type)
         await emit_provider_event(
             EventType.PROVIDER_STATUS, 
             provider.id, 
@@ -53,6 +57,7 @@ class ProviderService:
         """Get a provider by ID."""
         provider = self.repo.get(provider_id)
         if not provider:
+            logger.warning("provider_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
         return provider
     
@@ -78,7 +83,10 @@ class ProviderService:
         """
         provider = self.repo.update(provider_id, updates)
         if not provider:
+            logger.warning("provider_update_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
+        
+        logger.info("provider_updated", provider_id=provider_id)
         
         await emit_provider_event(
             EventType.PROVIDER_STATUS,
@@ -96,12 +104,15 @@ class ProviderService:
         model_repo = ModelRepositoryV2(self.session)
         deleted_count = model_repo.delete_all_statuses_for_provider(provider_id)
         if deleted_count > 0:
-            print(f"[ProviderService] Cascade deleted {deleted_count} status entries for provider '{provider_id}'")
+            logger.info("provider_cascade_delete", provider_id=provider_id, statuses_deleted=deleted_count)
         
         # Then delete the provider itself
         success = self.repo.delete(provider_id)
         if not success:
+            logger.warning("provider_delete_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
+        
+        logger.info("provider_deleted", provider_id=provider_id, statuses_cleaned=deleted_count)
         
         await emit_provider_event(
             EventType.PROVIDER_STATUS,

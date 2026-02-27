@@ -7,6 +7,9 @@ from sqlmodel import Session
 from core.entities import Model, ModelStatus
 from core.exceptions import NotFoundError
 from infrastructure.repositories import ModelRepository
+from infrastructure.logging import model_logger
+
+logger = model_logger()
 
 
 class ModelService:
@@ -51,6 +54,7 @@ class ModelService:
         """Get a model by ID."""
         model = self.repo.get(model_id)
         if not model:
+            logger.warning("model_not_found", model_id=model_id)
             raise NotFoundError("Model", str(model_id))
         return model
     
@@ -101,6 +105,7 @@ class ModelService:
         if not model:
             # Auto-create model entry if it doesn't exist
             model = self.repo.upsert(name=name, directory=directory)
+            logger.info("model_auto_created", name=name, directory=directory)
         
         result = self.repo.update_provider_status(
             model_id=model.id,
@@ -108,6 +113,8 @@ class ModelService:
             status=status,
             extra_data=extra_data
         )
+        
+        logger.info("model_provider_status_updated", name=name, directory=directory, provider_id=provider_id, status=status.value)
         
         # Emit event for real-time updates
         from core.events import event_bus, Event, EventType

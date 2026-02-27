@@ -5,6 +5,10 @@ import httpx
 from typing import Optional
 from contextlib import asynccontextmanager
 
+from infrastructure.logging import http_logger
+
+logger = http_logger()
+
 # Singleton HTTP client instance
 _client: Optional[httpx.AsyncClient] = None
 
@@ -37,6 +41,7 @@ def get_http_client() -> httpx.AsyncClient:
             # HTTP/2 support
             http2=True
         )
+        logger.info("http_client_created", max_connections=50, keepalive=20)
     return _client
 
 
@@ -49,7 +54,7 @@ async def close_http_client():
     if _client is not None:
         await _client.aclose()
         _client = None
-        print("[HTTPClient] Connection pool closed")
+        logger.info("http_client_closed")
 
 
 @asynccontextmanager

@@ -193,6 +193,36 @@ def api_logger() -> structlog.BoundLogger:
     return get_logger("api")
 
 
+def cache_logger() -> structlog.BoundLogger:
+    """Get logger for cache-related operations."""
+    return get_logger("cache")
+
+
+def db_logger() -> structlog.BoundLogger:
+    """Get logger for database-related operations."""
+    return get_logger("database")
+
+
+def scheduler_logger() -> structlog.BoundLogger:
+    """Get logger for scheduler-related operations."""
+    return get_logger("scheduler")
+
+
+def http_logger() -> structlog.BoundLogger:
+    """Get logger for HTTP client operations."""
+    return get_logger("http_client")
+
+
+def config_logger() -> structlog.BoundLogger:
+    """Get logger for configuration operations."""
+    return get_logger("config")
+
+
+def ws_logger() -> structlog.BoundLogger:
+    """Get logger for WebSocket operations."""
+    return get_logger("websocket")
+
+
 # Initialize with default settings
 configure_logging()
 

@@ -21,6 +21,9 @@ from core.entities_v2 import (
 )
 from core.exceptions import NotFoundError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+from infrastructure.logging import model_logger
+
+logger = model_logger()
 
 
 class ModelServiceV2:

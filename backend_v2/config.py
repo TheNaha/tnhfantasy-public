@@ -17,6 +17,10 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
 
+from infrastructure.logging import config_logger
+
+_cfg_logger = config_logger()
+
 
 # ============================================================================
 # DEFAULT CONFIGURATION - Fallback if config.json doesn't exist
@@ -166,11 +170,10 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
                 loaded_config = json.load(f)
                 # Merge with defaults to ensure all keys exist
                 _config = _deep_merge(DEFAULT_CONFIG.copy(), loaded_config)
-                print(f"✓ Configuration loaded from {_config_path}")
+                _cfg_logger.info("config_loaded", path=_config_path)
                 return _config
         except Exception as e:
-            print(f"⚠ Failed to load config from {_config_path}: {e}")
-            print(f"  Using defaults and creating new config file...")
+            _cfg_logger.warning("config_load_failed", path=_config_path, error=str(e))
     
     # Create default config file
     _config = DEFAULT_CONFIG.copy()
@@ -178,10 +181,9 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
         os.makedirs(os.path.dirname(_config_path), exist_ok=True)
         with open(_config_path, 'w') as f:
             json.dump(_config, f, indent=2)
-        print(f"✓ Created default configuration at {_config_path}")
+        _cfg_logger.info("config_created_default", path=_config_path)
     except Exception as e:
-        print(f"⚠ Failed to create config file: {e}")
-        print(f"  Continuing with in-memory defaults...")
+        _cfg_logger.warning("config_create_failed", error=str(e))
     
     return _config
 
@@ -230,9 +232,9 @@ def update_config(updates: Dict[str, Any], persist: bool = True) -> Dict[str, An
         try:
             with open(_config_path, 'w') as f:
                 json.dump(_config, f, indent=2)
-            print(f"✓ Configuration saved to {_config_path}")
+            _cfg_logger.info("config_saved", path=_config_path)
         except Exception as e:
-            print(f"⚠ Failed to save config: {e}")
+            _cfg_logger.error("config_save_failed", error=str(e))
             raise
     
     return _config
@@ -251,9 +253,9 @@ def reset_config() -> Dict[str, Any]:
     try:
         with open(_config_path, 'w') as f:
             json.dump(_config, f, indent=2)
-        print(f"✓ Configuration reset to defaults")
+        _cfg_logger.info("config_reset")
     except Exception as e:
-        print(f"⚠ Failed to save reset config: {e}")
+        _cfg_logger.warning("config_reset_save_failed", error=str(e))
     
     return _config
 

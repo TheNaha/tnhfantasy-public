@@ -6,6 +6,11 @@ from functools import wraps
 from cachetools import TTLCache, LRUCache
 import asyncio
 
+from infrastructure.logging import cache_logger
+from infrastructure.metrics import metrics
+
+logger = cache_logger()
+
 # ============================================================================
 # CACHE INSTANCES
 # ============================================================================
@@ -56,13 +61,19 @@ def cached(cache_name: str = "stats", ttl: Optional[int] = None):
             
             # Check cache
             if key in cache:
+                logger.debug("cache_hit", cache_name=cache_name, func=func.__name__)
+                metrics.track_cache_hit(cache_name)
                 return cache[key]
+            
+            logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
+            metrics.track_cache_miss(cache_name)
             
             # Execute function
             result = await func(*args, **kwargs)
             
             # Store in cache
             cache[key] = result
+            metrics.set_cache_size(cache_name, len(cache))
             return result
         
         @wraps(func)
@@ -71,10 +82,16 @@ def cached(cache_name: str = "stats", ttl: Optional[int] = None):
             cache = cache_map.get(cache_name, _stats_cache)
             
             if key in cache:
+                logger.debug("cache_hit", cache_name=cache_name, func=func.__name__)
+                metrics.track_cache_hit(cache_name)
                 return cache[key]
+            
+            logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
+            metrics.track_cache_miss(cache_name)
             
             result = func(*args, **kwargs)
             cache[key] = result
+            metrics.set_cache_size(cache_name, len(cache))
             return result
         
         # Return appropriate wrapper based on function type
@@ -113,18 +130,25 @@ def invalidate_cache(cache_name: str = "stats", key: Optional[str] = None):
     }
     
     if cache_name == "all":
-        for cache in cache_map.values():
+        for cn, cache in cache_map.items():
             cache.clear()
+            metrics.set_cache_size(cn, 0)
+        logger.info("cache_invalidated", cache_name="all")
         return
     
     cache = cache_map.get(cache_name)
     if cache is None:
+        logger.warning("cache_invalidate_unknown", cache_name=cache_name)
         return
     
     if key is None:
         cache.clear()
+        metrics.set_cache_size(cache_name, 0)
+        logger.info("cache_invalidated", cache_name=cache_name)
     elif key in cache:
         del cache[key]
+        metrics.set_cache_size(cache_name, len(cache))
+        logger.debug("cache_key_invalidated", cache_name=cache_name, key=key)
 
 
 def get_cache_stats() -> dict:

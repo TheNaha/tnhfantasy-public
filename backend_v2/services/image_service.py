@@ -15,6 +15,9 @@ from infrastructure.image_processor import (
     encode_blurhash,
     get_image_dimensions
 )
+from infrastructure.logging import get_logger
+
+logger = get_logger("image_service")
 
 
 class ImageService:
@@ -93,14 +96,14 @@ class ImageService:
             thumbnails = generate_thumbnails(full_path, output_base_dir=self.output_dir)
             thumbnail_path = thumbnails.get("medium") or thumbnails.get("thumb")
         except Exception as e:
-            print(f"[ImageService] Warning: Thumbnail generation failed: {e}")
+            logger.warning("thumbnail_generation_failed", error=str(e), path=full_path)
             thumbnail_path = None
         
         # Generate blurhash
         try:
             blurhash = encode_blurhash(full_path)
         except Exception as e:
-            print(f"[ImageService] Warning: BlurHash generation failed: {e}")
+            logger.warning("blurhash_generation_failed", error=str(e), path=full_path)
             blurhash = None
         
         # Get dimensions
