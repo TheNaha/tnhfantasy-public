@@ -1,7 +1,9 @@
-import React, { memo } from 'react';
+import React, { memo, useId } from 'react';
 import { Minus, Plus } from 'lucide-react';
 
 export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, className = "" }) => {
+    const inputId = useId();
+
     const handleDecrement = () => {
         const newValue = Math.max(min, Number((value - step).toFixed(2)));
         onChange(newValue);
@@ -27,7 +29,7 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
         <div className={className}>
             {label && (
                 <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</label>
+                    <label htmlFor={inputId} className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</label>
                 </div>
             )}
             <div className="flex items-center gap-1 h-[34px]">
@@ -42,6 +44,7 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
                 </button>
                 <div className="flex-1 h-full relative group">
                     <input
+                        id={inputId}
                         type="number"
                         value={value}
                         onChange={handleChange}

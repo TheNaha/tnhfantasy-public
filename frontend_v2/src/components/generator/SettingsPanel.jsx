@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { Sparkles, Sliders } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 import NumberInput from '../common/NumberInput';
@@ -29,6 +29,10 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
         adetailerDenoise, setAdetailerDenoise,
         adetailerInpaintMasked, setAdetailerInpaintMasked
     } = useGeneratorStore();
+
+    const seedId = useId();
+    const samplerId = useId();
+    const schedulerId = useId();
 
     const handleDimensionChange = (type, value) => {
         const newVal = parseInt(value);
@@ -82,6 +86,7 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                     value={width}
                                     onChange={(e) => handleDimensionChange('width', e.target.value)}
                                     className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-center text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                                    aria-label="Width"
                                 />
                                 <span className="absolute right-2 top-2 text-xs text-gray-500">W</span>
                             </div>
@@ -93,6 +98,7 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                     value={height}
                                     onChange={(e) => handleDimensionChange('height', e.target.value)}
                                     className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-center text-white focus:ring-1 focus:ring-blue-500 outline-none"
+                                    aria-label="Height"
                                 />
                                 <span className="absolute right-2 top-2 text-xs text-gray-500">H</span>
                             </div>
@@ -100,6 +106,8 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                 onClick={() => setAspectRatioLocked(!aspectRatioLocked)}
                                 className={`p-2 rounded-lg border ${aspectRatioLocked ? 'bg-blue-500/20 border-blue-500 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-500'}`}
                                 title="Lock Aspect Ratio"
+                                aria-label="Lock Aspect Ratio"
+                                aria-pressed={aspectRatioLocked}
                             >
                                 {aspectRatioLocked ? "🔒" : "🔓"}
                             </button>
@@ -117,9 +125,10 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
 
                     {/* Seed */}
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">Seed</label>
+                        <label htmlFor={seedId} className="block text-xs font-medium text-gray-500 mb-1 uppercase">Seed</label>
                         <div className="flex gap-2">
                             <input
+                                id={seedId}
                                 type="number"
                                 inputMode="numeric"
                                 pattern="[0-9]*"
@@ -131,6 +140,7 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                                 onClick={() => setSeed(Math.floor(Math.random() * 1000000000))}
                                 className="p-2 bg-gray-700 rounded-lg hover:bg-gray-600 text-white"
                                 title="Randomize Seed"
+                                aria-label="Randomize Seed"
                             >
                                 🎲
                             </button>
@@ -158,8 +168,9 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
 
                     {/* Sampler */}
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">Sampler</label>
+                        <label htmlFor={samplerId} className="block text-xs font-medium text-gray-500 mb-1 uppercase">Sampler</label>
                         <select
+                            id={samplerId}
                             value={sampler}
                             onChange={(e) => setSampler(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-1 focus:ring-blue-500 outline-none"
@@ -172,8 +183,9 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
 
                     {/* Scheduler */}
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">Scheduler</label>
+                        <label htmlFor={schedulerId} className="block text-xs font-medium text-gray-500 mb-1 uppercase">Scheduler</label>
                         <select
+                            id={schedulerId}
                             value={scheduler}
                             onChange={(e) => setScheduler(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-1 focus:ring-blue-500 outline-none"
