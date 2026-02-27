@@ -92,4 +92,36 @@ describe('SettingsPanel', () => {
         expect(screen.getByText(/Hi-Res Fix/i)).toBeInTheDocument();
         expect(screen.getByText(/ADetailer/i)).toBeInTheDocument();
     });
+
+    it('has accessible inputs', () => {
+        render(
+            <SettingsPanel
+                upscalerModels={mockUpscalerModels}
+                adetailerModels={mockAdetailerModels}
+            />
+        );
+
+        // Check resolution inputs via aria-label
+        expect(screen.getByLabelText('Width')).toBeInTheDocument();
+        expect(screen.getByLabelText('Height')).toBeInTheDocument();
+
+        // Check other inputs via associated labels
+
+        // Batch Size
+        expect(screen.getByLabelText('Batch Size', { selector: 'input' })).toBeInTheDocument();
+
+        expect(screen.getByLabelText('Seed', { selector: 'input' })).toBeInTheDocument();
+
+        // Steps appears multiple times (Main, Hi-Res, ADetailer), so we expect multiple
+        const stepsInputs = screen.getAllByLabelText('Steps', { selector: 'input' });
+        expect(stepsInputs.length).toBeGreaterThanOrEqual(1);
+
+        expect(screen.getByLabelText('CFG Scale', { selector: 'input' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Sampler', { selector: 'select' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Scheduler', { selector: 'select' })).toBeInTheDocument();
+
+        // Check buttons
+        expect(screen.getByLabelText(/Lock Aspect Ratio/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/Randomize Seed/i)).toBeInTheDocument();
+    });
 });
