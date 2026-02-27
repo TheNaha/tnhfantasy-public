@@ -10,6 +10,7 @@ import PromptLibrary from '../components/generator/PromptLibrary';
 import PresetManager from '../components/generator/PresetManager';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import CollapsibleSection from '../components/CollapsibleSection';
+import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
 import { usePingProviders } from '../hooks/usePingProviders';
 import toast from 'react-hot-toast';
@@ -1222,81 +1223,32 @@ export default function SimpleGenerator() {
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">Batch Size</label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="16"
-                                    value={batchSize}
-                                    onChange={(e) => setBatchSize(Math.max(1, Math.min(16, parseInt(e.target.value) || 1)))}
-                                    className="w-14 text-xs font-bold text-white bg-gray-800 px-2 py-0.5 rounded border border-gray-700 focus:border-blue-500 outline-none text-center"
-                                />
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <Layers size={16} className="text-gray-500" />
-                                <input
-                                    type="range"
-                                    min="1"
-                                    max="8"
-                                    step="1"
-                                    value={batchSize}
-                                    onChange={(e) => setBatchSize(parseInt(e.target.value))}
-                                    className="flex-1"
-                                />
-                            </div>
-                        </div>
+                        {/* Batch Size */}
+                        <NumberInput
+                            label="Batch Size"
+                            value={batchSize}
+                            onChange={(val) => setBatchSize(Math.max(1, Math.min(16, val)))}
+                            min={1}
+                            max={16}
+                        />
 
                         {/* Steps & CFG - Compact with sliders */}
                         <div className="grid grid-cols-2 gap-2">
-                            {/* Steps */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between items-center">
-                                    <label className="text-xs font-medium text-gray-500">Steps</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="150"
-                                        value={steps}
-                                        onChange={(e) => setSteps(Math.max(1, parseInt(e.target.value) || 1))}
-                                        className="w-12 text-xs font-bold text-white bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 focus:border-blue-500 outline-none text-center"
-                                    />
-                                </div>
-                                <input 
-                                    type="range" 
-                                    min="1" 
-                                    max="50" 
-                                    value={Math.min(steps, 50)} 
-                                    onChange={(e) => setSteps(parseInt(e.target.value))} 
-                                    className="w-full h-1.5 accent-blue-500" 
-                                />
-                            </div>
-
-                            {/* CFG */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between items-center">
-                                    <label className="text-xs font-medium text-gray-500">CFG</label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        max="30"
-                                        step="0.5"
-                                        value={cfg}
-                                        onChange={(e) => setCfg(Math.max(0, parseFloat(e.target.value) || 0))}
-                                        className="w-12 text-xs font-bold text-white bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 focus:border-blue-500 outline-none text-center"
-                                    />
-                                </div>
-                                <input 
-                                    type="range" 
-                                    min="1" 
-                                    max="15" 
-                                    step="0.5" 
-                                    value={Math.min(cfg, 15)} 
-                                    onChange={(e) => setCfg(parseFloat(e.target.value))} 
-                                    className="w-full h-1.5 accent-blue-500" 
-                                />
-                            </div>
+                            <NumberInput
+                                label="Steps"
+                                value={steps}
+                                onChange={(val) => setSteps(Math.max(1, val))}
+                                min={1}
+                                max={100}
+                            />
+                            <NumberInput
+                                label="CFG"
+                                value={cfg}
+                                onChange={(val) => setCfg(Math.max(0, val))}
+                                min={1}
+                                max={30}
+                                step={0.5}
+                            />
                         </div>
 
                         {/* Seed - Compact inline layout */}
