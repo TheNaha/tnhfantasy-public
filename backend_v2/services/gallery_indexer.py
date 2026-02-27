@@ -10,6 +10,7 @@
 #
 # INDEX STRUCTURE:
 #   files: { absolute_path -> file_data_dict }
+#   filename_index: { filename -> absolute_path }
 #   sorted_keys_date_desc: [absolute_path, ...] sorted newest-first
 #
 # THREAD SAFETY:
@@ -79,6 +80,7 @@ class GalleryIndexer:
             
         self.output_dir = output_dir or os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
         self.files: Dict[str, Dict[str, Any]] = {}
+        self.filename_index: Dict[str, str] = {} # New index: filename -> absolute_path
         self.sorted_keys_date_desc: List[str] = []
         
         self.lock = threading.RLock()
@@ -197,13 +199,16 @@ class GalleryIndexer:
         all_files = list(set([f for f in all_files if '/thumb/' not in f.replace('\\', '/')]))
         
         processed_files = {}
+        processed_filename_index = {} # Local index for initial scan
         for filepath in all_files:
             data = self._process_file(filepath)
             if data:
                 processed_files[filepath] = data
+                processed_filename_index[data['name']] = filepath
                 
         with self.lock:
             self.files = processed_files
+            self.filename_index = processed_filename_index
             self._rebuild_sort_index()
             self.is_ready = True
             
@@ -224,6 +229,7 @@ class GalleryIndexer:
         if data:
             with self.lock:
                 self.files[filepath] = data
+                self.filename_index[data['name']] = filepath # Update index
                 self._rebuild_sort_index()
                 logger.debug("gallery_indexer_added", file=os.path.basename(filepath))
 
@@ -231,10 +237,28 @@ class GalleryIndexer:
         """Remove a deleted file from the index."""
         with self.lock:
             if filepath in self.files:
+                filename = self.files[filepath]['name']
                 del self.files[filepath]
+                # Only remove from filename index if it matches (handle potential duplicates or stale data)
+                if self.filename_index.get(filename) == filepath:
+                    del self.filename_index[filename]
+
                 if filepath in self.sorted_keys_date_desc:
                     self.sorted_keys_date_desc.remove(filepath)
                 logger.debug("gallery_indexer_removed", file=os.path.basename(filepath))
+
+    def get_path_by_filename(self, filename: str) -> Optional[str]:
+        """
+        Get the absolute path for a given filename.
+        Thread-safe.
+        """
+        # Optional wait if not ready
+        if not self.is_ready:
+            # Short wait, but don't block forever if called during init
+            time.sleep(0.1)
+
+        with self.lock:
+            return self.filename_index.get(filename)
                 
     def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None):
         """
