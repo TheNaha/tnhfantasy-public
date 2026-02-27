@@ -1,4 +1,4 @@
-import { Star, Trash2, Copy, Edit2, TrendingUp } from 'lucide-react';
+import { Star, Trash2, Copy, Edit2, TrendingUp, Check } from 'lucide-react';
 import { useState } from 'react';
 
 /**
@@ -7,9 +7,12 @@ import { useState } from 'react';
  */
 export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }) => {
     const [showFullText, setShowFullText] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
 
     const handleCopyToClipboard = () => {
         navigator.clipboard.writeText(prompt.text);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
     };
 
     return (
@@ -41,6 +44,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                             : 'text-gray-600 hover:text-yellow-500'
                         }`}
                     title={prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-label={prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}
                 >
                     <Star size={18} fill={prompt.favorite ? 'currentColor' : 'none'} />
                 </button>
@@ -98,15 +102,20 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                 </button>
                 <button
                     onClick={handleCopyToClipboard}
-                    className="p-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
-                    title="Copy to clipboard"
+                    className={`p-2 rounded transition-colors ${isCopied
+                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                            : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                        }`}
+                    title={isCopied ? "Copied!" : "Copy to clipboard"}
+                    aria-label={isCopied ? "Copied!" : "Copy to clipboard"}
                 >
-                    <Copy size={16} />
+                    {isCopied ? <Check size={16} /> : <Copy size={16} />}
                 </button>
                 <button
                     onClick={() => onEdit(prompt)}
                     className="p-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
                     title="Edit prompt"
+                    aria-label="Edit prompt"
                 >
                     <Edit2 size={16} />
                 </button>
@@ -114,6 +123,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                     onClick={() => onDelete(prompt.id)}
                     className="p-2 bg-red-900/20 hover:bg-red-900/40 text-red-400 rounded transition-colors"
                     title="Delete prompt"
+                    aria-label="Delete prompt"
                 >
                     <Trash2 size={16} />
                 </button>
