@@ -317,6 +317,7 @@ async def list_files_endpoint(
 async def view_file_endpoint(path: str):
     """Serve files from local output or cached previews."""
     import glob
+    from services.gallery_indexer import gallery_indexer
     
     # Try local output first
     if path.startswith("output/"):
@@ -332,8 +333,18 @@ async def view_file_endpoint(path: str):
                     "Content-Disposition": f"attachment; {encode_filename_for_header(os.path.basename(local_path))}"
                 }
             )
+
+        # Optimization: Check index before globbing
+        indexed_path = gallery_indexer.get_path_by_filename(filename)
+        if indexed_path and os.path.exists(indexed_path):
+            return FileResponse(
+                indexed_path,
+                headers={
+                    "Content-Disposition": f"attachment; {encode_filename_for_header(os.path.basename(indexed_path))}"
+                }
+            )
         
-        # Search in date-based subdirectories
+        # Search in date-based subdirectories (fallback)
         pattern = os.path.join(OUTPUT_DIR, "**", filename)
         matches = glob.glob(pattern, recursive=True)
         # Filter out thumb directory
@@ -390,6 +401,7 @@ async def serve_thumbnail(size: str, filename: str):
     """
     import hashlib
     import glob
+    from services.gallery_indexer import gallery_indexer
     
     if size not in ("medium",):
         raise HTTPException(status_code=400, detail="Size must be 'medium'")
@@ -405,6 +417,40 @@ async def serve_thumbnail(size: str, filename: str):
     # Thumbnail directory (output/thumb)
     thumb_dir = os.path.join(OUTPUT_DIR, "thumb")
     
+    # Optimization: Use gallery index to find original image, then infer thumbnail path
+    original_path = gallery_indexer.get_path_by_filename(base_name)
+
+    if original_path:
+        # Check if we have a thumbnail in the mirrored structure
+        # original: output/2025/12/07/image.png
+        # thumb:    output/thumb/2025/12/07/image.webp
+
+        try:
+            rel_path = os.path.relpath(os.path.dirname(original_path), OUTPUT_DIR)
+            # Prevent path traversal in relative path
+            if ".." in rel_path:
+                rel_path = ""
+
+            inferred_thumb_path = os.path.join(thumb_dir, rel_path, f"{name_only}.webp")
+
+            if os.path.exists(inferred_thumb_path):
+                stat = os.stat(inferred_thumb_path)
+                etag_source = f"{inferred_thumb_path}:{stat.st_mtime}"
+                etag = hashlib.md5(etag_source.encode()).hexdigest()[:16]
+
+                return FileResponse(
+                    inferred_thumb_path,
+                    media_type="image/webp",
+                    headers={
+                        "Cache-Control": "public, max-age=31536000, immutable",
+                        "ETag": f'"{etag}"',
+                        "Content-Disposition": f"inline; {encode_filename_for_header(os.path.basename(inferred_thumb_path))}"
+                    }
+                )
+        except Exception as e:
+            # Fallback to standard search if path manipulation fails
+            pass
+
     # Search priority:
     # 1. New WebP in thumb directory with date hierarchy (output/thumb/YYYY/MM/DD/name.webp)
     # 2. Legacy PNG in flat thumb directory (output/thumb/name.medium.png)
@@ -413,6 +459,7 @@ async def serve_thumbnail(size: str, filename: str):
     
     # Try new WebP format in date-based hierarchy
     # Search recursively for the filename in the thumb directory
+    # Note: If optimization above worked, we wouldn't be here.
     webp_pattern = os.path.join(thumb_dir, "**", f"{name_only}.webp")
     webp_matches = glob.glob(webp_pattern, recursive=True)
     
@@ -462,6 +509,16 @@ async def serve_thumbnail(size: str, filename: str):
         )
     
     # Search in date-based hierarchy for original image
+    # Optimization: Use index if available
+    if original_path and os.path.exists(original_path):
+        return FileResponse(
+            original_path,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Content-Disposition": f"inline; {encode_filename_for_header(base_name)}"
+            }
+        )
+
     original_pattern = os.path.join(OUTPUT_DIR, "**", filename)
     original_matches = glob.glob(original_pattern, recursive=True)
     # Filter out thumb directory
