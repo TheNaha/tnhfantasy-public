@@ -130,9 +130,9 @@ def invalidate_cache(cache_name: str = "stats", key: Optional[str] = None):
     }
     
     if cache_name == "all":
-        for name, cache in cache_map.items():
+        for cn, cache in cache_map.items():
             cache.clear()
-            metrics.set_cache_size(name, 0)
+            metrics.set_cache_size(cn, 0)
         logger.info("cache_invalidated", cache_name="all")
         return
     
