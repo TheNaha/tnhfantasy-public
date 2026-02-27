@@ -9,6 +9,9 @@ from core.dtos import JobQueueItem
 from core.events import event_bus, Event, EventType, emit_job_event
 from core.exceptions import NotFoundError, JobError
 from infrastructure.repositories import JobRepository
+from infrastructure.logging import job_logger
+
+logger = job_logger()
 
 
 class JobService:
@@ -34,6 +37,8 @@ class JobService:
         """
         job = self.repo.create(workflow=workflow, metadata=metadata)
         
+        logger.info("job_created", job_id=job.id)
+        
         # Emit creation event
         await emit_job_event(EventType.JOB_CREATED, self._job_to_dict(job))
         
@@ -43,6 +48,7 @@ class JobService:
         """Get a job by ID."""
         job = self.repo.get(job_id)
         if not job:
+            logger.warning("job_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
         return job
     
@@ -85,7 +91,11 @@ class JobService:
         
         job = self.repo.update(job_id, **updates)
         if not job:
+            logger.warning("job_update_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
+        
+        if status:
+            logger.info("job_status_changed", job_id=job_id, status=status.value if hasattr(status, 'value') else status)
         
         # Determine event type based on status
         if status == JobStatus.COMPLETED:
@@ -105,12 +115,16 @@ class JobService:
         """Delete a job."""
         success = self.repo.delete(job_id)
         if not success:
+            logger.warning("job_delete_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
+        logger.info("job_deleted", job_id=job_id)
         return True
     
     async def clear_all_jobs(self) -> int:
         """Clear all jobs. Returns count of deleted jobs."""
-        return self.repo.delete_all()
+        count = self.repo.delete_all()
+        logger.info("jobs_cleared", count=count)
+        return count
     
     def get_pending_jobs(self) -> List[Job]:
         """Get all pending jobs in FIFO order."""

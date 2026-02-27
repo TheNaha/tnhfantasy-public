@@ -813,6 +813,8 @@ app.add_middleware(
 import time
 from uuid import uuid4
 from infrastructure.logging import api_logger
+from infrastructure.metrics import metrics
+from fastapi.responses import Response as FastAPIResponse
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -824,15 +826,16 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     
     # Calculate duration
-    duration_ms = round((time.time() - start_time) * 1000, 2)
+    duration_seconds = time.time() - start_time
+    duration_ms = round(duration_seconds * 1000, 2)
     
     # Skip logging for noisy endpoints
     path = request.url.path
-    skip_paths = ["/health", "/api/files/events"]
+    skip_paths = ["/health", "/api/files/events", "/metrics"]
     
     if not any(path.startswith(skip) for skip in skip_paths):
-        logger = api_logger()
-        logger.info(
+        log = api_logger()
+        log.info(
             "http_request",
             request_id=request_id,
             method=request.method,
@@ -840,6 +843,8 @@ async def log_requests(request: Request, call_next):
             status_code=response.status_code,
             duration_ms=duration_ms,
         )
+        # Track Prometheus metrics
+        metrics.track_request(request.method, path, response.status_code, duration_seconds)
     
     # Add request ID to response headers for tracing
     response.headers["X-Request-ID"] = request_id
@@ -848,6 +853,7 @@ async def log_requests(request: Request, call_next):
 # Exception handlers
 @app.exception_handler(NotFoundError)
 async def not_found_handler(request: Request, exc: NotFoundError):
+    logger.warning("not_found_error", path=request.url.path, error=exc.message, code=exc.code)
     return JSONResponse(
         status_code=404,
         content={"error": exc.message, "code": exc.code}
@@ -856,6 +862,7 @@ async def not_found_handler(request: Request, exc: NotFoundError):
 
 @app.exception_handler(ValidationError)
 async def validation_handler(request: Request, exc: ValidationError):
+    logger.warning("validation_error", path=request.url.path, error=exc.message, field=exc.field)
     return JSONResponse(
         status_code=400,
         content={"error": exc.message, "code": exc.code, "field": exc.field}
@@ -864,6 +871,7 @@ async def validation_handler(request: Request, exc: ValidationError):
 
 @app.exception_handler(ComfyError)
 async def comfy_error_handler(request: Request, exc: ComfyError):
+    logger.error("comfy_error", path=request.url.path, error=exc.message, code=exc.code)
     return JSONResponse(
         status_code=500,
         content={"error": exc.message, "code": exc.code}
@@ -895,3 +903,12 @@ app.mount("/socket.io", socket_app)
 @app.get("/")
 async def root():
     return {"message": "ComfyUI Modal Stack Backend V2", "version": "2.0.0"}
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Expose Prometheus metrics for scraping."""
+    return FastAPIResponse(
+        content=metrics.generate_metrics(),
+        media_type=metrics.get_content_type(),
+    )

@@ -7,6 +7,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
+from infrastructure.logging import scheduler_logger
+
+logger = scheduler_logger()
+
 
 # Global scheduler instance
 _scheduler: Optional[AsyncIOScheduler] = None
@@ -25,7 +29,7 @@ def start_scheduler():
     scheduler = get_scheduler()
     if not scheduler.running:
         scheduler.start()
-        print("✓ Background task scheduler started")
+        logger.info("scheduler_started")
 
 
 def stop_scheduler():
@@ -33,7 +37,7 @@ def stop_scheduler():
     global _scheduler
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
-        print("✓ Background task scheduler stopped")
+        logger.info("scheduler_stopped")
     _scheduler = None
 
 
@@ -83,7 +87,7 @@ def add_interval_job(
         max_instances=1,
     )
     
-    print(f"✓ Scheduled job '{job_id}' to run every {interval_seconds}s")
+    logger.info("job_scheduled", job_id=job_id, interval_seconds=interval_seconds)
 
 
 def add_cron_job(
@@ -131,7 +135,7 @@ def add_cron_job(
         max_instances=1,
     )
     
-    print(f"✓ Scheduled cron job '{job_id}' with expression '{cron_expr}'")
+    logger.info("cron_job_scheduled", job_id=job_id, cron_expr=cron_expr)
 
 
 def remove_job(job_id: str):
@@ -139,7 +143,7 @@ def remove_job(job_id: str):
     scheduler = get_scheduler()
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
-        print(f"✓ Removed job '{job_id}'")
+        logger.info("job_removed", job_id=job_id)
 
 
 def get_jobs_status() -> list:

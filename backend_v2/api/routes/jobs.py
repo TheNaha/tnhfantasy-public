@@ -26,6 +26,9 @@ from core.events import EventBus
 from core.exceptions import NotFoundError
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.request_dedup import deduplicated, make_key
+from infrastructure.logging import api_logger
+
+logger = api_logger()
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -71,6 +74,7 @@ async def validate_workflow(
     # Extract models from workflow
     required_models = extract_models_from_workflow(request.workflow)
     
+    logger.debug("workflow_validation_start", model_count=len(required_models))
     # Check availability
     availability_service = ModelAvailabilityService(session)
     result = availability_service.check_availability(required_models)
@@ -112,6 +116,7 @@ async def create_job(
         
         if not availability.valid:
             # No provider has all required models - return detailed error
+            logger.warning("job_creation_missing_models", global_missing=availability.global_missing)
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -129,6 +134,8 @@ async def create_job(
     
     # Enqueue for processing
     await job_queue.enqueue(job.id)
+    
+    logger.info("job_enqueued", job_id=job.id)
     
     return service._job_to_dict(job)
 
@@ -244,6 +251,8 @@ async def retry_job(
         original_job.metadata_
     )
     await job_queue.enqueue(new_job.id)
+    
+    logger.info("job_retried", original_job_id=job_id, new_job_id=new_job.id)
     
     return {
         "status": "success",

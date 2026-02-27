@@ -19,6 +19,9 @@ from pydantic import BaseModel
 
 from api.deps import get_session, get_job_service
 from services.job_queue import job_queue
+from infrastructure.logging import api_logger
+
+logger = api_logger()
 
 router = APIRouter(prefix="/api", tags=["generation"])
 
@@ -52,14 +55,14 @@ async def generate(
         
         # Enqueue job for processing
         await job_queue.enqueue(job.id)
-        print(f"[Generate] Job {job.id} created and enqueued")
+        logger.info("generate_job_created", job_id=job.id)
         
         return service._job_to_dict(job)
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Generate failed: {e}")
+        logger.error("generate_failed", error=str(e))
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -98,11 +101,11 @@ async def generate_batch(
             
             created_jobs.append(service._job_to_dict(job))
         
-        print(f"[Generate] Batch of {len(created_jobs)} jobs created and enqueued")
+        logger.info("generate_batch_created", count=len(created_jobs))
         return {"jobs": created_jobs, "count": len(created_jobs)}
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Batch generate failed: {e}")
+        logger.error("generate_batch_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

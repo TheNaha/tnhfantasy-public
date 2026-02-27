@@ -5,6 +5,9 @@ from typing import Generator
 import os
 
 from config import settings
+from infrastructure.logging import db_logger
+
+logger = db_logger()
 
 
 def get_database_url() -> str:
@@ -116,18 +119,18 @@ def _run_migrations() -> None:
             try:
                 conn.execute(text('ALTER TABLE jobs ADD COLUMN started_at DATETIME'))
                 conn.commit()
-                print("Migration: Added 'started_at' column to jobs table")
+                logger.info("migration_column_added", table="jobs", column="started_at")
             except Exception as e:
-                print(f"Migration warning (started_at): {e}")
+                logger.warning("migration_column_exists", column="started_at", detail=str(e))
         
         # Add completed_at if missing
         if 'completed_at' not in columns:
             try:
                 conn.execute(text('ALTER TABLE jobs ADD COLUMN completed_at DATETIME'))
                 conn.commit()
-                print("Migration: Added 'completed_at' column to jobs table")
+                logger.info("migration_column_added", table="jobs", column="completed_at")
             except Exception as e:
-                print(f"Migration warning (completed_at): {e}")
+                logger.warning("migration_column_exists", column="completed_at", detail=str(e))
         
         # ===== FTS5 Virtual Table for Prompts Search =====
         # Create FTS5 virtual table for fast full-text search on prompts
@@ -139,9 +142,9 @@ def _run_migrations() -> None:
                 )
             """))
             conn.commit()
-            print("Migration: Created prompts_fts virtual table")
+            logger.info("migration_fts_created", table="prompts_fts")
         except Exception as e:
-            print(f"FTS5 warning: {e}")
+            logger.warning("migration_fts_warning", detail=str(e))
         
         # Create triggers to keep FTS5 in sync with prompts table
         fts_triggers = [
@@ -254,17 +257,17 @@ def _migrate_models_to_v2() -> None:
         result = conn.execute(text("SELECT COUNT(*) FROM models_v2"))
         v2_count = result.scalar()
         if v2_count > 0:
-            print("Migration: V2 tables already populated, skipping migration")
+            logger.debug("migration_v2_skip", reason="already_populated")
             return
         
         # Check if there's data to migrate
         result = conn.execute(text("SELECT COUNT(*) FROM models"))
         v1_count = result.scalar()
         if v1_count == 0:
-            print("Migration: No V1 models to migrate")
+            logger.debug("migration_v2_skip", reason="no_v1_models")
             return
         
-        print(f"Migration: Migrating {v1_count} models from V1 to V2 schema...")
+        logger.info("migration_v2_start", v1_count=v1_count)
         
         # Fetch all V1 models
         result = conn.execute(text("""
@@ -480,8 +483,8 @@ def _migrate_models_to_v2() -> None:
                 migrated += 1
                 
             except Exception as e:
-                print(f"Migration: Error migrating model {row[1]}: {e}")
+                logger.error("migration_v2_model_error", model_name=row[1], error=str(e))
                 continue
         
         conn.commit()
-        print(f"Migration: Successfully migrated {migrated} models to V2 schema")
+        logger.info("migration_v2_complete", migrated=migrated)

@@ -19,6 +19,9 @@ import aiohttp
 from api.deps import get_session, get_provider_service, get_container_manager
 from services.provider_service import ProviderService
 from core.exceptions import NotFoundError, ValidationError
+from infrastructure.logging import api_logger
+
+logger = api_logger()
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 

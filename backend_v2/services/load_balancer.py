@@ -8,6 +8,9 @@ from sqlmodel import Session, select
 
 from core.entities import Provider, LoadBalancerState
 from infrastructure.repositories import ProviderRepository
+from infrastructure.logging import get_logger
+
+logger = get_logger("load_balancer")
 
 
 class LoadBalancer:
@@ -45,9 +48,11 @@ class LoadBalancer:
                             cls._provider_job_counts.get(job.provider_id, 0) + 1
                 
                 print(f"[LoadBalancer] Loaded state: index={cls._round_robin_index}, active_jobs={cls._provider_job_counts} (from {len(running_jobs)} running jobs)")
+                logger.info("lb_state_loaded", index=cls._round_robin_index, active_jobs=cls._provider_job_counts, running_jobs=len(running_jobs))
                 cls._initialized = True
             except Exception as e:
                 print(f"[LoadBalancer] Warning: Could not load state from DB: {e}")
+                logger.warning("lb_state_load_failed", error=str(e))
                 cls._provider_job_counts = {}  # Reset on error
                 cls._initialized = True
     
@@ -68,6 +73,7 @@ class LoadBalancer:
                 session.commit()
             except Exception as e:
                 print(f"[LoadBalancer] Warning: Could not save state to DB: {e}")
+                logger.warning("lb_state_save_failed", error=str(e))
     
     def __init__(self, session: Session, strategy: str = "round-robin"):
         """
@@ -173,6 +179,7 @@ class LoadBalancer:
             LoadBalancer._round_robin_index += 1
             index = LoadBalancer._round_robin_index
         print(f"[LoadBalancer] Round-robin selected: {provider.id} (index={index})")
+        logger.debug("lb_round_robin_selected", provider_id=provider.id, index=index)
         return provider
     
     def _random(self, providers: List[Provider]) -> Provider:
@@ -208,6 +215,7 @@ class LoadBalancer:
             LoadBalancer._round_robin_index += 1
         
         print(f"[LoadBalancer] Least-connections selected: {selected.id} (active_jobs={counts[selected.id]}, tied={len(tied_providers)})")
+        logger.debug("lb_least_conn_selected", provider_id=selected.id, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
     def _get_best_priority_tier(self, providers: List[Provider]) -> List[Provider]:
@@ -230,6 +238,7 @@ class LoadBalancer:
         provider = best_tier[LoadBalancer._round_robin_index % len(best_tier)]
         LoadBalancer._round_robin_index += 1
         print(f"[LoadBalancer] Priority-RR selected: {provider.id} (priority={provider.priority}, tier_size={len(best_tier)})")
+        logger.debug("lb_priority_rr_selected", provider_id=provider.id, priority=provider.priority, tier_size=len(best_tier))
         return provider
     
     def _priority_least_connections(self, providers: List[Provider]) -> Provider:
@@ -256,6 +265,7 @@ class LoadBalancer:
             LoadBalancer._round_robin_index += 1
         
         print(f"[LoadBalancer] Priority-LC selected: {selected.id} (priority={selected.priority}, active_jobs={counts[selected.id]}, tied={len(tied_providers)})")
+        logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
     def report_success(self, provider_id: str):
@@ -273,6 +283,7 @@ class LoadBalancer:
             LoadBalancer._provider_failures[provider_id] += 1
             failures = LoadBalancer._provider_failures[provider_id]
         print(f"[LoadBalancer] Provider {provider_id} failures: {failures}")
+        logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
     
     def release_job(self, provider_id: str):
         """
@@ -289,6 +300,7 @@ class LoadBalancer:
             else:
                 active_jobs = 0
         print(f"[LoadBalancer] Released job from {provider_id}, active_jobs={active_jobs}")
+        logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
     def get_fallback_provider(self, failed_provider_id: str) -> Optional[Provider]:
         """
