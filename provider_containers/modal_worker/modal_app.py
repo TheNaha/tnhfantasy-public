@@ -3,6 +3,7 @@ import subprocess
 import time
 import asyncio
 import logging
+from provider_core.utils import get_safe_path
 
 import os
 import json
@@ -1016,7 +1017,7 @@ class FileStorage:
         """
         import os
         
-        full_path = os.path.join("/mnt/data", path)
+        full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Reading file: {full_path}")
         
         if not os.path.exists(full_path):
@@ -1038,7 +1039,7 @@ class FileStorage:
         """
         import os
         
-        full_path = os.path.join("/mnt/data", path)
+        full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
         
         if not os.path.exists(full_path):
@@ -1065,7 +1066,7 @@ class FileStorage:
         """
         import os
         
-        full_path = os.path.join("/mnt/data", directory)
+        full_path = get_safe_path("/mnt/data", directory)
         logger.info(f"[FileStorage] Listing directory: {full_path}")
         
         if not os.path.exists(full_path):
@@ -1085,14 +1086,14 @@ class FileStorage:
     def file_exists(self, path: str) -> bool:
         """Check if file exists in volume."""
         import os
-        full_path = os.path.join("/mnt/data", path)
+        full_path = get_safe_path("/mnt/data", path)
         return os.path.exists(full_path)
     
     @modal.method()
     def get_file_size(self, path: str) -> int:
         """Get file size in bytes."""
         import os
-        full_path = os.path.join("/mnt/data", path)
+        full_path = get_safe_path("/mnt/data", path)
         if os.path.exists(full_path):
             return os.path.getsize(full_path)
         return 0
@@ -1112,7 +1113,7 @@ class FileStorage:
         """
         from pathlib import Path
         
-        full_path = Path(f"/mnt/data/{path}")
+        full_path = Path(get_safe_path("/mnt/data", path))
         full_path.parent.mkdir(parents=True, exist_ok=True)
         
         with open(full_path, "wb") as f:
