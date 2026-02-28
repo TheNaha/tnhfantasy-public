@@ -1,9 +1,10 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Image as ImageIcon, Loader2, X, Download, Trash2, RefreshCw, Check, Calendar, LayoutGrid, List, Square, ChevronDown, ArrowLeftRight, Star, FolderOpen, Plus, BarChart3, LineChart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
+import { VirtuosoGrid } from 'react-virtuoso';
 
 // API Layer
 import { filesApi, getApiUrl } from '../api';
@@ -35,6 +36,21 @@ import EmptyState from '../components/EmptyState';
 import ProgressiveImage from '../components/ProgressiveImage';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
+
+const GridList = React.forwardRef(({ style, children, context, ...props }, ref) => (
+    <div
+        ref={ref}
+        {...props}
+        className="grid gap-4 pb-20"
+        style={{ ...style, gridTemplateColumns: `repeat(${context.gridCols}, minmax(0, 1fr))` }}
+    >
+        {children}
+    </div>
+));
+
+const GridItem = ({ children, ...props }) => (
+    <div {...props}>{children}</div>
+);
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -346,6 +362,17 @@ export default function Dashboard() {
             return acc;
         }, {});
     }, [displayedItems]);
+
+    const flattenedGridItems = useMemo(() => {
+        const flat = [];
+        Object.entries(grouped)
+            .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
+            .forEach(([date, groupItems]) => {
+                flat.push({ isHeader: true, date, id: `header-${date}` });
+                groupItems.forEach(item => flat.push(item));
+            });
+        return flat;
+    }, [grouped]);
 
     // Helper to format date keys for display
     const formatDateLabel = (isoDateKey) => {
@@ -872,102 +899,112 @@ export default function Dashboard() {
                         />
                     ) : (
                         <div className="space-y-8">
-                            {Object.entries(grouped)
-                                .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-                                .map(([date, groupItems]) => (
+                            {viewMode === 'grid' ? (
+                                <VirtuosoGrid
+                                    useWindowScroll
+                                    data={flattenedGridItems}
+                                    context={{ gridCols }}
+                                    components={{ List: GridList, Item: GridItem }}
+                                    itemContent={(index, item) => {
+                                        if (item.isHeader) {
+                                            return (
+                                                <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2" style={{ gridColumn: '1 / -1' }}>
+                                                    <Calendar size={16} /> {formatDateLabel(item.date)}
+                                                </h3>
+                                            );
+                                        }
+
+                                        return (
+                                            <motion.div
+                                                layout
+                                                initial={{ opacity: 0, scale: 0.8 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.8 }}
+                                                transition={{ duration: 0.2 }}
+                                                key={item.id || item.name}
+                                            >
+                                                {item.type === 'job' ? (
+                                                    <JobCard job={item} onClick={() => setSelectedJobId(item.id)} />
+                                                ) : item.type === 'imageGroup' ? (
+                                                    <ImageGroup
+                                                        images={item.images}
+                                                        job={item.job}
+                                                        isSelected={item.images.some(img => selectedFiles.has(img.name))}
+                                                        showSelectionCheckbox={selectionMode}
+                                                        onSelectionToggle={() => {
+                                                            // Toggle all images in group
+                                                            item.images.forEach(img => toggleSelection(img.name));
+                                                        }}
+                                                        onClick={(img) => setSelectedImage({ ...img, siblingImages: item.images, associatedJob: item.job })}
+                                                    />
+                                                ) : (
+                                                    <div
+                                                        className={`group relative aspect-square bg-gray-800 rounded-xl overflow-hidden border transition-all ${selectedFiles.has(item.name) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-800 hover:border-gray-600'}`}
+                                                        onClick={() => {
+                                                            if (selectionMode) toggleSelection(item.name);
+                                                            else setSelectedImage(item);
+                                                        }}
+                                                        role="img"
+                                                        aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
+                                                    >
+                                                        <div className="aspect-square bg-gray-800 rounded-xl overflow-hidden group relative">
+                                                            <ProgressiveImage
+                                                                blurhash={item.blurhash}
+                                                                src={`/api/view/output/${item.name}`}
+                                                                medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
+                                                                alt={item.name}
+                                                                size="medium"
+                                                                className="w-full h-full"
+                                                            />
+                                                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                                            {isFavorite(item.name) && (
+                                                                <div className="absolute top-2 right-2 text-yellow-400">
+                                                                    <Star size={20} fill="currentColor" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        {/* Selection Mode Checkbox */}
+                                                        {selectionMode && (
+                                                            <div className={`absolute top-2 right-2 p-1.5 rounded-full ${selectedFiles.has(item.name) ? 'bg-blue-500 text-white' : 'bg-black/50 text-gray-400'}`}>
+                                                                <Check size={14} />
+                                                            </div>
+                                                        )}
+
+                                                        {/* Favorite Star Button */}
+                                                        {!selectionMode && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleFavorite(item.name);
+                                                                    toast.success(
+                                                                        isFavorite(item.name) ? "Removed from favorites" : "Added to favorites",
+                                                                        { icon: isFavorite(item.name) ? '💔' : '⭐' }
+                                                                    );
+                                                                }}
+                                                                className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                title={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
+                                                            >
+                                                                <Star
+                                                                    size={16}
+                                                                    className={isFavorite(item.name) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
+                                                                />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </motion.div>
+                                        );
+                                    }}
+                                />
+                            ) : (
+                                Object.entries(grouped)
+                                    .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
+                                    .map(([date, groupItems]) => (
                                 <div key={date}>
                                     <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
                                         <Calendar size={16} /> {formatDateLabel(date)}
                                     </h3>
-                                    {viewMode === 'grid' ? (
-                                        <div
-                                            className="grid gap-4 pb-20"
-                                            style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
-                                        >
-                                            <AnimatePresence mode='popLayout'>
-                                                {groupItems.map((item) => (
-                                                    <motion.div
-                                                        layout
-                                                        initial={{ opacity: 0, scale: 0.8 }}
-                                                        animate={{ opacity: 1, scale: 1 }}
-                                                        exit={{ opacity: 0, scale: 0.8 }}
-                                                        transition={{ duration: 0.2 }}
-                                                        key={item.id || item.name}
-                                                    >
-                                                        {item.type === 'job' ? (
-                                                            <JobCard job={item} onClick={() => setSelectedJobId(item.id)} />
-                                                        ) : item.type === 'imageGroup' ? (
-                                                            <ImageGroup
-                                                                images={item.images}
-                                                                job={item.job}
-                                                                isSelected={item.images.some(img => selectedFiles.has(img.name))}
-                                                                showSelectionCheckbox={selectionMode}
-                                                                onSelectionToggle={() => {
-                                                                    // Toggle all images in group
-                                                                    item.images.forEach(img => toggleSelection(img.name));
-                                                                }}
-                                                                onClick={(img) => setSelectedImage({ ...img, siblingImages: item.images, associatedJob: item.job })}
-                                                            />
-                                                        ) : (
-                                                            <div
-                                                                className={`group relative aspect-square bg-gray-800 rounded-xl overflow-hidden border transition-all ${selectedFiles.has(item.name) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-800 hover:border-gray-600'}`}
-                                                                onClick={() => {
-                                                                    if (selectionMode) toggleSelection(item.name);
-                                                                    else setSelectedImage(item);
-                                                                }}
-                                                                role="img"
-                                                                aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
-                                                            >
-                                                                <div className="aspect-square bg-gray-800 rounded-xl overflow-hidden group relative">
-                                                                    <ProgressiveImage
-                                                                        blurhash={item.blurhash}
-                                                                        src={`/api/view/output/${item.name}`}
-                                                                        medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
-                                                                        alt={item.name}
-                                                                        size="medium"
-                                                                        className="w-full h-full"
-                                                                    />
-                                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                                                                    {isFavorite(item.name) && (
-                                                                        <div className="absolute top-2 right-2 text-yellow-400">
-                                                                            <Star size={20} fill="currentColor" />
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                                {/* Selection Mode Checkbox */}
-                                                                {selectionMode && (
-                                                                    <div className={`absolute top-2 right-2 p-1.5 rounded-full ${selectedFiles.has(item.name) ? 'bg-blue-500 text-white' : 'bg-black/50 text-gray-400'}`}>
-                                                                        <Check size={14} />
-                                                                    </div>
-                                                                )}
-
-                                                                {/* Favorite Star Button */}
-                                                                {!selectionMode && (
-                                                                    <button
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            toggleFavorite(item.name);
-                                                                            toast.success(
-                                                                                isFavorite(item.name) ? "Removed from favorites" : "Added to favorites",
-                                                                                { icon: isFavorite(item.name) ? '💔' : '⭐' }
-                                                                            );
-                                                                        }}
-                                                                        className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                                                                        title={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
-                                                                    >
-                                                                        <Star
-                                                                            size={16}
-                                                                            className={isFavorite(item.name) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
-                                                                        />
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </motion.div>
-                                                ))}
-                                            </AnimatePresence>
-                                        </div>
-                                    ) : viewMode === 'list' ? (
+                                    {viewMode === 'list' ? (
                                         <div className="space-y-2">
                                             {groupItems.map((item) => (
                                                 item.type === 'job' ? (
@@ -1118,7 +1155,8 @@ export default function Dashboard() {
                                         </div>
                                     )}
                                 </div>
-                            ))}
+                            ))
+                            )}
                         </div>
                     )
                 )}
