@@ -33,7 +33,10 @@ from .background import (
     get_job_tracker,
 )
 
+from .utils import get_safe_path
+
 __all__ = [
+    "get_safe_path",
     # Models
     "InferenceRequest",
     "DownloadRequest", 

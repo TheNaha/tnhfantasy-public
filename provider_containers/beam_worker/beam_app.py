@@ -17,6 +17,7 @@ import os
 import json
 import subprocess
 import time
+from provider_core.utils import get_safe_path
 import asyncio
 from typing import Dict, Any
 import base64
@@ -672,7 +673,7 @@ async def delete_model(request: Request):
     """Delete a model."""
     data = await request.json()
     path = data.get("path")
-    full_path = os.path.join("/mnt/data", path)
+    full_path = get_safe_path("/mnt/data", path)
     
     if not os.path.exists(full_path):
         return {"success": False, "message": f"Not found: {path}"}
@@ -693,7 +694,7 @@ async def get_file(request: Request):
     """Get file contents."""
     data = await request.json()
     path = data.get("path")
-    full_path = os.path.join("/mnt/data", path)
+    full_path = get_safe_path("/mnt/data", path)
     
     if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -709,7 +710,7 @@ async def delete_file(request: Request):
     """Delete file."""
     data = await request.json()
     path = data.get("path")
-    full_path = os.path.join("/mnt/data", path)
+    full_path = get_safe_path("/mnt/data", path)
     
     if not os.path.exists(full_path):
         return {"success": False, "message": f"Not found: {path}"}
@@ -727,10 +728,10 @@ async def upload_file(request: Request):
     directory = data.get("directory", "input")
     
     content = base64.b64decode(content_base64)
-    dir_path = os.path.join("/mnt/data", directory)
+    dir_path = get_safe_path("/mnt/data", directory)
     os.makedirs(dir_path, exist_ok=True)
     
-    with open(os.path.join(dir_path, filename), "wb") as f:
+    with open(get_safe_path(dir_path, filename), "wb") as f:
         f.write(content)
     
     return {"success": True, "path": f"{directory}/{filename}", "size": len(content)}
