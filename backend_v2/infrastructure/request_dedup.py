@@ -4,7 +4,6 @@
 from cachetools import TTLCache
 import asyncio
 from typing import Callable, Any, TypeVar, Coroutine
-import hashlib
 
 from infrastructure.logging import get_logger
 
@@ -69,9 +68,9 @@ def make_key(*args) -> str:
         *args: Any hashable arguments
         
     Returns:
-        16-character hex digest
+        String joined by colons
     """
-    return hashlib.md5(str(args).encode()).hexdigest()[:16]
+    return ":".join(str(arg) for arg in args if arg)
 
 
 def clear_dedup_cache():
