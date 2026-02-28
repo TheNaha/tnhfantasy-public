@@ -9,6 +9,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { usePingProviders } from '../hooks/usePingProviders';
+import { useProviderStore } from '../store/providerStore';
 import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
@@ -46,6 +47,7 @@ export default function InpaintGenerator() {
 
     const { connect, disconnect } = useJobStore();
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
+    const getEnrichedProviders = useProviderStore(state => state.getEnrichedProviders);
 
     // Connect to job updates
     useEffect(() => {
@@ -121,15 +123,25 @@ export default function InpaintGenerator() {
         setGenerating(true);
 
         try {
+            // Use inpaint model if detected, otherwise use selected
+            const checkpointToUse = inpaintCheckpoint?.name || selectedCheckpoint.name;
+            const fullCheckpointData = inpaintCheckpoint || selectedCheckpoint;
+
+            // Find an active provider that has this model
+            const activeProviders = getEnrichedProviders().filter(p => p.enabled && p.container_status === 'running');
+            const syncedProvider = activeProviders.find(p => {
+                const status = fullCheckpointData.provider_statuses?.[p.id];
+                const statusValue = typeof status === 'object' ? status.status : status;
+                return statusValue === 'installed' || statusValue === 'ready';
+            });
+            const targetProviderId = syncedProvider ? syncedProvider.id : null;
+
             // First, upload the mask to the backend
             const maskResult = await filesApi.uploadMask(
                 maskImage,
                 sourceImage.filename,
-                null // TODO: Add provider_id when available
+                targetProviderId
             );
-
-            // Use inpaint model if detected, otherwise use selected
-            const checkpointToUse = inpaintCheckpoint?.name || selectedCheckpoint.name;
 
             const builder = new WorkflowBuilder();
             const workflow = builder.buildInpaint({
