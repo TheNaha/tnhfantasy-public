@@ -1,6 +1,7 @@
 # Job Repository - Data access layer for jobs
 from sqlmodel import Session, select, col
 from sqlalchemy import func, or_, and_
+from sqlalchemy.orm import aliased
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -71,6 +72,37 @@ class JobRepository:
         count = self.session.exec(stmt).one()
         return count + 1
     
+    def get_queue_positions(self, job_ids: List[str]) -> Dict[str, int]:
+        """
+        Get queue positions for multiple pending jobs efficiently.
+        Returns a dictionary mapping job ID to queue position.
+        """
+        if not job_ids:
+            return {}
+
+        JobAlias = aliased(Job)
+
+        # Subquery to count jobs created before the current job
+        subq = (
+            select(func.count())
+            .select_from(JobAlias)
+            .where(
+                JobAlias.status == JobStatus.PENDING,
+                or_(
+                    JobAlias.created_at < Job.created_at,
+                    and_(JobAlias.created_at == Job.created_at, JobAlias.id < Job.id)
+                )
+            )
+            .correlate(Job)
+            .scalar_subquery()
+        )
+
+        # Main query to get job ID and its position (count + 1)
+        stmt = select(Job.id, subq + 1).where(Job.id.in_(job_ids))
+        results = self.session.exec(stmt).all()
+
+        return {row[0]: row[1] for row in results}
+
     def get_by_status(self, status: JobStatus) -> List[Job]:
         """Get all jobs with a specific status."""
         stmt = select(Job).where(Job.status == status)
