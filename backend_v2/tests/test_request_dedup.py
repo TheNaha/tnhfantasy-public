@@ -219,3 +219,19 @@ async def test_deduplicated_concurrent_failure():
     # Verify cleanup
     stats = get_dedup_stats()
     assert stats["in_flight_count"] == 0
+
+def test_get_dedup_stats_structure():
+    """Test the structure and default values of get_dedup_stats."""
+    clear_dedup_cache()
+    stats = get_dedup_stats()
+
+    assert isinstance(stats, dict)
+    assert "cache_size" in stats
+    assert "cache_maxsize" in stats
+    assert "cache_ttl" in stats
+    assert "in_flight_count" in stats
+
+    assert stats["cache_size"] == 0
+    assert stats["in_flight_count"] == 0
+    assert stats["cache_maxsize"] == 100
+    assert stats["cache_ttl"] == 1.0
