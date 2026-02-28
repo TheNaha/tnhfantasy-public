@@ -845,7 +845,7 @@ export function ProviderModal({ provider, onClose, onSave }) {
                                         config: { ...formData.config, gpu_url: e.target.value }
                                     })}
                                     className="w-full px-4 py-2.5 bg-gray-800/50 border border-white/10 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 transition-colors"
-                                    placeholder="https://comfy-gpu-xxx.app.beam.cloud"
+
                                     required
                                 />
                                 <p className="text-xs text-white/40 mt-1">URL from: beam deploy beam_app.py:comfy_gpu</p>
