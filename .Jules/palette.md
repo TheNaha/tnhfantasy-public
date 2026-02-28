@@ -13,3 +13,6 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2026-02-26 - Modal Accessibility (Model Selector)
 **Learning:** The Model Selector modal lacked standard closing behaviors (Escape key, backdrop click), forcing users to hunt for the small "X" button. This is a common barrier for keyboard users and an annoyance for mouse users.
 **Action:** For all custom modals, implement `useEffect` for the Escape key and an `onClick` handler on the backdrop that calls the close function. Ensure the modal content prevents propagation of clicks to avoid accidental closing.
+## 2024-05-18 - Avoid whole-file formatting when strict line-change limits are enforced
+**Learning:** Running `npx prettier --write <path>` on an entire file when a strict <50 lines change limit is enforced will likely violate the limit due to unrelated stylistic changes, polluting the PR and making review difficult.
+**Action:** When working under strict line limits, only format the specific lines modified, or ignore automated whole-file formatting and format manually.
