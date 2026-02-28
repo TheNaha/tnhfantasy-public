@@ -54,6 +54,28 @@ class TestGetSession:
         except StopIteration:
             pass
 
+    def test_session_closes_on_exhaustion(self):
+        """Test that get_session context manager closes the session properly."""
+        with patch('infrastructure.database.Session') as MockSession:
+            gen = db_module.get_session()
+            session = next(gen)
+
+            # Verify Session was instantiated with the engine
+            MockSession.assert_called_once_with(db_module.engine)
+            # Verify we entered the context manager
+            MockSession.return_value.__enter__.assert_called_once()
+            # Verify we haven't exited yet
+            MockSession.return_value.__exit__.assert_not_called()
+
+            # Exhaust the generator to trigger the exit of the context manager
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+
+            # Verify the context manager exited, closing the session
+            MockSession.return_value.__exit__.assert_called_once()
+
 
 class TestCreateDbAndTables:
     def test_create_db_and_tables_runs(self):
