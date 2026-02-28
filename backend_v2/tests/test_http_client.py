@@ -37,6 +37,25 @@ class TestGetHttpClient:
         client = get_http_client()
         assert client is not None
 
+    def test_client_initialization_configuration(self):
+        client = get_http_client()
+
+        # Check timeout configuration
+        assert client.timeout.connect == 5.0
+        assert client.timeout.read == 60.0
+        assert client.timeout.write == 10.0
+        assert client.timeout.pool == 5.0
+
+        # Check connection limits
+        pool = client._transport._pool
+        assert getattr(pool, "_max_keepalive_connections", None) == 20
+        assert getattr(pool, "_max_connections", None) == 50
+        assert getattr(pool, "_keepalive_expiry", None) == 30.0
+
+        # Check other settings
+        assert client.follow_redirects is True
+        assert getattr(pool, "_http2", None) is True
+
 
 class TestCloseHttpClient:
     async def test_closes_client(self):
