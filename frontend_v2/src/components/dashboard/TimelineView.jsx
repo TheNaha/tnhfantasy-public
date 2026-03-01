@@ -255,6 +255,8 @@ const TimelineImageCard = memo(function TimelineImageCard({
                                         }}
                                         className="p-1.5 rounded-full hover:bg-gray-700 transition-colors"
                                         title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                                        aria-pressed={isFavorite}
                                     >
                                         <svg
                                             className={`w-4 h-4 ${isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-gray-500'}`}

@@ -36,7 +36,7 @@ export default function GeneratorTabs() {
                     {tab.label}
                     {/* Active indicator - blue underline */}
                     {isActive(tab.path) && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-400" />
+                        <div className="absolute -bottom-[1px] left-0 right-0 h-0.5 bg-cyan-400" />
                     )}
                 </NavLink>
             ))}

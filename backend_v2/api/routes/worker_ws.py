@@ -154,29 +154,57 @@ async def worker_websocket(
             elif msg_type == "job_completed":
                 job_id = data.get("job_id")
                 result = data.get("result", {})
+                outputs = result.get("outputs", [])
                 
-                # Update job in database
+                # Update job in database to POST_PROCESSING first
                 async with get_session_context() as session:
                     from services.job_service import JobService
                     from core.entities import JobStatus
                     job_service = JobService(session)
                     await job_service.update_job(
                         job_id,
-                        status=JobStatus.COMPLETED,
-                        outputs=result.get("outputs", [])
+                        status=JobStatus.POST_PROCESSING,
+                        outputs=outputs
                     )
                 
                 worker.current_job = None
                 worker.jobs_completed += 1
-                logger.info(f"[Worker WS] Job completed: {job_id}")
+                logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
                 
-                # Broadcast completion
+                # Broadcast post-processing
                 from api.routes.websocket import broadcast_to_room
-                await broadcast_to_room("job", "job.completed", {
+                await broadcast_to_room("job", "job.post_processing", {
                     "job_id": job_id,
                     "provider_id": provider_id,
-                    "outputs": result.get("outputs", [])
+                    "outputs": outputs
                 })
+
+                # Schedule background task to wait for GalleryIndexer
+                async def finalize_job(j_id, outps, p_id):
+                    from api.routes.statistics import gallery_indexer
+                    import asyncio
+
+                    # Poll for up to 10 seconds (20 * 0.5s)
+                    for _ in range(20):
+                        if all(gallery_indexer.get_path_by_filename(f) for f in outps):
+                            break
+                        await asyncio.sleep(0.5)
+
+                    async with get_session_context() as session:
+                        js = JobService(session)
+                        await js.update_job(
+                            j_id,
+                            status=JobStatus.COMPLETED
+                        )
+                    logger.info(f"[Worker WS] Job completed: {j_id}")
+                    await broadcast_to_room("job", "job.completed", {
+                        "job_id": j_id,
+                        "provider_id": p_id,
+                        "outputs": outps
+                    })
+
+                import asyncio
+                asyncio.create_task(finalize_job(job_id, outputs, provider_id))
             
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
