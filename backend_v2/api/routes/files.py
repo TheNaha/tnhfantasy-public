@@ -56,6 +56,9 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     # Remove leading slashes to prevent absolute path interpretation
     clean_path = requested_path.lstrip("/\\")
 
+    if not clean_path:
+        raise HTTPException(status_code=400, detail="Invalid path: path cannot be empty")
+
     # Resolve full path
     full_path = os.path.abspath(os.path.join(base_dir, clean_path))
     base_path = os.path.abspath(base_dir)
