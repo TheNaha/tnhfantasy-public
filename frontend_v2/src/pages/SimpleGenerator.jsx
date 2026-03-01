@@ -1227,7 +1227,7 @@ export default function SimpleGenerator() {
                         <NumberInput
                             label="Batch Size"
                             value={batchSize}
-                            onChange={(val) => setBatchSize(Math.max(1, Math.min(16, val)))}
+                            onChange={(val) => setBatchSize(Math.max(1, val))}
                             min={1}
                             max={16}
                         />

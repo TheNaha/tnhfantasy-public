@@ -1,54 +1,63 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import NumberInput from './NumberInput';
 
 describe('NumberInput', () => {
     it('renders label correctly', () => {
-        render(<NumberInput label="Test Input" value={10} onChange={() => {}} min={0} max={100} />);
+        render(<NumberInput label="Test Input" value={10} onChange={() => { }} />);
         expect(screen.getByText('Test Input')).toBeInTheDocument();
     });
 
-    it('renders value correctly', () => {
-        render(<NumberInput label="Test Input" value={10} onChange={() => {}} min={0} max={100} />);
-        expect(screen.getByRole('spinbutton')).toHaveValue(10);
+    it('renders value correctly in number input', () => {
+        render(<NumberInput label="Test Input" value={10} onChange={() => { }} />);
+        const numberInput = screen.getByRole('spinbutton');
+        expect(numberInput).toHaveValue(10);
     });
 
-    it('calls onChange with decremented value when - button clicked', () => {
-        const handleChange = vi.fn();
-        render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={0} max={100} step={1} />);
-
-        fireEvent.click(screen.getByLabelText('Decrease Test Input'));
-        expect(handleChange).toHaveBeenCalledWith(9);
+    it('renders value correctly in range input', () => {
+        render(<NumberInput label="Test Input" value={10} onChange={() => { }} />);
+        const rangeInput = screen.getByRole('slider');
+        expect(rangeInput).toHaveValue('10');
     });
 
-    it('calls onChange with incremented value when + button clicked', () => {
+    it('calls onChange with new value when number input changes', () => {
         const handleChange = vi.fn();
-        render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={0} max={100} step={1} />);
+        render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={0} max={100} />);
 
-        fireEvent.click(screen.getByLabelText('Increase Test Input'));
-        expect(handleChange).toHaveBeenCalledWith(11);
+        const numberInput = screen.getByRole('spinbutton');
+        fireEvent.change(numberInput, { target: { value: '25' } });
+        expect(handleChange).toHaveBeenCalledWith(25);
     });
 
-    it('does not decrement below min', () => {
+    it('calls onChange with new value when slider changes', () => {
         const handleChange = vi.fn();
-        render(<NumberInput label="Test Input" value={0} onChange={handleChange} min={0} max={100} step={1} />);
+        render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={0} max={100} />);
 
-        const button = screen.getByLabelText('Decrease Test Input');
-        expect(button).toBeDisabled();
-
-        fireEvent.click(button);
-        expect(handleChange).not.toHaveBeenCalled();
+        const rangeInput = screen.getByRole('slider');
+        fireEvent.change(rangeInput, { target: { value: '50' } });
+        expect(handleChange).toHaveBeenCalledWith(50);
     });
 
-    it('does not increment above max', () => {
+    it('allows typing outside of max and clamps to min on blur', () => {
         const handleChange = vi.fn();
-        render(<NumberInput label="Test Input" value={100} onChange={handleChange} min={0} max={100} step={1} />);
+        const { rerender } = render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={5} max={100} />);
 
-        const button = screen.getByLabelText('Increase Test Input');
-        expect(button).toBeDisabled();
+        const numberInput = screen.getByRole('spinbutton');
 
-        fireEvent.click(button);
-        expect(handleChange).not.toHaveBeenCalled();
+        // Type above max
+        fireEvent.change(numberInput, { target: { value: '200' } });
+        expect(handleChange).toHaveBeenCalledWith(200);
+
+        rerender(<NumberInput label="Test Input" value={200} onChange={handleChange} min={5} max={100} />);
+
+        // Type below min
+        fireEvent.change(numberInput, { target: { value: '2' } });
+        expect(handleChange).toHaveBeenCalledWith(2);
+
+        rerender(<NumberInput label="Test Input" value={2} onChange={handleChange} min={5} max={100} />);
+
+        // Blur clamps to min
+        fireEvent.blur(numberInput);
+        expect(handleChange).toHaveBeenCalledWith(5);
     });
 });
