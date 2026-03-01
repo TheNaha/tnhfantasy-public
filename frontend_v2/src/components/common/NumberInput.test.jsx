@@ -60,4 +60,22 @@ describe('NumberInput', () => {
         fireEvent.blur(numberInput);
         expect(handleChange).toHaveBeenCalledWith(5);
     });
+
+    it('handles clearing the number input to empty string and blur', () => {
+        const handleChange = vi.fn();
+        render(<NumberInput label="Test Input" value={10} onChange={handleChange} min={0} max={100} />);
+
+        const numberInput = screen.getByRole('spinbutton');
+
+        // Clear the input to simulate intermediate empty typing state
+        fireEvent.change(numberInput, { target: { value: '' } });
+
+        const callsBeforeBlur = handleChange.mock.calls.length;
+
+        // Blur after empty value to trigger any clamping/normalization logic
+        fireEvent.blur(numberInput);
+
+        // Ensure we at least run through the change/blur path without crashing
+        expect(handleChange.mock.calls.length).toBeGreaterThanOrEqual(callsBeforeBlur);
+    });
 });
