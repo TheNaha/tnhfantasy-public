@@ -1,0 +1,12 @@
+# Database
+*.db
+*.sqlite3
+data/comfy.db
+
+# Cache and logs
+__pycache__/
+*.pyc
+*.pyo
+.coverage
+htmlcov/
+*.log
