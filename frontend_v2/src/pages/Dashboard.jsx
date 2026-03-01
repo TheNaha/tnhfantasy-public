@@ -48,9 +48,15 @@ const GridList = React.forwardRef(({ style, children, context, ...props }, ref) 
     </div>
 ));
 
-const GridItem = ({ children, ...props }) => (
-    <div {...props}>{children}</div>
-);
+const GridItem = React.forwardRef(({ children, ...props }, ref) => {
+    const isHeader = children?.props?.className?.includes('date-header-marker');
+    return (
+        <div ref={ref} {...props} style={{ ...props.style, gridColumn: isHeader ? '1 / -1' : undefined }}>
+            {children}
+        </div>
+    );
+});
+GridItem.displayName = 'GridItem';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -908,7 +914,7 @@ export default function Dashboard() {
                                     itemContent={(index, item) => {
                                         if (item.isHeader) {
                                             return (
-                                                <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2" style={{ gridColumn: '1 / -1' }}>
+                                                <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2 date-header-marker">
                                                     <Calendar size={16} /> {formatDateLabel(item.date)}
                                                 </h3>
                                             );
