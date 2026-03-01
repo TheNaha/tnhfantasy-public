@@ -1,5 +1,6 @@
 # Statistics API Tests
 import pytest
+from unittest.mock import patch
 
 
 class TestStatisticsEndpoints:
@@ -23,12 +24,13 @@ class TestStatisticsEndpoints:
         assert "images_by_date" in data
         assert "popular_settings" in data
 
-    def test_get_statistics_empty_output(self, client):
+    @patch('api.routes.statistics.gallery_indexer.get_all_files')
+    def test_get_statistics_empty_output(self, mock_get_all, client):
         """Statistics returns zeros when no output images exist."""
-        from api.routes.statistics import gallery_indexer
-        gallery_indexer.files.clear()
-        gallery_indexer.filename_index.clear()
-        pass # no sort_index
+        mock_get_all.return_value = []
+        import api.routes.statistics
+        from infrastructure.cache import invalidate_cache
+        invalidate_cache('stats')
 
         response = client.get("/api/statistics")
         data = response.json()
@@ -74,8 +76,13 @@ class TestStatisticsEndpoints:
         assert "loras_used" in data
         assert "avg_generation_time" in data
 
-    def test_get_summary_empty_output(self, client):
+    @patch('api.routes.statistics.gallery_indexer.get_all_files')
+    def test_get_summary_empty_output(self, mock_get_all, client):
         """Summary returns zero counts when no images."""
+        mock_get_all.return_value = []
+        from infrastructure.cache import invalidate_cache
+        invalidate_cache('stats')
+
         response = client.get("/api/statistics/summary")
         data = response.json()
         assert data["total_images"] == 0
