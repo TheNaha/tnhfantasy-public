@@ -88,6 +88,23 @@ async def save_generated_image(request: SaveImageRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
     
+    from services.job_service import JobService
+    from core.entities import JobStatus
+    from infrastructure.database import get_session_context
+    from infrastructure.logging import get_logger
+
+    logger = get_logger("providers_route")
+
+    if request.job_id:
+        try:
+            async with get_session_context() as session:
+                job_service = JobService(session)
+                job = await job_service.get_job(request.job_id)
+                if job.status in [JobStatus.RUNNING, JobStatus.PROCESSING]:
+                    await job_service.update_job(request.job_id, status=JobStatus.POST_PROCESSING)
+        except Exception as e:
+            logger.error(f"Error updating job status to POST_PROCESSING: {e}")
+
     service = get_image_service()
     
     result = await service.save_generated_image(
@@ -98,6 +115,12 @@ async def save_generated_image(request: SaveImageRequest):
         batch_index=request.batch_index
     )
     
+    try:
+        from services.gallery_indexer import gallery_indexer
+        gallery_indexer.add_file(result['path'])
+    except Exception as e:
+        logger.error(f"Error updating gallery indexer: {e}")
+
     return result
 
 

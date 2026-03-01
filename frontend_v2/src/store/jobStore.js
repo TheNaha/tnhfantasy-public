@@ -41,7 +41,8 @@ export const useJobStore = create((set, get) => ({
             j.status === 'processing' ||
             j.status === 'executing' ||
             j.status === 'progress' ||
-            j.status === 'queued'
+            j.status === 'queued' ||
+            j.status === 'post-processing'
         );
         set({ jobs: mergedJobs, activeJobs: active });
     },
@@ -89,7 +90,7 @@ export const useJobStore = create((set, get) => ({
                             : state.activeJobs
                     };
                 });
-            } else if (eventType === 'job.progress' || eventType === 'job.updated') {
+            } else if (eventType === 'job.progress' || eventType === 'job.updated' || eventType === 'job.post_processing') {
                 // Update existing job or add if not exists
                 set((state) => {
                     const exists = state.jobs.some(j => j.id === job.id);
