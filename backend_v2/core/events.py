@@ -21,6 +21,7 @@ class EventType(str, Enum):
     JOB_UPDATED = "job.updated"
     JOB_PROGRESS = "job.progress"
     JOB_COMPLETED = "job.completed"
+    JOB_POST_PROCESSING = "job.post_processing"
     JOB_FAILED = "job.failed"
     JOB_CANCELLED = "job.cancelled"
     
