@@ -27,7 +27,7 @@ const ImageGroup = memo(function ImageGroup({
         <div
             className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer group
                 ${isSelected ? 'ring-2 ring-purple-500' : 'hover:ring-2 hover:ring-gray-500'}`}
-            onClick={() => onClick?.(primaryImage)}
+            onClick={() => onClick?.({ ...primaryImage, siblingImages: images, associatedJob: job })}
             onContextMenu={onContextMenu}
         >
             {/* Stacked card effect - show up to 3 layers */}

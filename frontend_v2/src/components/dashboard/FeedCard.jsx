@@ -304,7 +304,7 @@ const FeedCard = memo(function FeedCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onSelect();
+                onSelect(item.name);
               }}
               className={`p-2 rounded-lg ${selected ? "bg-blue-500 text-white" : "bg-gray-700 text-gray-400"}`}
               aria-label={selected ? "Deselect item" : "Select item"}
@@ -335,7 +335,7 @@ const FeedCard = memo(function FeedCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete();
+                  onDelete(item.name);
                 }}
                 className="p-2 hover:bg-red-900/50 rounded-lg text-gray-400 hover:text-red-400"
                 title="Delete"
@@ -446,16 +446,16 @@ const FeedCard = memo(function FeedCard({
             link.download = item.name;
             link.click();
           },
-          onViewParams: onClick,
+          onViewParams: () => onClick(item),
           onRemix: handleRemix,
-          onDelete: onDelete,
+          onDelete: () => onDelete(item.name),
         })}
       >
         <div
           className="relative group cursor-pointer bg-black/50"
           onClick={() => {
-            if (selectionMode) onSelect();
-            else onClick();
+            if (selectionMode) onSelect(item.name);
+            else onClick(item);
           }}
         >
           <ProgressiveImage
