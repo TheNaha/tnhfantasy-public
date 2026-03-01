@@ -25,6 +25,11 @@ class TestStatisticsEndpoints:
 
     def test_get_statistics_empty_output(self, client):
         """Statistics returns zeros when no output images exist."""
+        from api.routes.statistics import gallery_indexer
+        gallery_indexer.files.clear()
+        gallery_indexer.filename_index.clear()
+        pass # no sort_index
+
         response = client.get("/api/statistics")
         data = response.json()
         assert data["total_images"] == 0
