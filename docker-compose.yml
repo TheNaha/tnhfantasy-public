@@ -25,6 +25,7 @@ services:
       - label=disable
     networks:
       - comfy-network
+      - metrics
     restart: unless-stopped
 
   frontend_v2:
@@ -49,3 +50,5 @@ networks:
   comfy-network:
     name: comfy-network # Explicit name prevents docker-compose project prefix
     driver: bridge
+  metrics:
+    external: true
