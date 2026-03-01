@@ -116,7 +116,7 @@ async def save_generated_image(request: SaveImageRequest):
     )
     
     try:
-        from api.routes.statistics import gallery_indexer
+        from services.gallery_indexer import gallery_indexer
         gallery_indexer.add_file(result['path'])
     except Exception as e:
         logger.error(f"Error updating gallery indexer: {e}")
