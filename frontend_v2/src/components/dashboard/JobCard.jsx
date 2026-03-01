@@ -41,7 +41,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
 
     return (
         <div
-            onClick={onClick}
+            onClick={() => onClick(job)}
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated"
         >
             {/* Top Row: Provider + Status */}

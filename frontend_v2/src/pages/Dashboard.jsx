@@ -88,6 +88,11 @@ export default function Dashboard() {
         if (jobId) setSelectedJobId(jobId);
     }, []);
 
+    // Stable handler for image click
+    const handleImageClick = useCallback((image) => {
+        setSelectedImage(image);
+    }, []);
+
     // Local State
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
     const [selectedImage, setSelectedImage] = useState(null);
@@ -895,7 +900,7 @@ export default function Dashboard() {
                     viewMode === 'timeline' ? (
                         <TimelineView
                             items={displayedItems}
-                            onImageClick={setSelectedImage}
+                            onImageClick={handleImageClick}
                             onJobClick={handleJobClick}
                             selectionMode={selectionMode}
                             selectedFiles={selectedFiles}
@@ -930,7 +935,7 @@ export default function Dashboard() {
                                                 key={item.id || item.name}
                                             >
                                                 {item.type === 'job' ? (
-                                                    <JobCard job={item} onClick={() => setSelectedJobId(item.id)} />
+                                                    <JobCard job={item} onClick={handleJobClick} />
                                                 ) : item.type === 'imageGroup' ? (
                                                     <ImageGroup
                                                         images={item.images}
@@ -941,14 +946,14 @@ export default function Dashboard() {
                                                             // Toggle all images in group
                                                             item.images.forEach(img => toggleSelection(img.name));
                                                         }}
-                                                        onClick={(img) => setSelectedImage({ ...img, siblingImages: item.images, associatedJob: item.job })}
+                                                        onClick={handleImageClick}
                                                     />
                                                 ) : (
                                                     <div
                                                         className={`group relative aspect-square bg-gray-800 rounded-xl overflow-hidden border transition-all ${selectedFiles.has(item.name) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-800 hover:border-gray-600'}`}
                                                         onClick={() => {
                                                             if (selectionMode) toggleSelection(item.name);
-                                                            else setSelectedImage(item);
+                                                            else handleImageClick(item);
                                                         }}
                                                         role="img"
                                                         aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
@@ -1014,12 +1019,12 @@ export default function Dashboard() {
                                         <div className="space-y-2">
                                             {groupItems.map((item) => (
                                                 item.type === 'job' ? (
-                                                    <JobCard key={item.id} job={item} onClick={() => setSelectedJobId(item.id)} />
+                                                    <JobCard key={item.id} job={item} onClick={handleJobClick} />
                                                 ) : item.type === 'imageGroup' ? (
                                                     <div
                                                         key={item.id}
                                                         className={`flex items-center gap-4 bg-gray-800/50 p-3 rounded-lg border transition-colors cursor-pointer ${item.images.some(img => selectedFiles.has(img.name)) ? 'border-blue-500 bg-blue-900/10' : 'border-gray-700 hover:bg-gray-800'}`}
-                                                        onClick={() => setSelectedImage({ ...item.images[0], siblingImages: item.images, associatedJob: item.job })}
+                                                        onClick={() => handleImageClick({ ...item.images[0], siblingImages: item.images, associatedJob: item.job })}
                                                     >
                                                         {selectionMode && (
                                                             <div
@@ -1079,7 +1084,7 @@ export default function Dashboard() {
                                                         className={`flex items-center gap-4 bg-gray-800/50 p-3 rounded-lg border transition-colors cursor-pointer ${selectedFiles.has(item.name) ? 'border-blue-500 bg-blue-900/10' : 'border-gray-700 hover:bg-gray-800'}`}
                                                         onClick={() => {
                                                             if (selectionMode) toggleSelection(item.name);
-                                                            else setSelectedImage(item);
+                                                            else handleImageClick(item);
                                                         }}
                                                     >
                                                         {selectionMode && (
@@ -1087,7 +1092,7 @@ export default function Dashboard() {
                                                                 {selectedFiles.has(item.name) && <Check size={12} />}
                                                             </div>
                                                         )}
-                                                        <div onClick={() => setSelectedImage(item)} className="flex-shrink-0 w-32 bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all">
+                                                        <div onClick={() => handleImageClick(item)} className="flex-shrink-0 w-32 bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all">
                                                             <ProgressiveImage
                                                                 blurhash={item.blurhash}
                                                                 src={`/api/view/output/${item.name}`}
@@ -1120,7 +1125,7 @@ export default function Dashboard() {
                                         <div className="space-y-8 max-w-3xl mx-auto">
                                             {groupItems.map((item) => (
                                                 item.type === 'job' ? (
-                                                    <JobCard key={item.id} job={item} onClick={() => setSelectedJobId(item.id)} />
+                                                    <JobCard key={item.id} job={item} onClick={handleJobClick} />
                                                 ) : item.type === 'imageGroup' ? (
                                                     <div key={item.id} className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
                                                         <div className="flex items-center gap-2 mb-3">
@@ -1132,7 +1137,7 @@ export default function Dashboard() {
                                                                 <div
                                                                     key={img.name}
                                                                     className="aspect-square bg-gray-700 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all"
-                                                                    onClick={() => setSelectedImage({ ...img, siblingImages: item.images, associatedJob: item.job })}
+                                                                    onClick={() => handleImageClick({ ...img, siblingImages: item.images, associatedJob: item.job })}
                                                                 >
                                                                     <ProgressiveImage
                                                                         blurhash={img.blurhash}
@@ -1151,10 +1156,10 @@ export default function Dashboard() {
                                                         key={item.name}
                                                         item={item}
                                                         selected={selectedFiles.has(item.name)}
-                                                        onSelect={() => toggleSelection(item.name)}
-                                                        onClick={() => setSelectedImage(item)}
+                                                        onSelect={toggleSelection}
+                                                        onClick={handleImageClick}
                                                         selectionMode={selectionMode}
-                                                        onDelete={() => handleDelete(item.name)}
+                                                        onDelete={handleDelete}
                                                     />
                                                 )
                                             ))}
