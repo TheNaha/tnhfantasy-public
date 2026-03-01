@@ -20,3 +20,15 @@ def test_get_safe_path_absolute():
     # The lstrip prevents it from being absolute and puts it in base_dir
     result = get_safe_path(base_dir, path)
     assert result == "/mnt/data/etc/passwd"
+
+def test_get_safe_path_empty():
+    base_dir = "/mnt/data"
+
+    with pytest.raises(ValueError, match="Invalid path: path cannot be empty"):
+        get_safe_path(base_dir, "")
+
+    with pytest.raises(ValueError, match="Invalid path: path cannot be empty"):
+        get_safe_path(base_dir, "/")
+
+    with pytest.raises(ValueError, match="Invalid path: path cannot be empty"):
+        get_safe_path(base_dir, "\\")
