@@ -14,11 +14,11 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     Raises:
         ValueError if path traversal is detected.
     """
-    if not requested_path:
-        raise ValueError("Invalid path: path cannot be empty")
-
     # Remove leading slashes to prevent absolute path interpretation
     clean_path = requested_path.lstrip("/\\")
+
+    if not clean_path:
+        raise ValueError("Invalid path: path cannot be empty")
 
     # Resolve full path
     full_path = os.path.abspath(os.path.join(base_dir, clean_path))
