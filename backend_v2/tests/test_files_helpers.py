@@ -28,8 +28,17 @@ class TestGetSafePath:
 
     def test_empty_path(self, tmp_path):
         from api.routes.files import get_safe_path
-        result = get_safe_path(str(tmp_path), "")
-        assert result == str(tmp_path)
+        with pytest.raises(HTTPException) as exc_info:
+            get_safe_path(str(tmp_path), "")
+        assert exc_info.value.status_code == 400
+
+        with pytest.raises(HTTPException) as exc_info_slash:
+            get_safe_path(str(tmp_path), "/")
+        assert exc_info_slash.value.status_code == 400
+
+        with pytest.raises(HTTPException) as exc_info_backslash:
+            get_safe_path(str(tmp_path), "\\")
+        assert exc_info_backslash.value.status_code == 400
 
     def test_same_dir(self, tmp_path):
         from api.routes.files import get_safe_path

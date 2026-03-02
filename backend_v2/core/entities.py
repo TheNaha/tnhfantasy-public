@@ -14,6 +14,7 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    POST_PROCESSING = "post-processing"
     FAILED = "failed"
     CANCELLED = "cancelled"  # User-initiated cancellation
 

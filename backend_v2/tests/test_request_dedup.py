@@ -22,10 +22,37 @@ def test_make_key_distinctness():
     assert key1 != key2
 
 def test_make_key_types():
-    """Test that make_key handles various types."""
+    """Test that make_key handles various types correctly."""
     key = make_key(1, "string", [1, 2], {"key": "value"})
     assert isinstance(key, str)
-    assert len(key) == 16
+    assert key == "1:string:[1, 2]:{'key': 'value'}"
+
+def test_make_key_empty_args():
+    """Test that make_key handles empty arguments."""
+    key = make_key()
+    assert key == ""
+
+def test_make_key_falsy_values():
+    """Test that make_key filters out falsy values like None, empty string, 0."""
+    key = make_key("a", None, "", 0, False, "b")
+    assert key == "a:b"
+
+def test_make_key_ordering():
+    """Test that argument order matters."""
+    key1 = make_key("a", "b")
+    key2 = make_key("b", "a")
+    assert key1 == "a:b"
+    assert key2 == "b:a"
+    assert key1 != key2
+
+def test_make_key_similar_types():
+    """Test that different types with similar string representations generate same keys."""
+    # Since str(1) == "1", they will produce the same key if used directly.
+    # The current implementation joins string representations, so 1 and "1" produce the same result.
+    key1 = make_key(1)
+    key2 = make_key("1")
+    assert key1 == key2
+    assert key1 == "1"
 
 @pytest.mark.asyncio
 async def test_deduplicated_basic():
@@ -219,3 +246,19 @@ async def test_deduplicated_concurrent_failure():
     # Verify cleanup
     stats = get_dedup_stats()
     assert stats["in_flight_count"] == 0
+
+def test_get_dedup_stats_structure():
+    """Test the structure and default values of get_dedup_stats."""
+    clear_dedup_cache()
+    stats = get_dedup_stats()
+
+    assert isinstance(stats, dict)
+    assert "cache_size" in stats
+    assert "cache_maxsize" in stats
+    assert "cache_ttl" in stats
+    assert "in_flight_count" in stats
+
+    assert stats["cache_size"] == 0
+    assert stats["in_flight_count"] == 0
+    assert stats["cache_maxsize"] == 100
+    assert stats["cache_ttl"] == 1.0

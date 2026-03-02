@@ -7,7 +7,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
-    const isProcessing = job.status === 'processing' || job.status === 'executing' || job.status === 'progress' || job.status === 'running' || job.status === 'queued';
+    const isProcessing = job.status === 'processing' || job.status === 'executing' || job.status === 'progress' || job.status === 'running' || job.status === 'queued' || job.status === 'post-processing';
     const isPending = job.status === 'pending' || job.status === 'queued';
 
     // Extract metadata
@@ -41,7 +41,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
 
     return (
         <div
-            onClick={onClick}
+            onClick={() => onClick(job)}
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated"
         >
             {/* Top Row: Provider + Status */}
@@ -97,7 +97,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
 
                         {/* Progress Message */}
                         <p className="text-sm font-medium text-white truncate w-full mb-2">
-                            {job.message || "Processing..."}
+                            {job.status === 'post-processing' ? 'Post-Processing...' : (job.message || 'Processing...')}
                         </p>
 
                         {/* Overall Progress */}
