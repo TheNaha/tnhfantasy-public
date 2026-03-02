@@ -290,44 +290,52 @@ class TestModelsV1Extended:
         assert response.status_code == 200
         assert response.json()["updated"] == 1
 
-    @patch("requests.get")
-    def test_parse_model_url_civitai(self, mock_get, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_parse_model_url_civitai(self, mock_get_client, models_v1_client):
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"id": 123}
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_get_client.return_value = mock_client
 
         response = models_v1_client.post("/api/models/parse", json={"url": "https://civitai.com/models/123/name"})
         assert response.status_code == 200
         assert response.json()["id"] == 123
 
-    @patch("requests.get")
-    def test_parse_model_url_huggingface(self, mock_get, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_parse_model_url_huggingface(self, mock_get_client, models_v1_client):
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"id": "user/repo", "author": "user"}
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_get_client.return_value = mock_client
 
         response = models_v1_client.post("/api/models/parse", json={"url": "https://huggingface.co/user/repo"})
         assert response.status_code == 200
         assert response.json()["name"] == "repo"
 
-    @patch("requests.get")
-    def test_search_civitai(self, mock_get, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_search_civitai(self, mock_get_client, models_v1_client):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"items": []}
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_get_client.return_value = mock_client
 
         response = models_v1_client.get("/api/models/search/civitai?query=test")
         assert response.status_code == 200
 
-    @patch("requests.get")
-    def test_search_huggingface(self, mock_get, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_search_huggingface(self, mock_get_client, models_v1_client):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [{"id": "user/repo"}]
-        mock_get.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_get_client.return_value = mock_client
 
         response = models_v1_client.get("/api/models/search/huggingface?query=test")
         assert response.status_code == 200
@@ -335,8 +343,8 @@ class TestModelsV1Extended:
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     @patch("os.path.exists")
-    @patch("requests.get")
-    def test_get_model_preview_image(self, mock_get, mock_exists, mock_open_file, mock_makedirs, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_get_model_preview_image(self, mock_get_client, mock_exists, mock_open_file, mock_makedirs, models_v1_client):
         # Case 1: Cached
         mock_exists.return_value = True
         mock_open_file.return_value.__enter__.return_value.read.return_value = b"image"
@@ -347,8 +355,8 @@ class TestModelsV1Extended:
 
     @patch("builtins.open", new_callable=mock_open)
     @patch("os.path.exists")
-    @patch("requests.get")
-    def test_get_model_preview_image_fetch(self, mock_get, mock_exists, mock_open_file, models_v1_client):
+    @patch("api.routes.models.get_http_client")
+    def test_get_model_preview_image_fetch(self, mock_get_client, mock_exists, mock_open_file, models_v1_client):
         # Case 2: Fetch
         mock_exists.return_value = False
 
@@ -368,7 +376,9 @@ class TestModelsV1Extended:
         mock_img_resp.headers = {"Content-Type": "image/jpeg"}
         mock_img_resp.raise_for_status.return_value = None
 
-        mock_get.side_effect = [mock_api_resp, mock_img_resp]
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=[mock_api_resp, mock_img_resp])
+        mock_get_client.return_value = mock_client
 
         with patch("os.makedirs"):
             response = models_v1_client.get("/api/models/preview-image?model_id=123")
