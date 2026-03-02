@@ -832,7 +832,9 @@ export default function SimpleGenerator() {
                                                         min="-2"
                                                         max="2"
                                                         step="0.1"
-                                                        className="flex-1 min-w-0 h-1.5 accent-blue-500"
+                                                        className="flex-1 min-w-0 h-1.5 accent-blue-500 touch-none"
+                                                        onTouchStart={(e) => e.stopPropagation()}
+                                                        onTouchMove={(e) => e.stopPropagation()}
                                                         value={Math.max(-2, Math.min(2, lora.strength))}
                                                         onChange={(e) => handleLoraChange(idx, 'strength', parseFloat(e.target.value))}
                                                     />

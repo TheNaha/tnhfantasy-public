@@ -41,9 +41,12 @@ export function usePullToRefresh({
     const handleTouchStart = useCallback((e) => {
         if (disabled || isRefreshing) return;
         
+        const target = e.target;
+        if (target && ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName?.toUpperCase())) return;
+
         // Only enable pull-to-refresh when scrolled to top
         // Prioritize window scroll as it's the most common scroll container for full-page views
-        const scrollTop = window.scrollY > 0 ? window.scrollY : (containerRef.current?.scrollTop ?? 0);
+        const scrollTop = window.scrollY > 0 ? window.scrollY : (document.documentElement.scrollTop > 0 ? document.documentElement.scrollTop : (containerRef.current?.scrollTop ?? 0));
         
         // Strict top check with small buffer
         if (scrollTop > 0) return;
