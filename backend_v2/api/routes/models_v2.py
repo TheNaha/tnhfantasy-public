@@ -719,6 +719,7 @@ import os
 import re
 import requests
 from fastapi import Response
+from infrastructure.http_client import get_http_client
 
 
 class ParseUrlRequest(BaseModel):
@@ -833,8 +834,9 @@ async def search_civitai(query: str, limit: int = 20):
 async def search_huggingface(query: str, limit: int = 20):
     """Search models on HuggingFace."""
     try:
+        client = get_http_client()
         url = f"https://huggingface.co/api/models?search={query}&limit={limit}&filter=diffusers"
-        response = requests.get(url, timeout=10)
+        response = await client.get(url, timeout=10.0)
         if response.status_code == 200:
             hf_models = response.json()
             
