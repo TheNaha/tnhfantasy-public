@@ -111,7 +111,7 @@ export default function Layout({ children }) {
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-w-0 lg:overflow-hidden pt-16 lg:pt-0">
-                <main className="flex-1 lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8">
+                <main id="main-scroll-container" className="flex-1 lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8">
                     {children}
                 </main>
             </div>

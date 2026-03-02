@@ -912,7 +912,7 @@ export default function Dashboard() {
                         <div className="space-y-8">
                             {viewMode === 'grid' ? (
                                 <VirtuosoGrid
-                                    useWindowScroll
+                                    {...(scrollParent ? { customScrollParent: scrollParent } : { useWindowScroll: true })}
                                     data={flattenedGridItems}
                                     context={{ gridCols }}
                                     components={{ List: GridList, Item: GridItem }}
