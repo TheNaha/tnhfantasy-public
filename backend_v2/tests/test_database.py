@@ -17,7 +17,8 @@ class TestGetDatabaseUrl:
 
     def test_sqlite_url_creates_directory(self, tmp_path):
         """Test that SQLite URL creation creates the directory."""
-        db_path = str(tmp_path / "testdata" / "test.db")
+        db_dir = tmp_path / "testdata"
+        db_path = str(db_dir / "test.db")
         mock_settings = MagicMock()
         mock_settings.database_url = f"sqlite:///{db_path}"
 
@@ -25,11 +26,67 @@ class TestGetDatabaseUrl:
             url = db_module.get_database_url()
 
         # The directory should have been created
-        assert os.path.exists(str(tmp_path / "testdata"))
+        assert db_dir.exists()
+        assert url == mock_settings.database_url
 
     def test_returns_url_string(self):
         url = db_module.get_database_url()
         assert isinstance(url, str)
+
+    def test_database_url_from_env(self):
+        """Test that get_database_url picks up the URL from environment via settings."""
+        custom_url = "sqlite:///from_env/test.db"
+        with patch.dict(os.environ, {"COMFY_DATABASE_URL": custom_url}):
+            # Import Settings here to get a fresh instance with the new env var
+            from config import Settings
+            fresh_settings = Settings()
+            assert fresh_settings.database_url == custom_url
+
+            with patch.object(db_module, "settings", fresh_settings):
+                with patch("os.makedirs") as mock_makedirs:
+                    url = db_module.get_database_url()
+                    assert url == custom_url
+                    # Should attempt to create 'from_env'
+                    mock_makedirs.assert_called_once_with("from_env", exist_ok=True)
+
+    def test_sqlite_url_with_dot_slash_prefix(self):
+        """Test that SQLite URL with ./ prefix is handled correctly."""
+        db_path = "./testdata_relative/test.db"
+        mock_settings = MagicMock()
+        mock_settings.database_url = f"sqlite:///{db_path}"
+
+        with patch.object(db_module, "settings", mock_settings):
+            with patch("os.makedirs") as mock_makedirs:
+                url = db_module.get_database_url()
+
+                # Should have stripped ./ and called makedirs with testdata_relative
+                mock_makedirs.assert_called_once_with("testdata_relative", exist_ok=True)
+
+        assert url == mock_settings.database_url
+
+    def test_sqlite_url_no_directory(self):
+        """Test SQLite URL without directory components."""
+        mock_settings = MagicMock()
+        mock_settings.database_url = "sqlite:///test.db"
+
+        with patch.object(db_module, "settings", mock_settings):
+            with patch("os.makedirs") as mock_makedirs:
+                url = db_module.get_database_url()
+                mock_makedirs.assert_not_called()
+
+        assert url == "sqlite:///test.db"
+
+    def test_non_sqlite_url(self):
+        """Test that non-SQLite URLs are returned as-is and don't trigger directory creation."""
+        mock_settings = MagicMock()
+        mock_settings.database_url = "postgresql://user:pass@localhost/db"
+
+        with patch.object(db_module, "settings", mock_settings):
+            with patch("os.makedirs") as mock_makedirs:
+                url = db_module.get_database_url()
+                mock_makedirs.assert_not_called()
+
+        assert url == "postgresql://user:pass@localhost/db"
 
 
 class TestGetSession:
@@ -54,6 +111,19 @@ class TestGetSession:
         except StopIteration:
             pass
 
+    def test_get_session_sync(self):
+        """Test that get_session_sync returns a session."""
+        session = db_module.get_session_sync()
+        assert isinstance(session, Session)
+        session.close()
+
+    @pytest.mark.asyncio
+    async def test_get_session_context(self):
+        """Test that get_session_context yields a session and closes it."""
+        async with db_module.get_session_context() as session:
+            assert isinstance(session, Session)
+            # Session should be active
+            assert session.is_active
     def test_session_closes_on_exhaustion(self):
         """Test that get_session context manager closes the session properly."""
         with patch('infrastructure.database.Session') as MockSession:
@@ -97,3 +167,9 @@ class TestEngine:
         """Test that we can create a connection."""
         with db_module.engine.connect() as conn:
             assert conn is not None
+
+    def test_create_test_engine(self):
+        """Test that create_test_engine creates an in-memory engine."""
+        engine = db_module.create_test_engine()
+        assert str(engine.url) == "sqlite://"
+        assert isinstance(engine.pool, StaticPool)
