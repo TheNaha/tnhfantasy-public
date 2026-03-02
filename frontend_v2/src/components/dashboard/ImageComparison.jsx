@@ -29,18 +29,22 @@ export const ImageComparison = ({ images, onClose }) => {
                             <button
                                 onClick={() => setMode('slider')}
                                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'slider' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                aria-label="Slider comparison view"
+                                aria-pressed={mode === 'slider'}
                             >
                                 Slider
                             </button>
                             <button
                                 onClick={() => setMode('grid')}
                                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${mode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                aria-label="Side-by-side comparison view"
+                                aria-pressed={mode === 'grid'}
                             >
                                 Side-by-Side
                             </button>
                         </div>
                     )}
-                    <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white">
+                    <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white" aria-label="Close image comparison">
                         <X size={24} />
                     </button>
                 </div>
