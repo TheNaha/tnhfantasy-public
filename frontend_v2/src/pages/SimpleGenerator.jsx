@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Wand2, Save, Image as ImageIcon, Settings2, Play, Plus, Trash2, Upload, X, RefreshCw, ArrowRight, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
+import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { filesApi, generateApi, api } from '../api';
+import { filesApi, api } from '../api';
 import { useWebSocket, EventTypes } from '../api/websocket';
 
 export default function SimpleGenerator() {
@@ -105,11 +105,11 @@ export default function SimpleGenerator() {
         hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
         adetailer, adetailerModel, adetailerPrompt, adetailerNegative, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
         setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
-        setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2, setSelectedLoras, setControlnets,
+        setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
         setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
-        setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerNegative, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
+        setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
         randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords, applySDXLSettings,
-        setAll, aspectRatioLocked
+        aspectRatioLocked
     } = useGeneratorStore();
 
     const { connect, disconnect } = useJobStore();
@@ -764,10 +764,19 @@ export default function SimpleGenerator() {
 
                             <div className="space-y-2">
                                 {selectedLoras.map((lora, idx) => {
-                                    // Filter trigger words - only show ones not already in prompt
-                                    const unusedTriggers = lora.trained_words?.filter(
-                                        word => !prompt.toLowerCase().includes(word.toLowerCase())
-                                    ) || [];
+                                    // Get all trigger word groups that have at least one unused tag
+                                    const activeTriggerGroups = (lora.trained_words || []).map(group => {
+                                        const individualTags = group.split(',').map(t => t.trim()).filter(Boolean);
+                                        const promptLower = (prompt || '').toLowerCase();
+                                        const unusedTags = individualTags.filter(tag => !promptLower.includes(tag.toLowerCase()));
+
+                                        return {
+                                            fullGroup: group,
+                                            individualTags,
+                                            unusedTags,
+                                            previewText: group.length > 25 ? group.slice(0, 25) + '…' : group
+                                        };
+                                    }).filter(g => g.unusedTags.length > 0);
                                     
                                     return (
                                         <div key={idx} className="bg-gray-900/30 rounded-lg border border-gray-700/50 overflow-hidden flex">
@@ -848,21 +857,11 @@ export default function SimpleGenerator() {
                                                 </div>
                                                 
                                                 {/* Expandable Trigger Word Groups */}
-                                                {unusedTriggers.length > 0 && (
+                                                {activeTriggerGroups.length > 0 && (
                                                     <div className="space-y-1 pt-1 border-t border-gray-700/50">
-                                                        {unusedTriggers.map((triggerGroup, groupIdx) => {
+                                                        {activeTriggerGroups.map((group, groupIdx) => {
                                                             const groupKey = `${idx}-${groupIdx}`;
                                                             const isExpanded = expandedTriggerGroups[groupKey];
-                                                            const individualTags = triggerGroup.split(',').map(t => t.trim()).filter(t => t);
-                                                            const previewText = triggerGroup.length > 25 ? triggerGroup.slice(0, 25) + '…' : triggerGroup;
-                                                            
-                                                            // Filter out tags already in prompt
-                                                            const promptLower = (prompt || '').toLowerCase();
-                                                            const unusedTags = individualTags.filter(
-                                                                tag => !promptLower.includes(tag.toLowerCase())
-                                                            );
-                                                            
-                                                            if (unusedTags.length === 0) return null;
                                                             
                                                             return (
                                                                 <div key={groupIdx} className="space-y-1">
@@ -878,8 +877,8 @@ export default function SimpleGenerator() {
                                                                             size={10} 
                                                                             className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                                                                         />
-                                                                        <span className="truncate">{previewText}</span>
-                                                                        <span className="text-gray-600 flex-shrink-0">({individualTags.length})</span>
+                                                                        <span className="truncate">{group.previewText}</span>
+                                                                        <span className="text-gray-600 flex-shrink-0">({group.individualTags.length})</span>
                                                                     </button>
                                                                     
                                                                     {/* Expanded: Show individual tags */}
@@ -887,13 +886,13 @@ export default function SimpleGenerator() {
                                                                         <div className="flex flex-wrap gap-1 pl-2">
                                                                             {/* Add All button */}
                                                                             <button
-                                                                                onClick={() => handleAddTriggerWordsUI([triggerGroup])}
+                                                                                onClick={() => handleAddTriggerWordsUI([group.fullGroup])}
                                                                                 className="text-[9px] bg-green-900/30 text-green-300 px-1.5 py-0.5 rounded hover:bg-green-900/50 transition-colors"
                                                                             >
                                                                                 + All
                                                                             </button>
                                                                             {/* Individual tags */}
-                                                                            {unusedTags.map((tag, tagIdx) => (
+                                                                            {group.unusedTags.map((tag, tagIdx) => (
                                                                                 <button
                                                                                     key={tagIdx}
                                                                                     onClick={() => setPrompt(prompt ? `${prompt}, ${tag}` : tag)}
