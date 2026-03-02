@@ -338,8 +338,8 @@ def _migrate_models_to_v2() -> None:
                         conn.execute(text("""
                             INSERT INTO model_tags (model_id, tag) VALUES (:model_id, :tag)
                         """), {"model_id": model_v2_id, "tag": tag})
-                    except Exception:
-                        pass  # Ignore duplicate tags
+                    except Exception as e:
+                        logger.debug("migration_v2_tag_skip", model_id=model_v2_id, tag=tag, detail=str(e))
                 
                 # Get versions - take first (latest) as the selected one
                 versions = metadata.get("modelVersions", [])
