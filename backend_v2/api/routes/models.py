@@ -6,6 +6,8 @@
 #
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
+from infrastructure.http_client import get_http_client
+
 from sqlmodel import Session
 from pydantic import BaseModel
 
@@ -490,6 +492,7 @@ import os
 import requests
 from fastapi import Response
 
+
 # Cache directory for preview images
 PREVIEW_CACHE_DIR = os.path.join(os.path.dirname(__file__), "../../cache/previews")
 
@@ -592,7 +595,7 @@ async def search_civitai(query: str, limit: int = 20):
     """Search models on CivitAI."""
     try:
         url = f"https://civitai.com/api/v1/models?query={query}&limit={limit}"
-        response = requests.get(url, timeout=10)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
@@ -606,7 +609,7 @@ async def search_huggingface(query: str, limit: int = 20):
     """Search models on HuggingFace."""
     try:
         url = f"https://huggingface.co/api/models?search={query}&limit={limit}&filter=diffusers"
-        response = requests.get(url, timeout=10)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             hf_models = response.json()
             
