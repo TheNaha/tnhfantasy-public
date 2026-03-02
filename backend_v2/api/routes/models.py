@@ -417,7 +417,7 @@ async def parse_model_url(request: ParseUrlRequest):
         
         try:
             api_url = f"https://civitai.com/api/v1/models/{model_id}"
-            response = requests.get(api_url, timeout=15)
+            response = await get_http_client().get(api_url, timeout=15)
             response.raise_for_status()
             model_data = response.json()
             
@@ -440,7 +440,7 @@ async def parse_model_url(request: ParseUrlRequest):
         
         try:
             api_url = f"https://huggingface.co/api/models/{model_path}"
-            response = requests.get(api_url, timeout=15)
+            response = await get_http_client().get(api_url, timeout=15)
             response.raise_for_status()
             hf_data = response.json()
             
@@ -487,7 +487,7 @@ async def parse_model_url(request: ParseUrlRequest):
 # ============================================================================
 
 import os
-import requests
+from infrastructure.http_client import get_http_client
 from fastapi import Response
 
 # Cache directory for preview images
@@ -502,7 +502,7 @@ def get_cache_path(model_id: int, version_id: int = None) -> str:
     return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}.jpg")
 
 
-def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
+async def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
     """Fetch preview image from CivitAI API and cache it."""
     cache_path = get_cache_path(model_id, version_id)
     
@@ -514,7 +514,7 @@ def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
     # Fetch from CivitAI API
     try:
         api_url = f"https://civitai.com/api/v1/models/{model_id}"
-        response = requests.get(api_url, timeout=10)
+        response = await get_http_client().get(api_url, timeout=10)
         response.raise_for_status()
         model_data = response.json()
         
@@ -546,7 +546,7 @@ def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
             return None, None
         
         # Fetch the image
-        img_response = requests.get(image_url, timeout=30)
+        img_response = await get_http_client().get(image_url, timeout=30)
         img_response.raise_for_status()
         image_data = img_response.content
         content_type = img_response.headers.get('Content-Type', 'image/jpeg')
@@ -568,7 +568,7 @@ async def get_model_preview_image(model_id: int, version_id: int = None):
     Fetch and cache model preview image from CivitAI.
     Automatically filters out videos and returns the first image.
     """
-    image_data, content_type = fetch_civitai_preview(model_id, version_id)
+    image_data, content_type = await fetch_civitai_preview(model_id, version_id)
     
     if not image_data:
         raise HTTPException(status_code=404, detail="Preview image not found")
@@ -592,7 +592,7 @@ async def search_civitai(query: str, limit: int = 20):
     """Search models on CivitAI."""
     try:
         url = f"https://civitai.com/api/v1/models?query={query}&limit={limit}"
-        response = requests.get(url, timeout=10)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
@@ -606,7 +606,7 @@ async def search_huggingface(query: str, limit: int = 20):
     """Search models on HuggingFace."""
     try:
         url = f"https://huggingface.co/api/models?search={query}&limit={limit}&filter=diffusers"
-        response = requests.get(url, timeout=10)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             hf_models = response.json()
             
