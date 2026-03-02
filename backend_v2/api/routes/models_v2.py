@@ -13,6 +13,8 @@
 #   PATCH  /api/v2/models/{id}/versions/{vid}/status/{pid} – Update provider file status
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
+from infrastructure.http_client import get_http_client
+
 from sqlmodel import Session
 from pydantic import BaseModel
 
@@ -722,6 +724,7 @@ from fastapi import Response
 from infrastructure.http_client import get_http_client
 
 
+
 class ParseUrlRequest(BaseModel):
     url: str
 
@@ -821,7 +824,7 @@ async def search_civitai(query: str, limit: int = 20):
     """Search models on CivitAI."""
     try:
         url = f"https://civitai.com/api/v1/models?query={query}&limit={limit}"
-        response = requests.get(url, timeout=10)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
         else:
@@ -836,7 +839,7 @@ async def search_huggingface(query: str, limit: int = 20):
     try:
         client = get_http_client()
         url = f"https://huggingface.co/api/models?search={query}&limit={limit}&filter=diffusers"
-        response = await client.get(url, timeout=10.0)
+        response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             hf_models = response.json()
             
