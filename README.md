@@ -2,10 +2,18 @@
 
 A serverless implementation of ComfyUI designed for scalability and user-friendly Web UI interaction.
 
+## Documentation
+For comprehensive details on architecture, frontend, backend, deployment, and APIs, please refer to the [Documentation Directory](docs/README.md):
+- [Architecture Overview](docs/architecture.md)
+- [Frontend Documentation](docs/frontend.md)
+- [Backend Documentation](docs/backend.md)
+- [Deployment Guide](docs/deployment.md)
+- [API Reference](docs/api.md)
+
 ## Overview
 This project serves as a dynamic, containerized wrapper around ComfyUI that integrates provider-based serverless inferencing (Modal, Beam), a custom job queuing system, an image gallery, and a local model management system without permanently storing large checkpoints on the backend.
 
-## Architecture
+## Architecture Summary
 - **tnhcomfy-frontend** (Vite + React)
 - **tnhcomfy-backend** (FastAPI)
 - **provider-workers** (Serverless instances on Modal or Beam)
