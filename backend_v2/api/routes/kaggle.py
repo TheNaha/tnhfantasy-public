@@ -128,7 +128,8 @@ class KaggleWorker:
                 urllib.request.urlopen(f"http://127.0.0.1:{self.comfy_port}/")
                 print("[Worker] ComfyUI server ready")
                 return True
-            except:
+            except Exception as e:
+                print(f"[Worker] Error: {e}")
                 time.sleep(1)
         
         print("[Worker] ComfyUI failed to start")
@@ -157,7 +158,8 @@ class KaggleWorker:
             try:
                 await self.ws.send(json.dumps({"type": "heartbeat"}))
                 await asyncio.sleep(30)
-            except:
+            except Exception as e:
+                print(f"[Worker] Error: {e}")
                 break
     
     async def process_job(self, job_data: dict):
@@ -220,7 +222,8 @@ class KaggleWorker:
                             for img in node_output.get("images", []):
                                 images.append(img.get("filename"))
                         return images
-            except:
+            except Exception as e:
+                print(f"[Worker] Error: {e}")
                 pass
             await asyncio.sleep(1)
         
