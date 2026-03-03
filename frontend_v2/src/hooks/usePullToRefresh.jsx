@@ -46,7 +46,22 @@ export function usePullToRefresh({
 
         // Only enable pull-to-refresh when scrolled to top
         // Prioritize window scroll as it's the most common scroll container for full-page views
-        const scrollTop = window.scrollY > 0 ? window.scrollY : (document.documentElement.scrollTop > 0 ? document.documentElement.scrollTop : (containerRef.current?.scrollTop ?? 0));
+                // Find the actual scroll container dynamically
+        const getScrollTop = () => {
+            // Check if we are inside a custom main scroll container
+            const mainContainer = document.getElementById('main-scroll-container');
+            if (mainContainer) {
+                const style = window.getComputedStyle(mainContainer);
+                if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                    return mainContainer.scrollTop;
+                }
+            }
+
+            // Fallback to window/document
+            return window.scrollY || document.documentElement.scrollTop || containerRef.current?.scrollTop || 0;
+        };
+
+        const scrollTop = getScrollTop();
         
         // Strict top check with small buffer
         if (scrollTop > 0) return;
