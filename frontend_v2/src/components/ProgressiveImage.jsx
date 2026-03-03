@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, memo } from 'react';
 import { Blurhash } from 'react-blurhash';
+import { observeIntersection, unobserveIntersection } from '../utils/sharedObserver';
 
 /**
  * ProgressiveImage - Loads images progressively with BlurHash placeholder
  * 
  * Features:
  * - Instant BlurHash placeholder
- * - Lazy loading with Intersection Observer (for thumbnails)
+ * - Lazy loading with shared Intersection Observer (for thumbnails)
  * - Immediate loading for full-size images (lightbox/modal)
  * - Smooth fade-in transition
  * - Support for different sizes (medium/full)
@@ -40,23 +41,14 @@ const ProgressiveImage = memo(function ProgressiveImage({
             return;
         }
 
-        if (!containerRef.current) return;
+        const currentContainer = containerRef.current;
+        if (!currentContainer) return;
 
-        const observer = new IntersectionObserver(
-            ([entry]) => {
-                if (entry.isIntersecting) {
-                    setHasBeenInView(true);
-                    observer.disconnect();
-                }
-            },
-            {
-                rootMargin: '200px', // Start loading 200px before entering viewport
-            }
-        );
+        observeIntersection(currentContainer, () => {
+            setHasBeenInView(true);
+        });
 
-        observer.observe(containerRef.current);
-
-        return () => observer.disconnect();
+        return () => unobserveIntersection(currentContainer);
     }, [isInView]);
 
 
