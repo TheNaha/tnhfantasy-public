@@ -348,6 +348,8 @@ export default function ProviderManagement() {
                                         onClick={() => toggleProvider(provider.id, provider.enabled)}
                                         className="p-2 bg-gray-800/80 hover:bg-gray-700/90 border border-white/10 hover:border-blue-500/50 rounded-lg text-white/70 hover:text-white transition-all duration-200 hover:-translate-y-0.5"
                                         title={provider.enabled ? 'Disable' : 'Enable'}
+                                        aria-label={provider.enabled ? 'Disable provider' : 'Enable provider'}
+                                        aria-pressed={provider.enabled}
                                     >
                                         {provider.enabled ? <Power size={18} /> : <PowerOff size={18} />}
                                     </button>
@@ -355,6 +357,7 @@ export default function ProviderManagement() {
                                         onClick={() => setEditingProvider(provider)}
                                         className="p-2 bg-gray-800/80 hover:bg-gray-700/90 border border-white/10 hover:border-blue-500/50 rounded-lg text-white/70 hover:text-white transition-all duration-200 hover:-translate-y-0.5"
                                         title="Edit"
+                                        aria-label="Edit provider"
                                     >
                                         <Edit2 size={18} />
                                     </button>
@@ -362,6 +365,7 @@ export default function ProviderManagement() {
                                         onClick={() => deleteProvider(provider.id)}
                                         className="p-2 bg-gray-800/80 hover:bg-red-500/20 border border-white/10 hover:border-red-500/50 rounded-lg text-white/70 hover:text-red-400 transition-all duration-200 hover:-translate-y-0.5"
                                         title="Delete"
+                                        aria-label="Delete provider"
                                     >
                                         <Trash2 size={18} />
                                     </button>
@@ -466,6 +470,7 @@ export default function ProviderManagement() {
                                                 onClick={() => setShowLogs(provider.id)}
                                                 className="px-2 py-1.5 bg-gray-700/50 hover:bg-gray-700/70 border border-white/10 rounded text-white/70 text-xs font-medium transition-all"
                                                 title="View Logs"
+                                                aria-label="View container logs"
                                             >
                                                 <FileText size={12} />
                                             </button>
@@ -1840,11 +1845,7 @@ function LogsModal({ providerId, onClose }) {
     const [logs, setLogs] = useState('');
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        fetchLogs();
-    }, [providerId]);
-
-    const fetchLogs = async () => {
+    const fetchLogs = useCallback(async () => {
         try {
             const res = await fetch(`${getUrl()}/api/providers/${providerId}/container/logs?tail=100`);
             const data = await res.json();
@@ -1855,7 +1856,11 @@ function LogsModal({ providerId, onClose }) {
         } finally {
             setLoading(false);
         }
-    };
+    }, [providerId]);
+
+    useEffect(() => {
+        fetchLogs();
+    }, [fetchLogs]);
 
     return (
         <motion.div
