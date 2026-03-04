@@ -10,3 +10,8 @@
 2. Strip leading slashes from requested paths.
 3. Use `os.path.abspath(os.path.join(base_dir, clean_path))` to resolve the final path.
 4. Verify the resolved path remains strictly within the intended base directory using `os.path.commonpath([base_path, full_path]) == base_path`.
+
+## 2025-05-18 - [Path Traversal in Model List]
+**Vulnerability:** The API endpoint `GET /api/files?directory=models/{model_type}` passes `model_type` into `os.path.join(CACHE_DIR, "models", model_type)` without path sanitization inside `_scan_local_model_directory`. This allows an attacker to bypass the directory restrictions and list arbitrary directories on the server using `..` like `models/../../../etc`.
+**Learning:** Even if a global `get_safe_path` utility exists in the module, it must be consistently applied to all paths formed from user input, even in background threads/functions like `_scan_local_model_directory` that handle fallback/legacy functionality.
+**Prevention:** Always wrap user-provided subpaths with `get_safe_path` before checking if the path exists or using `os.listdir`, preventing attackers from "breaking out" of the intended base directory.

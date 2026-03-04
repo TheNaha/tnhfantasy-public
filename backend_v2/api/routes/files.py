@@ -64,7 +64,7 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     base_path = os.path.abspath(base_dir)
 
     # Check if the resolved path starts with the base path
-    if os.path.commonpath([base_path, full_path]) != base_path:
+    if not full_path.startswith(base_path + os.sep) and full_path != base_path:
          raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
 
     return full_path
@@ -112,7 +112,12 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
     Run in thread pool to avoid blocking event loop.
     """
     try:
-        model_cache_dir = os.path.join(CACHE_DIR, "models", model_type)
+        base_model_dir = os.path.join(CACHE_DIR, "models")
+        try:
+            model_cache_dir = get_safe_path(base_model_dir, model_type)
+        except HTTPException:
+            return {"files": [], "total": 0}
+
         if not os.path.exists(model_cache_dir):
             return {"files": [], "total": 0}
 
