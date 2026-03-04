@@ -108,6 +108,7 @@ export default function DownloadQueue() {
                                         onClick={() => handleClear(d.id)}
                                         className="text-gray-500 hover:text-white flex-shrink-0"
                                         title="Clear"
+                                        aria-label="Clear download task"
                                     >
                                         <X size={14} />
                                     </button>
@@ -120,6 +121,7 @@ export default function DownloadQueue() {
                                     <button
                                         onClick={() => handleRetry(d)}
                                         className="text-xs bg-red-900/30 hover:bg-red-900/50 text-red-300 px-2 py-1 rounded border border-red-800 transition-colors"
+                                        aria-label="Retry download"
                                     >
                                         Retry
                                     </button>

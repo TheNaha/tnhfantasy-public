@@ -158,6 +158,7 @@ export default function ModelImportCard({ model, onCancel }) {
                                 ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
                                 : 'bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white'
                             }`}
+                        aria-label={isSelectedVersionInstalled ? "Model already installed" : "Add to Library"}
                     >
                         {installing ? <Loader2 className="animate-spin" /> : isSelectedVersionInstalled ? <Check size={18} /> : <Download size={18} />}
                         {isSelectedVersionInstalled ? 'Already Installed' : 'Add to Library'}
@@ -165,6 +166,7 @@ export default function ModelImportCard({ model, onCancel }) {
                     <button
                         onClick={onCancel}
                         className="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl text-gray-300"
+                        aria-label="Cancel import"
                     >
                         Cancel
                     </button>
