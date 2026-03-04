@@ -307,6 +307,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         onClick={handleRefresh}
                         className="p-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
                         title="Refresh List"
+                        aria-label="Refresh List"
                     >
                         <RotateCw size={20} />
                     </button>
@@ -343,12 +344,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         {selectedTags.map(tag => (
                             <span key={tag} className="flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs border border-blue-500/30">
                                 {tag}
-                                <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))} className="hover:text-white">
+                                <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))} className="hover:text-white" aria-label={`Remove tag ${tag}`}>
                                     <X size={12} />
                                 </button>
                             </span>
                         ))}
-                        <button onClick={() => setSelectedTags([])} className="text-xs text-gray-500 hover:text-gray-300 underline">
+                        <button onClick={() => setSelectedTags([])} className="text-xs text-gray-500 hover:text-gray-300 underline" aria-label="Clear all tags">
                             Clear all
                         </button>
                     </div>
@@ -444,6 +445,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                                 }}
                                                 className="p-1.5 hover:bg-blue-500/20 hover:text-blue-400 rounded-full transition-colors"
                                                 title="Check & Download Dependencies (CLIP/VAE)"
+                                                aria-label="Check & Download Dependencies"
                                             >
                                                 <RotateCw size={14} />
                                             </button>
@@ -454,6 +456,8 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                             handleDelete(file);
                                         }}
                                         className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-full transition-colors"
+                                        title="Delete"
+                                        aria-label={`Delete ${file.display_name || file.name}`}
                                     >
                                         <Trash2 size={14} />
                                     </button>

@@ -98,6 +98,7 @@ export default function DiscoverTab() {
                         onClick={handleUrlImport}
                         disabled={importing || !urlInput}
                         className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 rounded-xl font-medium transition-colors flex items-center gap-2"
+                        aria-label="Import model from URL"
                     >
                         {importing ? <Loader2 className="animate-spin" /> : <Download size={18} />}
                         Import

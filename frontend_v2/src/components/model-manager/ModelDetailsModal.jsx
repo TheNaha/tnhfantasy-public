@@ -77,6 +77,8 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
                                     key={i}
                                     onClick={() => setActiveImage(img.url)}
                                     className={`aspect-square rounded-lg overflow-hidden border ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
+                                    aria-label={`View preview image ${i + 1}`}
+                                    aria-pressed={activeImage === img.url}
                                 >
                                     <img src={img.url} alt={`Preview ${i}`} className="w-full h-full object-cover" loading="lazy" />
                                 </button>
@@ -100,7 +102,7 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
                                 )}
                             </div>
                         </div>
-                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors" aria-label="Close modal">
                             <X size={24} />
                         </button>
                     </div>
