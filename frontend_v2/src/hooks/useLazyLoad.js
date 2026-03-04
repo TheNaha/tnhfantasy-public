@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { observeIntersection, unobserveIntersection } from '../utils/sharedObserver';
 
 /**
  * Custom hook for lazy loading content when it enters the viewport.
@@ -26,19 +27,12 @@ export function useLazyLoad(options = {}) {
         const element = ref.current;
         if (!element || isVisible) return;
 
-        const observer = new IntersectionObserver(
-            ([entry]) => {
-                if (entry.isIntersecting) {
-                    setIsVisible(true);
-                    observer.disconnect();
-                }
-            },
-            { rootMargin, threshold }
-        );
+        // Use the shared observer instead of creating a new one per element
+        observeIntersection(element, () => {
+            setIsVisible(true);
+        }, { rootMargin, threshold });
 
-        observer.observe(element);
-
-        return () => observer.disconnect();
+        return () => unobserveIntersection(element);
     }, [rootMargin, threshold, isVisible]);
 
     return [ref, isVisible];
