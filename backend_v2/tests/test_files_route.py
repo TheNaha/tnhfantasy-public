@@ -53,13 +53,11 @@ class TestFilesRoute:
         base = "/tmp/base"
         path = "../file.txt"
         with patch("os.path.abspath", side_effect=lambda x: x):
-            with patch("os.path.join", side_effect=lambda x, y: f"{x}/{y}"):
-                # Simulating commonpath returning something outside base
-                with patch("os.path.commonpath", return_value="/tmp"):
-                    from fastapi import HTTPException
-                    with pytest.raises(HTTPException) as exc:
-                        get_safe_path(base, path)
-                    assert exc.value.status_code == 403
+            with patch("os.path.join", side_effect=lambda x, y: "/tmp/file.txt"):
+                from fastapi import HTTPException
+                with pytest.raises(HTTPException) as exc:
+                    get_safe_path(base, path)
+                assert exc.value.status_code == 403
 
     @patch("services.gallery_indexer.gallery_indexer")
     def test_list_files_output(self, mock_indexer, client):
