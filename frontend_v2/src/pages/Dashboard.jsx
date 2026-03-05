@@ -58,7 +58,17 @@ const GridItem = React.forwardRef(({ children, ...props }, ref) => {
 });
 GridItem.displayName = 'GridItem';
 
+
+// Helper to generate a local date key
+const getLocalDateKey = (dateObj) => {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export default function Dashboard() {
+
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const settings = useSettings();
@@ -353,7 +363,7 @@ export default function Dashboard() {
     }, [allItems, showFavorites, favorites, activeCollection, collections]);
 
     // Group by Date - handle both ISO strings and UNIX timestamps
-    // Use UTC-based date keys to ensure consistent grouping regardless of timezone
+    // Use local-based date keys to ensure consistent grouping relative to user's timezone
     const grouped = useMemo(() => {
         return displayedItems.reduce((acc, item) => {
             let dateValue = item.date || item.mtime || Date.now() / 1000;
@@ -365,9 +375,9 @@ export default function Dashboard() {
             } else {
                 dateObj = new Date(dateValue * 1000); // UNIX timestamp
             }
-            // Use UTC date as key to avoid timezone-related grouping issues
+            // Use local date as key
             // Format: YYYY-MM-DD (e.g., "2024-12-09")
-            const d = dateObj.toISOString().split('T')[0];
+            const d = getLocalDateKey(dateObj);
             if (!acc[d]) acc[d] = [];
             acc[d].push(item);
             return acc;
@@ -386,19 +396,20 @@ export default function Dashboard() {
     }, [grouped]);
 
     // Helper to format date keys for display
-    const formatDateLabel = (isoDateKey) => {
-        // Parse as UTC date and display in user's locale
-        const date = new Date(isoDateKey + 'T00:00:00Z');
+    const formatDateLabel = (localDateKey) => {
+        const [year, month, day] = localDateKey.split('-');
+        const date = new Date(year, month - 1, day);
+
         const today = new Date();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
 
-        // Compare UTC dates
-        const todayKey = today.toISOString().split('T')[0];
-        const yesterdayKey = yesterday.toISOString().split('T')[0];
+        // Compare local dates
+        const todayKey = getLocalDateKey(today);
+        const yesterdayKey = getLocalDateKey(yesterday);
 
-        if (isoDateKey === todayKey) return 'Today';
-        if (isoDateKey === yesterdayKey) return 'Yesterday';
+        if (localDateKey === todayKey) return 'Today';
+        if (localDateKey === yesterdayKey) return 'Yesterday';
         return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     };
 
