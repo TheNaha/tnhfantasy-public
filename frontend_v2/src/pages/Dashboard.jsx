@@ -104,6 +104,16 @@ export default function Dashboard() {
     const [showSelectCollection, setShowSelectCollection] = useState(false);
     const [showStatsPanel, setShowStatsPanel] = useState(false);
 
+
+    // Find the scroll parent for Virtuoso
+    const [scrollParent, setScrollParent] = useState(null);
+    useEffect(() => {
+        // Find the closest scrollable container or use window
+        const container = document.getElementById('main-scroll-container');
+        if (container) {
+            setScrollParent(container);
+        }
+    }, []);
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
     const [filters, setFilters] = useState({
@@ -912,7 +922,8 @@ export default function Dashboard() {
                         <div className="space-y-8">
                             {viewMode === 'grid' ? (
                                 <VirtuosoGrid
-                                    useWindowScroll
+                                    customScrollParent={scrollParent}
+                                    useWindowScroll={!scrollParent}
                                     data={flattenedGridItems}
                                     context={{ gridCols }}
                                     components={{ List: GridList, Item: GridItem }}
