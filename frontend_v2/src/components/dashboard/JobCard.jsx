@@ -1,14 +1,27 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock } from 'lucide-react';
 
 const JobCard = memo(function JobCard({ job, onClick }) {
-    const [expanded, setExpanded] = useState(false);
+    const [currentTime, setCurrentTime] = useState(() => Date.now());
 
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
     const isProcessing = job.status === 'processing' || job.status === 'executing' || job.status === 'progress' || job.status === 'running' || job.status === 'queued' || job.status === 'post-processing';
     const isPending = job.status === 'pending' || job.status === 'queued';
+
+    useEffect(() => {
+        let interval;
+        if (isProcessing) {
+            interval = setInterval(() => {
+                setCurrentTime(Date.now());
+            }, 1000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isProcessing]);
+
 
     // Extract metadata
     const meta = job.metadata || job.metadata_ || {};
@@ -32,7 +45,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
         // Ensure UTC parsing - append 'Z' if not present for proper timezone handling
         const createdAt = job.created_at.endsWith('Z') ? job.created_at : job.created_at + 'Z';
         const start = new Date(createdAt);
-        const now = new Date();
+        const now = new Date(currentTime);
         const elapsed = Math.floor((now - start) / 1000);
         if (elapsed < 60) return `${elapsed}s`;
         if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
