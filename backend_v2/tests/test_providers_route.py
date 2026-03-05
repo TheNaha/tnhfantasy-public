@@ -130,8 +130,16 @@ class TestProvidersSaveImage:
         )
         assert response.status_code == 400
 
+    def test_save_image_rejects_bad_base64_padding(self, client):
+        response = client.post(
+            "/api/providers/save-image",
+            json={"image_base64": "Zg"}
+        )
+        assert response.status_code == 400
+
     def test_save_image_offloads_gallery_index_update(self, client):
         b64 = make_png_b64()
+        expected_image_data = base64.b64decode(b64)
         mock_service = MagicMock()
         mock_service.save_generated_image = AsyncMock(return_value={"path": "/tmp/test.png"})
         mock_gallery_indexer = MagicMock()
@@ -145,6 +153,13 @@ class TestProvidersSaveImage:
             )
 
         assert response.status_code == 200
+        mock_service.save_generated_image.assert_awaited_once_with(
+            image_data=expected_image_data,
+            metadata=None,
+            job_id=None,
+            filename=None,
+            batch_index=0
+        )
         mock_to_thread.assert_awaited_once_with(mock_gallery_indexer.add_file, "/tmp/test.png")
 
 
