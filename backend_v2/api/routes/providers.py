@@ -11,6 +11,7 @@
 #   POST   /api/providers/{id}/reconcile – Trigger model sync
 #   GET/POST /api/providers/{id}/container/* – Container lifecycle management
 from typing import Dict, Any, Optional, List
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 from pydantic import BaseModel
@@ -84,7 +85,7 @@ async def save_generated_image(request: SaveImageRequest):
     from services.image_service import get_image_service
     
     try:
-        image_data = base64.b64decode(request.image_base64)
+        image_data = base64.b64decode(request.image_base64, validate=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
     
@@ -117,7 +118,7 @@ async def save_generated_image(request: SaveImageRequest):
     
     try:
         from services.gallery_indexer import gallery_indexer
-        gallery_indexer.add_file(result['path'])
+        await asyncio.to_thread(gallery_indexer.add_file, result['path'])
     except Exception as e:
         logger.error(f"Error updating gallery indexer: {e}")
 

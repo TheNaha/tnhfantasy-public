@@ -123,6 +123,45 @@ class TestProvidersSaveImage:
         )
         assert response.status_code == 400
 
+    def test_save_image_rejects_non_base64_characters(self, client):
+        response = client.post(
+            "/api/providers/save-image",
+            json={"image_base64": "Zm9v$"}
+        )
+        assert response.status_code == 400
+
+    def test_save_image_rejects_bad_base64_padding(self, client):
+        response = client.post(
+            "/api/providers/save-image",
+            json={"image_base64": "Zg"}
+        )
+        assert response.status_code == 400
+
+    def test_save_image_offloads_gallery_index_update(self, client):
+        b64 = make_png_b64()
+        expected_image_data = base64.b64decode(b64)
+        mock_service = MagicMock()
+        mock_service.save_generated_image = AsyncMock(return_value={"path": "/tmp/test.png"})
+        mock_gallery_indexer = MagicMock()
+
+        with patch("services.image_service.get_image_service", return_value=mock_service), \
+             patch("services.gallery_indexer.gallery_indexer", mock_gallery_indexer), \
+             patch("api.routes.providers.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+            response = client.post(
+                "/api/providers/save-image",
+                json={"image_base64": b64}
+            )
+
+        assert response.status_code == 200
+        mock_service.save_generated_image.assert_awaited_once_with(
+            image_data=expected_image_data,
+            metadata=None,
+            job_id=None,
+            filename=None,
+            batch_index=0
+        )
+        mock_to_thread.assert_awaited_once_with(mock_gallery_indexer.add_file, "/tmp/test.png")
+
 
 class TestProvidersContainers:
     def test_list_containers(self, client):
