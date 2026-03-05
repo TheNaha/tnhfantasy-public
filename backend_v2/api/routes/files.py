@@ -329,7 +329,7 @@ async def view_file_endpoint(path: str):
     
     # Try local output first
     if path.startswith("output/"):
-        filename = path.replace("output/", "")
+        filename = path.replace("output/", "").lstrip("/\\")
 
         # Security check: ensure path is within OUTPUT_DIR
         local_path = get_safe_path(OUTPUT_DIR, filename)
@@ -367,19 +367,22 @@ async def view_file_endpoint(path: str):
             )
     
     # Try preview cache
-    preview_path = os.path.join(CACHE_DIR, "previews", path)
-    if os.path.exists(preview_path) and os.path.isfile(preview_path):
-        filename = os.path.basename(preview_path)
-        return FileResponse(
-            preview_path,
-            headers={
-                "Content-Disposition": f"attachment; {encode_filename_for_header(filename)}"
-            }
-        )
+    try:
+        preview_path = get_safe_path(os.path.join(CACHE_DIR, "previews"), path)
+        if os.path.exists(preview_path) and os.path.isfile(preview_path):
+            filename = os.path.basename(preview_path)
+            return FileResponse(
+                preview_path,
+                headers={
+                    "Content-Disposition": f"attachment; {encode_filename_for_header(filename)}"
+                }
+            )
+    except HTTPException:
+        pass
     
     # Try input directory for Img2Img/Inpaint source images
     if path.startswith("input/"):
-        filename = path.replace("input/", "")
+        filename = path.replace("input/", "").lstrip("/\\")
 
         # Security check: ensure path is within INPUT_DIR
         local_path = get_safe_path(INPUT_DIR, filename)
@@ -413,6 +416,9 @@ async def serve_thumbnail(size: str, filename: str):
     
     if size not in ("medium",):
         raise HTTPException(status_code=400, detail="Size must be 'medium'")
+
+    # Strip leading slashes to prevent absolute path injection via os.path.join
+    filename = filename.lstrip("/\\")
 
     # Security check: ensure filename path is safe
     get_safe_path(OUTPUT_DIR, filename)
@@ -822,6 +828,8 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
         
         success_count = 0
         for filename in req.files:
+            filename = filename.lstrip("/\\")
+
             # Handle output directory (supports hierarchical date-based folders)
             if req.directory == "output":
                 # First try direct path
@@ -973,9 +981,9 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         try:
             # Normalize path
             if path.startswith("output/"):
-                filename = path.replace("output/", "")
+                filename = path.replace("output/", "").lstrip("/\\")
             else:
-                filename = path
+                filename = path.lstrip("/\\")
             
             # Try direct path first
             try:
