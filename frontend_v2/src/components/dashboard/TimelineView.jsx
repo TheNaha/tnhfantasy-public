@@ -1,6 +1,6 @@
 import { useMemo, memo } from 'react';
 import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 
@@ -9,7 +9,7 @@ import JobCard from './JobCard';
  * Displays generation history in a chronological timeline format
  * Groups items by date with visual timeline connectors
  */
-export function TimelineView({
+export const TimelineView = memo(function TimelineView({
     items = [],
     onImageClick,
     onJobClick,
@@ -79,7 +79,7 @@ export function TimelineView({
                     const stats = getDayStats(group.items);
 
                     return (
-                        <motion.div
+                        <Motion.div
                             key={group.date}
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
@@ -120,7 +120,7 @@ export function TimelineView({
                             <div className="md:pl-20 space-y-4">
                                 <AnimatePresence mode="popLayout">
                                     {group.items.map((item, itemIndex) => (
-                                        <motion.div
+                                        <Motion.div
                                             key={item.id || item.name}
                                             layout
                                             initial={{ opacity: 0, y: 20 }}
@@ -148,17 +148,17 @@ export function TimelineView({
                                                     onToggleFavorite={onToggleFavorite}
                                                 />
                                             )}
-                                        </motion.div>
+                                        </Motion.div>
                                     ))}
                                 </AnimatePresence>
                             </div>
-                        </motion.div>
+                        </Motion.div>
                     );
                 })}
             </div>
 
             {/* End of Timeline Marker */}
-            <motion.div
+            <Motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.5 }}
@@ -169,10 +169,10 @@ export function TimelineView({
                     <Clock size={32} className="mx-auto mb-2 opacity-50" />
                     <p className="text-sm">End of timeline</p>
                 </div>
-            </motion.div>
+            </Motion.div>
         </div>
     );
-}
+});
 
 /**
  * TimelineImageCard - Individual image card for timeline view
