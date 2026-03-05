@@ -1005,6 +1005,7 @@ export default function Dashboard() {
                                                                 }}
                                                                 className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
                                                                 title={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
+                                                                aria-label={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
                                                             >
                                                                 <Star
                                                                     size={16}
@@ -1259,6 +1260,7 @@ export default function Dashboard() {
                 onClick={() => navigate('/generate')}
                 className="fixed bottom-6 right-6 z-40 md:hidden bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
                 title="Go to Generator"
+                aria-label="Go to Generator"
             >
                 <ImageIcon size={24} />
             </button>
