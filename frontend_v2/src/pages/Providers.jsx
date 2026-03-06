@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useProviders } from '../hooks/useProviders';
 import ProviderCard from '../components/providers/ProviderCard';
 import { ProviderModal } from '../components/ProviderManagement';
 import AddModelToProviderModal from '../components/providers/AddModelToProviderModal';
@@ -11,49 +10,55 @@ import ConfirmationModal from '../components/ConfirmationModal';
 import useReconciliationStore from '../store/reconciliationStore';
 import { useProviderStore } from '../store/providerStore';
 
-// API Layer
-import { providersApi } from '../api';
-
 export default function Providers() {
     const _motion = motion;
     const [showAddModal, setShowAddModal] = useState(false);
     const [showAddModelModal, setShowAddModelModal] = useState(false);
     const [reconcilingProviderId, setReconcilingProviderId] = useState(null); // Track which provider is reconciling
     const [editingProvider, setEditingProvider] = useState(null); // Track provider being edited
+    const [isRefreshing, setIsRefreshing] = useState(false);
     
     const { startReconciliation } = useReconciliationStore();
-    const { data: providersData, isLoading, refetch, isRefetching } = useProviders();
-    
-    // Use global provider store for container statuses (WebSocket updates happen globally)
+    const connectProviders = useProviderStore(state => state.connect);
+    const providers = useProviderStore(state => state.providers);
+    const isLoading = useProviderStore(state => state.isLoading);
     const containerStatuses = useProviderStore(state => state.containerStatuses);
+    const containerLoading = useProviderStore(state => state.containerLoading);
     const lbConfig = useProviderStore(state => state.lbConfig);
     const lbStats = useProviderStore(state => state.lbStats);
-    const fetchContainerStatuses = useProviderStore(state => state.fetchContainerStatuses);
-    const fetchLoadBalancerInfo = useProviderStore(state => state.fetchLoadBalancerInfo);
-    
-    const [containerLoading, setContainerLoading] = useState({});
+    const refreshProviders = useProviderStore(state => state.refreshAll);
+    const startContainer = useProviderStore(state => state.startContainer);
+    const stopContainer = useProviderStore(state => state.stopContainer);
+    const restartContainer = useProviderStore(state => state.restartContainer);
+    const deployProvider = useProviderStore(state => state.deployProvider);
+    const reconcileProvider = useProviderStore(state => state.reconcileProvider);
+    const setupProvider = useProviderStore(state => state.setupProvider);
+    const resetProviderModelStatus = useProviderStore(state => state.resetProviderModelStatus);
+    const toggleProviderEnabled = useProviderStore(state => state.toggleProviderEnabled);
+    const deleteProvider = useProviderStore(state => state.deleteProvider);
+    const updateLoadBalancerStrategy = useProviderStore(state => state.updateLoadBalancerStrategy);
+    const saveProvider = useProviderStore(state => state.saveProvider);
     const [resetConfirm, setResetConfirm] = useState({ isOpen: false, providerId: null });
 
-    const providers = providersData || [];
-
-    // Fetch load balancer info on mount (store handles WebSocket updates)
-    useEffect(() => {
-        fetchLoadBalancerInfo();
-    }, [fetchLoadBalancerInfo]);
-
-    // Fetch container statuses when providers load (store handles WebSocket updates)
-    useEffect(() => {
-        if (providers.length > 0) {
-            fetchContainerStatuses();
+    const refreshAll = useCallback(async () => {
+        setIsRefreshing(true);
+        try {
+            await refreshProviders();
+        } finally {
+            setIsRefreshing(false);
         }
-    }, [providers.length, fetchContainerStatuses]);
+    }, [refreshProviders]);
+
+    useEffect(() => {
+        connectProviders();
+    }, [connectProviders]);
 
     // Enrich providers with container status and default enabled to true
-    const enrichedProviders = providers.map(provider => ({
+    const enrichedProviders = useMemo(() => providers.map(provider => ({
         ...provider,
         container_status: containerStatuses[provider.id]?.status || 'stopped',
         enabled: provider.enabled !== undefined ? provider.enabled : true // Default to enabled if not set
-    }));
+    })), [providers, containerStatuses]);
 
     const pageVariants = {
         initial: { opacity: 0, y: 20 },
@@ -62,70 +67,52 @@ export default function Providers() {
     };
 
     const handleStart = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'starting' }));
         try {
-            await providersApi.startContainer(providerId);
-            await fetchContainerStatuses();
+            await startContainer(providerId);
         } catch (error) {
             console.error('Failed to start container:', error);
             toast.error(`Failed to start container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const handleStop = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'stopping' }));
         try {
-            await providersApi.stopContainer(providerId);
-            await fetchContainerStatuses();
+            await stopContainer(providerId);
         } catch (error) {
             console.error('Failed to stop container:', error);
             toast.error(`Failed to stop container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const handleDeploy = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'deploying' }));
         try {
-            const result = await providersApi.deploy(providerId);
+            const result = await deployProvider(providerId);
             const providerType = result.provider_type || 'Provider';
             toast.success(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} app deployed successfully!`);
-            await fetchContainerStatuses();
         } catch (error) {
             console.error('Failed to deploy app:', error);
             toast.error(`Failed to deploy: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const handleReconcile = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'reconciling' }));
         try {
-            await providersApi.reconcile(providerId);
+            await reconcileProvider(providerId);
             startReconciliation(providerId);
             setReconcilingProviderId(providerId);
         } catch (error) {
             console.error('Failed to trigger reconciliation:', error);
             toast.error(`Failed to trigger reconciliation: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: false }));
         }
     };
 
     const handleSetup = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'setting up' }));
         try {
-            const result = await providersApi.setup(providerId);
+            const result = await setupProvider(providerId);
             toast.success(`Setup complete! ${result.message}`);
         } catch (error) {
             console.error('Failed to setup provider:', error);
             toast.error(`Failed to setup provider: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: false }));
         }
     };
 
@@ -138,28 +125,21 @@ export default function Providers() {
         const providerId = resetConfirm.providerId;
         setResetConfirm({ isOpen: false, providerId: null });
 
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'resetting' }));
         try {
-            const result = await providersApi.resetModelStatus(providerId);
+            const result = await resetProviderModelStatus(providerId);
             toast.success(`Reset complete! ${result.deleted_count} entries cleared. Click Reconcile to re-download.`);
         } catch (error) {
             console.error('Failed to reset status:', error);
             toast.error(`Failed to reset: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: false }));
         }
     };
 
     const handleRestart = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'restarting' }));
         try {
-            await providersApi.restartContainer(providerId);
-            await fetchContainerStatuses();
+            await restartContainer(providerId);
         } catch (error) {
             console.error('Failed to restart container:', error);
             toast.error(`Failed to restart container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
@@ -170,9 +150,8 @@ export default function Providers() {
     const handleDelete = async (providerId) => {
         // Note: Browser confirm() is blocked, proceeding directly
         try {
-            await providersApi.delete(providerId);
-            await refetch();
-            // Could add toast.success here if toast is imported
+            await deleteProvider(providerId);
+            toast.success('Provider deleted');
         } catch (error) {
             console.error('Failed to delete provider:', error);
             toast.error(`Failed to delete provider: ${error.message}`);
@@ -181,9 +160,7 @@ export default function Providers() {
 
     const handleToggleEnabled = async (providerId, currentlyEnabled) => {
         try {
-            await providersApi.update(providerId, { enabled: !currentlyEnabled });
-            await refetch();
-            await fetchLoadBalancerInfo();
+            await toggleProviderEnabled(providerId, currentlyEnabled);
         } catch (error) {
             console.error('Failed to toggle provider:', error);
             toast.error(`Failed to toggle provider: ${error.message}`);
@@ -192,8 +169,7 @@ export default function Providers() {
 
     const handleUpdateLBStrategy = async (strategy) => {
         try {
-            await providersApi.updateLoadBalancerConfig({ ...lbConfig, strategy });
-            await fetchLoadBalancerInfo();
+            await updateLoadBalancerStrategy(strategy);
         } catch (error) {
             console.error('Failed to update load balancer:', error);
             toast.error(`Failed to update load balancer: ${error.message}`);
@@ -228,11 +204,11 @@ export default function Providers() {
                     </button>
 
                     <button
-                        onClick={() => refetch()}
-                        disabled={isRefetching}
+                        onClick={refreshAll}
+                        disabled={isRefreshing}
                         className="flex items-center gap-2 px-4 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors disabled:opacity-50"
                     >
-                        <RefreshCw size={16} className={isRefetching ? 'animate-spin' : ''} />
+                        <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
 
@@ -324,7 +300,7 @@ export default function Providers() {
                             onEdit={() => handleEdit(provider)}
                             onDelete={() => handleDelete(provider.id)}
                             onToggleEnabled={handleToggleEnabled}
-                            providerFailures={lbStats?.provider_failures?.[provider.id]}
+                            providerFailures={lbStats?.provider_stats?.find(p => p.id === provider.id)?.failures ?? 0}
                             jobsAssigned={lbStats?.provider_stats?.find(p => p.id === provider.id)?.jobs_assigned ?? 0}
                         />
                     ))}
@@ -350,11 +326,12 @@ export default function Providers() {
                         setShowAddModal(false);
                         setEditingProvider(null);
                     }}
-                    onSave={() => {
+                    onSave={async () => {
                         setShowAddModal(false);
                         setEditingProvider(null);
-                        refetch(); // Refresh after save
+                        await refreshAll();
                     }}
+                    saveProvider={saveProvider}
                 />
             )}
 
@@ -370,9 +347,9 @@ export default function Providers() {
             {reconcilingProviderId && (
                 <ReconciliationStatus
                     providerId={reconcilingProviderId}
-                    onClose={() => {
+                    onClose={async () => {
                         setReconcilingProviderId(null);
-                        refetch(); // Refresh provider data when closed
+                        await refreshAll();
                     }}
                 />
             )}

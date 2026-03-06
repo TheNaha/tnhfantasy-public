@@ -25,6 +25,9 @@ vi.mock('../api', () => ({
         stopContainer: vi.fn().mockResolvedValue({ success: true }),
         restartContainer: vi.fn().mockResolvedValue({ success: true }),
         deploy: vi.fn().mockResolvedValue({ provider_type: 'modal' }),
+        reconcile: vi.fn().mockResolvedValue({ started: true }),
+        setup: vi.fn().mockResolvedValue({ message: 'Setup complete' }),
+        resetModelStatus: vi.fn().mockResolvedValue({ deleted_count: 2 }),
         update: vi.fn().mockResolvedValue({ success: true }),
         delete: vi.fn().mockResolvedValue({ success: true }),
         updateLoadBalancerConfig: vi.fn().mockResolvedValue({ success: true }),
@@ -91,5 +94,32 @@ describe('useProviderStore', () => {
         expect(providersApi.list).toHaveBeenCalled();
         expect(providersApi.getAllContainerStatuses).toHaveBeenCalled();
         expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
+    });
+
+    it('refreshAll fetches providers, statuses, and load balancer info together', async () => {
+        await useProviderStore.getState().refreshAll();
+
+        expect(providersApi.list).toHaveBeenCalled();
+        expect(providersApi.getAllContainerStatuses).toHaveBeenCalled();
+        expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
+    });
+
+    it('reconcileProvider tracks loading state', async () => {
+        const promise = useProviderStore.getState().reconcileProvider('provider-1');
+
+        expect(useProviderStore.getState().containerLoading['provider-1']).toBe('reconciling');
+
+        await promise;
+
+        expect(providersApi.reconcile).toHaveBeenCalledWith('provider-1');
+        expect(useProviderStore.getState().containerLoading['provider-1']).toBeNull();
+    });
+
+    it('setupProvider and resetProviderModelStatus use provider APIs', async () => {
+        await useProviderStore.getState().setupProvider('provider-1');
+        await useProviderStore.getState().resetProviderModelStatus('provider-1');
+
+        expect(providersApi.setup).toHaveBeenCalledWith('provider-1');
+        expect(providersApi.resetModelStatus).toHaveBeenCalledWith('provider-1');
     });
 });

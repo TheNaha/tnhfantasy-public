@@ -128,6 +128,16 @@ export const useProviderStore = create((set, get) => ({
         }
     },
 
+    refreshAll: async () => {
+        const [providers, containerStatuses, loadBalancer] = await Promise.all([
+            get().fetchProviders(),
+            get().fetchContainerStatuses(),
+            get().fetchLoadBalancerInfo(),
+        ]);
+
+        return { providers, containerStatuses, loadBalancer };
+    },
+
     // Container actions with loading state
     setContainerLoading: (providerId, status) => {
         set(state => ({
@@ -180,6 +190,33 @@ export const useProviderStore = create((set, get) => ({
             const result = await providersApi.deploy(providerId);
             await get().fetchContainerStatuses();
             return result;
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    reconcileProvider: async (providerId) => {
+        get().setContainerLoading(providerId, 'reconciling');
+        try {
+            return await providersApi.reconcile(providerId);
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    setupProvider: async (providerId) => {
+        get().setContainerLoading(providerId, 'setting up');
+        try {
+            return await providersApi.setup(providerId);
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    resetProviderModelStatus: async (providerId) => {
+        get().setContainerLoading(providerId, 'resetting');
+        try {
+            return await providersApi.resetModelStatus(providerId);
         } finally {
             get().clearContainerLoading(providerId);
         }
