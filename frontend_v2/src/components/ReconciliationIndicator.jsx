@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import { useState } from 'react';
+import { Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import useReconciliationStore from '../store/reconciliationStore';
 import ReconciliationStatus from './providers/ReconciliationStatus';

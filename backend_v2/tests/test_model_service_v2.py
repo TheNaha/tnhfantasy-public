@@ -1,6 +1,7 @@
 """Tests for services/model_service_v2.py"""
 import pytest
 from unittest.mock import patch, AsyncMock
+from types import SimpleNamespace
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -206,3 +207,84 @@ class TestModelServiceV2Search:
     async def test_search_by_tag_not_found(self, service):
         results = await service.search_by_tag("nonexistent_tag_xyz")
         assert results == []
+
+
+class _FakeRequestCtx:
+    def __init__(self, status=200):
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeClientSession:
+    created = 0
+    post_calls = []
+    delete_calls = []
+
+    def __init__(self, *args, **kwargs):
+        _FakeClientSession.created += 1
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, url, **kwargs):
+        _FakeClientSession.post_calls.append((url, kwargs))
+        return _FakeRequestCtx(status=200)
+
+    def delete(self, url, **kwargs):
+        _FakeClientSession.delete_calls.append((url, kwargs))
+        return _FakeRequestCtx(status=200)
+
+
+class TestModelServiceV2NetworkEfficiency:
+    @pytest.mark.asyncio
+    async def test_trigger_download_reuses_single_http_session(self, service):
+        _FakeClientSession.created = 0
+        _FakeClientSession.post_calls = []
+
+        providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
+        model = SimpleNamespace(directory="checkpoints")
+        version = SimpleNamespace(id=101, is_enabled=True)
+        file_obj = SimpleNamespace(id=202, download_url="https://civitai.com/api/download/models/1", storage_filename="model.safetensors")
+
+        service.repo.get_model = lambda model_id: model
+        service.repo.get_versions_for_model = lambda model_id: [version]
+        service.repo.get_primary_file_for_version = lambda version_id: file_obj
+        service.repo.update_provider_status = lambda **kwargs: None
+        service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
+
+        with patch("aiohttp.ClientSession", _FakeClientSession):
+            result = await service.trigger_download_to_providers(model_id=1)
+
+        assert _FakeClientSession.created == 1
+        assert result["triggered"] == 2
+        assert len(_FakeClientSession.post_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_trigger_delete_reuses_single_http_session(self, service):
+        _FakeClientSession.created = 0
+        _FakeClientSession.delete_calls = []
+
+        providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
+        model = SimpleNamespace(directory="loras")
+        version = SimpleNamespace(id=501)
+        file_obj = SimpleNamespace(id=701, storage_filename="style.safetensors")
+
+        service.repo.get_model = lambda model_id: model
+        service.repo.get_versions_for_model = lambda model_id: [version]
+        service.repo.get_primary_file_for_version = lambda version_id: file_obj
+        service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
+
+        with patch("aiohttp.ClientSession", _FakeClientSession):
+            result = await service.trigger_delete_from_providers(model_id=1)
+
+        assert _FakeClientSession.created == 1
+        assert result["deleted"] == 2
+        assert len(_FakeClientSession.delete_calls) == 2

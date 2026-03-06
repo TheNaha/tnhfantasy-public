@@ -221,7 +221,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                                     await onCancel(job.id);
                                     onClose();
                                     toast.success('Job cancelled');
-                                } catch (e) {
+                                } catch {
                                     toast.error('Failed to cancel job');
                                 }
                             }}
@@ -237,7 +237,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                                     await onDelete(job.id);
                                     onClose();
                                     toast.success('Job removed from history');
-                                } catch (e) {
+                                } catch {
                                     toast.error('Failed to delete job');
                                 }
                             }}

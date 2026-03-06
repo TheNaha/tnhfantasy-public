@@ -54,6 +54,11 @@ export default function InpaintCanvas({
             maskCtx.fillStyle = '#000000';
             maskCtx.fillRect(0, 0, sourceWidth, sourceHeight);
 
+            // Initialize undo history with the blank mask state
+            const initialState = maskCtx.getImageData(0, 0, sourceWidth, sourceHeight);
+            setHistory([initialState]);
+            setHistoryIndex(0);
+
             // Calculate scale to fit container
             if (containerRef.current) {
                 const containerWidth = containerRef.current.clientWidth;
@@ -62,7 +67,6 @@ export default function InpaintCanvas({
             }
 
             setImageLoaded(true);
-            saveToHistory();
         };
         img.src = sourceImageUrl;
 
@@ -259,10 +263,6 @@ export default function InpaintCanvas({
             </div>
         );
     }
-
-    const containerHeight = sourceWidth && sourceHeight
-        ? (sourceHeight * scale)
-        : 400;
 
     return (
         <div className={className}>

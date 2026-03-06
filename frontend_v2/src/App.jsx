@@ -86,7 +86,7 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-    const settings = useSettings();
+    const _settings = useSettings();
     const { connect: connectJobs, fetchJobs } = useJobStore();
     const { connect: connectReconciliation } = useReconciliationStore();
     const { connect: connectProviders } = useProviderStore();

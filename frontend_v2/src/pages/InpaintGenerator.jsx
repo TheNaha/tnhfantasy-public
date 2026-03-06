@@ -40,7 +40,7 @@ export default function InpaintGenerator() {
         sourceImage, denoise, maskImage, maskBlur,
         selectedCheckpoint, selectedVae, selectedLoras,
         setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler,
-        setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage, clearMask,
+        setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
     } = useGeneratorStore();
@@ -102,7 +102,7 @@ export default function InpaintGenerator() {
         if (sourceImage?.filename && !showCanvas) {
             setShowCanvas(true);
         }
-    }, [sourceImage]);
+    }, [sourceImage, showCanvas]);
 
     const handleGenerate = async () => {
         if (!sourceImage?.filename) {

@@ -14,10 +14,10 @@ Protocol:
 
 import asyncio
 import logging
-from typing import Dict, Set, Any, Optional
+from typing import Dict, Optional
 from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from pydantic import BaseModel
+from core.exceptions import NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -101,19 +101,19 @@ async def worker_websocket(
     from services.provider_service import ProviderService
     
     # Authenticate
-    async with get_session_context() as session:
-        provider_service = ProviderService(session)
-        provider = await provider_service.get_provider(provider_id)
-        
-        if not provider:
-            await websocket.close(code=4001, reason="Provider not found")
-            return
-        
-        # Verify token matches provider's configured token
-        expected_token = provider.get("config", {}).get("worker_token")
-        if not expected_token or token != expected_token:
-            await websocket.close(code=4002, reason="Invalid token")
-            return
+    try:
+        async with get_session_context() as session:
+            provider_service = ProviderService(session)
+            provider = await provider_service.get_provider(provider_id)
+            
+            # Verify token matches provider's configured token
+            expected_token = provider.config.get("worker_token") if provider.config else None
+            if not expected_token or token != expected_token:
+                await websocket.close(code=4002, reason="Invalid token")
+                return
+    except NotFoundError:
+        await websocket.close(code=4001, reason="Provider not found")
+        return
     
     # Accept connection
     await websocket.accept()
@@ -185,23 +185,32 @@ async def worker_websocket(
                     import asyncio
 
                     # Poll for up to 10 seconds (20 * 0.5s)
+                    filenames = [
+                        output.get("filename")
+                        for output in outps
+                        if isinstance(output, dict) and output.get("filename")
+                    ]
+
                     for _ in range(20):
-                        if all(gallery_indexer.get_path_by_filename(f) for f in outps):
+                        if filenames and all(gallery_indexer.get_path_by_filename(name) for name in filenames):
                             break
                         await asyncio.sleep(0.5)
 
-                    async with get_session_context() as session:
-                        js = JobService(session)
-                        await js.update_job(
-                            j_id,
-                            status=JobStatus.COMPLETED
-                        )
-                    logger.info(f"[Worker WS] Job completed: {j_id}")
-                    await broadcast_to_room("job", "job.completed", {
-                        "job_id": j_id,
-                        "provider_id": p_id,
-                        "outputs": outps
-                    })
+                    try:
+                        async with get_session_context() as session:
+                            js = JobService(session)
+                            await js.update_job(
+                                j_id,
+                                status=JobStatus.COMPLETED
+                            )
+                        logger.info(f"[Worker WS] Job completed: {j_id}")
+                        await broadcast_to_room("job", "job.completed", {
+                            "job_id": j_id,
+                            "provider_id": p_id,
+                            "outputs": outps
+                        })
+                    except Exception as e:
+                        logger.error(f"[Worker WS] Finalize failed for {j_id}: {e}")
 
                 import asyncio
                 asyncio.create_task(finalize_job(job_id, outputs, provider_id))

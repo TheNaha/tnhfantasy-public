@@ -36,6 +36,8 @@ const ModelSelector = memo(function ModelSelector({
   const [hasMore, setHasMore] = useState(true);
   const [, setOffset] = useState(0);
   const offsetRef = useRef(0); // Track offset with ref to avoid stale closures
+  const loadingRef = useRef(false);
+  const loadingMoreRef = useRef(false);
   const [expandedModel, setExpandedModel] = useState(null);
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
 
@@ -136,6 +138,67 @@ const ModelSelector = memo(function ModelSelector({
     }
   }, [value, models, preview, metadata, externalSelectedModel]);
 
+  const fetchModels = useCallback(async (loadMore = false) => {
+    if (!directory) return;
+
+    if (loadMore) {
+      if (loadingMoreRef.current) return;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+    } else {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      setLoading(true);
+    }
+
+    try {
+      // Use ref for offset to avoid stale closure issues
+      const currentOffset = loadMore ? offsetRef.current : 0;
+
+      // Map frontend sortBy to API sort param
+      const sortMap = {
+        name: "name_asc",
+        date: "date_desc",
+        size: "size_desc",
+        rating: "rating_desc",
+      };
+      const params = new URLSearchParams({
+        directory,
+        limit: "50",
+        offset: currentOffset.toString(),
+        sort: sortMap[sortBy] || "name_asc",
+      });
+      if (search) params.append("search", search);
+
+      const res = await fetch(`/api/files?${params}`);
+      const data = await res.json();
+      const newModels = data.files || [];
+
+      if (loadMore) {
+        setModels((prev) => [...prev, ...newModels]);
+        const newOffset = currentOffset + 50;
+        setOffset(newOffset);
+        offsetRef.current = newOffset;
+      } else {
+        setModels(newModels);
+        setOffset(50);
+        offsetRef.current = 50;
+      }
+
+      setHasMore(newModels.length === 50);
+    } catch (error) {
+      console.error("Failed to fetch models", error);
+    } finally {
+      if (loadMore) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      } else {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
+  }, [directory, search, sortBy]);
+
   // Fetch models with debounce
   useEffect(() => {
     if (!isOpen) return;
@@ -158,65 +221,7 @@ const ModelSelector = memo(function ModelSelector({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, isOpen, directory, sortBy, initialModels.length]);
-
-  const fetchModels = async (loadMore = false) => {
-    if (!directory) return;
-
-    // Prevent concurrent fetches
-    if (loadMore && loadingMore) return;
-    if (!loadMore && loading) return;
-
-    if (loadMore) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-    }
-
-    try {
-      // Use ref for offset to avoid stale closure issues
-      const currentOffset = loadMore ? offsetRef.current : 0;
-
-      // Map frontend sortBy to API sort param
-      const sortMap = {
-        name: "name_asc",
-        date: "date_desc",
-        size: "size_desc",
-        rating: "rating_desc",
-      };
-      const params = new URLSearchParams({
-        directory: directory,
-        limit: "50",
-        offset: currentOffset.toString(),
-        sort: sortMap[sortBy] || "name_asc",
-      });
-      if (search) params.append("search", search);
-
-      const res = await fetch(`/api/files?${params}`);
-      const data = await res.json();
-      const newModels = data.files || [];
-
-      if (loadMore) {
-        setModels((prev) => [...prev, ...newModels]);
-        // Update both state and ref
-        const newOffset = currentOffset + 50;
-        setOffset(newOffset);
-        offsetRef.current = newOffset;
-      } else {
-        setModels(newModels);
-        // Reset offset when not loading more
-        setOffset(50);
-        offsetRef.current = 50;
-      }
-
-      setHasMore(newModels.length === 50);
-    } catch (e) {
-      console.error("Failed to fetch models", e);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  };
+  }, [isOpen, directory, initialModels.length, fetchModels]);
 
   // Filter and sort models
   const filteredAndSortedModels = useMemo(() => {

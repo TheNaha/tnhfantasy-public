@@ -245,7 +245,7 @@ export const usePromptStore = create((set, get) => ({
         for (const prompt of prompts) {
             try {
                 await promptsApi.deletePrompt(prompt.id);
-            } catch (e) {
+            } catch {
                 console.error('Failed to delete prompt:', prompt.id);
             }
         }

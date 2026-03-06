@@ -36,8 +36,7 @@ export default function MissingModelsDialog({
         required_models = {},
         global_missing = {},
         missing_models = {},
-        can_trigger_download = false,
-        eligible_providers = []
+        can_trigger_download = false
     } = validationResult;
 
     // Check if there are any missing models
@@ -57,7 +56,7 @@ export default function MissingModelsDialog({
                     try {
                         await downloadModel(filename, directory);
                         setDownloadStatus(prev => ({ ...prev, [key]: 'queued' }));
-                    } catch (error) {
+                    } catch {
                         setDownloadStatus(prev => ({ ...prev, [key]: 'error' }));
                     } finally {
                         setDownloading(prev => ({ ...prev, [key]: false }));
@@ -81,7 +80,7 @@ export default function MissingModelsDialog({
             if (onDownloadTriggered) {
                 onDownloadTriggered();
             }
-        } catch (error) {
+        } catch {
             setDownloadStatus(prev => ({ ...prev, [key]: 'error' }));
         } finally {
             setDownloading(prev => ({ ...prev, [key]: false }));

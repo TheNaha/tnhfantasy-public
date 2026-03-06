@@ -219,10 +219,16 @@ async def list_all_containers():
     """List all provider containers."""
     container_manager = get_container_manager()
     if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
+        return {
+            "containers": [],
+            "container_runtime_available": False
+        }
     
     containers = container_manager.list_containers()
-    return {"containers": containers}
+    return {
+        "containers": containers,
+        "container_runtime_available": True
+    }
 
 
 # Cache for batch container status (10 second TTL)
@@ -242,7 +248,11 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
     
     container_manager = get_container_manager()
     if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
+        return {
+            "statuses": {},
+            "cached": False,
+            "container_runtime_available": False
+        }
     
     # Get all providers
     service = get_provider_service(session)
@@ -280,7 +290,11 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
                 "healthy": False
             }
     
-    result = {"statuses": statuses, "cached": False}
+    result = {
+        "statuses": statuses,
+        "cached": False,
+        "container_runtime_available": True
+    }
     _container_status_cache['all_statuses'] = {**result, "cached": True}
     return result
 

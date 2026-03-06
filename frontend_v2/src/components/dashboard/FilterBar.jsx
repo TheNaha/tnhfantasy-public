@@ -19,7 +19,7 @@ export const FilterBar = ({ filters, onFilterChange }) => {
         if (debouncedSearch !== filters.search) {
             onFilterChange({ ...filters, search: debouncedSearch });
         }
-    }, [debouncedSearch]);
+    }, [debouncedSearch, filters, onFilterChange]);
 
     const handleApply = () => {
         onFilterChange(localFilters);

@@ -3,6 +3,39 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { copyToClipboard } from '../utils/clipboard';
 
+function ModelMetadataHeader({
+    className,
+    showCreator = false,
+    displayName,
+    modelType,
+    baseModel,
+    creator,
+    onClose,
+}) {
+    return (
+        <div className={`p-4 border-b border-gray-800 flex justify-between items-start bg-gray-900 ${className}`}>
+            <div className="min-w-0 flex-1 mr-4">
+                <h2 className="text-lg md:text-2xl font-bold text-white truncate">{displayName}</h2>
+                <div className="flex items-center gap-2 mt-1 md:mt-2 text-xs md:text-sm text-gray-400 flex-wrap">
+                    <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700 whitespace-nowrap">{modelType}</span>
+                    {baseModel && baseModel !== "Unknown" && (
+                        <span className="px-1.5 py-0.5 bg-purple-800/50 rounded border border-purple-700/50">{baseModel}</span>
+                    )}
+                    {showCreator && creator && (
+                        <span className="truncate">by <span className="text-blue-400 font-medium">{creator.username}</span></span>
+                    )}
+                </div>
+            </div>
+            <button
+                onClick={onClose}
+                className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors flex-shrink-0"
+            >
+                <X size={24} />
+            </button>
+        </div>
+    );
+}
+
 export default function ModelMetadataModal({ metadata, onClose }) {
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
@@ -75,36 +108,20 @@ export default function ModelMetadataModal({ metadata, onClose }) {
         }
     };
 
-    const Header = ({ className, showCreator = false }) => (
-        <div className={`p-4 border-b border-gray-800 flex justify-between items-start bg-gray-900 ${className}`}>
-            <div className="min-w-0 flex-1 mr-4">
-                <h2 className="text-lg md:text-2xl font-bold text-white truncate">{displayName}</h2>
-                <div className="flex items-center gap-2 mt-1 md:mt-2 text-xs md:text-sm text-gray-400 flex-wrap">
-                    <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700 whitespace-nowrap">{modelType}</span>
-                    {baseModel && baseModel !== "Unknown" && (
-                        <span className="px-1.5 py-0.5 bg-purple-800/50 rounded border border-purple-700/50">{baseModel}</span>
-                    )}
-                    {showCreator && creator && (
-                        <span className="truncate">by <span className="text-blue-400 font-medium">{creator.username}</span></span>
-                    )}
-                </div>
-            </div>
-            <button
-                onClick={onClose}
-                className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors flex-shrink-0"
-            >
-                <X size={24} />
-            </button>
-        </div>
-    );
-
     return (
         <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
             <div className="min-h-full md:min-h-0 flex items-center justify-center p-0 md:p-4">
                 <div className="bg-gray-900 w-full max-w-5xl md:max-h-[calc(90*var(--vh,1vh))] rounded-none md:rounded-2xl border-x-0 md:border md:border-gray-700 flex flex-col md:flex-row shadow-2xl overflow-visible md:overflow-hidden" onClick={e => e.stopPropagation()}>
 
                      {/* Mobile Header - Sticky on mobile */}
-                     <Header className="sticky top-0 z-20 md:hidden shadow-lg flex-shrink-0" />
+                     <ModelMetadataHeader
+                        className="sticky top-0 z-20 md:hidden shadow-lg flex-shrink-0"
+                        displayName={displayName}
+                        modelType={modelType}
+                        baseModel={baseModel}
+                        creator={creator}
+                        onClose={onClose}
+                     />
 
                     {/* Left: Images - Fixed on desktop, inline on mobile */}
                     <div className="w-full md:w-1/3 bg-black/50 p-4 space-y-4 md:overflow-y-auto border-b md:border-b-0 md:border-r border-gray-800 flex-shrink-0">
@@ -138,7 +155,15 @@ export default function ModelMetadataModal({ metadata, onClose }) {
                     {/* Right: Details - Scrollable on desktop, inline on mobile */}
                     <div className="flex-1 md:overflow-y-auto min-h-0 bg-gray-900">
                         {/* Desktop Header - Hidden on mobile */}
-                        <Header className="hidden md:flex bg-gray-900/50 lg:sticky lg:top-0 z-10 backdrop-blur-md" showCreator={true} />
+                        <ModelMetadataHeader
+                            className="hidden md:flex bg-gray-900/50 lg:sticky lg:top-0 z-10 backdrop-blur-md"
+                            showCreator={true}
+                            displayName={displayName}
+                            modelType={modelType}
+                            baseModel={baseModel}
+                            creator={creator}
+                            onClose={onClose}
+                        />
 
                     {/* Content */}
                     <div className="p-4 md:p-6 space-y-4 md:space-y-6">

@@ -82,7 +82,7 @@ export const useKeyboardShortcuts = ({ onEscape, onShowHelp } = {}) => {
 
         window.addEventListener('keydown', handleKeyPress);
         return () => window.removeEventListener('keydown', handleKeyPress);
-    }, [navigate, location, onEscape]);
+    }, [navigate, location, onEscape, onShowHelp]);
 }
 
 export default useKeyboardShortcuts;
