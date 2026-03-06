@@ -3,7 +3,6 @@ import { X, ArrowLeftRight, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide
 
 export const ImageComparison = ({ images, onClose }) => {
     const [sliderPosition, setSliderPosition] = useState(50);
-    const [zoom, setZoom] = useState(1);
     const [mode, setMode] = useState(images.length === 2 ? 'slider' : 'grid'); // 'slider' or 'grid'
 
     if (!images || images.length < 2) return null;

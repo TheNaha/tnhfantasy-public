@@ -15,7 +15,6 @@ import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
 import { filesApi, api } from '../api';
-import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';

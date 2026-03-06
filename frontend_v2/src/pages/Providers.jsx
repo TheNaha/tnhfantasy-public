@@ -12,15 +12,16 @@ import useReconciliationStore from '../store/reconciliationStore';
 import { useProviderStore } from '../store/providerStore';
 
 // API Layer
-import { api, providersApi, getApiUrl } from '../api';
+import { providersApi } from '../api';
 
 export default function Providers() {
+    const _motion = motion;
     const [showAddModal, setShowAddModal] = useState(false);
     const [showAddModelModal, setShowAddModelModal] = useState(false);
     const [reconcilingProviderId, setReconcilingProviderId] = useState(null); // Track which provider is reconciling
     const [editingProvider, setEditingProvider] = useState(null); // Track provider being edited
     
-    const { startReconciliation, endReconciliation } = useReconciliationStore();
+    const { startReconciliation } = useReconciliationStore();
     const { data: providersData, isLoading, refetch, isRefetching } = useProviders();
     
     // Use global provider store for container statuses (WebSocket updates happen globally)

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback } from 'react';
 import ConfirmationModal from '../components/ConfirmationModal';
 
@@ -47,10 +48,10 @@ export function ConfirmationProvider({ children }) {
         });
     }, []);
 
-    const handleClose = useCallback(() => {
+    const handleClose = () => {
         setState(prev => ({ ...prev, isOpen: false }));
         if (state.onCancel) state.onCancel();
-    }, [state.onCancel]);
+    };
 
     return (
         <ConfirmationContext.Provider value={{ confirm }}>

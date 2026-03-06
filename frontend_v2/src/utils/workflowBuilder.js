@@ -291,6 +291,10 @@ export class WorkflowBuilder {
 
         // 10. ADetailer
         if (adetailer) {
+            // Reserved for future FaceDetailer prompt/mask options.
+            void adetailerNegative;
+            void adetailerInpaintMasked;
+
             // Load BBox Model
             const bboxLoader = this.addNode("UltralyticsDetectorProvider", {
                 model_name: `bbox/${adetailerModel}`
@@ -301,7 +305,7 @@ export class WorkflowBuilder {
                 image: [finalImage, 0],
                 model: currentModel,
                 clip: currentClip,
-                vae: [checkpointLoader, 2],
+                vae: currentVae,
                 guide_size: 256,
                 guide_size_for: true,
                 max_size: 768,

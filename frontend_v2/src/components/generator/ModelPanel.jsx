@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Settings2, Info, Plus, Trash2 } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 import ModelSelector from '../ModelSelector';
+import ModelMetadataModal from '../ModelMetadataModal';
 import toast from 'react-hot-toast';
 
 export default function ModelPanel({ checkpoints, vaeModels, embeddingModels }) {
@@ -173,6 +174,10 @@ export default function ModelPanel({ checkpoints, vaeModels, embeddingModels }) 
                     ))}
                 </div>
             </div>
+            <ModelMetadataModal
+                metadata={viewingMetadata}
+                onClose={() => setViewingMetadata(null)}
+            />
         </div>
     );
 }

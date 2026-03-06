@@ -63,9 +63,15 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     full_path = os.path.abspath(os.path.join(base_dir, clean_path))
     base_path = os.path.abspath(base_dir)
 
-    # Check if the resolved path starts with the base path
-    if not full_path.startswith(base_path + os.sep) and full_path != base_path:
-         raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
+    # Use commonpath so mixed separators and platform differences are handled correctly.
+    try:
+        common = os.path.commonpath([full_path, base_path])
+    except ValueError:
+        # Happens when drives differ on Windows (e.g. C:\ vs D:\)
+        raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
+
+    if common != base_path:
+        raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
 
     return full_path
 
@@ -195,11 +201,18 @@ async def list_files_endpoint(
             from infrastructure.database import get_session
             
             # Get database session and model service V2
-            db_session = next(get_session())
-            model_service = get_model_service_v2(db_session)
-            
-            # Get models for this directory from SQLite
-            models = await model_service.list_models_by_directory(model_type)
+            session_gen = get_session()
+            db_session = next(session_gen)
+            try:
+                model_service = get_model_service_v2(db_session)
+                
+                # Get models for this directory from SQLite
+                models = await model_service.list_models_by_directory(model_type)
+            finally:
+                if hasattr(session_gen, "close"):
+                    session_gen.close()
+                elif hasattr(db_session, "close"):
+                    db_session.close()
             
             # Format V2 data for frontend compatibility
             valid_files = []

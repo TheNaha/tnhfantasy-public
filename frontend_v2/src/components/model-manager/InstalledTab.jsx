@@ -1,9 +1,24 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 import ModelDetailsModal from './ModelDetailsModal';
+
+const CATEGORIES = [
+    { id: "checkpoints", label: "Checkpoints", path: "models/checkpoints" },
+    { id: "unet", label: "UNET (Flux)", path: "models/unet" },
+    { id: "loras", label: "LoRAs", path: "models/loras" },
+    { id: "controlnet", label: "ControlNet", path: "models/controlnet" },
+    { id: "embeddings", label: "Embeddings", path: "models/embeddings" },
+    { id: "vae", label: "VAE", path: "models/vae" },
+    { id: "clip", label: "CLIP", path: "models/clip" },
+    { id: "hypernetworks", label: "Hypernetworks", path: "models/hypernetworks" },
+    { id: "aesthetics", label: "Aesthetics", path: "models/aesthetics" },
+    { id: "poses", label: "Poses", path: "models/poses" },
+    { id: "wildcards", label: "Wildcards", path: "models/wildcards" },
+    { id: "motion_modules", label: "Motion", path: "models/motion_modules" },
+];
 
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [category, setCategory] = useState("checkpoints");
@@ -19,40 +34,27 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [filterType, setFilterType] = useState('all');
     const [showNSFW, setShowNSFW] = useState(true);
     const [availableTags, setAvailableTags] = useState([]);
-    const [offset, setOffset] = useState(0);
+    const [, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
+    const offsetRef = useRef(0);
 
-    const categories = [
-        { id: "checkpoints", label: "Checkpoints", path: "models/checkpoints" },
-        { id: "unet", label: "UNET (Flux)", path: "models/unet" },
-        { id: "loras", label: "LoRAs", path: "models/loras" },
-        { id: "controlnet", label: "ControlNet", path: "models/controlnet" },
-        { id: "embeddings", label: "Embeddings", path: "models/embeddings" },
-        { id: "vae", label: "VAE", path: "models/vae" },
-        { id: "clip", label: "CLIP", path: "models/clip" },
-        { id: "hypernetworks", label: "Hypernetworks", path: "models/hypernetworks" },
-        { id: "aesthetics", label: "Aesthetics", path: "models/aesthetics" },
-        { id: "poses", label: "Poses", path: "models/poses" },
-        { id: "wildcards", label: "Wildcards", path: "models/wildcards" },
-        { id: "motion_modules", label: "Motion", path: "models/motion_modules" },
-    ];
-
-
-    const fetchFiles = async (reset = false, search = "") => {
+    const fetchFiles = useCallback(async (reset = false, search = "") => {
         if (reset) {
             setLoading(true);
             setOffset(0);
+            offsetRef.current = 0;
             setFiles([]);
             setHasMore(true);
+            setAvailableTags([]);
         } else {
             setLoadingMore(true);
         }
 
         try {
-            const path = categories.find(c => c.id === category)?.path;
+            const path = CATEGORIES.find(c => c.id === category)?.path;
             if (!path) return;
 
-            const currentOffset = reset ? 0 : offset;
+            const currentOffset = reset ? 0 : offsetRef.current;
             const params = {
                 directory: path,
                 limit: itemsPerPage,
@@ -67,27 +69,31 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             if (reset) {
                 setFiles(newFiles);
                 setOffset(itemsPerPage);
+                offsetRef.current = itemsPerPage;
             } else {
                 setFiles(prev => {
                     const existingNames = new Set(prev.map(f => f.name));
                     const uniqueNewFiles = newFiles.filter(f => !existingNames.has(f.name));
                     return [...prev, ...uniqueNewFiles];
                 });
-                setOffset(prev => prev + itemsPerPage);
+                offsetRef.current += itemsPerPage;
+                setOffset(offsetRef.current);
             }
 
             // Only has more if we received a full page AND there's a total indicating more
             const total = data.total || 0;
-            const loadedSoFar = reset ? newFiles.length : (files.length + newFiles.length);
+            const loadedSoFar = currentOffset + newFiles.length;
             setHasMore(newFiles.length >= itemsPerPage && loadedSoFar < total);
 
-            const tags = new Set(availableTags);
-            newFiles.forEach(f => {
-                if (f.tags) {
-                    f.tags.forEach(t => tags.add(t));
-                }
+            setAvailableTags(prev => {
+                const tags = new Set(prev);
+                newFiles.forEach(f => {
+                    if (f.tags) {
+                        f.tags.forEach(t => tags.add(t));
+                    }
+                });
+                return Array.from(tags).sort();
             });
-            setAvailableTags(Array.from(tags).sort());
         } catch (e) {
             console.error("Failed to fetch files", e);
             toast.error("Failed to load installed models");
@@ -95,7 +101,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             setLoading(false);
             setLoadingMore(false);
         }
-    };
+    }, [category, itemsPerPage, sortBy]);
 
     const handleCheckDependencies = async (file) => {
         if (!file.model_id) return;
@@ -116,19 +122,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     useEffect(() => {
         const timer = setTimeout(() => {
-            setFiles([]);
-            setOffset(0);
-            setHasMore(true);
             fetchFiles(true, searchTerm);
         }, 500);
         return () => clearTimeout(timer);
-    }, [searchTerm, category, sortBy]);  // Added sortBy
+    }, [searchTerm, category, sortBy, fetchFiles]);  // Added sortBy
 
     const handleRefresh = () => {
-        setFiles([]);
-        setOffset(0);
-        setHasMore(true);
-        setAvailableTags([]);
         fetchFiles(true, searchTerm);
     };
 
@@ -209,7 +208,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     return (
         <div className="space-y-6">
             <div className="flex gap-2 overflow-x-auto pb-2">
-                {categories.map(cat => (
+                {CATEGORIES.map(cat => (
                     <button
                         key={cat.id}
                         onClick={() => setCategory(cat.id)}

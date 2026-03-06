@@ -490,6 +490,7 @@ if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
         const store = useJobStore.getState();
         if (document.visibilityState === 'visible') {
+            dismissConnectionToast();
             // Page became visible - ensure WebSocket is connected and fetch fresh data
             console.log('[JobStore] Page became visible, checking WebSocket connection...');
 
@@ -518,6 +519,7 @@ if (typeof document !== 'undefined') {
     window.addEventListener('online', () => {
         console.log('[JobStore] Network online, reconnecting WebSocket...');
         const store = useJobStore.getState();
+        dismissConnectionToast();
         store.reconnect();
         store.fetchJobs().catch(console.error);
 

@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Settings as SettingsIcon, RotateCcw, Save, Info, Server } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../context/ConfirmationContext';
-import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
+import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 
 export default function Settings() {
+    const _motion = motion;
     const settings = useSettings();
     const { updateSetting, resetCategory, resetSettings } = useUpdateSettings();
     const { confirm } = useConfirmation();
@@ -157,13 +158,6 @@ function BrandingSettings() {
         },
     });
 
-    // Update local state when branding data loads
-    useEffect(() => {
-        if (branding) {
-            setLocalBranding(branding);
-        }
-    }, [branding]);
-
     // Save branding mutation
     const saveMutation = useMutation({
         mutationFn: async (data) => {
@@ -175,7 +169,7 @@ function BrandingSettings() {
             if (!res.ok) throw new Error('Failed to save branding');
             return res.json();
         },
-        onSuccess: (data) => {
+        onSuccess: () => {
             queryClient.invalidateQueries(['branding']);
             toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });
         },
@@ -184,8 +178,10 @@ function BrandingSettings() {
         },
     });
 
+    const effectiveBranding = localBranding || branding;
+
     const handleSave = () => {
-        saveMutation.mutate(localBranding);
+        saveMutation.mutate(effectiveBranding);
     };
 
     const handleReset = () => {
@@ -198,7 +194,7 @@ function BrandingSettings() {
         saveMutation.mutate(defaultBranding);
     };
 
-    if (isLoading || !localBranding) {
+    if (isLoading || !effectiveBranding) {
         return <div className="text-gray-400">Loading branding settings...</div>;
     }
 
@@ -233,8 +229,8 @@ function BrandingSettings() {
             <SettingGroup title="App Name" description="The name displayed in the browser tab and sidebar">
                 <input
                     type="text"
-                    value={localBranding.appName}
-                    onChange={(e) => setLocalBranding({ ...localBranding, appName: e.target.value })}
+                    value={effectiveBranding.appName}
+                    onChange={(e) => setLocalBranding({ ...effectiveBranding, appName: e.target.value })}
                     className="w-full md:w-80 bg-gray-900 border border-gray-700 rounded-lg p-2 text-white focus:border-blue-500 focus:outline-none"
                     placeholder="Enter app name"
                 />
@@ -245,7 +241,7 @@ function BrandingSettings() {
                 <div className="flex items-center gap-4">
                     <div className="w-16 h-16 bg-gray-900 rounded-lg border border-gray-700 flex items-center justify-center p-2">
                         <img
-                            src={localBranding.logoUrl}
+                            src={effectiveBranding.logoUrl}
                             alt="Logo Preview"
                             className="w-full h-full object-contain"
                             onError={(e) => {
@@ -254,7 +250,7 @@ function BrandingSettings() {
                         />
                     </div>
                     <div className="text-sm text-gray-400">
-                        <p>Current: {localBranding.logoUrl}</p>
+                        <p>Current: {effectiveBranding.logoUrl}</p>
                         <p className="text-xs mt-1">To change: upload a new file to /frontend/public/logo.png</p>
                     </div>
                 </div>
@@ -265,7 +261,7 @@ function BrandingSettings() {
                 <div className="flex items-center gap-4">
                     <div className="w-8 h-8 bg-gray-900 rounded border border-gray-700 flex items-center justify-center p-1">
                         <img
-                            src={localBranding.faviconUrl}
+                            src={effectiveBranding.faviconUrl}
                             alt="Favicon Preview"
                             className="w-full h-full object-contain"
                             onError={(e) => {
@@ -274,7 +270,7 @@ function BrandingSettings() {
                         />
                     </div>
                     <div className="text-sm text-gray-400">
-                        <p>Current: {localBranding.faviconUrl}</p>
+                        <p>Current: {effectiveBranding.faviconUrl}</p>
                         <p className="text-xs mt-1">To change: upload a new file to /frontend/public/favicon.ico</p>
                     </div>
                 </div>

@@ -161,7 +161,7 @@ export const useDownloadStore = create((set, get) => ({
             // Silently fail individual clears to avoid spamming errors, or better: have a bulk clear endpoint
             try {
                 await api.delete(`/api/downloads/${d.id}`);
-            } catch (e) { /* ignore */ }
+            } catch { /* ignore */ }
         }
     },
 

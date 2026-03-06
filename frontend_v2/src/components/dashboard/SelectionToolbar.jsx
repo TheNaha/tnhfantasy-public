@@ -1,6 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Download, Star, Plus, X, Trash2 } from 'lucide-react';
-import toast from 'react-hot-toast';
 
 export default function SelectionToolbar({
     selectedFiles,
@@ -10,8 +9,7 @@ export default function SelectionToolbar({
     onAddToCollection,
     onRemoveFromCollection,
     onCancel,
-    activeCollection,
-    favorites = []
+    activeCollection
 }) {
     const hasSelection = selectedFiles.size > 0;
 

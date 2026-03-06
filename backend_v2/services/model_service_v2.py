@@ -293,44 +293,44 @@ class ModelServiceV2:
         
         # Get versions to download
         versions = self.repo.get_versions_for_model(model_id)
-        for version in versions:
-            # Skip if version_ids specified and this version not in list
-            if version_ids is not None and version.id not in version_ids:
-                continue
-            if not version.is_enabled:
-                continue
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as http_session:
+            for version in versions:
+                # Skip if version_ids specified and this version not in list
+                if version_ids is not None and version.id not in version_ids:
+                    continue
+                if not version.is_enabled:
+                    continue
+                    
+                file = self.repo.get_primary_file_for_version(version.id)
+                if not file or not file.download_url:
+                    continue
                 
-            file = self.repo.get_primary_file_for_version(version.id)
-            if not file or not file.download_url:
-                continue
-            
-            storage_path = f"models/{model.directory}/{file.storage_filename}"
-            
-            # Determine token based on URL
-            token = None
-            if file.download_url:
-                if "huggingface.co" in file.download_url:
-                    token = os.getenv("HF_TOKEN", "")
-                elif "civitai.com" in file.download_url:
-                    token = os.getenv("CIVITAI_TOKEN", "")
-            
-            # Send download request to each enabled provider
-            for provider in providers:
-                # Container name is comfy-provider-{id}, internal port is always 8000
-                container_name = f"comfy-provider-{provider.id}"
-                worker_url = f"http://{container_name}:8000"
+                storage_path = f"models/{model.directory}/{file.storage_filename}"
                 
-                try:
-                    async with aiohttp.ClientSession() as session:
+                # Determine token based on URL
+                token = None
+                if file.download_url:
+                    if "huggingface.co" in file.download_url:
+                        token = os.getenv("HF_TOKEN", "")
+                    elif "civitai.com" in file.download_url:
+                        token = os.getenv("CIVITAI_TOKEN", "")
+                
+                # Send download request to each enabled provider
+                for provider in providers:
+                    # Container name is comfy-provider-{id}, internal port is always 8000
+                    container_name = f"comfy-provider-{provider.id}"
+                    worker_url = f"http://{container_name}:8000"
+                    
+                    try:
                         payload = {
                             "url": file.download_url,
                             "path": storage_path,
                             "token": token
                         }
-                        async with session.post(
+                        async with http_session.post(
                             f"{worker_url}/download-model",
                             json=payload,
-                            timeout=aiohttp.ClientTimeout(total=10)
                         ) as resp:
                             if resp.status == 200:
                                 results["triggered"] += 1
@@ -347,14 +347,14 @@ class ModelServiceV2:
                                     status="downloading",
                                     storage_path=storage_path
                                 )
-                except Exception as e:
-                    print(f"[ModelService] Failed to trigger download to {provider.id}: {e}")
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "file_id": file.id,
-                        "status": "error",
-                        "error": str(e)
-                    })
+                    except Exception as e:
+                        print(f"[ModelService] Failed to trigger download to {provider.id}: {e}")
+                        results["providers"].append({
+                            "provider_id": provider.id,
+                            "file_id": file.id,
+                            "status": "error",
+                            "error": str(e)
+                        })
         
         return results
     
@@ -378,27 +378,27 @@ class ModelServiceV2:
         
         # Get all files for this model's versions
         versions = self.repo.get_versions_for_model(model_id)
-        for version in versions:
-            file = self.repo.get_primary_file_for_version(version.id)
-            if not file:
-                continue
-            
-            storage_path = f"models/{model.directory}/{file.storage_filename}"
-            
-            # Send delete request to each provider
-            for provider in providers:
-                # Container name is comfy-provider-{id}, internal port is always 8000
-                container_name = f"comfy-provider-{provider.id}"
-                worker_url = f"http://{container_name}:8000"
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as http_session:
+            for version in versions:
+                file = self.repo.get_primary_file_for_version(version.id)
+                if not file:
+                    continue
                 
-                try:
-                    async with aiohttp.ClientSession() as session:
+                storage_path = f"models/{model.directory}/{file.storage_filename}"
+                
+                # Send delete request to each provider
+                for provider in providers:
+                    # Container name is comfy-provider-{id}, internal port is always 8000
+                    container_name = f"comfy-provider-{provider.id}"
+                    worker_url = f"http://{container_name}:8000"
+                    
+                    try:
                         # URL-encode the path for the route param
                         import urllib.parse
                         encoded_path = urllib.parse.quote(storage_path, safe='')
-                        async with session.delete(
+                        async with http_session.delete(
                             f"{worker_url}/delete-file/{encoded_path}",
-                            timeout=aiohttp.ClientTimeout(total=10)
                         ) as resp:
                             if resp.status == 200:
                                 results["deleted"] += 1
@@ -415,15 +415,15 @@ class ModelServiceV2:
                                     "path": storage_path,
                                     "status": "not_found"
                                 })
-                except Exception as e:
-                    print(f"[ModelService] Failed to delete from {provider.id}: {e}")
-                    # Don't fail the whole operation - provider might be offline
-                    results["providers"].append({
-                        "provider_id": provider.id,
-                        "file_id": file.id,
-                        "status": "error",
-                        "error": str(e)
-                    })
+                    except Exception as e:
+                        print(f"[ModelService] Failed to delete from {provider.id}: {e}")
+                        # Don't fail the whole operation - provider might be offline
+                        results["providers"].append({
+                            "provider_id": provider.id,
+                            "file_id": file.id,
+                            "status": "error",
+                            "error": str(e)
+                        })
         
         return results
     

@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
-import { X, Loader2, AlertCircle, ExternalLink, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { X, AlertCircle, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export default function ModelDetailsModal({ file, onClose, onDelete }) {
+export default function ModelDetailsModal({ file, onClose }) {
     const [activeImage, setActiveImage] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
-
+    
     if (!file) return null;
 
     // V2 format: data is at root level, not nested in metadata
@@ -18,7 +18,6 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
     const versions = file.versions || [];
     const images = file.images || [];
     const creator = file.creator || {};
-    const versionCount = file.version_count || versions.length || 1;
 
     // Get selected version (default to first/default version)
     const selectedVersion = selectedVersionId
@@ -31,7 +30,6 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
     const trainedWords = selectedVersion?.trained_words || file.trained_words || [];
     const versionDescription = selectedVersion?.description || file.version_description;
     const versionImages = selectedVersion?.images || images;
-    const primaryFile = selectedVersion?.primary_file || selectedVersion?.files?.[0];
 
     // Get active image or first preview
     const getPreviewUrl = () => {
@@ -43,11 +41,6 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
     };
 
     const previewUrl = getPreviewUrl();
-
-    // Reset active image when version changes
-    useEffect(() => {
-        setActiveImage(null);
-    }, [selectedVersionId]);
 
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
@@ -113,7 +106,10 @@ export default function ModelDetailsModal({ file, onClose, onDelete }) {
                             <label className="block text-xs font-medium text-gray-500 mb-2">Installed Version</label>
                             <select
                                 value={selectedVersionId || selectedVersion?.id || ''}
-                                onChange={(e) => setSelectedVersionId(parseInt(e.target.value))}
+                                onChange={(e) => {
+                                    setSelectedVersionId(parseInt(e.target.value));
+                                    setActiveImage(null);
+                                }}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                             >
                                 {versions.map(v => (

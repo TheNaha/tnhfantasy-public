@@ -21,7 +21,7 @@ export default function DownloadQueue() {
             toast.loading('Retrying download...');
             await handleClear(download.id);
             toast.success('Cleared failed download. Please try downloading again.');
-        } catch (e) {
+        } catch {
             toast.error('Failed to retry');
         }
     };

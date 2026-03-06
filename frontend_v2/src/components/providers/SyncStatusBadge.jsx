@@ -104,7 +104,6 @@ function ReconciliationBlock({ reconciliation, onClick }) {
     const activeDownloads = reconciliation.active_downloads || [];
     const isReconciling = reconciliation.status === 'reconciling';
     const isCompleted = reconciliation.status === 'completed';
-    const isFailed = reconciliation.status === 'failed';
 
     // Calculate progress
     const queued = stats.downloads_queued || 0;
@@ -306,7 +305,7 @@ function ModalStatsDisplay({ modalStats, onClick }) {
             {/* Breakdown by directory (compact) */}
             <div className="flex flex-wrap gap-1.5">
                 {Object.entries(by_directory)
-                    .filter(([_, count]) => count > 0)
+                    .filter(([, count]) => count > 0)
                     .slice(0, 6)
                     .map(([dir, count]) => (
                         <span

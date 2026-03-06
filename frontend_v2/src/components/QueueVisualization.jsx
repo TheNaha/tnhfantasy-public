@@ -1,23 +1,19 @@
-import { useState, useEffect, memo, useId } from 'react';
+import { useState, useMemo, memo, useId } from 'react';
 import { useJobStore } from '../store/jobStore';
 import { Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 
 /**
  * QueueVisualization - Shows pending and running jobs with ETA estimates.
  * Displays as a collapsible panel above the main content.
  */
 const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
-    const [queue, setQueue] = useState([]);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const contentId = useId();
 
     // Use global WebSocket job store
     const { jobs: activeJobs } = useJobStore();
-    const [stats, setStats] = useState({ avg_duration_seconds: 30, has_history: false });
-
-    // Derive queue from active jobs
-    useEffect(() => {
+    const { queue, stats } = useMemo(() => {
         // Filter for active items only and sort
         const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');
         const pending = activeJobs.filter(j => j.status === 'pending' || j.status === 'queued')
@@ -31,25 +27,23 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
         const calculatedQueue = [
             ...running.map(j => ({
                 ...j,
-                eta_seconds: Math.max(0, avgTime - ((Date.now() - new Date(j.started_at || Date.now())) / 1000))
+                eta_seconds: Math.max(0, avgTime - ((j.progress || 0) / 100) * avgTime)
             })),
-            ...pending.map((j, idx) => ({
+            ...pending.map((j, index) => ({
                 ...j,
-                position: idx + 1,
-                eta_seconds: avgTime * (idx + 1) + (running.length > 0 ? avgTime / 2 : 0)
+                position: index + 1,
+                eta_seconds: avgTime * (index + 1) + (running.length > 0 ? avgTime / 2 : 0)
             }))
         ];
 
-        setQueue(calculatedQueue);
-
-        // Update valid stats
-        setStats({
+        const derivedStats = {
             avg_duration_seconds: avgTime,
             has_history: true,
             total_pending: pending.length,
             total_running: running.length
-        });
+        };
 
+        return { queue: calculatedQueue, stats: derivedStats };
     }, [activeJobs]);
 
     // Don't render if queue is empty
@@ -66,11 +60,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const pendingJobs = queue.filter(j => j.status === 'pending');
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-xl overflow-hidden mb-4"
-        >
+        <div className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-xl overflow-hidden mb-4">
             {/* Header */}
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
@@ -98,22 +88,16 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
             {/* Content */}
             <AnimatePresence>
                 {!isCollapsed && (
-                    <motion.div
+                    <div
                         id={contentId}
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
                     >
                         <div className="px-4 pb-4 space-y-2">
                             {/* Timeline Bar - Using flex for proper job layout */}
                             <div className="flex h-8 bg-gray-800 rounded-lg overflow-hidden gap-0.5" aria-hidden="true">
                                 {/* Running jobs */}
-                                {runningJobs.map((job, idx) => (
-                                    <motion.div
+                                {runningJobs.map((job) => (
+                                    <div
                                         key={job.id}
-                                        initial={{ width: 0 }}
-                                        animate={{ flex: 1 }}
                                         className="relative h-full bg-gray-700 flex items-center justify-center cursor-pointer min-w-[60px] overflow-hidden"
                                         onClick={() => onJobClick?.(job.id)}
                                         title={job.prompt || 'Running...'}
@@ -128,21 +112,19 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                             <Loader2 className="animate-spin text-white" size={14} />
                                             <span className="text-xs text-white/90 font-medium">{Math.round(job.progress || 0)}%</span>
                                         </div>
-                                    </motion.div>
+                                    </div>
                                 ))}
 
                                 {/* Pending jobs */}
-                                {pendingJobs.map((job, idx) => (
-                                    <motion.div
+                                {pendingJobs.map((job) => (
+                                    <div
                                         key={job.id}
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1, flex: 0.8 }}
                                         className="h-full bg-gray-700 border-l-2 border-gray-600 flex items-center justify-center cursor-pointer hover:bg-gray-600 transition-colors min-w-[50px]"
                                         onClick={() => onJobClick?.(job.id)}
                                         title={job.prompt || 'Pending...'}
                                     >
                                         <span className="text-xs text-gray-400">#{job.position}</span>
-                                    </motion.div>
+                                    </div>
                                 ))}
                             </div>
 
@@ -187,10 +169,10 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                 )}
                             </div>
                         </div>
-                    </motion.div>
+                    </div>
                 )}
             </AnimatePresence>
-        </motion.div>
+        </div>
     );
 });
 

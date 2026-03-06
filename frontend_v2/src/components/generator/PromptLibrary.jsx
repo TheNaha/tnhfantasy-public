@@ -14,13 +14,9 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     const {
         prompts,
         categories,
-        addPrompt,
-        updatePrompt,
         deletePrompt,
         toggleFavorite,
         incrementUsage,
-        searchPrompts,
-        filterByCategory,
         getFavorites,
         getMostUsed,
         exportPrompts,
