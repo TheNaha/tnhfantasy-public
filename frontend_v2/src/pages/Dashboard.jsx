@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { VirtuosoGrid } from 'react-virtuoso';
 
 // API Layer
-import { filesApi, getApiUrl } from '../api';
+import { filesApi } from '../api';
 
 import { useGallery } from '../hooks/useGallery';
 import { useJobStore } from '../store/jobStore';
@@ -72,9 +72,10 @@ export default function Dashboard() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const settings = useSettings();
+    const _motion = motion;
 
     // Global State - now uses WebSocket for real-time updates
-    const { connect, disconnect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
+    const { connect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
     const { favorites, toggleFavorite, isFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
     // Wrapped deleteJob to handle query invalidation
@@ -82,27 +83,6 @@ export default function Dashboard() {
         await storeDeleteJob(jobId);
         queryClient.invalidateQueries(['gallery']);
     }, [storeDeleteJob, queryClient]);
-
-    // Stable handler for toggling favorite
-    const handleToggleFavorite = useCallback((filename) => {
-        toggleFavorite(filename);
-        toast.success(
-            isFavorite(filename) ? "Removed from favorites" : "Added to favorites",
-            { icon: isFavorite(filename) ? '💔' : '⭐' }
-        );
-    }, [toggleFavorite, isFavorite]);
-
-    // Stable handler for job click
-    const handleJobClick = useCallback((job) => {
-        const jobId = typeof job === 'string' ? job : job?.id;
-        if (jobId) setSelectedJobId(jobId);
-    }, []);
-
-    // Stable handler for image click
-    const handleImageClick = useCallback((image) => {
-        setSelectedImage(image);
-    }, []);
-
     // Local State
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
     const [selectedImage, setSelectedImage] = useState(null);
@@ -116,14 +96,10 @@ export default function Dashboard() {
 
 
     // Find the scroll parent for Virtuoso
-    const [scrollParent, setScrollParent] = useState(null);
-    useEffect(() => {
-        // Find the closest scrollable container or use window
-        const container = document.getElementById('main-scroll-container');
-        if (container) {
-            setScrollParent(container);
-        }
-    }, []);
+    const scrollParent = useMemo(
+        () => (typeof document !== 'undefined' ? document.getElementById('main-scroll-container') : null),
+        []
+    );
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
     const [filters, setFilters] = useState({
@@ -137,6 +113,32 @@ export default function Dashboard() {
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState(new Set());
     const [showComparison, setShowComparison] = useState(false);
+    // Stable handler for toggling favorite
+    const handleToggleFavorite = useCallback((filename) => {
+        toggleFavorite(filename);
+        toast.success(
+            isFavorite(filename) ? "Removed from favorites" : "Added to favorites",
+            { icon: isFavorite(filename) ? '*' : '*' }
+        );
+    }, [toggleFavorite, isFavorite]);
+
+    // Stable handler for job click
+    const handleJobClick = useCallback((job) => {
+        const jobId = typeof job === 'string' ? job : job?.id;
+        if (jobId) setSelectedJobId(jobId);
+    }, []);
+
+    // Stable handler for image click
+    const handleImageClick = useCallback((image) => {
+        setSelectedImage(image);
+        if (image?.metadata && Object.keys(image.metadata).length > 0) {
+            setMetadata(image.metadata);
+            setLoadingMeta(false);
+        } else {
+            setMetadata(null);
+            setLoadingMeta(true);
+        }
+    }, []);
 
     // Derive selectedJob from activeJobs to get live updates
     const selectedJob = selectedJobId ? activeJobs.find(j => j.id === selectedJobId) : null;
@@ -181,9 +183,6 @@ export default function Dashboard() {
         // No cleanup - WebSocket connection persists across component lifecycle
     }, [connect, refetch]);
 
-    // Note: Mobile polling fallback removed - WebSocket handles reconnection reliably
-    const { fetchJobs } = useJobStore();
-
     // Auto-refresh gallery when any job completes
     // Use lastCompletedJob from store which gets set when job.completed WebSocket event fires
     const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
@@ -222,11 +221,11 @@ export default function Dashboard() {
     // Flatten data and merge with real-time updates
     const allItems = useMemo(() => {
         const historicalFiles = data ? data.pages.flatMap(page => page.files.map(f => ({ ...f, type: 'image', date: f.date || f.mtime }))) : [];
-        const historicalJobs = data ? data.pages.flatMap(page => page.jobs.map(j => ({ ...j, type: 'job', date: j.created_at || j.updated_at || (Date.now() / 1000) }))) : [];
+        const historicalJobs = data ? data.pages.flatMap(page => page.jobs.map(j => ({ ...j, type: 'job', date: j.created_at || j.updated_at || 0 }))) : [];
 
         // Create a map of WebSocket jobs for easy lookup
         // activeJobs comes from the store (WebSocket) and contains the latest state of all jobs
-        const activeJobsMap = new Map(activeJobs.map(j => [j.id, { ...j, type: 'job', date: j.created_at || j.updated_at || (Date.now() / 1000) }]));
+        const activeJobsMap = new Map(activeJobs.map(j => [j.id, { ...j, type: 'job', date: j.created_at || j.updated_at || 0 }]));
 
         // Merge jobs: Use active job if available, otherwise use historical
         const mergedJobs = new Map();
@@ -353,7 +352,7 @@ export default function Dashboard() {
         });
 
         return sorted;
-    }, [data, activeJobs, showFavorites, favorites]);
+    }, [data, activeJobs]);
 
     // Filter for favorites and collections
     const displayedItems = useMemo(() => {
@@ -376,7 +375,7 @@ export default function Dashboard() {
     // Use local-based date keys to ensure consistent grouping relative to user's timezone
     const grouped = useMemo(() => {
         return displayedItems.reduce((acc, item) => {
-            let dateValue = item.date || item.mtime || Date.now() / 1000;
+            let dateValue = item.date || item.mtime || 0;
             // If it's an ISO string (from V2 backend), parse directly
             // If it's a number (UNIX timestamp), multiply by 1000
             let dateObj;
@@ -428,14 +427,8 @@ export default function Dashboard() {
     // Priority: 1) Use metadata already loaded from file list, 2) Fallback to API for legacy images
     useEffect(() => {
         if (selectedImage) {
-            // Use metadata from file listing if available (new system with embedded PNG metadata)
-            if (selectedImage.metadata && Object.keys(selectedImage.metadata).length > 0) {
-                setMetadata(selectedImage.metadata);
-                setLoadingMeta(false);
-            } else {
-                // Fallback: fetch from legacy sidecar JSON or dedicated endpoint
-                setLoadingMeta(true);
-                setMetadata(null);
+            // Fallback: fetch from legacy sidecar JSON or dedicated endpoint
+            if (!selectedImage.metadata || Object.keys(selectedImage.metadata).length === 0) {
                 fetch(`/api/view/output/${selectedImage.name}.json`)
                     .then(res => res.ok ? res.json() : null)
                     .then(data => {
@@ -478,7 +471,7 @@ export default function Dashboard() {
                 }
             }
         });
-    }, [selectedImage, queryClient]);
+    }, [selectedImage, queryClient, settings.ui.toastErrorDuration, settings.ui.toastSuccessDuration]);
 
     // Load parameters from metadata (reuse parameters)
     const useParameters = useCallback(() => {
@@ -520,28 +513,6 @@ export default function Dashboard() {
             return newSet;
         });
     }, []);
-
-    const handleBatchDelete = useCallback(() => {
-        setConfirmModal({
-            isOpen: true,
-            title: "Delete Multiple Images",
-            message: `Are you sure you want to delete ${selectedFiles.size} images? This action cannot be undone.`,
-            isDangerous: true,
-            confirmText: `Delete ${selectedFiles.size} Images`,
-            onConfirm: async () => {
-                try {
-                    await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries(['gallery']);
-                    setSelectedFiles(new Set());
-                    setSelectionMode(false);
-                    toast.success(`Deleted ${selectedFiles.size} images`);
-                } catch (e) {
-                    console.error(e);
-                    toast.error(`Failed to delete: ${e.message}`);
-                }
-            }
-        });
-    }, [selectedFiles, queryClient]);
 
     const handleBatchDownload = useCallback(() => {
         setConfirmModal({
@@ -1299,3 +1270,4 @@ export default function Dashboard() {
         </motion.div>
     );
 }
+

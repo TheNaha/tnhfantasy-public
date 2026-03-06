@@ -1,21 +1,33 @@
 import { useQuery } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
 import {
     TrendingUp, Image, Clock, Sparkles, BarChart3,
     PieChart as PieChartIcon, Activity, Zap, Hash, MessageSquare, Loader2
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, PieChart, Pie,
-    AreaChart, Area, ScatterChart, Scatter, Cell,
-    XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+    AreaChart, Area, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer
 } from 'recharts';
-import { useState } from 'react';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#ef4444'];
 
+const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="glass p-3 rounded-lg border border-gray-700/50">
+                <p className="text-white font-medium">{label}</p>
+                {payload.map((entry, index) => (
+                    <p key={index} className="text-sm" style={{ color: entry.color }}>
+                        {entry.name}: {entry.value}
+                    </p>
+                ))}
+            </div>
+        );
+    }
+    return null;
+};
+
 const Statistics = () => {
-    const [timeRange, setTimeRange] = useState('all'); // all, week, month
 
     // Fetch detailed statistics
     const { data, isLoading, error } = useQuery({
@@ -64,10 +76,7 @@ const Statistics = () => {
     const weekdayNames = {
         '0': 'Mon', '1': 'Tue', '2': 'Wed', '3': 'Thu', '4': 'Fri', '5': 'Sat', '6': 'Sun'
     };
-    const timelineWeekday = Object.entries(data.timeline.weekday).map(([day, count]) => ({
-        day: weekdayNames[day] || day,
-        count
-    }));
+    void weekdayNames;
 
     // Prepare model data
     const checkpointsData = Object.entries(data.models.checkpoints).map(([name, count]) => ({
@@ -81,10 +90,7 @@ const Statistics = () => {
         count
     }));
 
-    const schedulersData = Object.entries(data.models.schedulers).map(([name, count]) => ({
-        name,
-        count
-    }));
+    void data.models.schedulers;
 
     // Prepare settings data
     const stepsData = Object.entries(data.settings.steps).map(([steps, count]) => ({
@@ -113,30 +119,9 @@ const Statistics = () => {
         avg: stats.avg
     })).sort((a, b) => a.avg - b.avg);
 
-    // Custom tooltip for charts
-    const CustomTooltip = ({ active, payload, label }) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="glass p-3 rounded-lg border border-gray-700/50">
-                    <p className="text-white font-medium">{label}</p>
-                    {payload.map((entry, index) => (
-                        <p key={index} className="text-sm" style={{ color: entry.color }}>
-                            {entry.name}: {entry.value}
-                        </p>
-                    ))}
-                </div>
-            );
-        }
-        return null;
-    };
-
     return (
         <div className="min-h-screen bg-neutral-900 text-white p-6">
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="max-w-7xl mx-auto space-y-6"
-            >
+            <div className="max-w-7xl mx-auto space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div>
@@ -428,7 +413,7 @@ const Statistics = () => {
                         ))}
                     </div>
                 </div>
-            </motion.div>
+            </div>
         </div>
     );
 };

@@ -11,6 +11,7 @@
  */
 
 import { io } from 'socket.io-client';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 
 // Get API URL - use empty string to connect relative to current origin
 // This ensures Socket.IO goes through the Vite proxy (/socket.io -> backend:8002)
@@ -39,7 +40,7 @@ export function connect() {
         return connectionPromise;
     }
 
-    connectionPromise = new Promise((resolve, reject) => {
+    connectionPromise = new Promise((resolve) => {
         if (socket && isConnected) {
             resolve(socket);
             return;
@@ -93,8 +94,8 @@ export function connect() {
             emitLocal('connection', { connected: false, error: error.message });
         });
 
-        socket.on('connected', (data) => {
-            console.log('[WebSocket] Server welcome:', data.message);
+        socket.on('connected', ({ message }) => {
+            console.log('[WebSocket] Server welcome:', message);
         });
 
         socket.on('subscribed', (data) => {
@@ -111,7 +112,7 @@ export function connect() {
         });
 
         // Handle pong for keepalive
-        socket.on('pong', (data) => {
+        socket.on('pong', () => {
             // Connection is alive
         });
     });
@@ -250,18 +251,25 @@ export async function emit(event, data) {
  * @returns {Promise} Resolves with acknowledgment
  */
 export function cancelJob(jobId) {
-    return new Promise(async (resolve, reject) => {
-        await connect();
-
+    return connect().then(() => new Promise((resolve, reject) => {
         if (!socket) {
             reject(new Error('Not connected'));
             return;
         }
 
+        let timeoutId = null;
+
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            socket.off('cancel_job_ack', handler);
+        };
+
         // Listen for acknowledgment
         const handler = (data) => {
             if (data.job_id === jobId) {
-                socket.off('cancel_job_ack', handler);
+                cleanup();
                 resolve(data);
             }
         };
@@ -270,11 +278,11 @@ export function cancelJob(jobId) {
         socket.emit('cancel_job', { job_id: jobId });
 
         // Timeout after 10 seconds
-        setTimeout(() => {
-            socket.off('cancel_job_ack', handler);
+        timeoutId = setTimeout(() => {
+            cleanup();
             reject(new Error('Cancel request timeout'));
         }, 10000);
-    });
+    }));
 }
 
 // ============================================================================
@@ -320,8 +328,6 @@ export const EventTypes = {
 // React Hook for WebSocket
 // ============================================================================
 
-import { useEffect, useState, useCallback } from 'react';
-
 /**
  * React hook for WebSocket connection and events
  * @param {string|string[]} topics - Topics to subscribe to
@@ -329,13 +335,13 @@ import { useEffect, useState, useCallback } from 'react';
  */
 export function useWebSocket(topics = []) {
     const [connected, setConnected] = useState(isConnected);
+    const topicArray = useMemo(() => (Array.isArray(topics) ? topics : [topics]), [topics]);
 
     useEffect(() => {
         // Connect on mount
         connect();
 
         // Subscribe to topics
-        const topicArray = Array.isArray(topics) ? topics : [topics];
         if (topicArray.length > 0) {
             subscribe(topicArray);
         }
@@ -352,7 +358,7 @@ export function useWebSocket(topics = []) {
             }
             unsubConnection();
         };
-    }, [JSON.stringify(topics)]);
+    }, [topicArray]);
 
     // Stable callback for subscribing to events
     const subscribeToEvent = useCallback((event, callback) => {

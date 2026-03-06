@@ -73,7 +73,7 @@ export function useModels() {
             setEmbeddingModels(embData.files || []);
             setLoraModels(loraData.files || []);
             toast.success("Models refreshed");
-        } catch (e) {
+        } catch {
             toast.error("Failed to refresh models");
         } finally {
             setLoading(false);

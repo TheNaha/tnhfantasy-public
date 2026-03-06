@@ -125,7 +125,6 @@ class ModelService:
         elif status == ModelStatus.DOWNLOADING:
             event_type = EventType.MODEL_SYNC_PROGRESS
             
-        import asyncio
         data = {
             "model_name": name,
             "directory": directory,
@@ -134,8 +133,7 @@ class ModelService:
             "extra_data": extra_data
         }
         
-        # simple fire-and-forget
-        asyncio.create_task(event_bus.publish(Event(type=event_type, data=data)))
+        await event_bus.publish(Event(type=event_type, data=data))
         
         return result
     

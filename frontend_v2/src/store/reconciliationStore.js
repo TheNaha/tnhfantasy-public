@@ -55,7 +55,8 @@ const useReconciliationStore = create((set, get) => ({
     // End tracking a reconciliation
     endReconciliation: (providerId) => {
         set((state) => {
-            const { [providerId]: removed, ...remaining } = state.activeReconciliations;
+            const remaining = { ...state.activeReconciliations };
+            delete remaining[providerId];
             return { activeReconciliations: remaining };
         });
     },

@@ -183,7 +183,6 @@ const FeedCard = memo(function FeedCard({
       // Upload the image for Img2Img use
       const response = await fetch(`/api/view/output/${item.name}`);
       const blob = await response.blob();
-      const file = new File([blob], item.name, { type: "image/png" });
 
       // Get image dimensions
       const img = new Image();
@@ -431,7 +430,9 @@ const FeedCard = memo(function FeedCard({
               try {
                 const res = await fetch(`/api/view/output/${item.name}.json`);
                 if (res.ok) meta = await res.json();
-              } catch {}
+              } catch {
+                // Metadata sidecar is optional; seed copy falls back to unavailable state.
+              }
             }
             if (meta?.seed) {
               navigator.clipboard.writeText(String(meta.seed));

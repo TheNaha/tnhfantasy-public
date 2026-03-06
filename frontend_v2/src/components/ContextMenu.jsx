@@ -3,8 +3,123 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Copy, Download, FolderPlus, Eye, Trash2,
-    Sparkles, Share2, X
+    Sparkles, Share2
 } from 'lucide-react';
+
+const MotionDiv = motion.div;
+
+const DropdownMenu = memo(function DropdownMenu({
+    actions,
+    position,
+    containerRef,
+    handleAction,
+}) {
+    // Adjust position to stay within viewport
+    const menuWidth = 200;
+    const menuHeight = actions.length * 44 + 16;
+
+    let x = position.x;
+    let y = position.y;
+
+    if (x + menuWidth > window.innerWidth) {
+        x = window.innerWidth - menuWidth - 10;
+    }
+    if (y + menuHeight > window.innerHeight) {
+        y = window.innerHeight - menuHeight - 10;
+    }
+
+    return (
+        <MotionDiv
+            ref={containerRef}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.1 }}
+            className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-2 min-w-[180px]"
+            style={{ left: x, top: y }}
+        >
+            {actions.map((action, idx) => (
+                <button
+                    key={idx}
+                    onClick={() => handleAction(action)}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${action.danger
+                            ? 'text-red-400 hover:bg-red-500/20'
+                            : 'text-gray-300 hover:bg-gray-800'
+                        }`}
+                >
+                    {action.icon && <action.icon size={16} />}
+                    {action.label}
+                </button>
+            ))}
+        </MotionDiv>
+    );
+});
+
+const BottomSheet = memo(function BottomSheet({
+    actions,
+    containerRef,
+    handleAction,
+    handleClose,
+}) {
+    return (
+        <>
+            {/* Backdrop */}
+            <MotionDiv
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-40 bg-black/60"
+                onClick={handleClose}
+            />
+
+            {/* Sheet */}
+            <MotionDiv
+                ref={containerRef}
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                drag="y"
+                dragConstraints={{ top: 0 }}
+                dragElastic={0.2}
+                onDragEnd={(_, info) => {
+                    if (info.offset.y > 100) handleClose();
+                }}
+                className="fixed bottom-0 left-0 right-0 z-50 bg-gray-900 rounded-t-2xl border-t border-gray-700"
+            >
+                {/* Handle */}
+                <div className="flex justify-center py-3">
+                    <div className="w-10 h-1 bg-gray-600 rounded-full" />
+                </div>
+
+                {/* Actions */}
+                <div className="px-4 pb-8 space-y-1">
+                    {actions.map((action, idx) => (
+                        <button
+                            key={idx}
+                            onClick={() => handleAction(action)}
+                            className={`w-full flex items-center gap-4 px-4 py-4 text-base text-left rounded-xl transition-colors ${action.danger
+                                    ? 'text-red-400 hover:bg-red-500/20'
+                                    : 'text-white hover:bg-gray-800'
+                                }`}
+                        >
+                            {action.icon && <action.icon size={20} />}
+                            <span className="font-medium">{action.label}</span>
+                        </button>
+                    ))}
+
+                    {/* Cancel button for mobile */}
+                    <button
+                        onClick={handleClose}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-4 mt-2 text-base text-gray-400 bg-gray-800 rounded-xl"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </MotionDiv>
+        </>
+    );
+});
 
 /**
  * ContextMenu - Adaptive context menu component.
@@ -45,7 +160,7 @@ const ContextMenu = memo(function ContextMenu({
     }, [disabled, isMobile]);
 
     // Handle long-press start (mobile)
-    const handleTouchStart = useCallback((e) => {
+    const handleTouchStart = useCallback(() => {
         if (disabled || !isMobile) return;
 
         longPressTimer.current = setTimeout(() => {
@@ -110,109 +225,6 @@ const ContextMenu = memo(function ContextMenu({
         return () => document.removeEventListener('keydown', handleEscape);
     }, [isOpen, handleClose]);
 
-    // Desktop dropdown menu
-    const DropdownMenu = () => {
-        // Adjust position to stay within viewport
-        const menuWidth = 200;
-        const menuHeight = actions.length * 44 + 16;
-
-        let x = position.x;
-        let y = position.y;
-
-        if (x + menuWidth > window.innerWidth) {
-            x = window.innerWidth - menuWidth - 10;
-        }
-        if (y + menuHeight > window.innerHeight) {
-            y = window.innerHeight - menuHeight - 10;
-        }
-
-        return (
-            <motion.div
-                ref={containerRef}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.1 }}
-                className="fixed z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-2 min-w-[180px]"
-                style={{ left: x, top: y }}
-            >
-                {actions.map((action, idx) => (
-                    <button
-                        key={idx}
-                        onClick={() => handleAction(action)}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors ${action.danger
-                                ? 'text-red-400 hover:bg-red-500/20'
-                                : 'text-gray-300 hover:bg-gray-800'
-                            }`}
-                    >
-                        {action.icon && <action.icon size={16} />}
-                        {action.label}
-                    </button>
-                ))}
-            </motion.div>
-        );
-    };
-
-    // Mobile bottom sheet
-    const BottomSheet = () => (
-        <>
-            {/* Backdrop */}
-            <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-40 bg-black/60"
-                onClick={handleClose}
-            />
-
-            {/* Sheet */}
-            <motion.div
-                ref={containerRef}
-                initial={{ y: '100%' }}
-                animate={{ y: 0 }}
-                exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                drag="y"
-                dragConstraints={{ top: 0 }}
-                dragElastic={0.2}
-                onDragEnd={(_, info) => {
-                    if (info.offset.y > 100) handleClose();
-                }}
-                className="fixed bottom-0 left-0 right-0 z-50 bg-gray-900 rounded-t-2xl border-t border-gray-700"
-            >
-                {/* Handle */}
-                <div className="flex justify-center py-3">
-                    <div className="w-10 h-1 bg-gray-600 rounded-full" />
-                </div>
-
-                {/* Actions */}
-                <div className="px-4 pb-8 space-y-1">
-                    {actions.map((action, idx) => (
-                        <button
-                            key={idx}
-                            onClick={() => handleAction(action)}
-                            className={`w-full flex items-center gap-4 px-4 py-4 text-base text-left rounded-xl transition-colors ${action.danger
-                                    ? 'text-red-400 hover:bg-red-500/20'
-                                    : 'text-white hover:bg-gray-800'
-                                }`}
-                        >
-                            {action.icon && <action.icon size={20} />}
-                            <span className="font-medium">{action.label}</span>
-                        </button>
-                    ))}
-
-                    {/* Cancel button for mobile */}
-                    <button
-                        onClick={handleClose}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-4 mt-2 text-base text-gray-400 bg-gray-800 rounded-xl"
-                    >
-                        Cancel
-                    </button>
-                </div>
-            </motion.div>
-        </>
-    );
-
     return (
         <>
             {/* Trigger element */}
@@ -229,7 +241,23 @@ const ContextMenu = memo(function ContextMenu({
             {/* Menu portal */}
             {createPortal(
                 <AnimatePresence>
-                    {isOpen && (isMobile ? <BottomSheet /> : <DropdownMenu />)}
+                    {isOpen && (
+                        isMobile ? (
+                            <BottomSheet
+                                actions={actions}
+                                containerRef={containerRef}
+                                handleAction={handleAction}
+                                handleClose={handleClose}
+                            />
+                        ) : (
+                            <DropdownMenu
+                                actions={actions}
+                                position={position}
+                                containerRef={containerRef}
+                                handleAction={handleAction}
+                            />
+                        )
+                    )}
                 </AnimatePresence>,
                 document.body
             )}
@@ -241,6 +269,7 @@ const ContextMenu = memo(function ContextMenu({
 /**
  * Helper to create standard image actions
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export const createImageActions = ({
     onCopySeed,
     onDownload,

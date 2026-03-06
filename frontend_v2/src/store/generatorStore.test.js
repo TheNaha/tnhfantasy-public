@@ -206,7 +206,7 @@ describe('useGeneratorStore', () => {
             const { setAutoApplyModelSettings, setSelectedCheckpoint } = useGeneratorStore.getState();
             setAutoApplyModelSettings(true);
             setSelectedCheckpoint({ name: 'model.safetensors', base_model: 'SDXL' });
-            const { steps, cfg, width, height } = useGeneratorStore.getState();
+            const { steps, width, height } = useGeneratorStore.getState();
             expect(steps).toBe(30);
             expect(width).toBe(1024);
             expect(height).toBe(1024);
