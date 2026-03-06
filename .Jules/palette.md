@@ -16,3 +16,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-18 - Avoid whole-file formatting when strict line-change limits are enforced
 **Learning:** Running `npx prettier --write <path>` on an entire file when a strict <50 lines change limit is enforced will likely violate the limit due to unrelated stylistic changes, polluting the PR and making review difficult.
 **Action:** When working under strict line limits, only format the specific lines modified, or ignore automated whole-file formatting and format manually.
+
+## 2024-05-24 - Range Sliders Accessibility
+**Learning:** Range sliders that mirror number inputs often miss accessible names because their corresponding labels are only associated via `htmlFor` with the number input. This makes them inaccessible or ambiguous for screen readers.
+**Action:** When a UI provides parallel inputs (e.g., number and range slider) for a single value, explicitly provide `aria-label` or `aria-labelledby` to the secondary input, even when there's an associated `<label>` meant for the primary input.

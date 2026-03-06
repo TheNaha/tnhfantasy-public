@@ -50,6 +50,7 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
                 step={step}
                 value={Math.min(Math.max(Number(value) || min, min !== undefined ? min : 0), max !== undefined ? max : 100)}
                 onChange={handleSliderChange}
+                aria-label={label ? `${label} slider` : 'Range slider'}
                 className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
         </div>

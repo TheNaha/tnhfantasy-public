@@ -18,6 +18,13 @@ describe('NumberInput', () => {
         render(<NumberInput label="Test Input" value={10} onChange={() => { }} />);
         const rangeInput = screen.getByRole('slider');
         expect(rangeInput).toHaveValue('10');
+        expect(rangeInput).toHaveAttribute('aria-label', 'Test Input slider');
+    });
+
+    it('adds generic aria-label when label prop is missing', () => {
+        render(<NumberInput value={10} onChange={() => { }} />);
+        const rangeInput = screen.getByRole('slider');
+        expect(rangeInput).toHaveAttribute('aria-label', 'Range slider');
     });
 
     it('calls onChange with new value when number input changes', () => {
