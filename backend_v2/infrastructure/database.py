@@ -10,6 +10,22 @@ from infrastructure.logging import db_logger
 logger = db_logger()
 
 
+def _get_table_columns(conn, table_name: str) -> set[str]:
+    """Return the current column names for a table."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(conn)
+    return {col['name'] for col in inspector.get_columns(table_name)}
+
+
+def _verify_required_columns(conn, table_name: str, required_columns: set[str]) -> None:
+    """Ensure a table contains all required columns after migrations run."""
+    columns = _get_table_columns(conn, table_name)
+    missing = sorted(required_columns - columns)
+    if missing:
+        raise RuntimeError(f"Schema verification failed for {table_name}: missing columns {', '.join(missing)}")
+
+
 def get_database_url() -> str:
     """Get database URL, ensuring data directory exists."""
     url = settings.database_url
@@ -131,6 +147,8 @@ def _run_migrations() -> None:
                 logger.info("migration_column_added", table="jobs", column="completed_at")
             except Exception as e:
                 logger.warning("migration_column_exists", column="completed_at", detail=str(e))
+
+        _verify_required_columns(conn, 'jobs', {'started_at', 'completed_at'})
         
         # ===== FTS5 Virtual Table for Prompts Search =====
         # Create FTS5 virtual table for fast full-text search on prompts

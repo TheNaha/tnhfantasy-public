@@ -28,6 +28,8 @@ from provider_core import (
     UploadFileRequest,
     ValidateModelsRequest,
     CancelJobRequest,
+    build_error_response,
+    build_status_response,
     # State
     get_reconciliation_state,
     # Reconciliation
@@ -291,21 +293,13 @@ async def run_inference(request: InferenceRequest):
                 # Modal connection timeout - likely happened after job executed but before results streamed
                 error_msg = f"Modal connection timeout: {ce}"
                 print(f"[{PROVIDER_ID}] {error_msg}")
-                yield json.dumps({
-                    "status": "error",
-                    "message": error_msg,
-                    "retryable": True  # Backend can retry this
-                }) + "\n"
+                yield json.dumps(build_error_response(error_msg, retryable=True)) + "\n"
             
             except Exception as e:
                 # Other errors during streaming
                 error_msg = f"Stream error: {e}"
                 print(f"[{PROVIDER_ID}] {error_msg}")
-                yield json.dumps({
-                    "status": "error",
-                    "message": error_msg,
-                    "retryable": False
-                }) + "\n"
+                yield json.dumps(build_error_response(error_msg, retryable=False)) + "\n"
             
             finally:
                 if job_id:
@@ -331,7 +325,7 @@ async def setup_models_endpoint():
     try:
         setup_func = get_modal_function("setup_models")
         result = setup_func.remote()
-        return {"status": "success", "message": "Setup complete", "result": result}
+        return build_status_response("success", "Setup complete", result=result)
     except Exception as e:
         print(f"[{PROVIDER_ID}] Setup error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -350,7 +344,7 @@ async def download_model(request: DownloadRequest):
             request.preview_url,
             request.metadata,
         )
-        return {"status": "queued", "message": f"Download queued for {request.path}", "provider": PROVIDER_ID}
+        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
     except Exception as e:
         print(f"[{PROVIDER_ID}] Download error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -363,7 +357,7 @@ async def list_models(request: ListModelsRequest):
     try:
         list_func = get_modal_function("list_models_with_metadata")
         files = await list_func.remote.aio(request.directory)
-        return {"files": files, "provider": PROVIDER_ID}
+        return build_status_response("success", f"Listed models in {request.directory}", provider=PROVIDER_ID, files=files)
     except Exception as e:
         print(f"[{PROVIDER_ID}] List models error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -372,12 +366,7 @@ async def list_models(request: ListModelsRequest):
 @app.get("/modal-stats")
 async def get_modal_stats():
     """Get model counts per directory from Modal storage."""
-    directories = [
-        "models/checkpoints", "models/loras", "models/vae",
-        "models/controlnet", "models/unet", "models/clip",
-        "models/upscale/models", "models/embeddings",
-        "models/hypernetworks", "models/motion_modules",
-    ]
+    directories = MODEL_DIRECTORIES
     
     stats = {}
     total = 0

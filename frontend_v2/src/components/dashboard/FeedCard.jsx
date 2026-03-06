@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { api, ApiError } from "../../api";
 import { useGeneratorStore } from "../../store/generatorStore";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
@@ -33,15 +34,30 @@ const FeedCard = memo(function FeedCard({
   const [showDetails, setShowDetails] = useState(false);
   const navigate = useNavigate();
   const settings = useSettingsStore((state) => state.settings);
+  const encodedName = encodeURIComponent(item.name);
+  const metadataEndpoint = `/api/view/output/${encodedName}.json`;
+  const imageEndpoint = `/api/view/output/${encodedName}`;
+
+  const loadMetadata = useCallback(async () => {
+    try {
+      return await api.get(metadataEndpoint);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }, [metadataEndpoint]);
+
+  const loadImageBlob = useCallback(async () => {
+    const response = await api.get(imageEndpoint);
+    return response.blob();
+  }, [imageEndpoint]);
 
   // Use React Query for metadata fetching with caching
   const { data: metadata, isLoading: loading } = useQuery({
     queryKey: ["metadata", item.name],
-    queryFn: async () => {
-      const res = await fetch(`/api/view/output/${item.name}.json`);
-      if (res.ok) return res.json();
-      return null;
-    },
+    queryFn: loadMetadata,
     enabled: true, // Always fetch for header display - fixes "invalid model" issue
     staleTime: Infinity, // Metadata doesn't change
   });
@@ -51,10 +67,8 @@ const FeedCard = memo(function FeedCard({
     let meta = metadata;
     if (!meta) {
       try {
-        const res = await fetch(`/api/view/output/${item.name}.json`);
-        if (res.ok) {
-          meta = await res.json();
-        } else {
+        meta = await loadMetadata();
+        if (!meta) {
           console.error("Failed to load metadata");
           return;
         }
@@ -110,10 +124,8 @@ const FeedCard = memo(function FeedCard({
       // Fetch metadata
       let meta = metadata;
       if (!meta) {
-        const res = await fetch(`/api/view/output/${item.name}.json`);
-        if (res.ok) {
-          meta = await res.json();
-        } else {
+        meta = await loadMetadata();
+        if (!meta) {
           toast.error("Failed to load image metadata");
           return;
         }
@@ -155,20 +167,11 @@ const FeedCard = memo(function FeedCard({
         },
       };
 
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(jobData),
+      await api.post("/api/generate", jobData);
+      toast.success("Remix queued! Creating variation...", {
+        icon: "✨",
+        duration: settings.ui.toastSuccessDuration,
       });
-
-      if (response.ok) {
-        toast.success("Remix queued! Creating variation...", {
-          icon: "✨",
-          duration: settings.ui.toastSuccessDuration,
-        });
-      } else {
-        throw new Error("Failed to queue remix");
-      }
     } catch (error) {
       console.error("Remix error:", error);
       toast.error("Failed to create remix");
@@ -181,8 +184,7 @@ const FeedCard = memo(function FeedCard({
   const handleImg2Img = useCallback(async () => {
     try {
       // Upload the image for Img2Img use
-      const response = await fetch(`/api/view/output/${item.name}`);
-      const blob = await response.blob();
+      const blob = await loadImageBlob();
 
       // Get image dimensions
       const img = new Image();
@@ -207,14 +209,13 @@ const FeedCard = memo(function FeedCard({
       console.error("Failed to load image for Img2Img:", error);
       toast.error("Failed to load image");
     }
-  }, [item.name, navigate]);
+  }, [item.name, loadImageBlob, navigate]);
 
   // Navigate to Inpaint with this image as source
   const handleInpaint = useCallback(async () => {
     try {
       // Fetch the image for Inpaint use
-      const response = await fetch(`/api/view/output/${item.name}`);
-      const blob = await response.blob();
+      const blob = await loadImageBlob();
 
       // Get image dimensions
       const img = new Image();
@@ -239,7 +240,7 @@ const FeedCard = memo(function FeedCard({
       console.error("Failed to load image for Inpaint:", error);
       toast.error("Failed to load image");
     }
-  }, [item.name, navigate]);
+  }, [item.name, loadImageBlob, navigate]);
 
   return (
     <div
@@ -323,7 +324,7 @@ const FeedCard = memo(function FeedCard({
                 <RefreshCw size={18} />
               </button>
               <a
-                href={`/api/view/output/${item.name}`}
+                href={imageEndpoint}
                 download
                 className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white flex items-center"
                 title="Download"
@@ -428,8 +429,7 @@ const FeedCard = memo(function FeedCard({
             let meta = metadata;
             if (!meta) {
               try {
-                const res = await fetch(`/api/view/output/${item.name}.json`);
-                if (res.ok) meta = await res.json();
+                meta = await loadMetadata();
               } catch {
                 // Metadata sidecar is optional; seed copy falls back to unavailable state.
               }
@@ -443,7 +443,7 @@ const FeedCard = memo(function FeedCard({
           },
           onDownload: () => {
             const link = document.createElement("a");
-            link.href = `/api/view/output/${item.name}`;
+            link.href = imageEndpoint;
             link.download = item.name;
             link.click();
           },
@@ -461,7 +461,7 @@ const FeedCard = memo(function FeedCard({
         >
           <ProgressiveImage
             blurhash={item.blurhash}
-            src={`/api/view/output/${item.name}`}
+            src={imageEndpoint}
             medium={item.thumbnail_medium || item.medium}
             alt={item.name}
             size="full"

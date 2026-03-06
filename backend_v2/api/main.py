@@ -86,6 +86,35 @@ class JobTimeoutError(Exception):
     pass
 
 
+def _extract_worker_error_message(update: dict) -> str:
+    """Normalize worker error payloads from different providers."""
+    detail = update.get("detail")
+    if isinstance(detail, dict):
+        return detail.get("message") or detail.get("error") or json.dumps(detail)
+
+    return (
+        update.get("message")
+        or update.get("error")
+        or detail
+        or "Unknown worker error"
+    )
+
+
+def _format_worker_http_error(status_code: int, error_text: str) -> str:
+    """Produce a readable error for non-200 worker responses."""
+    if not error_text:
+        return f"Worker returned {status_code}"
+
+    try:
+        payload = json.loads(error_text)
+    except json.JSONDecodeError:
+        return f"Worker returned {status_code}: {error_text}"
+
+    if isinstance(payload, dict):
+        return f"Worker returned {status_code}: {_extract_worker_error_message(payload)}"
+    return f"Worker returned {status_code}: {payload}"
+
+
 async def _process_image_background(image_path: str, job_id: str):
     """
     Process image in background (generate thumbnails + blurhash).
@@ -197,10 +226,11 @@ async def _call_provider(
                                         final_result = update
                                         
                                     elif status == "error":
+                                        error_message = _extract_worker_error_message(update)
                                         raise ProviderCallError(
-                                            update.get("message", "Unknown worker error"),
+                                            error_message,
                                             provider_id="",
-                                            is_retryable=False  # Application errors shouldn't be retried
+                                            is_retryable=bool(update.get("retryable", False))
                                         )
                                         
                                 except json.JSONDecodeError as jde:
@@ -217,7 +247,7 @@ async def _call_provider(
                 else:
                     error_text = await response.aread()
                     raise ProviderCallError(
-                        f"Worker returned {response.status_code}: {error_text.decode()}",
+                        _format_worker_http_error(response.status_code, error_text.decode()),
                         provider_id="",
                         is_retryable=response.status_code >= 500  # Only retry server errors
                     )
@@ -273,16 +303,25 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
         exhausted_providers = set()
         current_provider = None
         retry_count = 0  # Retries for current provider
+
+        async def mark_provider_exhausted(provider_id: str, message: str):
+            """Release provider state and move the job back to pending before trying another provider."""
+            load_balancer.release_job(provider_id)
+            exhausted_providers.add(provider_id)
+            await job_service.update_job(
+                job_id,
+                status=JobStatus.PENDING,
+                message=message,
+            )
         
         while True:
             # Get a new provider only if we don't have one or current one is exhausted
             if current_provider is None or current_provider.id in exhausted_providers:
                 # Get provider from load balancer, excluding exhausted ones
-                provider = load_balancer.get_next_provider(preferred_provider_id)
-                
-                # Skip exhausted providers
-                while provider and provider.id in exhausted_providers:
-                    provider = load_balancer.get_fallback_provider(provider.id)
+                provider = load_balancer.get_next_provider(
+                    preferred_provider_id,
+                    exclude_provider_ids=exhausted_providers,
+                )
                 
                 if not provider:
                     # No more providers to try
@@ -319,12 +358,14 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
             # Get worker URL from container config
             container_config = current_provider.container_config or {}
             if not container_config:
-                await job_service.update_job(
-                    job_id,
-                    status=JobStatus.FAILED,
-                    error=f"Provider {current_provider.id} has no container config"
+                logger.warning("provider_missing_container_config", job_id=job_id, provider=current_provider.id)
+                load_balancer.report_failure(current_provider.id)
+                await mark_provider_exhausted(
+                    current_provider.id,
+                    f"Provider {current_provider.id} is unavailable, trying fallback...",
                 )
-                return
+                current_provider = None
+                continue
             
             container_name = f"comfy-provider-{current_provider.id}"
             worker_url = f"http://{container_name}:8000"
@@ -358,7 +399,7 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
                 
                 # Use image processor to determine output path logic (date-based hierarchy)
                 # This ensures consistent directory structure across the app
-                from infrastructure.image_processor import get_output_path, save_image_with_metadata
+                from infrastructure.image_processor import get_output_path, save_image_with_metadata, write_metadata_sidecar
                 
                 # Default output directory
                 base_output_dir = "/app/output"
@@ -410,9 +451,10 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
                             save_image_with_metadata(img_obj, output_path, full_metadata)
                             logger.debug("image_saved_with_metadata", path=output_path, bytes=len(image_data))
                         except Exception as e:
-                            logger.error(f"Failed to save image with metadata: {e}, falling back to raw write")
+                            logger.error(f"Failed to save image with metadata: {e}, falling back to raw write with sidecar metadata")
                             with open(output_path, 'wb') as f:
                                 f.write(image_data)
+                            write_metadata_sidecar(output_path, full_metadata)
                         
                         # Calculate relative subfolder for the API response
                         # The frontend expects 'subfolder' to be relative to the root output dir
@@ -476,8 +518,11 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
                 else:
                     # Max retries exhausted for this provider, try fallback
                     logger.warning("provider_max_retries", job_id=job_id, provider=current_provider.id, retries=retry_count)
-                    load_balancer.release_job(current_provider.id)
-                    exhausted_providers.add(current_provider.id)
+                    await mark_provider_exhausted(
+                        current_provider.id,
+                        f"Provider {current_provider.id} exhausted retries, trying fallback...",
+                    )
+                    current_provider = None
                     continue  # Try next provider
                     
             except ProviderCallError as e:
@@ -497,20 +542,27 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
                     continue  # Retry same provider
                 else:
                     # Non-retryable error or max retries exhausted
-                    load_balancer.release_job(current_provider.id)
-                    exhausted_providers.add(current_provider.id)
+                    failed_provider_id = current_provider.id
+                    await mark_provider_exhausted(
+                        failed_provider_id,
+                        f"Switching providers after error on {failed_provider_id}...",
+                    )
+                    current_provider = None
                     
                     if not e.is_retryable:
                         # Non-retryable error, fail immediately if no other providers
-                        logger.warning("provider_non_retryable", job_id=job_id, provider=current_provider.id, error=str(e))
+                        logger.warning("provider_non_retryable", job_id=job_id, provider=failed_provider_id, error=str(e))
                     
                     continue  # Try next provider (if any)
                     
             except asyncio.TimeoutError:
                 logger.error("job_timeout_exceeded", job_id=job_id, timeout=timeout)
                 load_balancer.report_failure(current_provider.id)
-                load_balancer.release_job(current_provider.id)
-                exhausted_providers.add(current_provider.id)
+                await mark_provider_exhausted(
+                    current_provider.id,
+                    f"Provider {current_provider.id} timed out, trying fallback...",
+                )
+                current_provider = None
                 continue  # Try next provider
                 
     except Exception as e:

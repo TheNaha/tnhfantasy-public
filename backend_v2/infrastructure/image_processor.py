@@ -68,6 +68,14 @@ def save_image_with_metadata(image: Image.Image, path: str, metadata: dict) -> s
     return path
 
 
+def write_metadata_sidecar(path: str, metadata: dict) -> str:
+    """Write metadata to the legacy sidecar JSON file used as a compatibility fallback."""
+    sidecar_path = f"{path}.json"
+    with open(sidecar_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f)
+    return sidecar_path
+
+
 def read_image_metadata(path: str) -> dict:
     """
     Read metadata from PNG file (embedded) or fallback to sidecar .json.

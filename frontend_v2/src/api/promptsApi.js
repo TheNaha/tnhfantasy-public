@@ -1,5 +1,7 @@
 // Prompts API client - Server-side prompt library with FTS5 search
 
+import api from './client';
+
 const API_BASE = '/api/prompts';
 
 /**
@@ -13,111 +15,77 @@ export async function listPrompts({ q, category, favorite, limit = 100, offset =
     params.append('limit', limit);
     params.append('offset', offset);
 
-    const response = await fetch(`${API_BASE}?${params}`);
-    if (!response.ok) throw new Error('Failed to fetch prompts');
-    return response.json();
+    return api.get(`${API_BASE}?${params}`);
 }
 
 /**
  * Get all categories
  */
 export async function getCategories() {
-    const response = await fetch(`${API_BASE}/categories`);
-    if (!response.ok) throw new Error('Failed to fetch categories');
-    return response.json();
+    return api.get(`${API_BASE}/categories`);
 }
 
 /**
  * Get favorite prompts
  */
 export async function getFavorites(limit = 20) {
-    const response = await fetch(`${API_BASE}/favorites?limit=${limit}`);
-    if (!response.ok) throw new Error('Failed to fetch favorites');
-    return response.json();
+    return api.get(`${API_BASE}/favorites?limit=${limit}`);
 }
 
 /**
  * Get most used prompts
  */
 export async function getMostUsed(limit = 10) {
-    const response = await fetch(`${API_BASE}/most-used?limit=${limit}`);
-    if (!response.ok) throw new Error('Failed to fetch most used');
-    return response.json();
+    return api.get(`${API_BASE}/most-used?limit=${limit}`);
 }
 
 /**
  * Get a single prompt by ID
  */
 export async function getPrompt(id) {
-    const response = await fetch(`${API_BASE}/${id}`);
-    if (!response.ok) throw new Error('Prompt not found');
-    return response.json();
+    return api.get(`${API_BASE}/${id}`);
 }
 
 /**
  * Create a new prompt
  */
 export async function createPrompt(data) {
-    const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Failed to create prompt');
-    return response.json();
+    return api.post(API_BASE, data);
 }
 
 /**
  * Update an existing prompt
  */
 export async function updatePrompt(id, data) {
-    const response = await fetch(`${API_BASE}/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Failed to update prompt');
-    return response.json();
+    return api.put(`${API_BASE}/${id}`, data);
 }
 
 /**
  * Delete a prompt
  */
 export async function deletePrompt(id) {
-    const response = await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error('Failed to delete prompt');
-    return response.json();
+    return api.delete(`${API_BASE}/${id}`);
 }
 
 /**
  * Increment usage count (call when prompt is used)
  */
 export async function incrementUsage(id) {
-    const response = await fetch(`${API_BASE}/${id}/use`, { method: 'POST' });
-    if (!response.ok) throw new Error('Failed to increment usage');
-    return response.json();
+    return api.post(`${API_BASE}/${id}/use`);
 }
 
 /**
  * Bulk import prompts (for localStorage migration)
  */
 export async function importPrompts(prompts) {
-    const response = await fetch(`${API_BASE}/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompts })
-    });
-    if (!response.ok) throw new Error('Failed to import prompts');
-    return response.json();
+    return api.post(`${API_BASE}/import`, { prompts });
 }
 
 /**
  * Export all prompts
  */
 export async function exportPrompts() {
-    const response = await fetch(`${API_BASE}/export`);
-    if (!response.ok) throw new Error('Failed to export prompts');
-    return response.json();
+    return api.get(`${API_BASE}/export`);
 }
 
 export default {

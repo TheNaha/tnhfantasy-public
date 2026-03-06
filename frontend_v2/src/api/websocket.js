@@ -31,6 +31,17 @@ const listeners = new Map();
 // Subscribed topics
 const subscribedTopics = new Set();
 
+
+function registerSocketListener(event, callback) {
+    if (!socket) {
+        return;
+    }
+
+    if (!socket.listeners(event).includes(callback)) {
+        socket.on(event, callback);
+    }
+}
+
 /**
  * Initialize WebSocket connection
  * @returns {Promise} Resolves when connected
@@ -71,10 +82,7 @@ export function connect() {
             // but event handlers may have been cleared
             listeners.forEach((callbacks, event) => {
                 callbacks.forEach(callback => {
-                    // Check if listener is already registered to avoid duplicates
-                    if (!socket.listeners(event).includes(callback)) {
-                        socket.on(event, callback);
-                    }
+                    registerSocketListener(event, callback);
                 });
             });
 
@@ -188,7 +196,7 @@ export function on(event, callback) {
 
     // Also register with Socket.IO if connected
     if (socket) {
-        socket.on(event, callback);
+        registerSocketListener(event, callback);
     }
 
     // Return unsubscribe function

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useConfirmation } from '../context/ConfirmationContext';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api';
 
 
 export default function Settings() {
@@ -151,24 +152,12 @@ function BrandingSettings() {
     // Fetch current branding
     const { data: branding, isLoading } = useQuery({
         queryKey: ['branding'],
-        queryFn: async () => {
-            const res = await fetch('/api/settings/branding');
-            if (!res.ok) throw new Error('Failed to fetch branding');
-            return res.json();
-        },
+        queryFn: () => api.get('/api/settings/branding'),
     });
 
     // Save branding mutation
     const saveMutation = useMutation({
-        mutationFn: async (data) => {
-            const res = await fetch('/api/settings/branding', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
-            });
-            if (!res.ok) throw new Error('Failed to save branding');
-            return res.json();
-        },
+        mutationFn: (data) => api.post('/api/settings/branding', data),
         onSuccess: () => {
             queryClient.invalidateQueries(['branding']);
             toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });

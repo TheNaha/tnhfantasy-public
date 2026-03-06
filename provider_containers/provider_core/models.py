@@ -3,8 +3,9 @@ Shared Pydantic models for provider workers.
 These models define the API contract for all provider worker endpoints.
 """
 
+from typing import Any, Dict, List, Literal, Optional
+
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
 
 
 class InferenceRequest(BaseModel):
@@ -50,6 +51,60 @@ class ValidateModelsRequest(BaseModel):
     """Request for validating models in a directory."""
     directory: str = "models/checkpoints"
     delete_invalid: bool = False
+
+
+class ErrorResponse(BaseModel):
+    """Standard error payload for worker endpoints and streamed updates."""
+    status: Literal["error"] = "error"
+    message: str
+    retryable: bool = False
+    code: Optional[int] = None
+    error: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+
+class StatusResponse(BaseModel):
+    """Standard success and queued payload for worker endpoints."""
+    status: Literal["success", "queued"]
+    message: str
+    provider: Optional[str] = None
+    result: Optional[Any] = None
+    files: Optional[List[Dict[str, Any]]] = None
+
+
+def build_error_response(
+    message: str,
+    *,
+    retryable: bool = False,
+    code: Optional[int] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a normalized error payload while preserving the legacy error field."""
+    return ErrorResponse(
+        message=message,
+        retryable=retryable,
+        code=code,
+        error=message,
+        details=details,
+    ).model_dump(exclude_none=True)
+
+
+def build_status_response(
+    status: Literal["success", "queued"],
+    message: str,
+    *,
+    provider: Optional[str] = None,
+    result: Optional[Any] = None,
+    files: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Build a normalized non-error payload for worker endpoints."""
+    return StatusResponse(
+        status=status,
+        message=message,
+        provider=provider,
+        result=result,
+        files=files,
+    ).model_dump(exclude_none=True)
 
 
 # Model directories used across providers

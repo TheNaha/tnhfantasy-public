@@ -170,8 +170,7 @@ const ModelSelector = memo(function ModelSelector({
       });
       if (search) params.append("search", search);
 
-      const res = await fetch(`/api/files?${params}`);
-      const data = await res.json();
+      const data = await filesApi.list(Object.fromEntries(params.entries()));
       const newModels = data.files || [];
 
       if (loadMore) {

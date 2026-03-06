@@ -13,6 +13,11 @@ from datetime import datetime
 from enum import Enum
 from collections import deque
 
+from infrastructure.logging import get_logger
+
+
+logger = get_logger("events")
+
 
 class EventType(str, Enum):
     """Event types for real-time updates."""
@@ -87,6 +92,7 @@ class EventBus:
         self._lock = asyncio.Lock()
         self._replay_buffer: deque = deque(maxlen=replay_buffer_size)
         self._replay_enabled = True
+        self._dropped_events = 0
     
     async def publish(self, event: Event) -> None:
         """
@@ -110,7 +116,15 @@ class EventBus:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
                     # Drop event if queue is full (subscriber too slow)
-                    pass
+                    self._dropped_events += 1
+                    if self._dropped_events == 1 or self._dropped_events % 50 == 0:
+                        logger.warning(
+                            "event_dropped",
+                            topic=topic,
+                            event_type=event.type.value,
+                            dropped_events=self._dropped_events,
+                            subscriber_count=len(queues),
+                        )
     
     async def subscribe(self, topic: str, max_queue_size: int = 100) -> AsyncGenerator[Event, None]:
         """
@@ -163,6 +177,10 @@ class EventBus:
     def subscriber_count(self, topic: str) -> int:
         """Get number of subscribers for a topic."""
         return len(self._subscribers.get(topic, []))
+
+    def dropped_event_count(self) -> int:
+        """Get the number of events dropped because subscriber queues were full."""
+        return self._dropped_events
     
     def get_replay_buffer(self, limit: Optional[int] = None) -> List[Event]:
         """

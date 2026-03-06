@@ -34,6 +34,12 @@ def providers(session: Session):
 
 class TestLoadBalancer:
     """Test load balancer strategies and failure handling."""
+
+    @pytest.fixture(autouse=True)
+    def reset_lb_state(self):
+        LoadBalancer.reset_state()
+        yield
+        LoadBalancer.reset_state()
     
     def test_round_robin_distribution(self, session: Session, providers):
         """Test round-robin distributes across all enabled providers."""
@@ -83,6 +89,10 @@ class TestLoadBalancer:
         
         assert provider is not None
         assert provider.id == "provider-2"
+
+        stats = lb.get_stats()
+        provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+        assert provider_stats["provider-2"]["jobs_assigned"] == 1
     
     def test_fallback_on_failure(self, session: Session, providers):
         """Test fallback provides alternative when provider fails."""
@@ -96,6 +106,21 @@ class TestLoadBalancer:
         
         assert fallback is not None
         assert fallback.id != "provider-1"
+
+    def test_get_next_provider_excludes_exhausted(self, session: Session, providers):
+        lb = LoadBalancer(session, strategy="round-robin")
+
+        provider = lb.get_next_provider(exclude_provider_ids={"provider-1"})
+
+        assert provider is not None
+        assert provider.id == "provider-2"
+
+    def test_fallback_excludes_multiple_providers(self, session: Session, providers):
+        lb = LoadBalancer(session, strategy="priority")
+
+        fallback = lb.get_fallback_provider("provider-1", exclude_provider_ids={"provider-2"})
+
+        assert fallback is None
     
     def test_no_enabled_providers(self, session: Session):
         """Test returns None when no providers are enabled."""

@@ -7,7 +7,10 @@ from provider_core.models import (
     ListModelsRequest,
     DeleteModelRequest,
     UploadFileRequest,
-    ValidateModelsRequest
+    ValidateModelsRequest,
+    build_error_response,
+    build_status_response,
+    MODEL_DIRECTORIES,
 )
 
 class TestProviderModels:
@@ -57,3 +60,25 @@ class TestProviderModels:
         req = ValidateModelsRequest()
         assert req.directory == "models/checkpoints" # default
         assert req.delete_invalid is False # default
+
+    def test_build_error_response(self):
+        payload = build_error_response("boom", retryable=True, code=503)
+        assert payload == {
+            "status": "error",
+            "message": "boom",
+            "retryable": True,
+            "code": 503,
+            "error": "boom",
+        }
+
+    def test_build_status_response(self):
+        payload = build_status_response("queued", "Download queued", provider="beam")
+        assert payload == {
+            "status": "queued",
+            "message": "Download queued",
+            "provider": "beam",
+        }
+
+    def test_model_directories_use_upscale_models(self):
+        assert "models/upscale_models" in MODEL_DIRECTORIES
+        assert "models/upscale/models" not in MODEL_DIRECTORIES

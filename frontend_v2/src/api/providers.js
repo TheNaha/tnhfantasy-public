@@ -89,7 +89,15 @@ export const providersApi = {
     restartContainer: (providerId) => api.post(`/api/providers/${providerId}/container/restart`),
 
     /** Tail recent container logs (useful for debugging startup failures). */
-    getContainerLogs: (providerId) => api.get(`/api/providers/${providerId}/container/logs`),
+    getContainerLogs: (providerId, tail) => api.get(
+        `/api/providers/${providerId}/container/logs${tail ? `?tail=${tail}` : ''}`
+    ),
+
+    /** Read current model reconciliation status for a provider. */
+    getReconciliationStatus: (providerId) => api.get(`/api/providers/${providerId}/reconciliation-status`),
+
+    /** Clear persisted provider model sync status to force a clean reconciliation pass. */
+    resetModelStatus: (providerId) => api.delete(`/api/v2/models/providers/${providerId}/reset-status`),
 
     // -------------------------------------------------------------------------
     // Modal-specific operations

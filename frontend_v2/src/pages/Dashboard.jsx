@@ -4,10 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { VirtuosoGrid } from 'react-virtuoso';
 
 // API Layer
-import { filesApi } from '../api';
+import { api, ApiError, filesApi } from '../api';
 
 import { useGallery } from '../hooks/useGallery';
 import { useJobStore } from '../store/jobStore';
@@ -38,27 +37,6 @@ import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
 import { parseGalleryDate, getLocalDateKey, getLatestDate } from '../utils/dateTime';
 
-const GridList = React.forwardRef(({ style, children, context, ...props }, ref) => (
-    <div
-        ref={ref}
-        {...props}
-        className="grid gap-4 pb-20"
-        style={{ ...style, gridTemplateColumns: `repeat(${context.gridCols}, minmax(0, 1fr))` }}
-    >
-        {children}
-    </div>
-));
-
-const GridItem = React.forwardRef(({ children, ...props }, ref) => {
-    const isHeader = children?.props?.className?.includes('date-header-marker');
-    return (
-        <div ref={ref} {...props} style={{ ...props.style, gridColumn: isHeader ? '1 / -1' : undefined }}>
-            {children}
-        </div>
-    );
-});
-GridItem.displayName = 'GridItem';
-
 export default function Dashboard() {
 
     const navigate = useNavigate();
@@ -87,11 +65,6 @@ export default function Dashboard() {
     const [showStatsPanel, setShowStatsPanel] = useState(false);
 
 
-    // Find the scroll parent for Virtuoso
-    const scrollParent = useMemo(
-        () => (typeof document !== 'undefined' ? document.getElementById('main-scroll-container') : null),
-        []
-    );
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
     const [filters, setFilters] = useState({
@@ -368,18 +341,15 @@ export default function Dashboard() {
         }, {});
     }, [displayedItems]);
 
-    const flattenedGridItems = useMemo(() => {
-        const flat = [];
-        Object.entries(grouped)
+    const sortedGroupedEntries = useMemo(() => {
+        return Object.entries(grouped)
             .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-            .forEach(([date, groupItems]) => {
-                flat.push({ isHeader: true, date, id: `header-${date}` });
+            .map(([date, groupItems]) => ([
+                date,
                 groupItems
                     .slice()
                     .sort((a, b) => parseGalleryDate(b.date) - parseGalleryDate(a.date))
-                    .forEach(item => flat.push(item));
-            });
-        return flat;
+            ]));
     }, [grouped]);
 
     // Helper to format date keys for display
@@ -407,13 +377,17 @@ export default function Dashboard() {
         if (selectedImage) {
             // Fallback: fetch from legacy sidecar JSON or dedicated endpoint
             if (!selectedImage.metadata || Object.keys(selectedImage.metadata).length === 0) {
-                fetch(`/api/view/output/${selectedImage.name}.json`)
-                    .then(res => res.ok ? res.json() : null)
-                    .then(data => {
+                api.get(`/api/view/output/${encodeURIComponent(selectedImage.name)}.json`)
+                    .then((data) => {
                         setMetadata(data);
                         setLoadingMeta(false);
                     })
-                    .catch(() => setLoadingMeta(false));
+                    .catch((error) => {
+                        if (error instanceof ApiError && error.status === 404) {
+                            setMetadata(null);
+                        }
+                        setLoadingMeta(false);
+                    });
             }
         }
     }, [selectedImage]);
@@ -881,109 +855,96 @@ export default function Dashboard() {
                     ) : (
                         <div className="space-y-8">
                             {viewMode === 'grid' ? (
-                                <VirtuosoGrid
-                                    customScrollParent={scrollParent}
-                                    useWindowScroll={!scrollParent}
-                                    data={flattenedGridItems}
-                                    context={{ gridCols }}
-                                    components={{ List: GridList, Item: GridItem }}
-                                    computeItemKey={(index, item) => item.id || item.name || `item-${index}`}
-                                    itemContent={(index, item) => {
-                                        if (item.isHeader) {
-                                            return (
-                                                <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2 date-header-marker">
-                                                    <Calendar size={16} /> {formatDateLabel(item.date)}
-                                                </h3>
-                                            );
-                                        }
-
-                                        return (
-                                            <motion.div
-                                                layout
-                                                initial={{ opacity: 0, scale: 0.8 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.8 }}
-                                                transition={{ duration: 0.2 }}
-                                                key={item.id || item.name}
-                                            >
-                                                {item.type === 'job' ? (
-                                                    <JobCard job={item} onClick={handleJobClick} />
-                                                ) : item.type === 'imageGroup' ? (
-                                                    <ImageGroup
-                                                        images={item.images}
-                                                        job={item.job}
-                                                        isSelected={item.images.some(img => selectedFiles.has(img.name))}
-                                                        showSelectionCheckbox={selectionMode}
-                                                        onSelectionToggle={() => {
-                                                            // Toggle all images in group
-                                                            item.images.forEach(img => toggleSelection(img.name));
-                                                        }}
-                                                        onClick={handleImageClick}
-                                                    />
-                                                ) : (
-                                                    <div
-                                                        className={`group relative aspect-square bg-gray-800 rounded-xl overflow-hidden border transition-all ${selectedFiles.has(item.name) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-800 hover:border-gray-600'}`}
-                                                        onClick={() => {
-                                                            if (selectionMode) toggleSelection(item.name);
-                                                            else handleImageClick(item);
-                                                        }}
-                                                        role="img"
-                                                        aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
-                                                    >
-                                                        <div className="aspect-square bg-gray-800 rounded-xl overflow-hidden group relative">
-                                                            <ProgressiveImage
-                                                                blurhash={item.blurhash}
-                                                                src={`/api/view/output/${item.name}`}
-                                                                medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
-                                                                alt={item.name}
-                                                                size="medium"
-                                                                className="w-full h-full"
-                                                            />
-                                                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                                                            {isFavorite(item.name) && (
-                                                                <div className="absolute top-2 right-2 text-yellow-400">
-                                                                    <Star size={20} fill="currentColor" />
+                                sortedGroupedEntries.map(([date, groupItems]) => (
+                                    <div key={date}>
+                                        <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
+                                            <Calendar size={16} /> {formatDateLabel(date)}
+                                        </h3>
+                                        <div
+                                            className="grid gap-4"
+                                            style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
+                                        >
+                                            {groupItems.map((item) => (
+                                                <motion.div
+                                                    initial={{ opacity: 0, scale: 0.96 }}
+                                                    animate={{ opacity: 1, scale: 1 }}
+                                                    transition={{ duration: 0.18 }}
+                                                    key={item.id || item.name}
+                                                >
+                                                    {item.type === 'job' ? (
+                                                        <JobCard job={item} onClick={handleJobClick} />
+                                                    ) : item.type === 'imageGroup' ? (
+                                                        <ImageGroup
+                                                            images={item.images}
+                                                            job={item.job}
+                                                            isSelected={item.images.some(img => selectedFiles.has(img.name))}
+                                                            showSelectionCheckbox={selectionMode}
+                                                            onSelectionToggle={() => {
+                                                                item.images.forEach(img => toggleSelection(img.name));
+                                                            }}
+                                                            onClick={handleImageClick}
+                                                        />
+                                                    ) : (
+                                                        <div
+                                                            className={`group relative aspect-square bg-gray-800 rounded-xl overflow-hidden border transition-all ${selectedFiles.has(item.name) ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-800 hover:border-gray-600'}`}
+                                                            onClick={() => {
+                                                                if (selectionMode) toggleSelection(item.name);
+                                                                else handleImageClick(item);
+                                                            }}
+                                                            role="img"
+                                                            aria-label={item.prompt ? `AI generated image: ${item.prompt.slice(0, 100)}${item.prompt.length > 100 ? '...' : ''}` : `Generated image ${item.name}`}
+                                                        >
+                                                            <div className="aspect-square bg-gray-800 rounded-xl overflow-hidden group relative">
+                                                                <ProgressiveImage
+                                                                    blurhash={item.blurhash}
+                                                                    src={`/api/view/output/${item.name}`}
+                                                                    medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
+                                                                    alt={item.name}
+                                                                    size="medium"
+                                                                    className="w-full h-full"
+                                                                />
+                                                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                                                {isFavorite(item.name) && (
+                                                                    <div className="absolute top-2 right-2 text-yellow-400">
+                                                                        <Star size={20} fill="currentColor" />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {selectionMode && (
+                                                                <div className={`absolute top-2 right-2 p-1.5 rounded-full ${selectedFiles.has(item.name) ? 'bg-blue-500 text-white' : 'bg-black/50 text-gray-400'}`}>
+                                                                    <Check size={14} />
                                                                 </div>
                                                             )}
-                                                        </div>
-                                                        {/* Selection Mode Checkbox */}
-                                                        {selectionMode && (
-                                                            <div className={`absolute top-2 right-2 p-1.5 rounded-full ${selectedFiles.has(item.name) ? 'bg-blue-500 text-white' : 'bg-black/50 text-gray-400'}`}>
-                                                                <Check size={14} />
-                                                            </div>
-                                                        )}
 
-                                                        {/* Favorite Star Button */}
-                                                        {!selectionMode && (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    toggleFavorite(item.name);
-                                                                    toast.success(
-                                                                        isFavorite(item.name) ? "Removed from favorites" : "Added to favorites",
-                                                                        { icon: isFavorite(item.name) ? '💔' : '⭐' }
-                                                                    );
-                                                                }}
-                                                                className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                                                                title={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
-                                                                aria-label={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
-                                                            >
-                                                                <Star
-                                                                    size={16}
-                                                                    className={isFavorite(item.name) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
-                                                                />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </motion.div>
-                                        );
-                                    }}
-                                />
+                                                            {!selectionMode && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleFavorite(item.name);
+                                                                        toast.success(
+                                                                            isFavorite(item.name) ? "Removed from favorites" : "Added to favorites",
+                                                                            { icon: isFavorite(item.name) ? '💔' : '⭐' }
+                                                                        );
+                                                                    }}
+                                                                    className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                    title={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
+                                                                    aria-label={isFavorite(item.name) ? 'Remove from favorites' : 'Add to favorites'}
+                                                                >
+                                                                    <Star
+                                                                        size={16}
+                                                                        className={isFavorite(item.name) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
+                                                                    />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </motion.div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))
                             ) : (
-                                Object.entries(grouped)
-                                    .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-                                    .map(([date, groupItems]) => (
+                                sortedGroupedEntries.map(([date, groupItems]) => (
                                 <div key={date}>
                                     <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
                                         <Calendar size={16} /> {formatDateLabel(date)}

@@ -4,6 +4,7 @@ Manages Docker containers for provider workers with isolated credentials.
 """
 import docker
 import os
+import requests
 import time
 from typing import Dict, Optional, List
 from pathlib import Path
@@ -256,6 +257,7 @@ class ContainerManager:
         """Wait for container to become healthy."""
         logger.debug("container_health_check_start", container=container.name, timeout=timeout)
         start_time = time.time()
+        last_error = None
         
         while time.time() - start_time < timeout:
             container.reload()
@@ -267,7 +269,6 @@ class ContainerManager:
             # Try health check endpoint
             # Note: This may fail if backend is containerized since port is on host
             try:
-                import requests
                 # Get the host port
                 ports = container.ports.get('8000/tcp')
                 if ports and len(ports) > 0:
@@ -279,8 +280,9 @@ class ContainerManager:
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method="localhost")
                             return
+                        last_error = f"localhost health returned {response.status_code}"
                     except:
-                        pass
+                        last_error = "localhost health probe failed"
                     
                     # Try host.containers.internal (Podman/Docker from container)
                     try:
@@ -288,25 +290,20 @@ class ContainerManager:
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method="host_internal")
                             return
+                        last_error = f"host_internal health returned {response.status_code}"
                     except:
-                        pass
+                        last_error = "host_internal health probe failed"
             except Exception as e:
-                pass
-            
-            # If we've waited at least 5 seconds and container is still running, consider it healthy
-            if time.time() - start_time > 5 and container.status == 'running':
-                logger.warning("container_healthy_fallback", container=container.name, reason="networking")
-                return
+                last_error = str(e)
             
             time.sleep(1)
         
-        # If we timeout but container is still running, warn but don't fail
         container.reload()
-        if container.status == 'running':
-            logger.warning("container_health_timeout", container=container.name, status="running")
-            return
-        
-        raise TimeoutError(f"Container {container.name} did not become healthy within {timeout}s")
+        timeout_message = f"Container {container.name} did not become healthy within {timeout}s"
+        if last_error:
+            timeout_message = f"{timeout_message}: {last_error}"
+        logger.warning("container_health_timeout", container=container.name, status=container.status, error=last_error)
+        raise TimeoutError(timeout_message)
     
     def stop_container(self, provider_id: str):
         """Stop a provider worker container."""

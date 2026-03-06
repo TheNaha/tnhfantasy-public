@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { api } from '../api';
 import {
     TrendingUp, Image, Clock, Sparkles, BarChart3,
     PieChart as PieChartIcon, Activity, Zap, Hash, MessageSquare, Loader2
@@ -32,11 +33,7 @@ const Statistics = () => {
     // Fetch detailed statistics
     const { data, isLoading, error } = useQuery({
         queryKey: ['statistics', 'detailed'],
-        queryFn: async () => {
-            const res = await fetch('/api/statistics/detailed');
-            if (!res.ok) throw new Error('Failed to fetch detailed statistics');
-            return res.json();
-        },
+        queryFn: () => api.get('/api/statistics/detailed'),
         staleTime: 60000, // Cache for 1 minute
     });
 

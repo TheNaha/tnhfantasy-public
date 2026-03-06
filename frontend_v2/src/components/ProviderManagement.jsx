@@ -9,193 +9,78 @@ import {
     Server, Activity, TrendingUp, BarChart3, Play, Square, RotateCw, FileText, Upload
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getApiUrl } from '../api';
+import { providersApi } from '../api';
 import { useConfirmation } from '../context/ConfirmationContext';
-import * as ws from '../api/websocket';
-
-// In dev mode, use relative URLs for Vite proxy. In production, use configured API URL.
-const getUrl = () => import.meta.env.DEV ? '' : getApiUrl();
+import useProviderStore from '../store/providerStore';
 
 export default function ProviderManagement() {
-    const [providers, setProviders] = useState([]);
-    const [lbConfig, setLbConfig] = useState(null);
-    const [lbStats, setLbStats] = useState(null);
-    const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
     const [editingProvider, setEditingProvider] = useState(null);
-    const [containerStatuses, setContainerStatuses] = useState({});
     const [showLogs, setShowLogs] = useState(null);
-    const [containerLoading, setContainerLoading] = useState({});
     const { confirm } = useConfirmation();
+    const providers = useProviderStore((state) => state.providers);
+    const lbConfig = useProviderStore((state) => state.lbConfig);
+    const lbStats = useProviderStore((state) => state.lbStats);
+    const loading = useProviderStore((state) => state.isLoading);
+    const containerStatuses = useProviderStore((state) => state.containerStatuses);
+    const containerLoading = useProviderStore((state) => state.containerLoading);
+    const connectProviders = useProviderStore((state) => state.connect);
+    const startProviderContainer = useProviderStore((state) => state.startContainer);
+    const stopProviderContainer = useProviderStore((state) => state.stopContainer);
+    const restartProviderContainer = useProviderStore((state) => state.restartContainer);
+    const deployProvider = useProviderStore((state) => state.deployProvider);
+    const toggleProviderEnabled = useProviderStore((state) => state.toggleProviderEnabled);
+    const removeProvider = useProviderStore((state) => state.deleteProvider);
+    const updateLoadBalancerStrategy = useProviderStore((state) => state.updateLoadBalancerStrategy);
+    const saveProvider = useProviderStore((state) => state.saveProvider);
 
     useEffect(() => {
-        fetchProviders();
-        fetchLoadBalancerInfo();
-    }, []);
-
-    // WebSocket-based container status updates (replaces polling)
-    const handleContainerStatusEvent = useCallback((data) => {
-        // Handle provider.container_status events
-        if (data.data?.statuses) {
-            setContainerStatuses(data.data.statuses);
-        } else if (data.data?.provider_id && data.data?.status) {
-            // Single provider update
-            setContainerStatuses(prev => ({
-                ...prev,
-                [data.data.provider_id]: data.data.status
-            }));
-        }
-    }, []);
-
-    useEffect(() => {
-        // Only set up WebSocket if we have providers
-        if (providers.length === 0) return;
-
-        // Fetch initial status via HTTP
-        fetchContainerStatuses();
-
-        // Connect and subscribe to provider events
-        const initWebSocket = async () => {
-            await ws.connect();
-            await ws.subscribe('provider');
-        };
-        initWebSocket();
-
-        // Listen for container status updates
-        const unsub = ws.on(ws.EventTypes.PROVIDER_CONTAINER_STATUS, handleContainerStatusEvent);
-
-        return () => {
-            unsub();
-            ws.unsubscribe('provider');
-        };
-    }, [providers.length, handleContainerStatusEvent]);
-
-    const fetchProviders = async () => {
-        try {
-            const res = await fetch(`${getUrl()}/api/providers`);
-            const data = await res.json();
-            setProviders(data);
-        } catch (error) {
-            console.error('Failed to fetch providers:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchLoadBalancerInfo = async () => {
-        try {
-            const res = await fetch(`${getUrl()}/api/providers/config/load-balancing`);
-            const data = await res.json();
-            setLbConfig(data.config);
-            setLbStats(data.stats);
-        } catch (error) {
-            console.error('Failed to fetch load balancer info:', error);
-        }
-    };
-
-    const fetchContainerStatuses = async () => {
-        // Use batch endpoint instead of N separate calls
-        try {
-            const res = await fetch(`${getUrl()}/api/providers/containers/status`);
-            const data = await res.json();
-            setContainerStatuses(data.statuses || {});
-        } catch (error) {
-            console.error('Failed to fetch container statuses:', error);
-        }
-    };
+        connectProviders();
+    }, [connectProviders]);
 
     const deployModalApp = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'deploying' }));
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}/deploy`, {
-                method: 'POST'
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                toast.error(`Failed to deploy Modal app: ${error.detail || 'Unknown error'}`);
-                return;
-            }
+            await deployProvider(providerId);
             toast.success('Modal app deployed successfully!');
-            await fetchContainerStatuses(); // Refresh status after deployment
         } catch (error) {
             console.error('Failed to deploy Modal app:', error);
             toast.error(`Failed to deploy Modal app: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const startContainer = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'starting' }));
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}/container/start`, {
-                method: 'POST'
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                toast.error(`Failed to start container: ${error.detail || 'Unknown error'}`);
-                return;
-            }
-            // Immediately refresh status
-            await fetchContainerStatuses();
+            await startProviderContainer(providerId);
         } catch (error) {
             console.error('Failed to start container:', error);
             toast.error(`Failed to start container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const stopContainer = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'stopping' }));
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}/container/stop`, {
-                method: 'POST'
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                toast.error(`Failed to stop container: ${error.detail || 'Unknown error'}`);
-                return;
-            }
-            await fetchContainerStatuses();
+            await stopProviderContainer(providerId);
         } catch (error) {
             console.error('Failed to stop container:', error);
             toast.error(`Failed to stop container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const restartContainer = async (providerId) => {
-        setContainerLoading(prev => ({ ...prev, [providerId]: 'restarting' }));
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}/container/restart`, {
-                method: 'POST'
-            });
-            if (!res.ok) {
-                const error = await res.json();
-                toast.error(`Failed to restart container: ${error.detail || 'Unknown error'}`);
-                return;
-            }
-            await fetchContainerStatuses();
+            await restartProviderContainer(providerId);
         } catch (error) {
             console.error('Failed to restart container:', error);
             toast.error(`Failed to restart container: ${error.message}`);
-        } finally {
-            setContainerLoading(prev => ({ ...prev, [providerId]: null }));
         }
     };
 
     const toggleProvider = async (providerId, currentlyEnabled) => {
         try {
-            await fetch(`${getUrl()}/api/providers/${providerId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: !currentlyEnabled })
-            });
-            fetchProviders();
+            await toggleProviderEnabled(providerId, currentlyEnabled);
         } catch (error) {
             console.error('Failed to toggle provider:', error);
+            toast.error(`Failed to toggle provider: ${error.message}`);
         }
     };
 
@@ -209,18 +94,8 @@ export default function ProviderManagement() {
         if (!confirmed) return;
 
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}`, {
-                method: 'DELETE'
-            });
-
-            if (!res.ok) {
-                const error = await res.json();
-                toast.error(`Failed to delete provider: ${error.detail || 'Unknown error'}`);
-                return;
-            }
-
+            await removeProvider(providerId);
             toast.success('Provider deleted');
-            fetchProviders();
         } catch (error) {
             console.error('Failed to delete provider:', error);
             toast.error(`Failed to delete provider: ${error.message}`);
@@ -229,14 +104,10 @@ export default function ProviderManagement() {
 
     const updateLBStrategy = async (strategy) => {
         try {
-            await fetch(`${getUrl()}/api/providers/config/load-balancing`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...lbConfig, strategy })
-            });
-            fetchLoadBalancerInfo();
+            await updateLoadBalancerStrategy(strategy);
         } catch (error) {
             console.error('Failed to update load balancer:', error);
+            toast.error(`Failed to update load balancer: ${error.message}`);
         }
     };
 
@@ -490,9 +361,9 @@ export default function ProviderManagement() {
                                 )}
                             </div>
 
-                            {lbStats?.provider_failures?.[provider.id] > 0 && (
+                            {lbStats?.provider_stats?.find((item) => item.id === provider.id)?.failures > 0 && (
                                 <div className="mt-4 px-5 py-3 bg-orange-500/15 border-l-4 border-orange-500 rounded-lg text-orange-400 text-sm font-medium">
-                                    ⚠️ {lbStats.provider_failures[provider.id]} consecutive failures
+                                    ⚠️ {lbStats.provider_stats.find((item) => item.id === provider.id).failures} consecutive failures
                                 </div>
                             )}
                         </motion.div>
@@ -525,11 +396,11 @@ export default function ProviderManagement() {
                             setShowAddModal(false);
                             setEditingProvider(null);
                         }}
-                        onSave={() => {
-                            fetchProviders();
+                        onSave={async () => {
                             setShowAddModal(false);
                             setEditingProvider(null);
                         }}
+                        saveProvider={saveProvider}
                     />
                 )}
             </AnimatePresence>
@@ -546,7 +417,7 @@ export default function ProviderManagement() {
         </div>
     );
 }
-export function ProviderModal({ provider, onClose, onSave }) {
+export function ProviderModal({ provider, onClose, onSave, saveProvider }) {
     const [formData, setFormData] = useState(
         provider || {
             id: '',
@@ -565,34 +436,18 @@ export function ProviderModal({ provider, onClose, onSave }) {
         e.preventDefault();
 
         try {
-            const url = provider
-                ? `${getUrl()}/api/providers/${provider.id}`
-                : `${getUrl()}/api/providers`;
-
-            const method = provider ? 'PUT' : 'POST';
-
             // Remove container_config if not enabled
             const submitData = {
                 ...formData,
                 container_config: enableContainer ? formData.container_config : null
             };
 
-            const res = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(submitData)
-            });
-
-            if (res.ok) {
-                toast.success(provider ? 'Provider updated' : 'Provider created');
-                onSave();
-            } else {
-                const error = await res.json();
-                toast.error(`Error: ${error.detail}`);
-            }
+            await saveProvider(provider, submitData);
+            toast.success(provider ? 'Provider updated' : 'Provider created');
+            await onSave();
         } catch (error) {
             console.error('Failed to save provider:', error);
-            toast.error('Failed to save provider');
+            toast.error(error.message || 'Failed to save provider');
         }
     };
 
@@ -1847,8 +1702,7 @@ function LogsModal({ providerId, onClose }) {
 
     const fetchLogs = useCallback(async () => {
         try {
-            const res = await fetch(`${getUrl()}/api/providers/${providerId}/container/logs?tail=100`);
-            const data = await res.json();
+            const data = await providersApi.getContainerLogs(providerId, 100);
             setLogs(data.logs);
         } catch (error) {
             console.error('Failed to fetch logs:', error);

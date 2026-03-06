@@ -174,3 +174,32 @@ class TestContainerManager:
 
         # Verify
         assert cm.runtime == "unknown"
+
+    def test_wait_for_health_succeeds_on_http_200(self):
+        cm = ContainerManager.__new__(ContainerManager)
+        container = MagicMock()
+        container.name = "test-container"
+        container.status = "running"
+        container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
+
+        response = MagicMock()
+        response.status_code = 200
+
+        with patch("services.container_manager.requests.get", return_value=response), \
+             patch("services.container_manager.time.sleep", return_value=None):
+            cm._wait_for_health(container, timeout=1)
+
+    def test_wait_for_health_times_out_when_only_running(self):
+        cm = ContainerManager.__new__(ContainerManager)
+        container = MagicMock()
+        container.name = "test-container"
+        container.status = "running"
+        container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
+
+        with patch("services.container_manager.requests.get", side_effect=Exception("probe failed")), \
+             patch("services.container_manager.time.sleep", return_value=None), \
+             patch("services.container_manager.time.time", side_effect=[0, 0.1, 1.1]):
+            with pytest.raises(TimeoutError) as excinfo:
+                cm._wait_for_health(container, timeout=1)
+
+        assert "did not become healthy" in str(excinfo.value)

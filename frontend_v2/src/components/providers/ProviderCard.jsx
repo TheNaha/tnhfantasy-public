@@ -5,7 +5,7 @@ import SyncStatusBadge from './SyncStatusBadge';
 import ReconciliationStatus from './ReconciliationStatus';
 import { useProviderSyncStatus, useModalStats } from '../../hooks/useProviderModels';
 import useReconciliationStore from '../../store/reconciliationStore';
-import { getApiUrl } from '../../api';
+import { providersApi } from '../../api';
 
 const STATUS_COLORS = {
     active: 'text-green-400',
@@ -62,10 +62,7 @@ export default function ProviderCard({
     const fetchLogs = async () => {
         setLoadingLogs(true);
         try {
-            const apiUrl = import.meta.env.DEV ? '' : getApiUrl();
-            const res = await fetch(`${apiUrl}/api/providers/${provider.id}/container/logs`);
-            if (!res.ok) throw new Error('Failed to fetch logs');
-            const data = await res.json();
+            const data = await providersApi.getContainerLogs(provider.id);
             setLogs(data.logs || 'No logs available');
             setShowLogs(true);
         } catch (error) {

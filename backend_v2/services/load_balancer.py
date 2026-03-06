@@ -1,7 +1,7 @@
 # Load Balancer - Distributes jobs across multiple providers.
 import random
 import threading
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from datetime import datetime
 
 from sqlmodel import Session, select
@@ -21,7 +21,16 @@ class LoadBalancer:
     _provider_failures: Dict[str, int] = {}
     _provider_job_counts: Dict[str, int] = {}  # Track jobs per provider
     _initialized: bool = False
-    _lock = threading.Lock()  # Thread-safe state updates
+    _lock = threading.RLock()  # Thread-safe state updates, also used in tests
+
+    @classmethod
+    def reset_state(cls):
+        """Reset in-memory state. Intended for tests and controlled startup flows."""
+        with cls._lock:
+            cls._round_robin_index = 0
+            cls._provider_failures = {}
+            cls._provider_job_counts = {}
+            cls._initialized = False
     
     @classmethod
     def load_state_from_db(cls, session: Session):
@@ -94,7 +103,8 @@ class LoadBalancer:
     def get_next_provider(
         self, 
         preferred_provider_id: Optional[str] = None,
-        required_models: Optional[Dict[str, List[str]]] = None
+        required_models: Optional[Dict[str, List[str]]] = None,
+        exclude_provider_ids: Optional[Set[str]] = None,
     ) -> Optional[Provider]:
         """
         Get the next provider to handle a job.
@@ -107,6 +117,9 @@ class LoadBalancer:
             Provider or None if no providers available
         """
         providers = self.repo.get_enabled()
+        excluded = exclude_provider_ids or set()
+        if excluded:
+            providers = [p for p in providers if p.id not in excluded]
         
         if not providers:
             return None
@@ -130,11 +143,12 @@ class LoadBalancer:
         # If specific provider requested, try to use it
         if preferred_provider_id:
             provider = self.repo.get(preferred_provider_id)
-            if provider and provider.enabled:
+            if provider and provider.enabled and provider.id not in excluded:
                 # Check if preferred provider is in eligible list (if filtering)
                 if required_models and provider.id not in [p.id for p in providers]:
                     # Preferred provider doesn't have required models
                     return None
+                self._track_job(provider.id)
                 return provider
         
         # Apply load balancing strategy
@@ -201,8 +215,9 @@ class LoadBalancer:
         When tied, uses round-robin among tied providers for fair distribution.
         """
         # Get job counts
-        counts = {p.id: LoadBalancer._provider_job_counts.get(p.id, 0) for p in providers}
-        min_count = min(counts.values())
+        with LoadBalancer._lock:
+            counts = {p.id: LoadBalancer._provider_job_counts.get(p.id, 0) for p in providers}
+            min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in providers if counts[p.id] == min_count]
@@ -211,8 +226,9 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers for fair distribution
-            selected = tied_providers[LoadBalancer._round_robin_index % len(tied_providers)]
-            LoadBalancer._round_robin_index += 1
+            with LoadBalancer._lock:
+                selected = tied_providers[LoadBalancer._round_robin_index % len(tied_providers)]
+                LoadBalancer._round_robin_index += 1
         
         print(f"[LoadBalancer] Least-connections selected: {selected.id} (active_jobs={counts[selected.id]}, tied={len(tied_providers)})")
         logger.debug("lb_least_conn_selected", provider_id=selected.id, active_jobs=counts[selected.id], tied=len(tied_providers))
@@ -235,8 +251,9 @@ class LoadBalancer:
             return best_tier[0]
         
         # Round-robin within the best priority tier
-        provider = best_tier[LoadBalancer._round_robin_index % len(best_tier)]
-        LoadBalancer._round_robin_index += 1
+        with LoadBalancer._lock:
+            provider = best_tier[LoadBalancer._round_robin_index % len(best_tier)]
+            LoadBalancer._round_robin_index += 1
         print(f"[LoadBalancer] Priority-RR selected: {provider.id} (priority={provider.priority}, tier_size={len(best_tier)})")
         logger.debug("lb_priority_rr_selected", provider_id=provider.id, priority=provider.priority, tier_size=len(best_tier))
         return provider
@@ -251,8 +268,9 @@ class LoadBalancer:
             return best_tier[0]
         
         # Get job counts for best tier
-        counts = {p.id: LoadBalancer._provider_job_counts.get(p.id, 0) for p in best_tier}
-        min_count = min(counts.values())
+        with LoadBalancer._lock:
+            counts = {p.id: LoadBalancer._provider_job_counts.get(p.id, 0) for p in best_tier}
+            min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in best_tier if counts[p.id] == min_count]
@@ -261,8 +279,9 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers
-            selected = tied_providers[LoadBalancer._round_robin_index % len(tied_providers)]
-            LoadBalancer._round_robin_index += 1
+            with LoadBalancer._lock:
+                selected = tied_providers[LoadBalancer._round_robin_index % len(tied_providers)]
+                LoadBalancer._round_robin_index += 1
         
         print(f"[LoadBalancer] Priority-LC selected: {selected.id} (priority={selected.priority}, active_jobs={counts[selected.id]}, tied={len(tied_providers)})")
         logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
@@ -302,7 +321,7 @@ class LoadBalancer:
         print(f"[LoadBalancer] Released job from {provider_id}, active_jobs={active_jobs}")
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
-    def get_fallback_provider(self, failed_provider_id: str) -> Optional[Provider]:
+    def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:
         """
         Get a fallback provider when one fails.
         
@@ -313,24 +332,32 @@ class LoadBalancer:
             Alternative provider or None
         """
         providers = self.repo.get_enabled()
+        excluded = set(exclude_provider_ids or set())
+        excluded.add(failed_provider_id)
         
         # Filter out the failed provider
-        available = [p for p in providers if p.id != failed_provider_id]
+        available = [p for p in providers if p.id not in excluded]
         
         if not available:
             return None
         
         # Return provider with fewest failures
-        best = min(
-            available,
-            key=lambda p: LoadBalancer._provider_failures.get(p.id, 0)
-        )
+        with LoadBalancer._lock:
+            best = min(
+                available,
+                key=lambda p: (LoadBalancer._provider_failures.get(p.id, 0), p.priority, p.id)
+            )
         
         return best
     
     def get_stats(self) -> Dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""
         providers = self.repo.get_enabled()
+        with LoadBalancer._lock:
+            current_index = LoadBalancer._round_robin_index
+            total_jobs_assigned = sum(LoadBalancer._provider_job_counts.values())
+            failure_counts = dict(LoadBalancer._provider_failures)
+            job_counts = dict(LoadBalancer._provider_job_counts)
         
         # Build detailed per-provider stats
         provider_stats = []
@@ -339,15 +366,15 @@ class LoadBalancer:
                 "id": p.id,
                 "enabled": p.enabled,
                 "priority": p.priority,
-                "jobs_assigned": LoadBalancer._provider_job_counts.get(p.id, 0),
-                "failures": LoadBalancer._provider_failures.get(p.id, 0),
+                "jobs_assigned": job_counts.get(p.id, 0),
+                "failures": failure_counts.get(p.id, 0),
             })
         
         return {
             "strategy": self.strategy,
             "total_providers": len(providers),
-            "current_index": LoadBalancer._round_robin_index,
-            "total_jobs_assigned": sum(LoadBalancer._provider_job_counts.values()),
+            "current_index": current_index,
+            "total_jobs_assigned": total_jobs_assigned,
             "provider_stats": provider_stats,
         }
 

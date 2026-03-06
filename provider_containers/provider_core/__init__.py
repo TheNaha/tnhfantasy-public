@@ -13,6 +13,10 @@ from .models import (
     UploadFileRequest,
     ValidateModelsRequest,
     CancelJobRequest,
+    ErrorResponse,
+    StatusResponse,
+    build_error_response,
+    build_status_response,
 )
 from .state import ReconciliationState, get_reconciliation_state
 from .sync_progress import SyncProgressReporter
@@ -45,6 +49,10 @@ __all__ = [
     "UploadFileRequest",
     "ValidateModelsRequest",
     "CancelJobRequest",
+    "ErrorResponse",
+    "StatusResponse",
+    "build_error_response",
+    "build_status_response",
     # State
     "ReconciliationState",
     "get_reconciliation_state",

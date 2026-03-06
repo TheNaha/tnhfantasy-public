@@ -2,6 +2,7 @@ import React from 'react';
 import { Settings2, Plus, Trash2 } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 import toast from 'react-hot-toast';
+import { api } from '../../api';
 
 export default function ControlNetPanel({ controlNetModels }) {
     const {
@@ -13,10 +14,7 @@ export default function ControlNetPanel({ controlNetModels }) {
         formData.append('file', file);
         formData.append('path', 'input'); // Upload to input directory
 
-        const uploadPromise = fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-        }).then(res => res.json());
+        const uploadPromise = api.post('/api/upload', formData);
 
         toast.promise(uploadPromise, {
             loading: 'Uploading image...',

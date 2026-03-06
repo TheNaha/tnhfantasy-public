@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 from infrastructure.image_processor import (
     get_output_path,
     save_image_with_metadata,
+    write_metadata_sidecar,
     read_image_metadata,
     generate_thumbnails,
     get_image_dimensions,
@@ -143,6 +144,19 @@ class TestReadImageMetadata:
         path = os.path.join(tmp_dir, "nonexistent.png")
         result = read_image_metadata(path)
         assert result == {}
+
+
+class TestWriteMetadataSidecar:
+    def test_writes_sidecar_json(self, tmp_dir):
+        path = os.path.join(tmp_dir, "output.png")
+        metadata = {"job_id": "job-1", "prompt": "test"}
+
+        sidecar_path = write_metadata_sidecar(path, metadata)
+
+        assert sidecar_path == f"{path}.json"
+        with open(sidecar_path, "r", encoding="utf-8") as f:
+            stored = json.load(f)
+        assert stored == metadata
 
 
 class TestGenerateThumbnails:

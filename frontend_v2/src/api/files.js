@@ -3,7 +3,7 @@
  * Gallery/file-related API calls.
  */
 
-import api, { ApiError } from './client';
+import api from './client';
 import { getApiUrl } from './config';
 
 export const filesApi = {
@@ -49,18 +49,7 @@ export const filesApi = {
         formData.append('file', file);
 
         const params = providerId ? `?provider_id=${providerId}` : '';
-
-        const response = await fetch(`${getApiUrl()}/api/upload/input${params}`, {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.text();
-            throw new ApiError('Upload failed', response.status, { detail: error });
-        }
-
-        return response.json();
+        return api.post(`/api/upload/input${params}`, formData);
     },
 
     /**
@@ -75,21 +64,10 @@ export const filesApi = {
     uploadMask: async (maskDataUrl, sourceFilename, providerId = null) => {
         const params = providerId ? `?provider_id=${providerId}` : '';
 
-        const response = await fetch(`${getApiUrl()}/api/upload/mask${params}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+        return api.post(`/api/upload/mask${params}`, {
                 mask_data: maskDataUrl,
                 source_filename: sourceFilename
-            })
         });
-
-        if (!response.ok) {
-            const error = await response.text();
-            throw new ApiError('Mask upload failed', response.status, { detail: error });
-        }
-
-        return response.json();
     },
 };
 

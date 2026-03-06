@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from sqlmodel import SQLModel, Session, create_engine
 from sqlmodel.pool import StaticPool
+from sqlalchemy import text
 
 import infrastructure.database as db_module
 
@@ -156,6 +157,35 @@ class TestCreateDbAndTables:
         except Exception as e:
             # If it fails for database-specific reasons, that's ok
             assert "migration" in str(e).lower() or "table" in str(e).lower() or True
+
+
+class TestRunMigrations:
+    def test_run_migrations_adds_missing_job_columns(self, tmp_path):
+        db_path = tmp_path / "migration.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+
+        with patch.object(db_module, "engine", engine):
+            db_module._run_migrations()
+
+        with engine.connect() as conn:
+            columns = db_module._get_table_columns(conn, "jobs")
+
+        assert "started_at" in columns
+        assert "completed_at" in columns
+
+    def test_verify_required_columns_raises_for_missing_columns(self, tmp_path):
+        db_path = tmp_path / "verify.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+
+        with engine.connect() as conn:
+            with pytest.raises(RuntimeError, match="missing columns started_at"):
+                db_module._verify_required_columns(conn, "jobs", {"started_at"})
 
 
 class TestEngine:

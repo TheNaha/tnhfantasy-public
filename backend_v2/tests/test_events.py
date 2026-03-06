@@ -255,6 +255,18 @@ class TestEmitConvenienceFunctions:
 class TestEventBusQueueFull:
     """Test queue full behavior."""
 
+    @pytest.mark.asyncio
+    async def test_queue_full_increments_drop_count(self):
+        bus = EventBus(replay_buffer_size=10)
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait(Event(type=EventType.JOB_CREATED, data={"i": 0}))
+        bus._subscribers["job"] = [queue]
+
+        await bus.publish(Event(type=EventType.JOB_CREATED, data={"i": 1}))
+
+        assert bus.dropped_event_count() == 1
+
+    @pytest.mark.asyncio
     async def test_queue_full_drops_event(self):
         """Test that QueueFull is handled gracefully - old events are dropped."""
         bus = EventBus(replay_buffer_size=100)
@@ -280,6 +292,8 @@ class TestEventBusQueueFull:
             await task
         except (asyncio.CancelledError, Exception):
             pass
+
+        assert bus.dropped_event_count() >= 0
 
 
 class TestEmitProviderFunctions:

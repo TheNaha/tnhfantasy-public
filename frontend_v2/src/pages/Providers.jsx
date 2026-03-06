@@ -140,11 +140,7 @@ export default function Providers() {
 
         setContainerLoading(prev => ({ ...prev, [providerId]: 'resetting' }));
         try {
-            const res = await fetch(`/api/v2/models/providers/${providerId}/reset-status`, {
-                method: 'DELETE'
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const result = await res.json();
+            const result = await providersApi.resetModelStatus(providerId);
             toast.success(`Reset complete! ${result.deleted_count} entries cleared. Click Reconcile to re-download.`);
         } catch (error) {
             console.error('Failed to reset status:', error);

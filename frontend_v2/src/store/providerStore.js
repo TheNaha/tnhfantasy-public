@@ -121,8 +121,10 @@ export const useProviderStore = create((set, get) => ({
         try {
             const data = await providersApi.getLoadBalancerConfig();
             set({ lbConfig: data.config, lbStats: data.stats });
+            return data;
         } catch (error) {
             console.error('[ProviderStore] Failed to fetch load balancer info:', error);
+            throw error;
         }
     },
 
@@ -137,6 +139,77 @@ export const useProviderStore = create((set, get) => ({
         set(state => ({
             containerLoading: { ...state.containerLoading, [providerId]: null }
         }));
+    },
+
+    startContainer: async (providerId) => {
+        get().setContainerLoading(providerId, 'starting');
+        try {
+            const result = await providersApi.startContainer(providerId);
+            await get().fetchContainerStatuses();
+            return result;
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    stopContainer: async (providerId) => {
+        get().setContainerLoading(providerId, 'stopping');
+        try {
+            const result = await providersApi.stopContainer(providerId);
+            await get().fetchContainerStatuses();
+            return result;
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    restartContainer: async (providerId) => {
+        get().setContainerLoading(providerId, 'restarting');
+        try {
+            const result = await providersApi.restartContainer(providerId);
+            await get().fetchContainerStatuses();
+            return result;
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    deployProvider: async (providerId) => {
+        get().setContainerLoading(providerId, 'deploying');
+        try {
+            const result = await providersApi.deploy(providerId);
+            await get().fetchContainerStatuses();
+            return result;
+        } finally {
+            get().clearContainerLoading(providerId);
+        }
+    },
+
+    toggleProviderEnabled: async (providerId, currentlyEnabled) => {
+        const result = await providersApi.update(providerId, { enabled: !currentlyEnabled });
+        await Promise.all([get().fetchProviders(), get().fetchLoadBalancerInfo()]);
+        return result;
+    },
+
+    deleteProvider: async (providerId) => {
+        const result = await providersApi.delete(providerId);
+        await Promise.all([get().fetchProviders(), get().fetchLoadBalancerInfo(), get().fetchContainerStatuses()]);
+        return result;
+    },
+
+    updateLoadBalancerStrategy: async (strategy) => {
+        const { lbConfig } = get();
+        const result = await providersApi.updateLoadBalancerConfig({ ...lbConfig, strategy });
+        await get().fetchLoadBalancerInfo();
+        return result;
+    },
+
+    saveProvider: async (provider, updates) => {
+        const result = provider
+            ? await providersApi.update(provider.id, updates)
+            : await providersApi.create(updates);
+        await Promise.all([get().fetchProviders(), get().fetchLoadBalancerInfo(), get().fetchContainerStatuses()]);
+        return result;
     },
 
     // Enriched providers getter

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Download, CheckCircle, XCircle, Clock, HardDrive, AlertCircle, RefreshCw, Trash2, Loader2, Search } from 'lucide-react';
 import { motion } from 'framer-motion';
 import useReconciliationStore from '../../store/reconciliationStore';
-import { getApiUrl } from '../../api';
+import { providersApi } from '../../api';
 
 // Phase definitions with static Tailwind classes
 const PHASES = {
@@ -66,10 +66,7 @@ export default function ReconciliationStatus({ providerId, onClose }) {
         
         const fetchInitialStatus = async () => {
             try {
-                const apiUrl = import.meta.env.DEV ? '' : getApiUrl();
-                const res = await fetch(`${apiUrl}/api/providers/${providerId}/reconciliation-status`);
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await providersApi.getReconciliationStatus(providerId);
                 setLocalStatus(data);
             } catch (error) {
                 console.error('Failed to fetch reconciliation status:', error);

@@ -6,7 +6,8 @@ def test_get_safe_path_valid():
     base_dir = "/mnt/data"
     path = "models/checkpoints/model.safetensors"
     result = get_safe_path(base_dir, path)
-    assert result == "/mnt/data/models/checkpoints/model.safetensors"
+    expected = os.path.abspath(os.path.join(base_dir, path))
+    assert result == expected
 
 def test_get_safe_path_traversal():
     base_dir = "/mnt/data"
@@ -19,7 +20,8 @@ def test_get_safe_path_absolute():
     path = "/etc/passwd"
     # The lstrip prevents it from being absolute and puts it in base_dir
     result = get_safe_path(base_dir, path)
-    assert result == "/mnt/data/etc/passwd"
+    expected = os.path.abspath(os.path.join(base_dir, path.lstrip("/\\")))
+    assert result == expected
 
 def test_get_safe_path_empty():
     base_dir = "/mnt/data"

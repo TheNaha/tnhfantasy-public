@@ -288,15 +288,7 @@ export const useJobStore = create((set, get) => ({
     // Retry a failed job - creates new job with same workflow
     retryJob: async (jobId) => {
         try {
-            const response = await fetch(`/api/jobs/${jobId}/retry`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Failed to retry job');
-            }
-            const result = await response.json();
+            const result = await jobsApi.retry(jobId);
             // Fetch jobs to get the new job in the list
             await get().fetchJobs();
             return result;

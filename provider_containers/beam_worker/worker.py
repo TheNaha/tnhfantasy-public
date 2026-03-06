@@ -30,6 +30,7 @@ from provider_core import (
     UploadFileRequest,
     ValidateModelsRequest,
     CancelJobRequest,
+    build_error_response,
     # State
     get_reconciliation_state,
     # Reconciliation
@@ -257,7 +258,11 @@ async def run_inference(request: InferenceRequest):
                             if "images" in update:
                                 print(f"[{PROVIDER_ID}] Images count: {len(update['images'])}")
                         elif update.get("status") == "error":
-                            print(f"[{PROVIDER_ID}] ✗ Error: {update.get('message') or update.get('error')}")
+                            message = update.get("message") or update.get("error") or "Unknown worker error"
+                            update["message"] = message
+                            update.setdefault("error", message)
+                            update.setdefault("retryable", False)
+                            print(f"[{PROVIDER_ID}] ✗ Error: {message}")
                         
                         yield json.dumps(update) + "\n"
                         
@@ -269,15 +274,15 @@ async def run_inference(request: InferenceRequest):
         except websockets.exceptions.InvalidStatusCode as e:
             error_msg = f"WebSocket rejected with status {e.status_code}"
             print(f"[{PROVIDER_ID}] {error_msg}")
-            yield json.dumps({"status": "error", "error": error_msg}) + "\n"
+            yield json.dumps(build_error_response(error_msg, retryable=True, code=e.status_code)) + "\n"
         except websockets.exceptions.WebSocketException as e:
             error_msg = f"WebSocket error: {type(e).__name__}: {str(e)}"
             print(f"[{PROVIDER_ID}] {error_msg}")
-            yield json.dumps({"status": "error", "error": error_msg}) + "\n"
+            yield json.dumps(build_error_response(error_msg, retryable=True)) + "\n"
         except Exception as e:
             error_msg = f"Inference error: {type(e).__name__}: {str(e)}"
             print(f"[{PROVIDER_ID}] {error_msg}")
-            yield json.dumps({"status": "error", "error": error_msg}) + "\n"
+            yield json.dumps(build_error_response(error_msg)) + "\n"
         finally:
             if job_id:
                 await job_tracker.end_job(job_id)
@@ -299,10 +304,10 @@ async def setup():
             if response.status_code == 200:
                 print(f"[{PROVIDER_ID}] ✓ Setup complete")
                 return response.json()
-            return {"status": "error", "code": response.status_code}
+            return build_error_response(response.text or "Beam storage setup failed", code=response.status_code)
     except Exception as e:
         print(f"[{PROVIDER_ID}] Setup error: {e}")
-        return {"status": "error", "message": str(e)}
+        return build_error_response(str(e))
 
 
 @app.post("/download-model")
@@ -326,10 +331,10 @@ async def download_model(request: DownloadRequest):
             if response.status_code == 200:
                 print(f"[{PROVIDER_ID}] ✓ Download queued: {request.path}")
                 return response.json()
-            return {"status": "error", "code": response.status_code}
+            return build_error_response(response.text or f"Download queue failed for {request.path}", code=response.status_code)
     except Exception as e:
         print(f"[{PROVIDER_ID}] Download error: {e}")
-        return {"status": "error", "message": str(e)}
+        return build_error_response(str(e))
 
 
 async def download_model_internal(url: str, path: str, token: str = None) -> Dict:
@@ -367,10 +372,10 @@ async def list_models(request: ListModelsRequest = None, directory: str = None):
                 result = response.json()
                 print(f"[{PROVIDER_ID}] Found {len(result.get('files', []))} models")
                 return result
-            return {"files": []}
+            return build_error_response(response.text or f"List models failed for {dir_to_list}", code=response.status_code)
     except Exception as e:
         print(f"[{PROVIDER_ID}] List models error: {e}")
-        return {"files": []}
+        return build_error_response(str(e))
 
 
 async def list_models_internal(directory: str) -> List[Dict]:

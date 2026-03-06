@@ -1,16 +1,13 @@
 import { X, TrendingUp, Image, CheckCircle, Clock, Sparkles, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
+import { api } from '../../api';
 
 const StatsPanel = ({ isOpen, onClose }) => {
     // Fetch statistics from the new API endpoint
     const { data: stats, isLoading, error } = useQuery({
         queryKey: ['statistics'],
-        queryFn: async () => {
-            const res = await fetch('/api/statistics');
-            if (!res.ok) throw new Error('Failed to fetch statistics');
-            return res.json();
-        },
+        queryFn: () => api.get('/api/statistics'),
         enabled: isOpen, // Only fetch when panel is open
         staleTime: 30000, // Cache for 30 seconds
     });
