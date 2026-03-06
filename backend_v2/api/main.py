@@ -73,6 +73,34 @@ from infrastructure.logging import get_logger
 logger = get_logger("main")
 
 
+def _requeue_inflight_jobs_for_shutdown() -> int:
+    """Reset in-flight jobs so startup recovery can safely re-enqueue them."""
+    from infrastructure.database import get_session_sync
+
+    session = get_session_sync()
+    try:
+        job_service = JobService(session)
+        inflight_jobs = job_service.get_running_jobs()
+
+        for job in inflight_jobs:
+            job.status = JobStatus.PENDING
+            job.started_at = None
+            job.completed_at = None
+            job.progress = 0.0
+            job.overall_progress = 0.0
+            job.message = "Requeued after server shutdown"
+            job.error = None
+            session.add(job)
+
+        if inflight_jobs:
+            session.commit()
+
+        logger.info("shutdown_jobs_requeued", count=len(inflight_jobs))
+        return len(inflight_jobs)
+    finally:
+        session.close()
+
+
 class ProviderCallError(Exception):
     """Raised when a provider call fails and may be retried."""
     def __init__(self, message: str, provider_id: str, is_retryable: bool = True):
@@ -826,6 +854,12 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("shutdown", phase="scheduler")
     stop_scheduler()
+
+    logger.info("shutdown", phase="job_requeue")
+    try:
+        _requeue_inflight_jobs_for_shutdown()
+    except Exception as e:
+        logger.warning("shutdown_job_requeue_failed", error=str(e))
     
     logger.info("shutdown", phase="job_queue")
     await job_queue.stop()
