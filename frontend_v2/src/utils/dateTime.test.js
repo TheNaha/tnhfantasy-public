@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getLatestDate, parseGalleryDate } from './dateTime';
+import { getItemTimelineDate, getLatestDate, parseGalleryDate } from './dateTime';
 
 describe('dateTime utils', () => {
     it('parses unix timestamps in seconds', () => {
@@ -29,5 +29,22 @@ describe('dateTime utils', () => {
         ]);
 
         expect(latest.toISOString()).toBe('2024-03-09T13:00:00.000Z');
+    });
+
+    it('prefers timelineDate when ordering replacement items', () => {
+        const parsed = getItemTimelineDate({
+            timelineDate: '2026-03-07T02:00:00Z',
+            date: '2026-03-07T03:00:00Z'
+        });
+
+        expect(parsed.toISOString()).toBe('2026-03-07T02:00:00.000Z');
+    });
+
+    it('falls back to image timestamps when no timelineDate exists', () => {
+        const parsed = getItemTimelineDate({
+            date: '2026-03-07T03:00:00Z'
+        });
+
+        expect(parsed.toISOString()).toBe('2026-03-07T03:00:00.000Z');
     });
 });

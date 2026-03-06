@@ -36,6 +36,14 @@ export function parseGalleryDate(value) {
     return new Date(0);
 }
 
+export function getItemTimelineDate(item) {
+    if (!item || typeof item !== 'object') {
+        return new Date(0);
+    }
+
+    return parseGalleryDate(item.timelineDate || item.date || item.mtime || 0);
+}
+
 export function getLocalDateKey(dateObj) {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');

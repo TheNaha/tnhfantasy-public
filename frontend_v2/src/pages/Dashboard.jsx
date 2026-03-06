@@ -35,7 +35,7 @@ import EmptyState from '../components/EmptyState';
 import ProgressiveImage from '../components/ProgressiveImage';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
-import { parseGalleryDate, getLocalDateKey, getLatestDate } from '../utils/dateTime';
+import { getLocalDateKey, getLatestDate, getItemTimelineDate } from '../utils/dateTime';
 
 export default function Dashboard() {
 
@@ -185,12 +185,12 @@ export default function Dashboard() {
 
     // Flatten data and merge with real-time updates
     const allItems = useMemo(() => {
-        const historicalFiles = data ? data.pages.flatMap(page => page.files.map(f => ({ ...f, type: 'image', date: f.date || f.mtime }))) : [];
-        const historicalJobs = data ? data.pages.flatMap(page => page.jobs.map(j => ({ ...j, type: 'job', date: j.created_at || j.updated_at || 0 }))) : [];
+        const historicalFiles = data ? data.pages.flatMap(page => page.files.map(f => ({ ...f, type: 'image', date: f.date || f.mtime, timelineDate: f.date || f.mtime }))) : [];
+        const historicalJobs = data ? data.pages.flatMap(page => page.jobs.map(j => ({ ...j, type: 'job', date: j.created_at || j.updated_at || 0, timelineDate: j.created_at || j.updated_at || 0 }))) : [];
 
         // Create a map of WebSocket jobs for easy lookup
         // activeJobs comes from the store (WebSocket) and contains the latest state of all jobs
-        const activeJobsMap = new Map(activeJobs.map(j => [j.id, { ...j, type: 'job', date: j.created_at || j.updated_at || 0 }]));
+        const activeJobsMap = new Map(activeJobs.map(j => [j.id, { ...j, type: 'job', date: j.created_at || j.updated_at || 0, timelineDate: j.created_at || j.updated_at || 0 }]));
 
         // Merge jobs: Use active job if available, otherwise use historical
         const mergedJobs = new Map();
@@ -228,6 +228,7 @@ export default function Dashboard() {
                         images: groupedImages,
                         job: job,
                         date: getLatestDate([job.created_at, ...groupedImages.map(img => img.date)]).toISOString(),
+                        timelineDate: job.created_at || job.updated_at || groupedImages[0]?.date || 0,
                         id: `group-${job.id}`
                     });
                     groupedImages.forEach(img => usedImages.add(img.name));
@@ -239,6 +240,7 @@ export default function Dashboard() {
                         ...img,
                         type: 'image',
                         date: getLatestDate([job.created_at, img.date]).toISOString(),
+                        timelineDate: job.created_at || job.updated_at || img.date || img.mtime || 0,
                         _replacedJobId: job.id,
                         _job: job
                     });
@@ -253,6 +255,7 @@ export default function Dashboard() {
                             ...matchingImage,
                             type: 'image',
                             date: getLatestDate([job.created_at, matchingImage.date]).toISOString(),
+                            timelineDate: job.created_at || job.updated_at || matchingImage.date || matchingImage.mtime || 0,
                             _replacedJobId: job.id,
                             _job: job
                         });
@@ -283,6 +286,7 @@ export default function Dashboard() {
                                 images: groupedImages,
                                 job: null,
                                 date: getLatestDate(groupedImages.map(i => i.date)).toISOString(),
+                                timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
                                 id: `group-${jobId}`
                             });
                             groupedImages.forEach(i => usedImages.add(i.name));
@@ -301,8 +305,8 @@ export default function Dashboard() {
 
         // Sort by date descending (newest first)
         const sorted = combined.sort((a, b) => {
-            const dateA = parseGalleryDate(a.date);
-            const dateB = parseGalleryDate(b.date);
+            const dateA = getItemTimelineDate(a);
+            const dateB = getItemTimelineDate(b);
             return dateB - dateA;
         });
 
@@ -330,8 +334,7 @@ export default function Dashboard() {
     // Use local-based date keys to ensure consistent grouping relative to user's timezone
     const grouped = useMemo(() => {
         return displayedItems.reduce((acc, item) => {
-            const dateValue = item.date || item.mtime || 0;
-            const dateObj = parseGalleryDate(dateValue);
+            const dateObj = getItemTimelineDate(item);
             // Use local date as key
             // Format: YYYY-MM-DD (e.g., "2024-12-09")
             const d = getLocalDateKey(dateObj);
@@ -348,7 +351,7 @@ export default function Dashboard() {
                 date,
                 groupItems
                     .slice()
-                    .sort((a, b) => parseGalleryDate(b.date) - parseGalleryDate(a.date))
+                    .sort((a, b) => getItemTimelineDate(b) - getItemTimelineDate(a))
             ]));
     }, [grouped]);
 

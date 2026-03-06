@@ -3,6 +3,7 @@ import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
+import { getItemTimelineDate } from '../../utils/dateTime';
 
 /**
  * TimelineView Component
@@ -22,9 +23,7 @@ export const TimelineView = memo(function TimelineView({
     // Group items by date with enhanced metadata
     const timelineGroups = useMemo(() => {
         const groups = items.reduce((acc, item) => {
-            let dateValue = item.date || item.mtime || Date.now() / 1000;
-            // Handle both ISO strings (V2) and UNIX timestamps (legacy)
-            const date = typeof dateValue === 'string' ? new Date(dateValue) : new Date(dateValue * 1000);
+            const date = getItemTimelineDate(item);
             const dateKey = date.toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
