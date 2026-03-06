@@ -135,7 +135,7 @@ export const TimelineView = memo(function TimelineView({
                                             {item.type === 'job' ? (
                                                 <JobCard
                                                     job={item}
-                                                    onClick={() => onJobClick?.(item)}
+                                                    onClick={onJobClick} // ⚡ Bolt: Pass stable reference instead of () => onJobClick?.(item) to preserve JobCard's React.memo
                                                 />
                                             ) : (
                                                 <TimelineImageCard

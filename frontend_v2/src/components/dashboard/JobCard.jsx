@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useCallback } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock } from 'lucide-react';
 
 const JobCard = memo(function JobCard({ job, onClick }) {
@@ -39,6 +39,11 @@ const JobCard = memo(function JobCard({ job, onClick }) {
     };
     const providerName = getProviderName(job.provider_id);
 
+    // ⚡ Bolt: Use a stable callback to prevent creating a new function on every render (especially when processing updates every second)
+    const handleClick = useCallback(() => {
+        onClick?.(job);
+    }, [onClick, job]);
+
     // Calculate elapsed time
     const getElapsedTime = () => {
         if (!job.created_at) return null;
@@ -54,7 +59,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
 
     return (
         <div
-            onClick={() => onClick(job)}
+            onClick={handleClick}
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated"
         >
             {/* Top Row: Provider + Status */}
