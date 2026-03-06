@@ -36,6 +36,7 @@ import EmptyState from '../components/EmptyState';
 import ProgressiveImage from '../components/ProgressiveImage';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
+import { parseGalleryDate, getLocalDateKey, getLatestDate } from '../utils/dateTime';
 
 const GridList = React.forwardRef(({ style, children, context, ...props }, ref) => (
     <div
@@ -57,15 +58,6 @@ const GridItem = React.forwardRef(({ children, ...props }, ref) => {
     );
 });
 GridItem.displayName = 'GridItem';
-
-
-// Helper to generate a local date key
-const getLocalDateKey = (dateObj) => {
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-};
 
 export default function Dashboard() {
 
@@ -262,7 +254,7 @@ export default function Dashboard() {
                         type: 'imageGroup',
                         images: groupedImages,
                         job: job,
-                        date: job.created_at || groupedImages[0].date,
+                        date: getLatestDate([job.created_at, ...groupedImages.map(img => img.date)]).toISOString(),
                         id: `group-${job.id}`
                     });
                     groupedImages.forEach(img => usedImages.add(img.name));
@@ -273,7 +265,7 @@ export default function Dashboard() {
                     combined.push({
                         ...img,
                         type: 'image',
-                        date: job.created_at || img.date,
+                        date: getLatestDate([job.created_at, img.date]).toISOString(),
                         _replacedJobId: job.id,
                         _job: job
                     });
@@ -287,7 +279,7 @@ export default function Dashboard() {
                         combined.push({
                             ...matchingImage,
                             type: 'image',
-                            date: job.created_at || matchingImage.date,
+                            date: getLatestDate([job.created_at, matchingImage.date]).toISOString(),
                             _replacedJobId: job.id,
                             _job: job
                         });
@@ -317,7 +309,7 @@ export default function Dashboard() {
                                 type: 'imageGroup',
                                 images: groupedImages,
                                 job: null,
-                                date: groupedImages[0].date,
+                                date: getLatestDate(groupedImages.map(i => i.date)).toISOString(),
                                 id: `group-${jobId}`
                             });
                             groupedImages.forEach(i => usedImages.add(i.name));
@@ -335,19 +327,9 @@ export default function Dashboard() {
         });
 
         // Sort by date descending (newest first)
-        const parseDate = (date) => {
-            if (typeof date === 'string') {
-                const isoDate = date.endsWith('Z') || date.includes('+') || date.includes('-', 10)
-                    ? date
-                    : date + 'Z';
-                return new Date(isoDate);
-            }
-            return new Date((date || 0) * 1000);
-        };
-
         const sorted = combined.sort((a, b) => {
-            const dateA = parseDate(a.date);
-            const dateB = parseDate(b.date);
+            const dateA = parseGalleryDate(a.date);
+            const dateB = parseGalleryDate(b.date);
             return dateB - dateA;
         });
 
@@ -375,15 +357,8 @@ export default function Dashboard() {
     // Use local-based date keys to ensure consistent grouping relative to user's timezone
     const grouped = useMemo(() => {
         return displayedItems.reduce((acc, item) => {
-            let dateValue = item.date || item.mtime || 0;
-            // If it's an ISO string (from V2 backend), parse directly
-            // If it's a number (UNIX timestamp), multiply by 1000
-            let dateObj;
-            if (typeof dateValue === 'string') {
-                dateObj = new Date(dateValue); // ISO string
-            } else {
-                dateObj = new Date(dateValue * 1000); // UNIX timestamp
-            }
+            const dateValue = item.date || item.mtime || 0;
+            const dateObj = parseGalleryDate(dateValue);
             // Use local date as key
             // Format: YYYY-MM-DD (e.g., "2024-12-09")
             const d = getLocalDateKey(dateObj);
@@ -399,7 +374,10 @@ export default function Dashboard() {
             .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
             .forEach(([date, groupItems]) => {
                 flat.push({ isHeader: true, date, id: `header-${date}` });
-                groupItems.forEach(item => flat.push(item));
+                groupItems
+                    .slice()
+                    .sort((a, b) => parseGalleryDate(b.date) - parseGalleryDate(a.date))
+                    .forEach(item => flat.push(item));
             });
         return flat;
     }, [grouped]);
@@ -909,6 +887,7 @@ export default function Dashboard() {
                                     data={flattenedGridItems}
                                     context={{ gridCols }}
                                     components={{ List: GridList, Item: GridItem }}
+                                    computeItemKey={(index, item) => item.id || item.name || `item-${index}`}
                                     itemContent={(index, item) => {
                                         if (item.isHeader) {
                                             return (
