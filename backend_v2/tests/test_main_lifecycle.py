@@ -42,7 +42,7 @@ class TestMainLifecycle:
         processing_job_id = processing_job.id
         completed_job_id = completed_job.id
 
-        monkeypatch.setattr("infrastructure.database.get_session_sync", lambda: session)
+        monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
 
         count = _requeue_inflight_jobs_for_shutdown()
 
@@ -74,7 +74,7 @@ class TestMainLifecycle:
         assert refreshed_completed.message == "Done"
 
     def test_requeue_inflight_jobs_for_shutdown_when_empty(self, session, monkeypatch):
-        monkeypatch.setattr("infrastructure.database.get_session_sync", lambda: session)
+        monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
 
         count = _requeue_inflight_jobs_for_shutdown()
 
