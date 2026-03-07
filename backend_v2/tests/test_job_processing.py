@@ -9,7 +9,8 @@ from PIL import Image
 import pytest
 from sqlmodel import Session
 
-from api.main import ProviderCallError, process_job
+from api.main import process_job
+from api.provider_client import ProviderCallError
 from core.entities import JobStatus, Provider
 from services.job_service import JobService
 from services.load_balancer import LoadBalancer
@@ -136,7 +137,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
     monkeypatch.setattr("api.main.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
-    monkeypatch.setattr("api.main.os.path.relpath", lambda target, base: ".")
+    monkeypatch.setattr("api.job_processing.os.path.relpath", lambda target, base: ".")
     monkeypatch.setattr("infrastructure.image_processor.get_output_path", lambda base_dir: str(tmp_path))
     monkeypatch.setattr(
         "infrastructure.image_processor.save_image_with_metadata",

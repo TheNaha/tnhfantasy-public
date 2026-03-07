@@ -247,6 +247,36 @@ async def test_deduplicated_concurrent_failure():
     stats = get_dedup_stats()
     assert stats["in_flight_count"] == 0
 
+@pytest.mark.asyncio
+async def test_waiter_cancellation_does_not_cancel_shared_task():
+    execution_count = 0
+    ready = asyncio.Event()
+
+    async def slow_coro():
+        nonlocal execution_count
+        execution_count += 1
+        ready.set()
+        await asyncio.sleep(0.05)
+        return "shared_result"
+
+    primary = asyncio.create_task(deduplicated("key_waiter_cancel", slow_coro))
+    await ready.wait()
+    waiter = asyncio.create_task(deduplicated("key_waiter_cancel", slow_coro))
+    await asyncio.sleep(0)
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    result = await primary
+
+    assert result == "shared_result"
+    assert execution_count == 1
+
+    stats = get_dedup_stats()
+    assert stats["cache_size"] == 1
+    assert stats["in_flight_count"] == 0
+
 def test_get_dedup_stats_structure():
     """Test the structure and default values of get_dedup_stats."""
     clear_dedup_cache()

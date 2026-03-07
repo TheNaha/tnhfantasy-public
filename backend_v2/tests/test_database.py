@@ -176,6 +176,43 @@ class TestRunMigrations:
         assert "started_at" in columns
         assert "completed_at" in columns
 
+    def test_run_migrations_records_applied_versions(self, tmp_path):
+        db_path = tmp_path / "migration_versions.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+            conn.execute(text("CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"))
+
+        with patch.object(db_module, "engine", engine):
+            db_module._run_migrations()
+
+        with engine.connect() as conn:
+            applied = db_module._get_applied_migrations(conn)
+
+        assert "001_jobs_started_completed" in applied
+        assert "002_prompts_fts" in applied
+
+    def test_run_migrations_is_idempotent_with_version_tracking(self, tmp_path):
+        db_path = tmp_path / "migration_idempotent.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+            conn.execute(text("CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"))
+
+        with patch.object(db_module, "engine", engine):
+            db_module._run_migrations()
+            db_module._run_migrations()
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"SELECT version FROM {db_module.SCHEMA_MIGRATIONS_TABLE} ORDER BY version")).all()
+
+        assert [row[0] for row in rows] == [
+            "001_jobs_started_completed",
+            "002_prompts_fts",
+        ]
+
     def test_verify_required_columns_raises_for_missing_columns(self, tmp_path):
         db_path = tmp_path / "verify.db"
         engine = create_engine(f"sqlite:///{db_path}")

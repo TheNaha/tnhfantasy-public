@@ -2,7 +2,7 @@
 import pytest
 from sqlmodel import Session
 
-from services.load_balancer import LoadBalancer
+from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
 from core.entities import LoadBalancerState, Provider
 
 
@@ -187,3 +187,24 @@ class TestLoadBalancer:
         stats = second.get_stats()
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
         assert provider_stats[selected.id]["jobs_assigned"] == 1
+
+    def test_runtime_state_can_be_isolated_per_instance(self, session: Session, providers):
+        """Injected runtime state should allow isolated balancing contexts."""
+        shared = LoadBalancer(session, strategy="round-robin")
+        isolated_state = LoadBalancerRuntimeState()
+        isolated = LoadBalancer(session, strategy="round-robin", runtime_state=isolated_state)
+
+        shared_selected = shared.get_next_provider()
+
+        assert shared_selected is not None
+
+        isolated_stats_before = isolated.get_stats()
+        isolated_provider_stats_before = {item["id"]: item for item in isolated_stats_before["provider_stats"]}
+        assert isolated_provider_stats_before[shared_selected.id]["jobs_assigned"] == 0
+
+        isolated_selected = isolated.get_next_provider()
+        assert isolated_selected is not None
+
+        isolated_stats_after = isolated.get_stats()
+        isolated_provider_stats_after = {item["id"]: item for item in isolated_stats_after["provider_stats"]}
+        assert isolated_provider_stats_after[isolated_selected.id]["jobs_assigned"] == 1

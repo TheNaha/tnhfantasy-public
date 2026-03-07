@@ -158,7 +158,8 @@ class ProviderService:
     
     def get_load_balancer_stats(self) -> Dict[str, Any]:
         """Get load balancer statistics."""
-        from services.load_balancer import LoadBalancer
-        load_balancer = LoadBalancer(self.session, strategy="round-robin")
+        from services.load_balancer_factory import create_load_balancer
+
+        load_balancer = create_load_balancer(self.session, strategy="round-robin")
         return load_balancer.get_stats()
 

@@ -1,6 +1,19 @@
 import { create } from 'zustand';
 import * as ws from '../api/websocket';
 import { jobsApi } from '../api';
+import { filterActiveJobs, isActiveJobStatus } from '../utils/jobStatus';
+
+function sortJobsByCreatedAt(jobs) {
+    return [...jobs].sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB - dateA;
+    });
+}
+
+function normalizeActiveJobs(jobs) {
+    return sortJobsByCreatedAt(filterActiveJobs(jobs));
+}
 
 export const useJobStore = create((set, get) => ({
     jobs: [],
@@ -12,47 +25,28 @@ export const useJobStore = create((set, get) => ({
     _unsubscribers: [],
 
     setJobs: (jobs) => {
-        // Deduplicate: merge incoming jobs with existing, preferring newer server data
-        // This prevents duplicates when fetchJobs() is called while WebSocket events also add jobs
+        // Only active, websocket-owned jobs belong in this store.
         const jobMap = new Map();
         
-        // First, add existing jobs (preserves optimistic updates and WebSocket-added jobs)
         get().jobs.forEach(j => jobMap.set(j.id, j));
         
-        // Then, update/add from server response (server data takes precedence)
         jobs.forEach(j => {
             const existing = jobMap.get(j.id);
-            // Merge: keep optimistic flags but update status/progress from server
             jobMap.set(j.id, existing ? { ...existing, ...j } : j);
         });
-        
-        const mergedJobs = Array.from(jobMap.values());
-        
-        // Sort by created_at descending (newest first)
-        mergedJobs.sort((a, b) => {
-            const dateA = new Date(a.created_at || 0);
-            const dateB = new Date(b.created_at || 0);
-            return dateB - dateA;
-        });
-        
-        const active = mergedJobs.filter(j =>
-            j.status === 'pending' ||
-            j.status === 'running' ||
-            j.status === 'processing' ||
-            j.status === 'executing' ||
-            j.status === 'progress' ||
-            j.status === 'queued' ||
-            j.status === 'post-processing'
-        );
-        set({ jobs: mergedJobs, activeJobs: active });
+
+        const activeJobs = normalizeActiveJobs(Array.from(jobMap.values()));
+        set({ jobs: activeJobs, activeJobs });
     },
 
     updateJob: (jobId, updates) => {
-        set((state) => ({
-            jobs: state.jobs.map((job) =>
+        set((state) => {
+            const mergedJobs = state.jobs.map((job) =>
                 job.id === jobId ? { ...job, ...updates } : job
-            ),
-        }));
+            );
+            const activeJobs = normalizeActiveJobs(mergedJobs);
+            return { jobs: activeJobs, activeJobs };
+        });
     },
 
     // Handle WebSocket message processing (same logic as SSE)
@@ -76,44 +70,38 @@ export const useJobStore = create((set, get) => ({
                 set((state) => {
                     const exists = state.jobs.some(j => j.id === job.id);
                     if (exists) {
-                        // Job already exists (from optimistic update or fetchJobs), just update it
+                        const mergedJobs = state.jobs.map(j => j.id === job.id ? { ...j, ...job } : j);
+                        const activeJobs = normalizeActiveJobs(mergedJobs);
                         return {
-                            jobs: state.jobs.map(j => j.id === job.id ? { ...j, ...job } : j),
-                            activeJobs: state.activeJobs.map(j => j.id === job.id ? { ...j, ...job } : j)
+                            jobs: activeJobs,
+                            activeJobs,
                         };
                     }
-                    // New job - add to the beginning
+                    const activeJobs = normalizeActiveJobs([job, ...state.jobs]);
                     return {
-                        jobs: [job, ...state.jobs],
-                        activeJobs: job.status !== 'completed' && job.status !== 'failed'
-                            ? [job, ...state.activeJobs]
-                            : state.activeJobs
+                        jobs: activeJobs,
+                        activeJobs,
                     };
                 });
             } else if (eventType === 'job.progress' || eventType === 'job.updated' || eventType === 'job.post_processing') {
-                // Update existing job or add if not exists
                 set((state) => {
                     const exists = state.jobs.some(j => j.id === job.id);
+                    const mergedJobs = exists
+                        ? state.jobs.map(j => j.id === job.id ? { ...j, ...job } : j)
+                        : [job, ...state.jobs];
+                    const activeJobs = normalizeActiveJobs(mergedJobs);
                     if (exists) {
-                        return { 
-                            jobs: state.jobs.map(j => j.id === job.id ? { ...j, ...job } : j),
-                            activeJobs: state.activeJobs.map(j => j.id === job.id ? { ...j, ...job } : j)
-                        };
+                        return { jobs: activeJobs, activeJobs };
                     } else {
-                        return { jobs: [job, ...state.jobs], activeJobs: [job, ...state.activeJobs] };
+                        return { jobs: activeJobs, activeJobs };
                     }
                 });
             } else if (eventType === 'job.completed' || eventType === 'job.failed' || eventType === 'job.cancelled') {
-                // Update job (or add if not exists) and remove from active
                 set((state) => {
-                    const exists = state.jobs.some(j => j.id === job.id);
-                    const newJobs = exists
-                        ? state.jobs.map(j => j.id === job.id ? { ...j, ...job } : j)
-                        : [job, ...state.jobs];
+                    const remainingActiveJobs = state.activeJobs.filter(j => j.id !== job.id);
                     return {
-                        jobs: newJobs,
-                        activeJobs: state.activeJobs.filter(j => j.id !== job.id),
-                        // Track completed job so Dashboard can trigger gallery refresh
+                        jobs: remainingActiveJobs,
+                        activeJobs: remainingActiveJobs,
                         lastCompletedJob: eventType === 'job.completed' ? job : state.lastCompletedJob
                     };
                 });
@@ -211,7 +199,7 @@ export const useJobStore = create((set, get) => ({
     fetchJobs: async () => {
         try {
             const data = await jobsApi.list();
-            get().setJobs(data.jobs || []);
+            get().setJobs(filterActiveJobs(data.jobs || []));
             return data;
         } catch (error) {
             console.error('Failed to fetch jobs:', error);
@@ -228,9 +216,7 @@ export const useJobStore = create((set, get) => ({
             // Optimistically update the job status
             if (result.status === 'cancelled' || result.status === 'cancellation_requested') {
                 set((state) => ({
-                    jobs: state.jobs.map(j =>
-                        j.id === jobId ? { ...j, status: 'cancelled', message: 'Cancelled by user' } : j
-                    ),
+                    jobs: state.jobs.filter(j => j.id !== jobId),
                     activeJobs: state.activeJobs.filter(j => j.id !== jobId)
                 }));
             }
@@ -338,11 +324,9 @@ export const useJobStore = create((set, get) => ({
                     
                     let newJobs;
                     if (existsInJobs) {
-                        // Remove temp job, update real job
                         newJobs = state.jobs.map(j => j.id === realJob.id ? { ...j, ...realJob, isOptimistic: false } : j)
-                                           .filter(j => j.id !== tempId);
+                                          .filter(j => j.id !== tempId);
                     } else {
-                        // Replace temp with real
                         newJobs = state.jobs.map(j => j.id === tempId ? { ...realJob, isOptimistic: false } : j);
                     }
 
@@ -352,15 +336,13 @@ export const useJobStore = create((set, get) => ({
                                                       .filter(j => j.id !== tempId);
                     } else {
                         newActiveJobs = state.activeJobs.map(j => j.id === tempId ? { ...realJob, isOptimistic: false } : j);
-                        
-                        // Edge case: real job might be in 'jobs' (via WS) but not 'activeJobs' yet? 
-                        // Unlikely for a specific race, but if so, we handle it above.
-                        // More likely: WS added it to both.
                     }
 
+                    const normalizedActiveJobs = normalizeActiveJobs(newActiveJobs);
+
                     return {
-                        jobs: newJobs,
-                        activeJobs: newActiveJobs
+                        jobs: normalizedActiveJobs,
+                        activeJobs: normalizedActiveJobs
                     };
                 });
                 return realJob;

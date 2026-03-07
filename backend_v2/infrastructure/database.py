@@ -2,12 +2,25 @@
 from sqlmodel import SQLModel, Session, create_engine
 from sqlalchemy.pool import StaticPool
 from typing import Generator
+from dataclasses import dataclass
 import os
 
 from config import settings
 from infrastructure.logging import db_logger
 
 logger = db_logger()
+
+
+SCHEMA_MIGRATIONS_TABLE = "schema_migrations"
+
+
+@dataclass(frozen=True)
+class MigrationStep:
+    """Single schema migration step tracked in the database."""
+
+    version: str
+    description: str
+    apply_fn: callable
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
@@ -24,6 +37,129 @@ def _verify_required_columns(conn, table_name: str, required_columns: set[str]) 
     missing = sorted(required_columns - columns)
     if missing:
         raise RuntimeError(f"Schema verification failed for {table_name}: missing columns {', '.join(missing)}")
+
+
+def _ensure_schema_migrations_table(conn) -> None:
+    """Create the schema migration tracking table if it does not exist."""
+    from sqlalchemy import text
+
+    conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS {SCHEMA_MIGRATIONS_TABLE} (
+            version TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.commit()
+
+
+def _get_applied_migrations(conn) -> set[str]:
+    """Return the set of migration versions already recorded."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if SCHEMA_MIGRATIONS_TABLE not in inspector.get_table_names():
+        return set()
+
+    rows = conn.execute(text(f"SELECT version FROM {SCHEMA_MIGRATIONS_TABLE}")).all()
+    return {row[0] for row in rows}
+
+
+def _record_migration(conn, step: MigrationStep) -> None:
+    """Record a successfully applied migration step."""
+    from sqlalchemy import text
+
+    conn.execute(
+        text(
+            f"INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, description) VALUES (:version, :description)"
+        ),
+        {"version": step.version, "description": step.description},
+    )
+    conn.commit()
+
+
+def _migration_add_job_timestamps(conn) -> None:
+    """Ensure jobs table includes started_at and completed_at columns."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return
+
+    columns = {col['name'] for col in inspector.get_columns('jobs')}
+
+    if 'started_at' not in columns:
+        conn.execute(text('ALTER TABLE jobs ADD COLUMN started_at DATETIME'))
+        conn.commit()
+        logger.info("migration_column_added", table="jobs", column="started_at")
+
+    if 'completed_at' not in columns:
+        conn.execute(text('ALTER TABLE jobs ADD COLUMN completed_at DATETIME'))
+        conn.commit()
+        logger.info("migration_column_added", table="jobs", column="completed_at")
+
+    _verify_required_columns(conn, 'jobs', {'started_at', 'completed_at'})
+
+
+def _migration_setup_prompts_fts(conn) -> None:
+    """Create the prompts FTS table and synchronization triggers."""
+    from sqlalchemy import text
+
+    conn.execute(text("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+            name, text, negative, description, tags,
+            content='prompts', content_rowid='id'
+        )
+    """))
+    conn.commit()
+    logger.info("migration_fts_created", table="prompts_fts")
+
+    fts_triggers = [
+        """
+        CREATE TRIGGER IF NOT EXISTS prompts_ai AFTER INSERT ON prompts BEGIN
+            INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
+            VALUES (new.id, new.name, new.text, COALESCE(new.negative, ''), 
+                    COALESCE(new.description, ''), COALESCE(new.tags, ''));
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS prompts_ad AFTER DELETE ON prompts BEGIN
+            INSERT INTO prompts_fts(prompts_fts, rowid, name, text, negative, description, tags)
+            VALUES ('delete', old.id, old.name, old.text, COALESCE(old.negative, ''), 
+                    COALESCE(old.description, ''), COALESCE(old.tags, ''));
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS prompts_au AFTER UPDATE ON prompts BEGIN
+            INSERT INTO prompts_fts(prompts_fts, rowid, name, text, negative, description, tags)
+            VALUES ('delete', old.id, old.name, old.text, COALESCE(old.negative, ''), 
+                    COALESCE(old.description, ''), COALESCE(old.tags, ''));
+            INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
+            VALUES (new.id, new.name, new.text, COALESCE(new.negative, ''), 
+                    COALESCE(new.description, ''), COALESCE(new.tags, ''));
+        END
+        """,
+    ]
+
+    for trigger_sql in fts_triggers:
+        conn.execute(text(trigger_sql))
+        conn.commit()
+
+
+def _get_schema_migration_steps() -> list[MigrationStep]:
+    """Return ordered schema migration steps."""
+    return [
+        MigrationStep(
+            version="001_jobs_started_completed",
+            description="Add jobs.started_at and jobs.completed_at columns",
+            apply_fn=_migration_add_job_timestamps,
+        ),
+        MigrationStep(
+            version="002_prompts_fts",
+            description="Create prompts FTS table and synchronization triggers",
+            apply_fn=_migration_setup_prompts_fts,
+        ),
+    ]
 
 
 def get_database_url() -> str:
@@ -116,9 +252,9 @@ def create_db_and_tables() -> None:
 def _run_migrations() -> None:
     """
     Run schema migrations for existing databases.
-    This handles adding new columns that don't exist yet.
+    Migration steps are tracked in a lightweight schema_migrations table.
     """
-    from sqlalchemy import text, inspect
+    from sqlalchemy import inspect
     
     with engine.connect() as conn:
         inspector = inspect(engine)
@@ -126,81 +262,17 @@ def _run_migrations() -> None:
         # Check if jobs table exists
         if 'jobs' not in inspector.get_table_names():
             return
-        
-        # Get existing columns in jobs table
-        columns = {col['name'] for col in inspector.get_columns('jobs')}
-        
-        # Add started_at if missing
-        if 'started_at' not in columns:
-            try:
-                conn.execute(text('ALTER TABLE jobs ADD COLUMN started_at DATETIME'))
-                conn.commit()
-                logger.info("migration_column_added", table="jobs", column="started_at")
-            except Exception as e:
-                logger.warning("migration_column_exists", column="started_at", detail=str(e))
-        
-        # Add completed_at if missing
-        if 'completed_at' not in columns:
-            try:
-                conn.execute(text('ALTER TABLE jobs ADD COLUMN completed_at DATETIME'))
-                conn.commit()
-                logger.info("migration_column_added", table="jobs", column="completed_at")
-            except Exception as e:
-                logger.warning("migration_column_exists", column="completed_at", detail=str(e))
 
-        _verify_required_columns(conn, 'jobs', {'started_at', 'completed_at'})
-        
-        # ===== FTS5 Virtual Table for Prompts Search =====
-        # Create FTS5 virtual table for fast full-text search on prompts
-        try:
-            conn.execute(text("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
-                    name, text, negative, description, tags,
-                    content='prompts', content_rowid='id'
-                )
-            """))
-            conn.commit()
-            logger.info("migration_fts_created", table="prompts_fts")
-        except Exception as e:
-            logger.warning("migration_fts_warning", detail=str(e))
-        
-        # Create triggers to keep FTS5 in sync with prompts table
-        fts_triggers = [
-            # Insert trigger
-            """
-            CREATE TRIGGER IF NOT EXISTS prompts_ai AFTER INSERT ON prompts BEGIN
-                INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
-                VALUES (new.id, new.name, new.text, COALESCE(new.negative, ''), 
-                        COALESCE(new.description, ''), COALESCE(new.tags, ''));
-            END
-            """,
-            # Delete trigger
-            """
-            CREATE TRIGGER IF NOT EXISTS prompts_ad AFTER DELETE ON prompts BEGIN
-                INSERT INTO prompts_fts(prompts_fts, rowid, name, text, negative, description, tags)
-                VALUES ('delete', old.id, old.name, old.text, COALESCE(old.negative, ''), 
-                        COALESCE(old.description, ''), COALESCE(old.tags, ''));
-            END
-            """,
-            # Update trigger  
-            """
-            CREATE TRIGGER IF NOT EXISTS prompts_au AFTER UPDATE ON prompts BEGIN
-                INSERT INTO prompts_fts(prompts_fts, rowid, name, text, negative, description, tags)
-                VALUES ('delete', old.id, old.name, old.text, COALESCE(old.negative, ''), 
-                        COALESCE(old.description, ''), COALESCE(old.tags, ''));
-                INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
-                VALUES (new.id, new.name, new.text, COALESCE(new.negative, ''), 
-                        COALESCE(new.description, ''), COALESCE(new.tags, ''));
-            END
-            """
-        ]
-        
-        for trigger_sql in fts_triggers:
-            try:
-                conn.execute(text(trigger_sql))
-                conn.commit()
-            except Exception as e:
-                pass  # Trigger may already exist
+        _ensure_schema_migrations_table(conn)
+        applied_versions = _get_applied_migrations(conn)
+
+        for step in _get_schema_migration_steps():
+            if step.version in applied_versions:
+                continue
+
+            step.apply_fn(conn)
+            _record_migration(conn, step)
+            logger.info("migration_applied", version=step.version, description=step.description)
 
 
 

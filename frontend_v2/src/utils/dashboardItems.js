@@ -1,0 +1,139 @@
+import { getLatestDate, getItemTimelineDate } from './dateTime';
+
+function toImageItem(file) {
+    return {
+        ...file,
+        type: 'image',
+        date: file.date || file.mtime,
+        timelineDate: file.date || file.mtime,
+    };
+}
+
+function toJobItem(job) {
+    return {
+        ...job,
+        type: 'job',
+        date: job.created_at || job.updated_at || 0,
+        timelineDate: job.created_at || job.updated_at || 0,
+    };
+}
+
+export function buildDashboardItems(data, activeJobs) {
+    const historicalFiles = data ? data.pages.flatMap((page) => page.files.map(toImageItem)) : [];
+    const historicalJobs = data ? data.pages.flatMap((page) => page.jobs.map(toJobItem)) : [];
+
+    const mergedJobs = new Map();
+    historicalJobs.forEach((job) => mergedJobs.set(job.id, job));
+    activeJobs.forEach((job) => mergedJobs.set(job.id, toJobItem(job)));
+
+    const imagesByJobId = new Map();
+    historicalFiles.forEach((image) => {
+        const jobId = image.metadata?.job_id;
+        if (!jobId) {
+            return;
+        }
+
+        if (!imagesByJobId.has(jobId)) {
+            imagesByJobId.set(jobId, []);
+        }
+
+        imagesByJobId.get(jobId).push(image);
+    });
+
+    const combined = [];
+    const usedImages = new Set();
+    const usedJobIds = new Set();
+
+    Array.from(mergedJobs.values()).forEach((job) => {
+        if (job.status === 'completed' && job.outputs && job.outputs.length > 0) {
+            const groupedImages = imagesByJobId.get(job.id);
+
+            if (groupedImages && groupedImages.length > 1) {
+                combined.push({
+                    type: 'imageGroup',
+                    images: groupedImages,
+                    job,
+                    date: getLatestDate([job.created_at, ...groupedImages.map((image) => image.date)]).toISOString(),
+                    timelineDate: job.created_at || job.updated_at || groupedImages[0]?.date || 0,
+                    id: `group-${job.id}`,
+                });
+                groupedImages.forEach((image) => usedImages.add(image.name));
+                usedJobIds.add(job.id);
+                return;
+            }
+
+            if (groupedImages && groupedImages.length === 1) {
+                const image = groupedImages[0];
+                combined.push({
+                    ...image,
+                    type: 'image',
+                    date: getLatestDate([job.created_at, image.date]).toISOString(),
+                    timelineDate: job.created_at || job.updated_at || image.date || image.mtime || 0,
+                    _replacedJobId: job.id,
+                    _job: job,
+                });
+                usedImages.add(image.name);
+                usedJobIds.add(job.id);
+                return;
+            }
+
+            const outputFilename = job.outputs[0];
+            const matchingImage = historicalFiles.find((image) => image.name === outputFilename);
+            if (matchingImage && !usedImages.has(matchingImage.name)) {
+                combined.push({
+                    ...matchingImage,
+                    type: 'image',
+                    date: getLatestDate([job.created_at, matchingImage.date]).toISOString(),
+                    timelineDate: job.created_at || job.updated_at || matchingImage.date || matchingImage.mtime || 0,
+                    _replacedJobId: job.id,
+                    _job: job,
+                });
+                usedImages.add(matchingImage.name);
+            }
+            return;
+        }
+
+        if (job.status !== 'completed') {
+            combined.push(job);
+        }
+    });
+
+    historicalFiles.forEach((image) => {
+        if (usedImages.has(image.name)) {
+            return;
+        }
+
+        const jobId = image.metadata?.job_id;
+        if (jobId && !usedJobIds.has(jobId)) {
+            const existingGroup = combined.find((item) => item.type === 'imageGroup' && item.id === `group-${jobId}`);
+            if (!existingGroup) {
+                const groupedImages = imagesByJobId.get(jobId);
+                if (groupedImages && groupedImages.length > 1) {
+                    combined.push({
+                        type: 'imageGroup',
+                        images: groupedImages,
+                        job: null,
+                        date: getLatestDate(groupedImages.map((groupedImage) => groupedImage.date)).toISOString(),
+                        timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
+                        id: `group-${jobId}`,
+                    });
+                    groupedImages.forEach((groupedImage) => usedImages.add(groupedImage.name));
+                    usedJobIds.add(jobId);
+                } else {
+                    combined.push(image);
+                    usedImages.add(image.name);
+                }
+            }
+            return;
+        }
+
+        if (!jobId) {
+            combined.push(image);
+        }
+    });
+
+    const items = combined.sort((left, right) => getItemTimelineDate(right) - getItemTimelineDate(left));
+    const jobsById = new Map(Array.from(mergedJobs.values()).map((job) => [job.id, job]));
+
+    return { items, jobsById };
+}

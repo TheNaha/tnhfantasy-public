@@ -1,4 +1,4 @@
-"""Tests for provider streaming response parsing in api.main."""
+"""Tests for provider streaming response parsing in api.provider_client."""
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from api.main import ProviderCallError, _call_provider
+from api.provider_client import ProviderCallError, call_provider
 
 
 class FakeResponse:
@@ -48,7 +48,7 @@ def install_streaming_client(monkeypatch, response):
     async def fake_get_streaming_client(timeout=600.0):
         yield FakeClient(response)
 
-    monkeypatch.setattr("api.main.get_streaming_client", fake_get_streaming_client)
+    monkeypatch.setattr("api.provider_client.get_streaming_client", fake_get_streaming_client)
 
 
 @pytest.mark.asyncio
@@ -63,7 +63,7 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await _call_provider(
+        await call_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-1",
@@ -88,7 +88,7 @@ async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monk
     install_streaming_client(monkeypatch, response)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
-    result = await _call_provider(
+    result = await call_provider(
         worker_url="http://worker",
         workflow={"nodes": {"1": {}}},
         job_id="job-2",
@@ -112,7 +112,7 @@ async def test_call_provider_formats_http_error_payload(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await _call_provider(
+        await call_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-3",

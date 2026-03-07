@@ -96,18 +96,18 @@ describe('useJobStore', () => {
     });
 
     describe('setJobs', () => {
-        it('sets jobs and sorts by created_at descending', () => {
+        it('keeps only active jobs and sorts by created_at descending', () => {
             const { setJobs } = useJobStore.getState();
             const jobs = [
                 { id: 'a', status: 'completed', created_at: '2024-01-01T00:00:00Z' },
-                { id: 'b', status: 'completed', created_at: '2024-01-03T00:00:00Z' },
-                { id: 'c', status: 'completed', created_at: '2024-01-02T00:00:00Z' },
+                { id: 'b', status: 'running', created_at: '2024-01-03T00:00:00Z' },
+                { id: 'c', status: 'pending', created_at: '2024-01-02T00:00:00Z' },
             ];
             setJobs(jobs);
             const state = useJobStore.getState();
             expect(state.jobs[0].id).toBe('b'); // Most recent first
             expect(state.jobs[1].id).toBe('c');
-            expect(state.jobs[2].id).toBe('a');
+            expect(state.jobs.length).toBe(2);
         });
 
         it('computes activeJobs from pending/running jobs', () => {
@@ -261,13 +261,15 @@ describe('useJobStore', () => {
     describe('fetchJobs', () => {
         it('calls jobsApi.list and populates jobs', async () => {
             const mockJobs = [
-                { id: 'a', status: 'completed', created_at: '2024-01-01T00:00:00Z' }
+                { id: 'a', status: 'completed', created_at: '2024-01-01T00:00:00Z' },
+                { id: 'b', status: 'running', created_at: '2024-01-02T00:00:00Z' }
             ];
             jobsApi.list.mockResolvedValueOnce({ jobs: mockJobs });
 
             const { fetchJobs } = useJobStore.getState();
             await fetchJobs();
             expect(useJobStore.getState().jobs.length).toBe(1);
+            expect(useJobStore.getState().jobs[0].id).toBe('b');
         });
 
         it('throws on API error', async () => {

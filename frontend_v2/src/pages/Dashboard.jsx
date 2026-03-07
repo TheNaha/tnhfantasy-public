@@ -1,14 +1,16 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { Image as ImageIcon, Loader2, X, Download, Trash2, RefreshCw, Check, Calendar, LayoutGrid, List, Square, ChevronDown, ArrowLeftRight, Star, FolderOpen, Plus, BarChart3, LineChart } from 'lucide-react';
+import { Image as ImageIcon, Loader2, Trash2, RefreshCw, Check, Calendar, LayoutGrid, List, Square, Star, FolderOpen, BarChart3, LineChart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // API Layer
-import { api, ApiError, filesApi } from '../api';
+import { filesApi } from '../api';
 
 import { useGallery } from '../hooks/useGallery';
+import { useDashboardItems } from '../hooks/useDashboardItems';
+import { useSelectedImageState } from '../hooks/useSelectedImageState';
 import { useJobStore } from '../store/jobStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -35,7 +37,6 @@ import EmptyState from '../components/EmptyState';
 import ProgressiveImage from '../components/ProgressiveImage';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
-import { getLocalDateKey, getLatestDate, getItemTimelineDate } from '../utils/dateTime';
 
 export default function Dashboard() {
 
@@ -55,14 +56,18 @@ export default function Dashboard() {
     }, [storeDeleteJob, queryClient]);
     // Local State
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
-    const [selectedImage, setSelectedImage] = useState(null);
     const [selectedJobId, setSelectedJobId] = useState(null);  // Store ID, not object
     const [gridCols, setGridCols] = useState(settings.ui.defaultGridColumns);
-    const [metadata, setMetadata] = useState(null);
-    const [loadingMeta, setLoadingMeta] = useState(false);
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
     const [showSelectCollection, setShowSelectCollection] = useState(false);
     const [showStatsPanel, setShowStatsPanel] = useState(false);
+    const {
+        selectedImage,
+        metadata,
+        loadingMeta,
+        selectImage,
+        closeSelectedImage,
+    } = useSelectedImageState();
 
 
     // Filters
@@ -95,18 +100,8 @@ export default function Dashboard() {
 
     // Stable handler for image click
     const handleImageClick = useCallback((image) => {
-        setSelectedImage(image);
-        if (image?.metadata && Object.keys(image.metadata).length > 0) {
-            setMetadata(image.metadata);
-            setLoadingMeta(false);
-        } else {
-            setMetadata(null);
-            setLoadingMeta(true);
-        }
-    }, []);
-
-    // Derive selectedJob from activeJobs to get live updates
-    const selectedJob = selectedJobId ? activeJobs.find(j => j.id === selectedJobId) : null;
+        selectImage(image);
+    }, [selectImage]);
 
     // Confirmation Modal
     const [confirmModal, setConfirmModal] = useState({
@@ -173,7 +168,7 @@ export default function Dashboard() {
     // Keyboard shortcuts (ESC to close modals)
     useKeyboardShortcuts({
         onEscape: () => {
-            if (selectedImage) setSelectedImage(null);
+            if (selectedImage) closeSelectedImage();
             else if (selectedJob) setSelectedJobId(null);
         }
     });
@@ -183,223 +178,21 @@ export default function Dashboard() {
         localStorage.setItem('galleryViewMode', viewMode);
     }, [viewMode]);
 
-    // Flatten data and merge with real-time updates
-    const allItems = useMemo(() => {
-        const historicalFiles = data ? data.pages.flatMap(page => page.files.map(f => ({ ...f, type: 'image', date: f.date || f.mtime, timelineDate: f.date || f.mtime }))) : [];
-        const historicalJobs = data ? data.pages.flatMap(page => page.jobs.map(j => ({ ...j, type: 'job', date: j.created_at || j.updated_at || 0, timelineDate: j.created_at || j.updated_at || 0 }))) : [];
-
-        // Create a map of WebSocket jobs for easy lookup
-        // activeJobs comes from the store (WebSocket) and contains the latest state of all jobs
-        const activeJobsMap = new Map(activeJobs.map(j => [j.id, { ...j, type: 'job', date: j.created_at || j.updated_at || 0, timelineDate: j.created_at || j.updated_at || 0 }]));
-
-        // Merge jobs: Use active job if available, otherwise use historical
-        const mergedJobs = new Map();
-        historicalJobs.forEach(j => mergedJobs.set(j.id, j));
-        activeJobsMap.forEach((j, id) => mergedJobs.set(id, j));
-
-        // Group images by job_id from metadata
-        const imagesByJobId = new Map();
-        historicalFiles.forEach(img => {
-            const jobId = img.metadata?.job_id;
-            if (jobId) {
-                if (!imagesByJobId.has(jobId)) {
-                    imagesByJobId.set(jobId, []);
-                }
-                imagesByJobId.get(jobId).push(img);
-            }
-        });
-
-        // Build combined list
-        const jobsArray = Array.from(mergedJobs.values());
-        const combined = [];
-        const usedImages = new Set();
-        const usedJobIds = new Set();
-
-        // First pass: Handle jobs
-        jobsArray.forEach(job => {
-            if (job.status === 'completed' && job.outputs && job.outputs.length > 0) {
-                // Check if this job has grouped images
-                const groupedImages = imagesByJobId.get(job.id);
-
-                if (groupedImages && groupedImages.length > 1) {
-                    // Multiple images - create a group
-                    combined.push({
-                        type: 'imageGroup',
-                        images: groupedImages,
-                        job: job,
-                        date: getLatestDate([job.created_at, ...groupedImages.map(img => img.date)]).toISOString(),
-                        timelineDate: job.created_at || job.updated_at || groupedImages[0]?.date || 0,
-                        id: `group-${job.id}`
-                    });
-                    groupedImages.forEach(img => usedImages.add(img.name));
-                    usedJobIds.add(job.id);
-                } else if (groupedImages && groupedImages.length === 1) {
-                    // Single image with job_id match - show as regular image
-                    const img = groupedImages[0];
-                    combined.push({
-                        ...img,
-                        type: 'image',
-                        date: getLatestDate([job.created_at, img.date]).toISOString(),
-                        timelineDate: job.created_at || job.updated_at || img.date || img.mtime || 0,
-                        _replacedJobId: job.id,
-                        _job: job
-                    });
-                    usedImages.add(img.name);
-                    usedJobIds.add(job.id);
-                } else {
-                    // Fallback: Find by output filename
-                    const outputFilename = job.outputs[0];
-                    const matchingImage = historicalFiles.find(img => img.name === outputFilename);
-                    if (matchingImage && !usedImages.has(matchingImage.name)) {
-                        combined.push({
-                            ...matchingImage,
-                            type: 'image',
-                            date: getLatestDate([job.created_at, matchingImage.date]).toISOString(),
-                            timelineDate: job.created_at || job.updated_at || matchingImage.date || matchingImage.mtime || 0,
-                            _replacedJobId: job.id,
-                            _job: job
-                        });
-                        usedImages.add(matchingImage.name);
-                    }
-                }
-            } else if (job.status !== 'completed') {
-                // Keep non-completed jobs (pending, processing, failed)
-                combined.push(job);
-            }
-        });
-
-        // Second pass: Add remaining images not associated with any job
-        historicalFiles.forEach(img => {
-            if (!usedImages.has(img.name)) {
-                // Check if this image is part of a group that wasn't handled
-                const jobId = img.metadata?.job_id;
-                if (jobId && !usedJobIds.has(jobId)) {
-                    // This image has a job_id but the job wasn't in our list
-                    // Check if we already created a group for this job_id
-                    const existingGroup = combined.find(item => item.type === 'imageGroup' && item.id === `group-${jobId}`);
-                    if (!existingGroup) {
-                        const groupedImages = imagesByJobId.get(jobId);
-                        if (groupedImages && groupedImages.length > 1) {
-                            // Create a group without job info
-                            combined.push({
-                                type: 'imageGroup',
-                                images: groupedImages,
-                                job: null,
-                                date: getLatestDate(groupedImages.map(i => i.date)).toISOString(),
-                                timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
-                                id: `group-${jobId}`
-                            });
-                            groupedImages.forEach(i => usedImages.add(i.name));
-                            usedJobIds.add(jobId);
-                        } else {
-                            combined.push(img);
-                            usedImages.add(img.name);
-                        }
-                    }
-                } else if (!jobId) {
-                    // No job_id, just add the image
-                    combined.push(img);
-                }
-            }
-        });
-
-        // Sort by date descending (newest first)
-        const sorted = combined.sort((a, b) => {
-            const dateA = getItemTimelineDate(a);
-            const dateB = getItemTimelineDate(b);
-            return dateB - dateA;
-        });
-
-        return sorted;
-    }, [data, activeJobs]);
-
-    // Filter for favorites and collections
-    const displayedItems = useMemo(() => {
-        let items = allItems;
-
-        // Apply collection filter
-        if (activeCollection && collections[activeCollection]) {
-            const collectionImages = collections[activeCollection].images;
-            items = items.filter(item => item.type === 'image' && collectionImages.includes(item.name));
-        }
-
-        // Apply favorites filter
-        if (showFavorites) {
-            items = items.filter(item => item.type === 'image' && favorites.includes(item.name));
-        }
-        return items;
-    }, [allItems, showFavorites, favorites, activeCollection, collections]);
-
-    // Group by Date - handle both ISO strings and UNIX timestamps
-    // Use local-based date keys to ensure consistent grouping relative to user's timezone
-    const grouped = useMemo(() => {
-        return displayedItems.reduce((acc, item) => {
-            const dateObj = getItemTimelineDate(item);
-            // Use local date as key
-            // Format: YYYY-MM-DD (e.g., "2024-12-09")
-            const d = getLocalDateKey(dateObj);
-            if (!acc[d]) acc[d] = [];
-            acc[d].push(item);
-            return acc;
-        }, {});
-    }, [displayedItems]);
-
-    const sortedGroupedEntries = useMemo(() => {
-        return Object.entries(grouped)
-            .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-            .map(([date, groupItems]) => ([
-                date,
-                groupItems
-                    .slice()
-                    .sort((a, b) => getItemTimelineDate(b) - getItemTimelineDate(a))
-            ]));
-    }, [grouped]);
-
-    // Helper to format date keys for display
-    const formatDateLabel = (localDateKey) => {
-        const [year, month, day] = localDateKey.split('-');
-        const date = new Date(year, month - 1, day);
-
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-
-        // Compare local dates
-        const todayKey = getLocalDateKey(today);
-        const yesterdayKey = getLocalDateKey(yesterday);
-
-        if (localDateKey === todayKey) return 'Today';
-        if (localDateKey === yesterdayKey) return 'Yesterday';
-        return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    };
-
-
-    // Metadata Fetching for Lightbox
-    // Priority: 1) Use metadata already loaded from file list, 2) Fallback to API for legacy images
-    useEffect(() => {
-        if (selectedImage) {
-            // Fallback: fetch from legacy sidecar JSON or dedicated endpoint
-            if (!selectedImage.metadata || Object.keys(selectedImage.metadata).length === 0) {
-                api.get(`/api/view/output/${encodeURIComponent(selectedImage.name)}.json`)
-                    .then((data) => {
-                        setMetadata(data);
-                        setLoadingMeta(false);
-                    })
-                    .catch((error) => {
-                        if (error instanceof ApiError && error.status === 404) {
-                            setMetadata(null);
-                        }
-                        setLoadingMeta(false);
-                    });
-            }
-        }
-    }, [selectedImage]);
-
-    // Lock Scroll
-    useEffect(() => {
-        document.body.style.overflow = selectedImage ? 'hidden' : 'unset';
-        return () => { document.body.style.overflow = 'unset'; };
-    }, [selectedImage]);
+    const {
+        allItems,
+        displayedItems,
+        selectedJob,
+        sortedGroupedEntries,
+        formatDateLabel,
+    } = useDashboardItems({
+        data,
+        activeJobs,
+        selectedJobId,
+        activeCollection,
+        collections,
+        showFavorites,
+        favorites,
+    });
 
     // Handlers
     const handleDelete = useCallback((filename) => {
@@ -413,7 +206,7 @@ export default function Dashboard() {
                 try {
                     await filesApi.deleteMultiple([filename]);
                     queryClient.invalidateQueries(['gallery']);
-                    if (selectedImage?.name === filename) setSelectedImage(null);
+                    if (selectedImage?.name === filename) closeSelectedImage();
                     toast.success(`Successfully deleted ${filename}`, {
                         icon: '🗑️',
                         duration: settings.ui.toastSuccessDuration,
@@ -501,6 +294,54 @@ export default function Dashboard() {
             }
         });
     }, [selectedFiles, setConfirmModal, setSelectionMode, setSelectedFiles]);
+
+    const handleBatchFavorite = useCallback(() => {
+        Array.from(selectedFiles).forEach(filename => {
+            if (!favorites.includes(filename)) {
+                toggleFavorite(filename);
+            }
+        });
+        toast.success(`Added ${selectedFiles.size} images to favorites`, { icon: '⭐' });
+    }, [favorites, selectedFiles, toggleFavorite]);
+
+    const handleAddSelectionToCollection = useCallback(() => {
+        setShowSelectCollection(true);
+    }, []);
+
+    const handleRemoveSelectionFromCollection = useCallback(() => {
+        selectedFiles.forEach(filename => {
+            removeFromCollection(activeCollection, filename);
+        });
+        toast.success(`Removed ${selectedFiles.size} images from collection`);
+        setSelectedFiles(new Set());
+    }, [activeCollection, removeFromCollection, selectedFiles]);
+
+    const handleBatchDelete = useCallback(() => {
+        setConfirmModal({
+            isOpen: true,
+            title: `Delete ${selectedFiles.size} Images`,
+            message: 'Are you sure you want to delete these images? This action cannot be undone.',
+            isDangerous: true,
+            confirmText: 'Delete Images',
+            onConfirm: async () => {
+                try {
+                    await filesApi.deleteMultiple(Array.from(selectedFiles));
+                    queryClient.invalidateQueries(['gallery']);
+                    setSelectedFiles(new Set());
+                    setSelectionMode(false);
+                    toast.success(`Deleted ${selectedFiles.size} images`);
+                } catch (e) {
+                    console.error(e);
+                    toast.error(`Failed to delete: ${e.message}`);
+                }
+            }
+        });
+    }, [queryClient, selectedFiles]);
+
+    const handleCancelSelectionMode = useCallback(() => {
+        setSelectionMode(false);
+        setSelectedFiles(new Set());
+    }, []);
 
     // Pull to Refresh
     const { containerRef, pullDistance, isRefreshing, isPulling } = usePullToRefresh({
@@ -707,114 +548,16 @@ export default function Dashboard() {
                     {/* Selection Mode Toolbar (Sticky when active) */}
                     <AnimatePresence>
                         {selectionMode && (
-                            <motion.div
-                                initial={{ opacity: 0, y: -10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.2 }}
-                                className="flex items-center gap-2 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg flex-wrap"
-                            >
-                                <span className="text-sm text-blue-300 font-medium">
-                                    {selectedFiles.size} selected
-                                </span>
-
-                                <div className="h-4 w-px bg-blue-500/30" />
-
-                                <button
-                                    onClick={handleBatchDownload}
-                                    className="px-3 py-1.5 bg-blue-600 rounded-lg text-sm font-medium hover:bg-blue-500 flex items-center gap-2 transition-colors"
-                                    disabled={selectedFiles.size === 0}
-                                >
-                                    <Download size={14} aria-hidden="true" />
-                                    Download
-                                </button>
-
-                                <button
-                                    onClick={() => {
-                                        Array.from(selectedFiles).forEach(filename => {
-                                            if (!favorites.includes(filename)) {
-                                                toggleFavorite(filename);
-                                            }
-                                        });
-                                        toast.success(`Added ${selectedFiles.size} images to favorites`, { icon: '⭐' });
-                                    }}
-                                    className="px-3 py-1.5 bg-yellow-600 rounded-lg text-sm font-medium hover:bg-yellow-500 flex items-center gap-2 transition-colors"
-                                    disabled={selectedFiles.size === 0}
-                                >
-                                    <Star size={14} aria-hidden="true" />
-                                    <span className="hidden sm:inline">Add to Favorites</span>
-                                    <span className="sm:hidden">Favorite</span>
-                                </button>
-
-                                <button
-                                    onClick={() => setShowSelectCollection(true)}
-                                    className="px-3 py-1.5 bg-purple-600 rounded-lg text-sm font-medium hover:bg-purple-500 flex items-center gap-2 transition-colors"
-                                    disabled={selectedFiles.size === 0}
-                                >
-                                    <Plus size={14} aria-hidden="true" />
-                                    <span className="hidden sm:inline">Add to Collection</span>
-                                    <span className="sm:hidden">Collection</span>
-                                </button>
-
-                                {activeCollection && (
-                                    <button
-                                        onClick={() => {
-                                            selectedFiles.forEach(filename => {
-                                                removeFromCollection(activeCollection, filename);
-                                            });
-                                            toast.success(`Removed ${selectedFiles.size} images from collection`);
-                                            setSelectedFiles(new Set());
-                                        }}
-                                        className="px-3 py-1.5 bg-orange-600 rounded-lg text-sm font-medium hover:bg-orange-500 flex items-center gap-2 transition-colors"
-                                        disabled={selectedFiles.size === 0}
-                                    >
-                                        <X size={14} aria-hidden="true" />
-                                        <span className="hidden sm:inline">Remove from Collection</span>
-                                        <span className="sm:hidden">Remove</span>
-                                    </button>
-                                )}
-
-                                <button
-                                    onClick={() => {
-                                        setConfirmModal({
-                                            isOpen: true,
-                                            title: `Delete ${selectedFiles.size} Images`,
-                                            message: "Are you sure you want to delete these images? This action cannot be undone.",
-                                            isDangerous: true,
-                                            confirmText: "Delete Images",
-                                            onConfirm: async () => {
-                                                try {
-                                                    await filesApi.deleteMultiple(Array.from(selectedFiles));
-                                                    queryClient.invalidateQueries(['gallery']);
-                                                    setSelectedFiles(new Set());
-                                                    setSelectionMode(false);
-                                                    toast.success(`Deleted ${selectedFiles.size} images`);
-                                                } catch (e) {
-                                                    console.error(e);
-                                                    toast.error(`Failed to delete: ${e.message}`);
-                                                }
-                                            }
-                                        });
-                                    }}
-                                    className="px-3 py-1.5 bg-red-600 rounded-lg text-sm font-medium hover:bg-red-500 flex items-center gap-2 transition-colors"
-                                    disabled={selectedFiles.size === 0}
-                                >
-                                    <Trash2 size={14} aria-hidden="true" />
-                                    Delete
-                                </button>
-
-                                <div className="flex-1" />
-
-                                <button
-                                    onClick={() => {
-                                        setSelectionMode(false);
-                                        setSelectedFiles(new Set());
-                                    }}
-                                    className="px-3 py-1.5 bg-gray-700 rounded-lg text-sm font-medium hover:bg-gray-600 text-gray-300 transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                            </motion.div>
+                            <SelectionToolbar
+                                selectedFiles={selectedFiles}
+                                onDownload={handleBatchDownload}
+                                onDelete={handleBatchDelete}
+                                onFavorite={handleBatchFavorite}
+                                onAddToCollection={handleAddSelectionToCollection}
+                                onRemoveFromCollection={handleRemoveSelectionFromCollection}
+                                onCancel={handleCancelSelectionMode}
+                                activeCollection={activeCollection}
+                            />
                         )}
                     </AnimatePresence>
                 </div>
@@ -1128,7 +871,7 @@ export default function Dashboard() {
                     currentIndex={selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) || 0}
                     onNavigate={(newIndex) => {
                         if (selectedImage.siblingImages?.[newIndex]) {
-                            setSelectedImage({
+                            selectImage({
                                 ...selectedImage.siblingImages[newIndex],
                                 siblingImages: selectedImage.siblingImages,
                                 associatedJob: selectedImage.associatedJob
@@ -1138,7 +881,7 @@ export default function Dashboard() {
                     metadata={metadata}
                     loadingMeta={loadingMeta}
                     job={selectedImage.associatedJob}
-                    onClose={() => setSelectedImage(null)}
+                    onClose={closeSelectedImage}
                     onDelete={(name) => handleDelete(name)}
                     onReuseParameters={useParameters}
                 />

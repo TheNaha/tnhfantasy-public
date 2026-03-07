@@ -13,6 +13,7 @@ T = TypeVar('T')
 
 # Track in-flight requests to deduplicate concurrent identical requests
 _in_flight: dict[str, asyncio.Task] = {}
+_in_flight_lock = asyncio.Lock()
 
 # Short-lived cache for completed requests (1 second TTL)
 _result_cache = TTLCache(maxsize=100, ttl=1.0)
@@ -38,26 +39,35 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
             lambda: service.list_jobs(limit, offset)
         )
     """
-    # Check result cache first
-    if key in _result_cache:
-        logger.debug("dedup_cache_hit", key=key)
-        return _result_cache[key]
-    
-    # Check if same request is already in-flight
-    if key in _in_flight:
-        logger.debug("dedup_in_flight", key=key)
-        return await _in_flight[key]
-    
-    # Create new task for this request
-    task = asyncio.create_task(coro_factory())
-    _in_flight[key] = task
-    
+    async with _in_flight_lock:
+        # Check result cache first
+        if key in _result_cache:
+            logger.debug("dedup_cache_hit", key=key)
+            return _result_cache[key]
+
+        # Check if same request is already in-flight
+        task = _in_flight.get(key)
+        created_task = False
+        if task is None:
+            task = asyncio.create_task(coro_factory(), name=f"dedup:{key}")
+            _in_flight[key] = task
+            created_task = True
+        else:
+            logger.debug("dedup_in_flight", key=key)
+
     try:
-        result = await task
-        _result_cache[key] = result
+        # Shield shared work from caller cancellation so one waiter cannot
+        # cancel the underlying request for every other waiter.
+        result = await asyncio.shield(task)
+        if created_task:
+            async with _in_flight_lock:
+                _result_cache[key] = result
         return result
     finally:
-        _in_flight.pop(key, None)
+        if created_task:
+            async with _in_flight_lock:
+                if _in_flight.get(key) is task:
+                    _in_flight.pop(key, None)
 
 
 def make_key(*args) -> str:
@@ -76,7 +86,9 @@ def make_key(*args) -> str:
 def clear_dedup_cache():
     """Clear the deduplication cache. Useful for testing."""
     _result_cache.clear()
-    # Note: in-flight tasks will complete naturally
+    done_keys = [key for key, task in _in_flight.items() if task.done()]
+    for key in done_keys:
+        _in_flight.pop(key, None)
 
 
 def get_dedup_stats() -> dict:
