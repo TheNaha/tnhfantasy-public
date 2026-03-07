@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as ws from '../api/websocket';
 import { jobsApi } from '../api';
-import { filterActiveJobs, isActiveJobStatus } from '../utils/jobStatus';
+import { filterActiveJobs } from '../utils/jobStatus';
 
 function sortJobsByCreatedAt(jobs) {
     return [...jobs].sort((a, b) => {
@@ -316,20 +316,11 @@ export const useJobStore = create((set, get) => ({
             if (realJob && realJob.id) {
                 // Check if the real job already exists (from WebSocket race)
                 set((state) => {
-                    const existsInJobs = state.jobs.some(j => j.id === realJob.id);
                     const existsInActive = state.activeJobs.some(j => j.id === realJob.id);
 
                     // If it exists, we should remove the temp job and update the existing one if needed
                     // If it doesn't exist, we replace the temp job with the real one
                     
-                    let newJobs;
-                    if (existsInJobs) {
-                        newJobs = state.jobs.map(j => j.id === realJob.id ? { ...j, ...realJob, isOptimistic: false } : j)
-                                          .filter(j => j.id !== tempId);
-                    } else {
-                        newJobs = state.jobs.map(j => j.id === tempId ? { ...realJob, isOptimistic: false } : j);
-                    }
-
                     let newActiveJobs;
                     if (existsInActive) {
                         newActiveJobs = state.activeJobs.map(j => j.id === realJob.id ? { ...j, ...realJob, isOptimistic: false } : j)
