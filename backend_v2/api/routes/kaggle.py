@@ -175,7 +175,7 @@ class KaggleWorker:
                 "job_id": job_id
             }))
             
-            # Send workflow to ComfyUI
+            # Send workflow to ComfyUI and poll for completion using a single session
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"http://127.0.0.1:{self.comfy_port}/prompt",
@@ -184,8 +184,8 @@ class KaggleWorker:
                     result = await resp.json()
                     prompt_id = result.get("prompt_id")
             
-            # Poll for completion
-            outputs = await self.wait_for_completion(prompt_id)
+                # Poll for completion (outside post response context, inside session context)
+                outputs = await self.wait_for_completion(session, prompt_id)
             
             await self.ws.send(json.dumps({
                 "type": "job_completed",
@@ -203,17 +203,15 @@ class KaggleWorker:
                 "error": str(e)
             }))
     
-    async def wait_for_completion(self, prompt_id: str, timeout: int = 300):
+    async def wait_for_completion(self, session, prompt_id: str, timeout: int = 300):
         """Wait for ComfyUI to complete the prompt."""
-        import urllib.request
-        
         start = time.time()
         while time.time() - start < timeout:
             try:
-                with urllib.request.urlopen(
+                async with session.get(
                     f"http://127.0.0.1:{self.comfy_port}/history/{prompt_id}"
                 ) as resp:
-                    data = json.loads(resp.read())
+                    data = await resp.json()
                     if prompt_id in data:
                         outputs = data[prompt_id].get("outputs", {})
                         # Extract image filenames
