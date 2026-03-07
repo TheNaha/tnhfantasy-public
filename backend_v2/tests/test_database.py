@@ -172,9 +172,11 @@ class TestRunMigrations:
 
         with engine.connect() as conn:
             columns = db_module._get_table_columns(conn, "jobs")
+            applied = db_module._get_applied_migrations(conn)
 
         assert "started_at" in columns
         assert "completed_at" in columns
+        assert applied == {"001_jobs_started_completed"}
 
     def test_run_migrations_records_applied_versions(self, tmp_path):
         db_path = tmp_path / "migration_versions.db"

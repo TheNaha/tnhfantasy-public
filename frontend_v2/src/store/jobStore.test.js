@@ -283,8 +283,8 @@ describe('useJobStore', () => {
         it('optimistically removes the job immediately', async () => {
             const { setJobs, deleteJob } = useJobStore.getState();
             setJobs([
-                { id: 'del-me', status: 'completed', created_at: '2024-01-01T00:00:00Z' },
-                { id: 'keep', status: 'completed', created_at: '2024-01-02T00:00:00Z' },
+                { id: 'del-me', status: 'running', created_at: '2024-01-01T00:00:00Z' },
+                { id: 'keep', status: 'pending', created_at: '2024-01-02T00:00:00Z' },
             ]);
             const deletePromise = deleteJob('del-me');
             // Optimistic: job should be removed immediately
@@ -294,11 +294,16 @@ describe('useJobStore', () => {
 
         it('rolls back on API error', async () => {
             const { setJobs, deleteJob } = useJobStore.getState();
-            setJobs([{ id: 'del-me', status: 'completed', created_at: '2024-01-01T00:00:00Z' }]);
+            setJobs([{ id: 'del-me', status: 'running', created_at: '2024-01-01T00:00:00Z' }]);
             jobsApi.delete.mockRejectedValueOnce(new Error('server error'));
             await expect(deleteJob('del-me')).rejects.toThrow();
             // Job should be restored after rollback
-            expect(useJobStore.getState().jobs.some(j => j.id === 'del-me')).toBe(true);
+            expect(useJobStore.getState().jobs).toEqual([
+                expect.objectContaining({ id: 'del-me', status: 'running' }),
+            ]);
+            expect(useJobStore.getState().activeJobs).toEqual([
+                expect.objectContaining({ id: 'del-me', status: 'running' }),
+            ]);
         });
     });
 
@@ -306,8 +311,8 @@ describe('useJobStore', () => {
         it('optimistically clears all jobs immediately', async () => {
             const { setJobs, clearJobs } = useJobStore.getState();
             setJobs([
-                { id: 'a', status: 'completed', created_at: '2024-01-01T00:00:00Z' },
-                { id: 'b', status: 'completed', created_at: '2024-01-02T00:00:00Z' },
+                { id: 'a', status: 'running', created_at: '2024-01-01T00:00:00Z' },
+                { id: 'b', status: 'pending', created_at: '2024-01-02T00:00:00Z' },
             ]);
             const clearPromise = clearJobs();
             // Optimistic: cleared immediately
@@ -318,12 +323,17 @@ describe('useJobStore', () => {
         it('rolls back on API error', async () => {
             const { setJobs, clearJobs } = useJobStore.getState();
             setJobs([
-                { id: 'a', status: 'completed', created_at: '2024-01-01T00:00:00Z' },
+                { id: 'a', status: 'running', created_at: '2024-01-01T00:00:00Z' },
             ]);
             jobsApi.clear.mockRejectedValueOnce(new Error('server error'));
             await expect(clearJobs()).rejects.toThrow();
             // Jobs should be restored
-            expect(useJobStore.getState().jobs.length).toBe(1);
+            expect(useJobStore.getState().jobs).toEqual([
+                expect.objectContaining({ id: 'a', status: 'running' }),
+            ]);
+            expect(useJobStore.getState().activeJobs).toEqual([
+                expect.objectContaining({ id: 'a', status: 'running' }),
+            ]);
         });
     });
 

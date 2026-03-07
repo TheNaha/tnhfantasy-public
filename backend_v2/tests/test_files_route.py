@@ -3,6 +3,7 @@ import os
 import shutil
 import json
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import patch, MagicMock, AsyncMock, mock_open
 from fastapi.testclient import TestClient
 from fastapi import FastAPI, Response
@@ -72,9 +73,8 @@ class TestFilesRoute:
         assert data["files"][0]["name"] == "test.png"
         assert data["total"] == 1
 
-    @patch("api.deps.get_model_service_v2")
-    @patch("infrastructure.database.get_session")
-    def test_list_files_models(self, mock_get_session, mock_get_service, client):
+    @patch("api.routes.files.get_model_service_v2")
+    def test_list_files_models(self, mock_get_service, client):
         # Setup mock service
         mock_service = AsyncMock()
         mock_service.list_models_by_directory.return_value = [
@@ -87,47 +87,42 @@ class TestFilesRoute:
         ]
         mock_get_service.return_value = mock_service
 
-        # Setup mock session generator
         mock_session = MagicMock()
-        mock_get_session.return_value = iter([mock_session])
+        
+        @asynccontextmanager
+        async def fake_session_context():
+            yield mock_session
 
-        response = client.get("/api/files?directory=models/checkpoints")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["files"]) == 1
-        assert data["files"][0]["name"] == "model1.safetensors"
+        with patch("api.routes.files.get_session_context", fake_session_context):
+            response = client.get("/api/files?directory=models/checkpoints")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["files"]) == 1
+            assert data["files"][0]["name"] == "model1.safetensors"
 
-    @patch("api.deps.get_model_service_v2")
-    @patch("infrastructure.database.get_session")
-    def test_list_files_models_closes_session_generator(self, mock_get_session, mock_get_service, client):
-        class DummySessionGenerator:
+    @patch("api.routes.files.get_model_service_v2")
+    def test_list_files_models_closes_session_generator(self, mock_get_service, client):
+        class DummySessionContext:
             def __init__(self, session):
                 self._session = session
-                self._yielded = False
                 self.closed = False
 
-            def __iter__(self):
-                return self
-
-            def __next__(self):
-                if self._yielded:
-                    raise StopIteration
-                self._yielded = True
+            async def __aenter__(self):
                 return self._session
 
-            def close(self):
+            async def __aexit__(self, exc_type, exc, tb):
                 self.closed = True
 
         mock_service = AsyncMock()
         mock_service.list_models_by_directory.return_value = []
         mock_get_service.return_value = mock_service
 
-        session_gen = DummySessionGenerator(MagicMock())
-        mock_get_session.return_value = session_gen
+        session_context = DummySessionContext(MagicMock())
 
-        response = client.get("/api/files?directory=models/checkpoints")
-        assert response.status_code == 200
-        assert session_gen.closed is True
+        with patch("api.routes.files.get_session_context", return_value=session_context):
+            response = client.get("/api/files?directory=models/checkpoints")
+            assert response.status_code == 200
+            assert session_context.closed is True
 
     @patch("os.path.exists")
     @patch("os.path.isfile")
