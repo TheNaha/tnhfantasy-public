@@ -17,9 +17,10 @@ from sqlmodel import Session
 from pydantic import BaseModel
 import aiohttp
 
-from api.deps import get_session, get_provider_service, get_container_manager
+from api.deps import get_session, get_provider_service, get_container_manager, get_session_context
 from services.provider_service import ProviderService
 from core.exceptions import NotFoundError, ValidationError
+from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import api_logger
 
 logger = api_logger()
@@ -91,7 +92,6 @@ async def save_generated_image(request: SaveImageRequest):
     
     from services.job_service import JobService
     from core.entities import JobStatus
-    from infrastructure.database import get_session_context
     from infrastructure.logging import get_logger
 
     logger = get_logger("providers_route")
@@ -399,8 +399,7 @@ async def wake_providers(session: Session = Depends(get_session)):
             # Fire and forget; we don't care if they timeout during cold start
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    import asyncio
-    asyncio.create_task(ping_containers())
+    start_background_task(ping_containers(), task_name="wake_provider_containers")
     
     return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
 

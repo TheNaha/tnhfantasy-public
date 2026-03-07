@@ -24,7 +24,7 @@ from typing import List
 import tempfile
 import asyncio
 
-from api.deps import get_session, get_provider_service
+from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
 
 router = APIRouter(tags=["files"])
 
@@ -197,22 +197,11 @@ async def list_files_endpoint(
         model_type = directory.replace("models/", "")
         
         try:
-            from api.deps import get_model_service_v2
-            from infrastructure.database import get_session
-            
-            # Get database session and model service V2
-            session_gen = get_session()
-            db_session = next(session_gen)
-            try:
+            async with get_session_context() as db_session:
                 model_service = get_model_service_v2(db_session)
-                
+
                 # Get models for this directory from SQLite
                 models = await model_service.list_models_by_directory(model_type)
-            finally:
-                if hasattr(session_gen, "close"):
-                    session_gen.close()
-                elif hasattr(db_session, "close"):
-                    db_session.close()
             
             # Format V2 data for frontend compatibility
             valid_files = []

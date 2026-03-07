@@ -19,7 +19,7 @@ from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel
 
-from infrastructure.database import get_session
+from api.deps import get_session
 from core.entities import Prompt
 
 

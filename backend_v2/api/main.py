@@ -39,6 +39,8 @@ import logging
 # Import logging config early to suppress noisy loggers before they initialize
 import infrastructure.logging  # noqa: F401
 
+from api.error_handlers import register_exception_handlers
+from api.startup_helpers import autostart_provider_containers, configure_worker_pool, recover_pending_jobs
 from config import (
     settings, 
     get_job_timeout,
@@ -46,7 +48,9 @@ from config import (
     get_job_retry_base_delay,
     get_job_retry_max_delay
 )
+from api.deps import get_session_sync
 from infrastructure.database import create_db_and_tables, get_session
+from infrastructure.background_tasks import start_background_task, cancel_background_tasks
 from infrastructure.http_client import get_http_client, close_http_client, get_streaming_client
 from infrastructure.scheduler import (
     start_scheduler, 
@@ -75,8 +79,6 @@ logger = get_logger("main")
 
 def _requeue_inflight_jobs_for_shutdown() -> int:
     """Reset in-flight jobs so startup recovery can safely re-enqueue them."""
-    from infrastructure.database import get_session_sync
-
     session = get_session_sync()
     try:
         job_service = JobService(session)
@@ -522,8 +524,10 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
                 # This doesn't block job completion - runs asynchronously
                 for output in outputs:
                     if output.get("path") and output.get("type") == "image":
-                        asyncio.create_task(
+                        start_background_task(
                             _process_image_background(output["path"], job_id)
+                            ,
+                            task_name=f"image_post_process:{job_id}:{output['path']}",
                         )
                 return  # Success!
                 
@@ -677,7 +681,6 @@ async def monitor_provider_changes():
     Running as a background task.
     """
     from core.events import event_bus, EventType
-    from infrastructure.database import get_session_sync
     from infrastructure.repositories import ProviderRepository
     
     logger.info("provider_monitor_start")
@@ -744,36 +747,21 @@ async def lifespan(app: FastAPI):
     # Get the number of enabled providers to set worker count dynamically
     # Each provider can only process one job at a time
     logger.info("startup_init", phase="worker_pool")
-    try:
-        from infrastructure.repositories import ProviderRepository
-        from infrastructure.database import get_session_sync
-        session = get_session_sync()
-        provider_repo = ProviderRepository(session)
-        enabled_providers = provider_repo.get_enabled()
-        num_workers = max(1, len(enabled_providers))  # At least 1 worker
-        job_queue.max_workers = num_workers
-        session.close()
-        logger.info("worker_pool_configured", providers=len(enabled_providers), workers=num_workers)
-    except Exception as e:
-        logger.warning("worker_pool_error", error=str(e))
+    configure_worker_pool()
     
     logger.info("startup_init", phase="job_queue")
     await job_queue.start()
     
     # Start provider monitor for auto-scaling
     logger.info("startup_init", phase="provider_monitor")
-    provider_monitor_task = asyncio.create_task(monitor_provider_changes())
+    provider_monitor_task = start_background_task(
+        monitor_provider_changes(),
+        task_name="provider_monitor",
+    )
     
     # Recover pending/stuck jobs from database
     logger.info("startup_init", phase="job_recovery")
-    try:
-        from infrastructure.database import get_session_sync
-        recovery_session = get_session_sync()
-        recovery_job_service = JobService(recovery_session)
-        recovered, failed = await job_queue.recover_pending_jobs(recovery_job_service)
-        recovery_session.close()
-    except Exception as e:
-        logger.warning("job_recovery_failed", error=str(e))
+    await recover_pending_jobs()
     
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
@@ -789,46 +777,14 @@ async def lifespan(app: FastAPI):
     
     # Auto-start enabled provider containers
     logger.info("startup_init", phase="containers")
-    try:
-        from services.container_manager import ContainerManager
-        from infrastructure.database import get_session_sync
-        from infrastructure.repositories import ProviderRepository
-        
-        session = get_session_sync()
-        try:
-            provider_repo = ProviderRepository(session)
-            providers = provider_repo.get_all()
-            container_manager = ContainerManager()
-            
-            for provider in providers:
-                # Only auto-start if enabled AND has container config
-                if provider.enabled and provider.container_config:
-                    try:
-                        logger.info("container_starting", provider=provider.id)
-                        # Get port from container config, default to 8000
-                        port = provider.container_config.get('port', 8000)
-                        
-                        # Build env vars using provider registry (provider-agnostic)
-                        from infrastructure.providers import ProviderRegistry
-                        env_vars = ProviderRegistry.build_container_env(provider)
-                        
-                        container_manager.start_container(
-                            provider_id=provider.id,
-                            provider_type=provider.type,
-                            port=port,
-                            env_vars=env_vars if env_vars else None
-                        )
-                        logger.info("container_started", provider=provider.id)
-                    except Exception as e:
-                        logger.warning("container_start_failed", provider=provider.id, error=str(e))
-        finally:
-            session.close()
-    except Exception as e:
-        logger.warning("container_autostart_failed", error=str(e))
+    autostart_provider_containers()
     
     # Start WebSocket broadcast listener
     logger.info("startup_init", phase="websocket")
-    broadcast_task = asyncio.create_task(ws_manager.start_broadcasting())
+    broadcast_task = start_background_task(
+        ws_manager.start_broadcasting(),
+        task_name="websocket_broadcast",
+    )
     
     logger.info("startup_complete")
     
@@ -850,6 +806,10 @@ async def lifespan(app: FastAPI):
         await provider_monitor_task
     except asyncio.CancelledError:
         pass
+
+    logger.info("shutdown", phase="background_tasks")
+    cancelled_task_count = await cancel_background_tasks()
+    logger.info("background_tasks_cancelled", count=cancelled_task_count)
     
     # Shutdown
     logger.info("shutdown", phase="scheduler")
@@ -936,32 +896,7 @@ async def log_requests(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
-# Exception handlers
-@app.exception_handler(NotFoundError)
-async def not_found_handler(request: Request, exc: NotFoundError):
-    logger.warning("not_found_error", path=request.url.path, error=exc.message, code=exc.code)
-    return JSONResponse(
-        status_code=404,
-        content={"error": exc.message, "code": exc.code}
-    )
-
-
-@app.exception_handler(ValidationError)
-async def validation_handler(request: Request, exc: ValidationError):
-    logger.warning("validation_error", path=request.url.path, error=exc.message, field=exc.field)
-    return JSONResponse(
-        status_code=400,
-        content={"error": exc.message, "code": exc.code, "field": exc.field}
-    )
-
-
-@app.exception_handler(ComfyError)
-async def comfy_error_handler(request: Request, exc: ComfyError):
-    logger.error("comfy_error", path=request.url.path, error=exc.message, code=exc.code)
-    return JSONResponse(
-        status_code=500,
-        content={"error": exc.message, "code": exc.code}
-    )
+register_exception_handlers(app)
 
 
 # Include routers

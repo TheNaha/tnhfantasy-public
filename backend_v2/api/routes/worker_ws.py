@@ -17,7 +17,9 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from api.deps import get_session_context
 from core.exceptions import NotFoundError
+from infrastructure.background_tasks import start_background_task
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,6 @@ async def worker_websocket(
     Once connected, they will receive jobs and send results.
     """
     # Import here to avoid circular imports
-    from infrastructure.database import get_session_context
     from services.provider_service import ProviderService
     
     # Authenticate
@@ -212,8 +213,10 @@ async def worker_websocket(
                     except Exception as e:
                         logger.error(f"[Worker WS] Finalize failed for {j_id}: {e}")
 
-                import asyncio
-                asyncio.create_task(finalize_job(job_id, outputs, provider_id))
+                start_background_task(
+                    finalize_job(job_id, outputs, provider_id),
+                    task_name=f"worker_finalize_job:{job_id}",
+                )
             
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")

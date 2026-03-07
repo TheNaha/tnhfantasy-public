@@ -12,24 +12,42 @@
 #
 # The ContainerManager is a singleton because it holds a Docker/Podman client
 # connection that is expensive to create on every request.
-from functools import lru_cache
-from typing import Generator, Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Generator
 
 from sqlmodel import Session
 
-from infrastructure.database import get_session as db_get_session, engine
+from infrastructure.database import (
+    get_session as db_get_session,
+    get_session_context as db_get_session_context,
+    get_session_sync as db_get_session_sync,
+)
 from services.job_service import JobService
 from services.provider_service import ProviderService
 from services.model_service import ModelService
 from core.events import event_bus, EventBus
+from infrastructure.logging import get_logger
 
 # Singleton container manager (initialized lazily on first use)
 _container_manager = None
+logger = get_logger("api_deps")
 
 
 def get_session() -> Generator[Session, None, None]:
     """Get database session for FastAPI dependency injection."""
     yield from db_get_session()
+
+
+def get_session_sync() -> Session:
+    """Get a synchronous session for non-request code paths."""
+    return db_get_session_sync()
+
+
+@asynccontextmanager
+async def get_session_context() -> AsyncIterator[Session]:
+    """Get an async context manager for internal async code paths."""
+    async with db_get_session_context() as session:
+        yield session
 
 
 def get_event_bus() -> EventBus:
@@ -66,7 +84,7 @@ def get_container_manager():
             from services.container_manager import ContainerManager
             _container_manager = ContainerManager()
         except Exception as e:
-            print(f"Warning: Could not initialize container manager: {e}")
+            logger.warning("container_manager_init_failed", error=str(e))
             return None
     return _container_manager
 

@@ -183,7 +183,7 @@ async def cancel_job(sid, data):
     from services.job_service import JobService
     from services.provider_service import ProviderService
     from core.entities import JobStatus
-    from infrastructure.database import get_session_context
+    from api.deps import get_session_context
     from infrastructure.http_client import get_http_client
     
     try:

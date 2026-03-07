@@ -7,7 +7,6 @@ from sqlmodel.pool import StaticPool
 
 from api.main import app
 from api.deps import get_session
-import infrastructure.database as _db_module
 from core.entities import Job, Provider, Model
 
 
@@ -36,10 +35,7 @@ def client_fixture(session: Session):
     def get_session_override():
         return session
 
-    # Override both the api.deps and infrastructure.database get_session
-    # because some routes (prompts, collections) import directly from infrastructure.database
     app.dependency_overrides[get_session] = get_session_override
-    app.dependency_overrides[_db_module.get_session] = get_session_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()

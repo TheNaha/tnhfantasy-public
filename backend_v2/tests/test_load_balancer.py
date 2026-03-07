@@ -3,7 +3,7 @@ import pytest
 from sqlmodel import Session
 
 from services.load_balancer import LoadBalancer
-from core.entities import Provider
+from core.entities import LoadBalancerState, Provider
 
 
 @pytest.fixture
@@ -152,3 +152,38 @@ class TestLoadBalancer:
         
         assert "strategy" in stats
         assert "provider_stats" in stats
+
+    def test_save_and_reload_state_round_trip(self, session: Session, providers):
+        """Persisted state should survive a reset and reload from the database."""
+        lb = LoadBalancer(session, strategy="round-robin")
+
+        lb.get_next_provider()
+        lb.get_next_provider()
+        lb.report_failure("provider-1")
+        LoadBalancer.save_state_to_db(session)
+
+        persisted = session.get(LoadBalancerState, 1)
+        assert persisted is not None
+        assert persisted.round_robin_index == 2
+        assert persisted.provider_failures["provider-1"] == 1
+
+        LoadBalancer.reset_state()
+        LoadBalancer.load_state_from_db(session)
+
+        stats = lb.get_stats()
+        assert stats["current_index"] == 2
+        provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+        assert provider_stats["provider-1"]["failures"] == 1
+
+    def test_runtime_state_is_shared_across_instances(self, session: Session, providers):
+        """Separate instances should observe the same runtime balancing state."""
+        first = LoadBalancer(session, strategy="round-robin")
+        second = LoadBalancer(session, strategy="least-connections")
+
+        selected = first.get_next_provider()
+
+        assert selected is not None
+
+        stats = second.get_stats()
+        provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+        assert provider_stats[selected.id]["jobs_assigned"] == 1
