@@ -78,7 +78,7 @@ def _record_migration(conn, step: MigrationStep) -> None:
     conn.commit()
 
 
-def _migration_add_job_timestamps(conn) -> None:
+def _migration_add_job_timestamps(conn) -> bool:
     """Ensure jobs table includes started_at and completed_at columns."""
     from sqlalchemy import inspect, text
 
@@ -102,7 +102,7 @@ def _migration_add_job_timestamps(conn) -> None:
     return True
 
 
-def _migration_setup_prompts_fts(conn) -> None:
+def _migration_setup_prompts_fts(conn) -> bool:
     """Create the prompts FTS table and synchronization triggers."""
     from sqlalchemy import inspect, text
 
@@ -278,7 +278,7 @@ def _run_migrations() -> None:
                 continue
 
             applied = step.apply_fn(conn)
-            if applied is False:
+            if not applied:
                 continue
             _record_migration(conn, step)
             logger.info("migration_applied", version=step.version, description=step.description)

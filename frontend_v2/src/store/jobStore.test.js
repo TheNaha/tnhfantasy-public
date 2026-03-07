@@ -298,8 +298,12 @@ describe('useJobStore', () => {
             jobsApi.delete.mockRejectedValueOnce(new Error('server error'));
             await expect(deleteJob('del-me')).rejects.toThrow();
             // Job should be restored after rollback
-            expect(useJobStore.getState().jobs.some(j => j.id === 'del-me')).toBe(true);
-            expect(useJobStore.getState().activeJobs.some(j => j.id === 'del-me')).toBe(true);
+            expect(useJobStore.getState().jobs).toEqual([
+                expect.objectContaining({ id: 'del-me', status: 'running' }),
+            ]);
+            expect(useJobStore.getState().activeJobs).toEqual([
+                expect.objectContaining({ id: 'del-me', status: 'running' }),
+            ]);
         });
     });
 
@@ -324,8 +328,12 @@ describe('useJobStore', () => {
             jobsApi.clear.mockRejectedValueOnce(new Error('server error'));
             await expect(clearJobs()).rejects.toThrow();
             // Jobs should be restored
-            expect(useJobStore.getState().jobs.length).toBe(1);
-            expect(useJobStore.getState().activeJobs.length).toBe(1);
+            expect(useJobStore.getState().jobs).toEqual([
+                expect.objectContaining({ id: 'a', status: 'running' }),
+            ]);
+            expect(useJobStore.getState().activeJobs).toEqual([
+                expect.objectContaining({ id: 'a', status: 'running' }),
+            ]);
         });
     });
 
