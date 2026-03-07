@@ -265,6 +265,24 @@ class TestEventBusQueueFull:
         await bus.publish(Event(type=EventType.JOB_CREATED, data={"i": 1}))
 
         assert bus.dropped_event_count() == 1
+        assert bus.dropped_event_counts_by_topic() == {"job": 1}
+
+    @pytest.mark.asyncio
+    async def test_queue_full_records_last_drop_stats(self):
+        bus = EventBus(replay_buffer_size=10)
+        queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait(Event(type=EventType.JOB_CREATED, data={"i": 0}))
+        bus._subscribers["job"] = [queue]
+
+        await bus.publish(Event(type=EventType.JOB_CREATED, data={"i": 1}))
+
+        stats = bus.get_stats()
+        assert stats["dropped_events"] == 1
+        assert stats["dropped_events_by_topic"] == {"job": 1}
+        assert stats["last_drop"]["topic"] == "job"
+        assert stats["last_drop"]["event_type"] == EventType.JOB_CREATED.value
+        assert stats["last_drop"]["queue_maxsize"] == 1
+        assert stats["subscriber_counts"]["job"] == 1
 
     @pytest.mark.asyncio
     async def test_queue_full_drops_event(self):

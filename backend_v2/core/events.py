@@ -6,9 +6,8 @@
 # - Events are typed and include structured data payloads
 # - Event replay: Last 100 events buffered for debugging
 import asyncio
-import json
 from typing import Dict, List, Any, AsyncGenerator, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from collections import deque
@@ -93,6 +92,8 @@ class EventBus:
         self._replay_buffer: deque = deque(maxlen=replay_buffer_size)
         self._replay_enabled = True
         self._dropped_events = 0
+        self._dropped_events_by_topic: Dict[str, int] = {}
+        self._last_drop: Optional[Dict[str, Any]] = None
     
     async def publish(self, event: Event) -> None:
         """
@@ -117,6 +118,15 @@ class EventBus:
                 except asyncio.QueueFull:
                     # Drop event if queue is full (subscriber too slow)
                     self._dropped_events += 1
+                    self._dropped_events_by_topic[topic] = self._dropped_events_by_topic.get(topic, 0) + 1
+                    self._last_drop = {
+                        "topic": topic,
+                        "event_type": event.type.value,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "subscriber_count": len(queues),
+                        "queue_size": queue.qsize(),
+                        "queue_maxsize": queue.maxsize,
+                    }
                     if self._dropped_events == 1 or self._dropped_events % 50 == 0:
                         logger.warning(
                             "event_dropped",
@@ -181,6 +191,24 @@ class EventBus:
     def dropped_event_count(self) -> int:
         """Get the number of events dropped because subscriber queues were full."""
         return self._dropped_events
+
+    def dropped_event_counts_by_topic(self) -> Dict[str, int]:
+        """Get drop counts grouped by topic."""
+        return dict(self._dropped_events_by_topic)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get a snapshot of event bus health for diagnostics."""
+        return {
+            "subscriber_counts": {
+                topic: len(queues)
+                for topic, queues in self._subscribers.items()
+            },
+            "replay_buffer_size": len(self._replay_buffer),
+            "replay_buffer_capacity": self._replay_buffer.maxlen,
+            "dropped_events": self._dropped_events,
+            "dropped_events_by_topic": dict(self._dropped_events_by_topic),
+            "last_drop": dict(self._last_drop) if self._last_drop else None,
+        }
     
     def get_replay_buffer(self, limit: Optional[int] = None) -> List[Event]:
         """
