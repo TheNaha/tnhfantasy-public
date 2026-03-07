@@ -21,7 +21,10 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> Li
     )
 
     outputs: List[Dict[str, Any]] = []
-    base_output_dir = "/app/output"
+    base_output_dir = os.environ.get(
+        "OUTPUT_DIR",
+        os.path.join(os.path.dirname(__file__), "../output"),
+    )
     final_output_dir = get_output_path(base_output_dir)
 
     for img in images:

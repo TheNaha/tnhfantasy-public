@@ -84,7 +84,7 @@ def _migration_add_job_timestamps(conn) -> None:
 
     inspector = inspect(conn)
     if "jobs" not in inspector.get_table_names():
-        return
+        return False
 
     columns = {col['name'] for col in inspector.get_columns('jobs')}
 
@@ -99,11 +99,17 @@ def _migration_add_job_timestamps(conn) -> None:
         logger.info("migration_column_added", table="jobs", column="completed_at")
 
     _verify_required_columns(conn, 'jobs', {'started_at', 'completed_at'})
+    return True
 
 
 def _migration_setup_prompts_fts(conn) -> None:
     """Create the prompts FTS table and synchronization triggers."""
-    from sqlalchemy import text
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "prompts" not in inspector.get_table_names():
+        logger.info("migration_fts_skipped", reason="prompts_table_missing")
+        return False
 
     conn.execute(text("""
         CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
@@ -144,6 +150,7 @@ def _migration_setup_prompts_fts(conn) -> None:
     for trigger_sql in fts_triggers:
         conn.execute(text(trigger_sql))
         conn.commit()
+    return True
 
 
 def _get_schema_migration_steps() -> list[MigrationStep]:
@@ -270,7 +277,9 @@ def _run_migrations() -> None:
             if step.version in applied_versions:
                 continue
 
-            step.apply_fn(conn)
+            applied = step.apply_fn(conn)
+            if applied is False:
+                continue
             _record_migration(conn, step)
             logger.info("migration_applied", version=step.version, description=step.description)
 
