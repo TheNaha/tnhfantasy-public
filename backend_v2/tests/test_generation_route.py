@@ -12,11 +12,15 @@ class TestGenerationRoute:
 
     def test_generate_without_workflow(self, client):
         response = client.post("/api/generate", json={"metadata": {}})
-        assert response.status_code == 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        assert response.json()["field"] == "workflow"
 
     def test_generate_empty_payload(self, client):
         response = client.post("/api/generate", json={})
-        assert response.status_code == 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        assert response.json()["field"] == "workflow"
 
     def test_generate_with_metadata(self, client, sample_workflow):
         payload = {
@@ -45,11 +49,15 @@ class TestGenerationRoute:
 
     def test_generate_batch_empty(self, client):
         response = client.post("/api/generate/batch", json={"workflows": []})
-        assert response.status_code == 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        assert response.json()["field"] == "workflows"
 
     def test_generate_batch_without_workflows(self, client):
         response = client.post("/api/generate/batch", json={})
-        assert response.status_code == 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        assert response.json()["field"] == "workflows"
 
     def test_generate_batch_single(self, client, sample_workflow):
         payload = {"workflows": [sample_workflow]}

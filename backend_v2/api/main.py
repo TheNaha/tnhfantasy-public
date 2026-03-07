@@ -73,6 +73,15 @@ from infrastructure.logging import get_logger
 logger = get_logger("main")
 
 
+def _status_code_for_comfy_error(error: ComfyError) -> int:
+    """Map domain errors to consistent HTTP status codes."""
+    if isinstance(error, NotFoundError):
+        return 404
+    if isinstance(error, ValidationError):
+        return 422
+    return 500
+
+
 def _requeue_inflight_jobs_for_shutdown() -> int:
     """Reset in-flight jobs so startup recovery can safely re-enqueue them."""
     from infrastructure.database import get_session_sync
@@ -99,6 +108,29 @@ def _requeue_inflight_jobs_for_shutdown() -> int:
         return len(inflight_jobs)
     finally:
         session.close()
+
+
+async def comfy_error_handler(request: Request, exc: ComfyError) -> JSONResponse:
+    """Serialize domain exceptions through one API contract."""
+    status_code = _status_code_for_comfy_error(exc)
+    payload = {
+        "error": exc.message,
+        "code": exc.code,
+    }
+
+    field = getattr(exc, "field", None)
+    if field:
+        payload["field"] = field
+
+    logger.warning(
+        "comfy_error_response",
+        path=str(request.url.path),
+        method=request.method,
+        status_code=status_code,
+        code=exc.code,
+        error=exc.message,
+    )
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 class ProviderCallError(Exception):
@@ -877,6 +909,8 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+app.add_exception_handler(ComfyError, comfy_error_handler)
 
 
 # CORS middleware

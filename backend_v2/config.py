@@ -57,7 +57,8 @@ DEFAULT_CONFIG = {
     },
     "api": {
         "cors_origins": ["http://localhost:5173", "http://localhost:5174", "http://localhost:8000"],
-        "gzip_minimum_size": 1000
+        "gzip_minimum_size": 1000,
+        "worker_backend_url": "http://comfy-backend-v2:8002"
     },
     "jobs_cleanup": {
         "max_age_hours": 24,
@@ -118,6 +119,7 @@ class Settings(BaseSettings):
     # Override via COMFY_CORS_ORIGINS environment variable for production
     cors_origins: List[str] = ["*"]
     gzip_minimum_size: int = 1000
+    worker_backend_url: str = "http://comfy-backend-v2:8002"
     
     # Model Sync
     model_sync_interval: int = 300
@@ -446,6 +448,12 @@ def get_model_sync_retry_delay() -> int:
 def get_reconciliation_interval() -> int:
     """Get reconciliation interval in seconds."""
     return get_config()["model_sync"]["reconciliation_interval"]
+
+
+def get_worker_backend_url() -> str:
+    """Get backend URL exposed to provider containers. Prefers env var, falls back to file config."""
+    default_url = "http://comfy-backend-v2:8002"
+    return settings.worker_backend_url if settings.worker_backend_url != default_url else get_config()["api"].get("worker_backend_url", default_url)
 
 
 

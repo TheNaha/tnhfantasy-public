@@ -9,6 +9,7 @@ import time
 from typing import Dict, Optional, List
 from pathlib import Path
 
+from config import get_worker_backend_url
 from infrastructure.logging import get_logger
 
 logger = get_logger("container_manager")
@@ -179,9 +180,7 @@ class ContainerManager:
         environment = {
             "PROVIDER_ID": provider_id,
             "PORT": "8000",
-            # Use backend_v2 container name - Podman DNS will resolve it
-            # Port 8002 matches docker-compose.yml configuration
-            "BACKEND_URL": "http://comfy-backend-v2:8002"
+            "BACKEND_URL": get_worker_backend_url(),
         }
         
         # Pass through download tokens from backend to worker

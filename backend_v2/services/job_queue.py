@@ -67,18 +67,32 @@ class JobQueue:
         logger.info("job_queue_started", workers=self.max_workers)
     
     async def stop(self) -> None:
-        """Stop the worker pool gracefully."""
+        """Stop the worker pool gracefully, allowing active jobs to drain first."""
+        if not self._running and not self._workers:
+            return
+
         self._running = False
-        
-        # Cancel all workers
-        for worker in self._workers:
-            worker.cancel()
-        
-        # Wait for workers to finish
+
         if self._workers:
-            await asyncio.gather(*self._workers, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._workers, return_exceptions=True),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "job_queue_stop_timeout",
+                    active_jobs=list(self._active_jobs.keys()),
+                    worker_count=len(self._workers),
+                )
+                for worker in self._workers:
+                    if not worker.done():
+                        worker.cancel()
+
+                await asyncio.gather(*self._workers, return_exceptions=True)
         
         self._workers.clear()
+        self._stopping_workers.clear()
         logger.info("job_queue_stopped")
 
     async def resize(self, new_count: int) -> None:

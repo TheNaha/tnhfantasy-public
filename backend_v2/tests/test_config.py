@@ -27,6 +27,7 @@ from config import (
     get_model_sync_interval,
     get_model_sync_retry_delay,
     get_reconciliation_interval,
+    get_worker_backend_url,
     get_download_chunk_size,
     get_download_auto_remove_delay,
     get_modal_timeout,
@@ -232,6 +233,20 @@ class TestLoadConfig:
             assert "retry_delay" in result["worker"]
         finally:
             os.unlink(tmp_path)
+
+
+class TestWorkerBackendUrl:
+    def test_prefers_file_config_when_settings_value_is_default(self, monkeypatch):
+        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://comfy-backend-v2:8002")
+        cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://custom-backend:9002"}})
+
+        assert get_worker_backend_url() == "http://custom-backend:9002"
+
+    def test_prefers_settings_override_when_non_default(self, monkeypatch):
+        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://env-backend:9100")
+        cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://config-backend:9002"}})
+
+        assert get_worker_backend_url() == "http://env-backend:9100"
 
 
 class TestGetConfig:

@@ -116,6 +116,53 @@ class TestJobQueueStartStop:
         # Should not raise
         await q.stop()
 
+    async def test_stop_allows_active_job_to_finish_before_cancelling(self):
+        q = JobQueue(max_workers=1)
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def dummy_processor(job_id, provider_id):
+            started.set()
+            await asyncio.sleep(0.05)
+            finished.set()
+
+        q.set_processor(dummy_processor)
+        await q.start()
+        await q.enqueue("job-1")
+
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await q.stop()
+
+        assert finished.is_set() is True
+        assert q.active_count == 0
+
+    async def test_stop_cancels_stuck_workers_after_timeout(self):
+        q = JobQueue(max_workers=1)
+        started = asyncio.Event()
+
+        async def dummy_processor(job_id, provider_id):
+            started.set()
+            await asyncio.sleep(10)
+
+        q.set_processor(dummy_processor)
+        await q.start()
+        await q.enqueue("job-1")
+
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        original_wait_for = asyncio.wait_for
+
+        async def immediate_timeout(awaitable, timeout):
+            if timeout == 5.0:
+                raise asyncio.TimeoutError()
+            return await original_wait_for(awaitable, timeout)
+
+        with patch("services.job_queue.asyncio.wait_for", side_effect=immediate_timeout):
+            await q.stop()
+
+        assert q._workers == []
+        assert q.active_count == 0
+
 
 class TestJobQueueSize:
     async def test_size_empty(self):

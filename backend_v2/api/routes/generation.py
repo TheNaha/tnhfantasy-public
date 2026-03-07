@@ -13,11 +13,12 @@
 # For workflow validation (check model availability before submitting)
 # use POST /api/jobs/validate (routes/jobs.py).
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_job_service
+from core.exceptions import ValidationError
 from services.job_queue import job_queue
 from infrastructure.logging import api_logger
 
@@ -48,7 +49,7 @@ async def generate(
         metadata = data.get("metadata", {})
         
         if not workflow:
-            raise HTTPException(status_code=400, detail="workflow is required")
+            raise ValidationError("workflow is required", field="workflow")
         
         service = get_job_service(session)
         job = await service.create_job(workflow=workflow, metadata=metadata)
@@ -58,14 +59,11 @@ async def generate(
         logger.info("generate_job_created", job_id=job.id)
         
         return service._job_to_dict(job)
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error("generate_failed", error=str(e))
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
 
 
 @router.post("/generate/batch")
@@ -86,7 +84,7 @@ async def generate_batch(
         metadata = data.get("metadata", {})
         
         if not workflows:
-            raise HTTPException(status_code=400, detail="workflows array is required")
+            raise ValidationError("workflows array is required", field="workflows")
         
         service = get_job_service(session)
         created_jobs = []
@@ -103,9 +101,6 @@ async def generate_batch(
         
         logger.info("generate_batch_created", count=len(created_jobs))
         return {"jobs": created_jobs, "count": len(created_jobs)}
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error("generate_batch_failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise
