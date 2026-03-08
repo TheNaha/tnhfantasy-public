@@ -295,6 +295,7 @@ export default function InpaintCanvas({
                         max="100"
                         value={brushSize}
                         onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                        aria-label="Brush size"
                         className="w-24"
                     />
                     <span className="text-xs text-white w-8">{brushSize}px</span>
