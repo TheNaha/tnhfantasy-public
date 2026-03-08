@@ -129,6 +129,7 @@ export default function ModelPanel({ checkpoints, vaeModels, embeddingModels }) 
                                             min="-4"
                                             max="4"
                                             step="0.1"
+                                            aria-label={`Strength for LoRA ${lora.name || idx + 1}`}
                                             className="flex-1 min-w-0 accent-blue-500 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                                             value={lora.strength}
                                             onChange={(e) => updateLora(idx, 'strength', parseFloat(e.target.value))}

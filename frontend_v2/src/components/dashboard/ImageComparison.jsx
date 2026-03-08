@@ -88,6 +88,7 @@ export const ImageComparison = ({ images, onClose }) => {
                                 type="range"
                                 min="0"
                                 max="100"
+                                aria-label="Image comparison slider"
                                 value={sliderPosition}
                                 onChange={handleSliderChange}
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-10"
