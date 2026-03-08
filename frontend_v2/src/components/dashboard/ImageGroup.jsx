@@ -62,7 +62,7 @@ const ImageGroup = memo(function ImageGroup({
                     className="absolute top-2 right-2 z-10"
                     onClick={(e) => {
                         e.stopPropagation();
-                        onSelectionToggle?.();
+                        onSelectionToggle?.(images);
                     }}
                 >
                     <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors

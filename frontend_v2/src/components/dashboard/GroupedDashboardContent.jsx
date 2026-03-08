@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
 
@@ -39,6 +40,11 @@ export default function GroupedDashboardContent({
     handleToggleFavorite,
     handleDelete,
 }) {
+    // ⚡ Bolt: Use a stable callback to prevent re-renders in memoized ImageGroup components
+    const handleImageGroupSelection = useCallback((images) => {
+        images.forEach((image) => toggleSelection(image.name));
+    }, [toggleSelection]);
+
     return (
         <div className="space-y-8">
             {sortedGroupedEntries.map(([date, groupItems]) => (
@@ -66,9 +72,7 @@ export default function GroupedDashboardContent({
                                             job={item.job}
                                             isSelected={item.images.some((image) => selectedFiles.has(image.name))}
                                             showSelectionCheckbox={selectionMode}
-                                            onSelectionToggle={() => {
-                                                item.images.forEach((image) => toggleSelection(image.name));
-                                            }}
+                                            onSelectionToggle={handleImageGroupSelection}
                                             onClick={handleImageClick}
                                         />
                                     ) : (
@@ -143,7 +147,7 @@ export default function GroupedDashboardContent({
                                                 className={`w-5 h-5 rounded border flex items-center justify-center ${item.images.some((image) => selectedFiles.has(image.name)) ? 'bg-blue-500 border-blue-500' : 'border-gray-600'}`}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
-                                                    item.images.forEach((image) => toggleSelection(image.name));
+                                                    handleImageGroupSelection(item.images);
                                                 }}
                                             >
                                                 {item.images.some((image) => selectedFiles.has(image.name)) && <Check size={12} />}
