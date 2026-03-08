@@ -6,7 +6,7 @@ import docker
 import os
 import requests
 import time
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Iterable
 from pathlib import Path
 
 from config import get_worker_backend_url
@@ -17,6 +17,7 @@ logger = get_logger("container_manager")
 
 class ContainerManager:
     """Manages provider worker containers (Docker or Podman)."""
+    DEFAULT_PROVIDER_TYPES = ("modal", "beam")
     
     def __init__(self, containers_dir: str = None):
         """
@@ -146,6 +147,19 @@ class ContainerManager:
         except docker.errors.BuildError as e:
             logger.error("image_build_failed", provider_type=provider_type, error=str(e))
             raise
+
+    def build_worker_images(self, provider_types: Optional[Iterable[str]] = None) -> Dict[str, str]:
+        """Build provider worker images and continue past individual failures."""
+        image_tags: Dict[str, str] = {}
+        provider_list = provider_types or self.DEFAULT_PROVIDER_TYPES
+
+        for provider_type in dict.fromkeys(provider_list):
+            try:
+                image_tags[provider_type] = self.build_worker_image(provider_type)
+            except Exception as exc:
+                logger.warning("image_build_skipped", provider_type=provider_type, error=str(exc))
+
+        return image_tags
     
     def start_container(
         self,

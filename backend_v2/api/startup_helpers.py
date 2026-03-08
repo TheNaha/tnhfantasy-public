@@ -37,6 +37,18 @@ async def recover_pending_jobs() -> None:
         logger.warning("job_recovery_failed", error=str(exc))
 
 
+def build_provider_worker_images() -> None:
+    """Attempt to refresh built provider worker images before container startup."""
+    try:
+        from services.container_manager import ContainerManager
+
+        container_manager = ContainerManager()
+        image_tags = container_manager.build_worker_images()
+        logger.info("provider_image_refresh_complete", built=list(image_tags.keys()))
+    except Exception as exc:
+        logger.warning("provider_image_refresh_failed", error=str(exc))
+
+
 def autostart_provider_containers() -> None:
     """Start enabled provider containers configured for local management."""
     try:

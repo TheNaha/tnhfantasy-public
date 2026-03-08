@@ -2,7 +2,12 @@ import asyncio
 
 from api.deps import get_session_sync
 from api.provider_runtime import monitor_provider_changes
-from api.startup_helpers import autostart_provider_containers, configure_worker_pool, recover_pending_jobs
+from api.startup_helpers import (
+    autostart_provider_containers,
+    build_provider_worker_images,
+    configure_worker_pool,
+    recover_pending_jobs,
+)
 from core.entities import JobStatus
 from infrastructure.background_tasks import cancel_background_tasks, start_background_task
 from infrastructure.database import create_db_and_tables
@@ -90,6 +95,9 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
     schedule_vacuum(vacuum_database, interval_seconds=86400)
+
+    logger.info("startup_init", phase="provider_images")
+    build_provider_worker_images()
 
     logger.info("startup_init", phase="containers")
     autostart_provider_containers()
