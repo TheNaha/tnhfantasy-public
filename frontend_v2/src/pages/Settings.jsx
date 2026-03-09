@@ -175,7 +175,7 @@ function BrandingSettings() {
 
     const handleReset = () => {
         const defaultBranding = {
-            appName: "TNH Comfy Gen",
+            appName: "TNH-Comfy",
             logoUrl: "/logo.png",
             faviconUrl: "/favicon.ico"
         };

@@ -351,7 +351,7 @@ BRANDING_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../data/brand
 def get_branding_config() -> Dict[str, Any]:
     """Load branding configuration from JSON file."""
     default_branding = {
-        "appName": "TNH Comfy Gen",
+        "appName": "TNH-Comfy",
         "logoUrl": "/logo.png",
         "faviconUrl": "/favicon.ico"
     }

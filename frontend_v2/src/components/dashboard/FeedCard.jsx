@@ -22,6 +22,7 @@ import { useGeneratorStore } from "../../store/generatorStore";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
+import { getCheckpointDisplayName } from "../../utils/modelDisplay";
 
 const FeedCard = memo(function FeedCard({
   item,
@@ -242,6 +243,8 @@ const FeedCard = memo(function FeedCard({
     }
   }, [item.name, loadImageBlob, navigate]);
 
+  const checkpointDisplayName = getCheckpointDisplayName(metadata) || getCheckpointDisplayName(item) || "Unknown Model";
+
   return (
     <div
       className={`bg-gray-800 rounded-2xl overflow-hidden border transition-all ${selected ? "border-blue-500 ring-2 ring-blue-500/50" : "border-gray-700"}`}
@@ -254,13 +257,7 @@ const FeedCard = memo(function FeedCard({
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-white truncate">
-              {loading
-                ? "Loading..."
-                : (typeof metadata?.checkpoint === "object"
-                    ? metadata.checkpoint.display_name ||
-                      metadata.checkpoint.name
-                    : metadata?.checkpoint
-                  )?.replace(".safetensors", "") || "Unknown Model"}
+              {loading ? "Loading..." : checkpointDisplayName}
             </h3>
             <p className="text-xs text-gray-400 truncate">
               {(() => {

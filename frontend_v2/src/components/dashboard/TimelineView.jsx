@@ -4,6 +4,7 @@ import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 import { getItemTimelineDate } from '../../utils/dateTime';
+import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 
 /**
  * TimelineView Component
@@ -193,6 +194,8 @@ const TimelineImageCard = memo(function TimelineImageCard({
         minute: '2-digit'
     });
 
+    const checkpointDisplayName = getCheckpointDisplayName(item);
+
     const handleClick = () => {
         if (selectionMode) {
             onToggleSelection?.(item.name);
@@ -271,23 +274,23 @@ const TimelineImageCard = memo(function TimelineImageCard({
                         </div>
 
                         {item.prompt && (
-                            <p className="text-xs text-gray-400 line-clamp-2 mb-2">
+                            <p className="text-xs text-gray-400 line-clamp-2 mb-2 break-words">
                                 {item.prompt}
                             </p>
                         )}
                     </div>
 
                     {/* Quick Stats */}
-                    <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <div className="flex items-center gap-3 text-xs text-gray-500 min-w-0 flex-wrap">
                         {item.width && item.height && (
                             <span className="flex items-center gap-1">
                                 <ImageIcon size={12} />
                                 {item.width}×{item.height}
                             </span>
                         )}
-                        {item.checkpoint && (
-                            <span className="truncate max-w-[200px]" title={item.checkpoint}>
-                                {item.checkpoint}
+                        {checkpointDisplayName && (
+                            <span className="truncate max-w-[200px] min-w-0" title={checkpointDisplayName}>
+                                {checkpointDisplayName}
                             </span>
                         )}
                         {item.steps && (
