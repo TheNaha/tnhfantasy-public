@@ -1,3 +1,4 @@
+import React from "react";
 import { useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
@@ -26,7 +27,7 @@ function formatTimestamp(timestamp) {
     return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString();
 }
 
-export default function GroupedDashboardContent({
+const GroupedDashboardContent = React.memo(function GroupedDashboardContent({
     viewMode,
     sortedGroupedEntries,
     formatDateLabel,
@@ -262,4 +263,6 @@ export default function GroupedDashboardContent({
             ))}
         </div>
     );
-}
+});
+
+export default GroupedDashboardContent;
