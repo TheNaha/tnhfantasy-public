@@ -1,3 +1,4 @@
+import React from "react";
 import { useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';

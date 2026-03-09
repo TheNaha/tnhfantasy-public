@@ -9,3 +9,7 @@
 ## 2024-05-18 - React.memo Broken By Inline Arrow Functions
 **Learning:** In components like `TimelineView` rendering `JobCard`, passing inline arrow functions (e.g. `onClick={() => onJobClick?.(item)}`) breaks the child's `React.memo` optimization, causing unnecessary re-renders inside list/grid containers on every update.
 **Action:** When passing callbacks to memoized components, ensure stable function references are passed directly (e.g. `onClick={onJobClick}`), and have the child component safely handle the invocation (e.g. with `useCallback` around its own interaction handlers).
+
+## 2024-05-19 - Memoize Large Container Components
+**Learning:** Large, conditionally rendered container components (like `GroupedDashboardContent` in a dashboard view) that map over large arrays and render many complex child components (like `JobCard`, `ImageGroup`, `FeedCard`) can cause significant rendering overhead if they are not memoized and their parent component re-renders frequently due to unrelated state changes.
+**Action:** Wrap such components in `React.memo()` to prevent unnecessary re-renders when their props haven't changed.
