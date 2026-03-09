@@ -14,7 +14,7 @@ export function BrandingProvider({ children }) {
             } catch {
                 // Return defaults if API fails
                 return {
-                    appName: "TNH Comfy Gen",
+                    appName: "TNH-Comfy",
                     logoUrl: "/logo.png",
                     faviconUrl: "/favicon.ico"
                 };
@@ -26,7 +26,7 @@ export function BrandingProvider({ children }) {
 
     // Default branding while loading
     const currentBranding = branding || {
-        appName: "TNH Comfy Gen",
+        appName: "TNH-Comfy",
         logoUrl: "/logo.png",
         faviconUrl: "/favicon.ico"
     };

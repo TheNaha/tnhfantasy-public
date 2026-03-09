@@ -89,7 +89,7 @@ export default function ProviderCard({
                                 {provider.id}
                                 <Circle className={`${statusColor} fill-current`} size={8} />
                             </h3>
-                            {provider.priority && (
+                            {provider.priority !== undefined && provider.priority !== null && (
                                 <span className="text-xs px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-mono">
                                     P{provider.priority}
                                 </span>

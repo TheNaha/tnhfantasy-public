@@ -6,6 +6,7 @@ import FeedCard from './FeedCard';
 import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
+import { getCheckpointDisplayName } from '../../utils/modelDisplay';
 
 function formatTimestamp(timestamp) {
     if (!timestamp) {
@@ -173,6 +174,9 @@ export default function GroupedDashboardContent({
                                             <h4 className="text-sm font-medium text-white truncate">{item.images.length} images</h4>
                                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
                                                 <span>{formatTimestamp(item.date || item.mtime)}</span>
+                                                <span className="truncate max-w-[220px]" title={getCheckpointDisplayName(item.images[0]) || 'Unknown Model'}>
+                                                    {getCheckpointDisplayName(item.images[0]) || 'Unknown Model'}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
@@ -209,6 +213,9 @@ export default function GroupedDashboardContent({
                                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
                                                 <span>{(item.size / 1024 / 1024).toFixed(2)} MB</span>
                                                 <span>{formatTimestamp(item.date || item.mtime)}</span>
+                                                <span className="truncate max-w-[220px]" title={getCheckpointDisplayName(item) || 'Unknown Model'}>
+                                                    {getCheckpointDisplayName(item) || 'Unknown Model'}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
