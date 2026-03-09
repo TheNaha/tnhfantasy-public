@@ -20,3 +20,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-24 - Range Sliders Accessibility
 **Learning:** Range sliders that mirror number inputs often miss accessible names because their corresponding labels are only associated via `htmlFor` with the number input. This makes them inaccessible or ambiguous for screen readers.
 **Action:** When a UI provides parallel inputs (e.g., number and range slider) for a single value, explicitly provide `aria-label` or `aria-labelledby` to the secondary input, even when there's an associated `<label>` meant for the primary input.
+
+## 2024-05-25 - Accessible Form Labels in Filter Panels
+**Learning:** Filter panels often use visual labels (like `<label>Model</label> <input />`) without programmatic association, making them inaccessible to screen readers.
+**Action:** Always use `useId()` to generate unique IDs and explicitly associate `<label htmlFor={id}>` with `<input id={id}>` or `<select id={id}>`, and use `aria-expanded` and `aria-controls` for the filter toggle button.
