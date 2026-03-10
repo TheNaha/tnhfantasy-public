@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
@@ -28,7 +28,8 @@ function formatTimestamp(timestamp) {
     return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString();
 }
 
-export default function GroupedDashboardContent({
+// ⚡ Bolt: Wrap the entire container in memo to prevent expensive re-renders on unrelated parent updates
+export default memo(function GroupedDashboardContent({
     viewMode,
     sortedGroupedEntries,
     formatDateLabel,
@@ -270,4 +271,4 @@ export default function GroupedDashboardContent({
             ))}
         </div>
     );
-}
+});
