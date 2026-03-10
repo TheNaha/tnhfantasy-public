@@ -1,6 +1,7 @@
 # Modal provider implementation
 import os
 import json
+import urllib.parse
 from typing import Dict, List, AsyncIterator, Any, Optional
 
 from .base import ServerlessProvider, FileProxyProvider
@@ -17,7 +18,8 @@ class ModalFileProxy(FileProxyProvider):
     async def get_file(self, path: str) -> bytes:
         """Get file from Modal via worker container."""
         client = get_http_client()
-        url = f"{self.base_url}/file-proxy?path={path}"
+        encoded_path = urllib.parse.quote(path, safe='')
+        url = f"{self.base_url}/file-proxy?path={encoded_path}"
         response = await client.get(url)
         if response.status_code == 200:
             return response.content
@@ -26,7 +28,8 @@ class ModalFileProxy(FileProxyProvider):
     async def delete_file(self, path: str) -> bool:
         """Delete file from Modal volume."""
         client = get_http_client()
-        url = f"{self.base_url}/file-proxy?path={path}"
+        encoded_path = urllib.parse.quote(path, safe='')
+        url = f"{self.base_url}/file-proxy?path={encoded_path}"
         response = await client.delete(url)
         return response.status_code == 200
     
