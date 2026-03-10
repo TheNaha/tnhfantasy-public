@@ -71,9 +71,10 @@ export default function ImageLightbox({
         <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
             <button
                 onClick={onClose}
-                className="absolute top-4 right-4 z-10 p-2 bg-gray-800/50 rounded-full text-white hover:bg-gray-700"
+                className="absolute top-4 right-4 z-10 p-2 bg-gray-800/50 rounded-full text-white hover:bg-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                aria-label="Close lightbox"
             >
-                <X size={24} />
+                <X size={24} aria-hidden="true" />
             </button>
 
             <div className="flex flex-col lg:flex-row w-full h-full gap-4 max-w-7xl overflow-hidden">
@@ -83,9 +84,10 @@ export default function ImageLightbox({
                     {hasMultiple && (
                         <button
                             onClick={goToPrev}
-                            className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            aria-label="Previous image"
                         >
-                            <ChevronLeft size={28} />
+                            <ChevronLeft size={28} aria-hidden="true" />
                         </button>
                     )}
 
@@ -93,9 +95,10 @@ export default function ImageLightbox({
                     {hasMultiple && (
                         <button
                             onClick={goToNext}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-gray-800/70 hover:bg-gray-700 rounded-full text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            aria-label="Next image"
                         >
-                            <ChevronRight size={28} />
+                            <ChevronRight size={28} aria-hidden="true" />
                         </button>
                     )}
                     <ProgressiveImage
@@ -119,8 +122,10 @@ export default function ImageLightbox({
                                         setImgIndex(idx);
                                         onNavigate?.(idx);
                                     }}
-                                    className={`w-2 h-2 rounded-full transition-colors ${idx === imgIndex ? 'bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'
+                                    className={`w-2 h-2 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-black ${idx === imgIndex ? 'bg-blue-500' : 'bg-gray-600 hover:bg-gray-500'
                                         }`}
+                                    aria-label={`Go to image ${idx + 1}`}
+                                    aria-pressed={idx === imgIndex}
                                 />
                             ))}
                             <span className="ml-2 text-xs text-gray-400">{imgIndex + 1} / {images.length}</span>
