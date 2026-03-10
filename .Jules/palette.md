@@ -24,3 +24,11 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-25 - Accessible Form Labels in Filter Panels
 **Learning:** Filter panels often use visual labels (like `<label>Model</label> <input />`) without programmatic association, making them inaccessible to screen readers.
 **Action:** Always use `useId()` to generate unique IDs and explicitly associate `<label htmlFor={id}>` with `<input id={id}>` or `<select id={id}>`, and use `aria-expanded` and `aria-controls` for the filter toggle button.
+
+## 2024-05-18 - ImageLightbox Accessibility
+**Learning:** Found that custom carousel implementations and modals (like `ImageLightbox`) often rely heavily on icon-only buttons (`lucide-react` icons like `X`, `ChevronLeft`, `ChevronRight`) without appropriate `aria-label`s, rendering them completely invisible or confusing to screen reader users. Additionally, custom indicator dots for carousels are frequently built as plain `button`s without `aria-label` or `aria-pressed` states to indicate the current active index.
+**Action:** When creating or reviewing custom modals and image carousels, always ensure that:
+1. Icon-only buttons have descriptive `aria-label` attributes.
+2. The icons themselves are hidden from screen readers using `aria-hidden="true"`.
+3. Custom indicators (like carousel dots) use `aria-label` to describe their target (e.g., "Go to image 1") and use `aria-pressed="true"` for the currently active state.
+4. All interactive elements have clear focus indicators for keyboard navigation (e.g., `focus-visible:ring-2 focus-visible:ring-blue-500 outline-none`).
