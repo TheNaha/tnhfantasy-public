@@ -119,7 +119,8 @@ class ModalProvider(ServerlessProvider):
     async def list_models(self, directory: str) -> List[Dict[str, Any]]:
         """List models via worker container."""
         client = get_http_client()
-        url = f"{self.worker_url}/list-models?directory={directory}"
+        encoded_dir = urllib.parse.quote(directory, safe='')
+        url = f"{self.worker_url}/list-models?directory={encoded_dir}"
         response = await client.get(url)
         if response.status_code == 200:
             data = response.json()

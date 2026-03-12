@@ -1,7 +1,12 @@
+import { useState } from 'react';
 import { X, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import ConfirmationModal from '../ConfirmationModal';
 
 export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
+    const [confirmAction, setConfirmAction] = useState(null);
+    const [confirmConfig, setConfirmConfig] = useState(null);
+
     if (!job) return null;
 
     const meta = job.metadata || job.metadata_ || {};
@@ -10,6 +15,49 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
     const isPending = ['pending', 'queued'].includes(job.status);
     const isCompleted = job.status === 'completed';
     const isFailed = job.status === 'failed' || job.status === 'error';
+
+    const handleActionClick = (actionType) => {
+        if (actionType === 'cancel') {
+            setConfirmConfig({
+                title: "Cancel Job",
+                message: "Are you sure you want to cancel this job? This action cannot be undone.",
+                confirmText: "Yes, Cancel Job",
+                isDangerous: true,
+                onConfirm: async () => {
+                    try {
+                        await onCancel(job.id);
+                        onClose();
+                        toast.success('Job cancelled');
+                    } catch {
+                        toast.error('Failed to cancel job');
+                    }
+                }
+            });
+            setConfirmAction('cancel');
+        } else if (actionType === 'delete') {
+            setConfirmConfig({
+                title: "Remove Job",
+                message: "Are you sure you want to remove this job from history? The generated images will remain in your gallery.",
+                confirmText: "Yes, Remove Job",
+                isDangerous: true,
+                onConfirm: async () => {
+                    try {
+                        await onDelete(job.id);
+                        onClose();
+                        toast.success('Job removed from history');
+                    } catch {
+                        toast.error('Failed to delete job');
+                    }
+                }
+            });
+            setConfirmAction('delete');
+        }
+    };
+
+    const closeConfirm = () => {
+        setConfirmAction(null);
+        setConfirmConfig(null);
+    };
 
     // Calculate elapsed time
     const getElapsedTime = () => {
@@ -41,7 +89,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                         <h3 className="text-lg font-bold text-white">Job Details</h3>
                         <p className="text-xs text-gray-500 font-mono mt-1">{job.id}</p>
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white p-1 ml-2">
+                    <button onClick={onClose} className="text-gray-400 hover:text-white p-1 ml-2" aria-label="Close job details">
                         <X size={20} />
                     </button>
                 </div>
@@ -216,15 +264,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                 <div className="p-4 border-t border-gray-700 flex flex-col sm:flex-row gap-2 flex-shrink-0">
                     {(isPending || isProcessing) && (
                         <button
-                            onClick={async () => {
-                                try {
-                                    await onCancel(job.id);
-                                    onClose();
-                                    toast.success('Job cancelled');
-                                } catch {
-                                    toast.error('Failed to cancel job');
-                                }
-                            }}
+                            onClick={() => handleActionClick('cancel')}
                             className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
                         >
                             <X size={16} /> Cancel Job
@@ -232,15 +272,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                     )}
                     {(isCompleted || isFailed) && onDelete && (
                         <button
-                            onClick={async () => {
-                                try {
-                                    await onDelete(job.id);
-                                    onClose();
-                                    toast.success('Job removed from history');
-                                } catch {
-                                    toast.error('Failed to delete job');
-                                }
-                            }}
+                            onClick={() => handleActionClick('delete')}
                             className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
                         >
                             <Trash2 size={16} /> Remove from History
@@ -270,6 +302,18 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                     </button>
                 </div>
             </div>
+
+            {/* Confirmation Modal */}
+            <ConfirmationModal
+                isOpen={!!confirmAction}
+                onClose={closeConfirm}
+                onCancel={closeConfirm}
+                onConfirm={confirmConfig?.onConfirm}
+                title={confirmConfig?.title}
+                message={confirmConfig?.message}
+                confirmText={confirmConfig?.confirmText}
+                isDangerous={confirmConfig?.isDangerous}
+            />
         </div>
     );
 }

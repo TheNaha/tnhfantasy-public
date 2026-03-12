@@ -27,3 +27,7 @@
 **Vulnerability:** User-provided search queries were directly concatenated into external API URLs (`https://civitai.com/...` and `https://huggingface.co/...`) without URL encoding, allowing users to inject arbitrary URL parameters (Parameter Injection) which can lead to Server-Side Request Forgery (SSRF) and broken API requests.
 **Learning:** Even when proxying requests to safe external domains (not internal workers), direct string interpolation of user input into URLs introduces parameter injection vulnerabilities.
 **Prevention:** Always URL-encode user-provided input using `urllib.parse.quote(query, safe='')` before appending it to a URL query string.
+## 2025-05-21 - [SSRF Parameter Injection in Provider Worker Proxies]
+**Vulnerability:** The `list_models` internal provider methods for `ModalProvider` and `BeamProvider` passed the user-provided `directory` string directly into the worker proxy URL (`f"{self.worker_url}/list-models?directory={directory}"`) without URL encoding.
+**Learning:** Internal service-to-service calls must rigorously encode dynamically substituted path and query parameters, particularly when proxying external user inputs to avoid Parameter Injection/SSRF on internal networks. Unencoded characters (like `&` and `=`) allow attackers to manipulate queries to upstream services.
+**Prevention:** Ensure that all dynamically injected query parameters to downstream services are properly encoded using `urllib.parse.quote(param, safe='')`.

@@ -1,8 +1,9 @@
-import { useState, useEffect, useId } from 'react';
+import { useState, useEffect, useId, memo } from 'react';
 import { Filter, Calendar, Image as ImageIcon, Box, X, ChevronDown, Search } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 
-export const FilterBar = ({ filters, onFilterChange }) => {
+// ⚡ Bolt: Wrap FilterBar in React.memo to prevent unnecessary re-renders when parent dashboard updates
+export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
     const [isOpen, setIsOpen] = useState(false);
     const [localFilters, setLocalFilters] = useState(filters);
 
@@ -180,4 +181,4 @@ export const FilterBar = ({ filters, onFilterChange }) => {
             )}
         </div>
     );
-};
+});
