@@ -23,3 +23,7 @@
 **Vulnerability:** The `/api/files/proxy/{provider_id}/{path:path}` endpoint in `backend_v2/api/routes/files.py` passed the user-provided `path` directly into the worker's proxy URL (`f"{self.base_url}/file-proxy?path={path}"`) without URL encoding.
 **Learning:** When constructing URLs from user input, even if the input appears to be a "path", failing to URL encode it allows an attacker to inject arbitrary query parameters (e.g., `image.png&other_param=malicious_value`). In a server-side request context, this leads to parameter injection and potentially Server-Side Request Forgery (SSRF) against the internal worker API.
 **Prevention:** Always use `urllib.parse.quote` (or equivalent) to URL-encode user-provided data before embedding it into the query string of an outgoing HTTP request.
+## 2025-03-12 - Fix URL Parameter Injection (SSRF Risk) in External API Proxy
+**Vulnerability:** User-provided search queries were directly concatenated into external API URLs (`https://civitai.com/...` and `https://huggingface.co/...`) without URL encoding, allowing users to inject arbitrary URL parameters (Parameter Injection) which can lead to Server-Side Request Forgery (SSRF) and broken API requests.
+**Learning:** Even when proxying requests to safe external domains (not internal workers), direct string interpolation of user input into URLs introduces parameter injection vulnerabilities.
+**Prevention:** Always URL-encode user-provided input using `urllib.parse.quote(query, safe='')` before appending it to a URL query string.

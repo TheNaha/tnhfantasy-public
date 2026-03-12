@@ -593,8 +593,11 @@ async def get_model_preview_image(model_id: int, version_id: int = None):
 @router.get("/search/civitai")
 async def search_civitai(query: str, limit: int = 20):
     """Search models on CivitAI."""
+    import urllib.parse
     try:
-        url = f"https://civitai.com/api/v1/models?query={query}&limit={limit}"
+        # Sentinel: URL-encode user-provided query to prevent SSRF and parameter injection
+        encoded_query = urllib.parse.quote(query, safe='')
+        url = f"https://civitai.com/api/v1/models?query={encoded_query}&limit={limit}"
         response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             return response.json()
@@ -607,8 +610,11 @@ async def search_civitai(query: str, limit: int = 20):
 @router.get("/search/huggingface")
 async def search_huggingface(query: str, limit: int = 20):
     """Search models on HuggingFace."""
+    import urllib.parse
     try:
-        url = f"https://huggingface.co/api/models?search={query}&limit={limit}&filter=diffusers"
+        # Sentinel: URL-encode user-provided query to prevent SSRF and parameter injection
+        encoded_query = urllib.parse.quote(query, safe='')
+        url = f"https://huggingface.co/api/models?search={encoded_query}&limit={limit}&filter=diffusers"
         response = await get_http_client().get(url, timeout=10)
         if response.status_code == 200:
             hf_models = response.json()
