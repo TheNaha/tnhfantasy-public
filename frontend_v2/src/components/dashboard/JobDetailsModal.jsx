@@ -89,7 +89,7 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
                         <h3 className="text-lg font-bold text-white">Job Details</h3>
                         <p className="text-xs text-gray-500 font-mono mt-1">{job.id}</p>
                     </div>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white p-1 ml-2">
+                    <button onClick={onClose} className="text-gray-400 hover:text-white p-1 ml-2" aria-label="Close job details">
                         <X size={20} />
                     </button>
                 </div>
