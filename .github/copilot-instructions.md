@@ -1,72 +1,84 @@
-# TNHComfy — Copilot Instructions
+# TNHComfy Workspace Instructions
+
+## Project Guidelines
+
+- Prefer focused edits that preserve existing architecture and module boundaries.
+- Link to docs instead of duplicating long explanations:
+  - `docs/architecture.md`
+  - `docs/backend.md`
+  - `docs/frontend.md`
+  - `docs/api.md`
+- Never run local ComfyUI in this repo. This backend dispatches to serverless workers.
+- Never commit checkpoints, generated outputs, or secrets (`.env`, model files, output images).
 
 ## Architecture
 
-TNHComfy is a **serverless ComfyUI wrapper**. The backend never runs ComfyUI — it dispatches generation jobs to serverless GPU workers (Modal, Beam) and manages results locally. Three components communicate over HTTP/WebSocket:
+TNHComfy is a serverless ComfyUI wrapper with three parts:
 
-- **`backend_v2/`** — FastAPI (Python 3.11+), SQLite (WAL mode), async job queue
-- **`frontend_v2/`** — React 19 + Vite 7 + Tailwind CSS 4
-- **`provider_containers/`** — Shared core (`provider_core/`) + per-provider workers (`modal_worker/`, `beam_worker/`)
+- `backend_v2/`: FastAPI + SQLite (WAL) + async job queue
+- `frontend_v2/`: React + Vite + Tailwind
+- `provider_containers/`: provider workers (`modal_worker/`, `beam_worker/`) plus shared `provider_core/`
 
-**Request flow:** Client → `POST /api/generate` → `JobService.create_job` → `job_queue.enqueue` → worker coroutine → `_call_provider()` (streaming NDJSON to Modal/Beam) → images returned → `ImageService.save()` → WebSocket event → frontend gallery refresh.
+Main request flow:
 
-## Backend Patterns
+`POST /api/generate` -> `JobService.create_job` -> `job_queue.enqueue` -> provider call (`/inference` NDJSON stream) -> `ImageService.save()` -> WebSocket event -> frontend refresh.
 
-- **Entities** use `SQLModel` (SQLAlchemy + Pydantic combined). Two coexisting schemas: V1 (`core/entities.py` — flat) and V2 (`core/entities_v2.py` — normalized `ModelV2 → ModelVersion → ModelFile`). V2 is the modern path.
-- **Services** (`services/`) take a `Session` in their constructor, create an internal repository, and expose `async` methods. Services are instantiated per-request inside route handlers: `service = get_job_service(session)`.
-- **Dependency injection** via `api/deps.py`: `get_session()` yields request-scoped SQLModel sessions. `ContainerManager` is a lazy singleton. `EventBus` is a global singleton.
-- **Event system** (`core/events.py`): async pub/sub `EventBus` with dotted event types (`job.created`, `download.progress`). Uses `asyncio.Queue` per subscriber. Emit via `emit_job_event()`, `emit_download_event()`, etc.
-- **Exceptions** (`core/exceptions.py`): hierarchy under `ComfyError` with machine-readable `code` field — `NotFoundError`, `ValidationError`, `ProviderError`, `JobError`, `DownloadError`, `ConfigurationError`.
-- **Database migrations** are manual column additions in `infrastructure/database.py._run_migrations()` — no Alembic. FTS5 virtual tables for prompt search.
-- **Caching** (`infrastructure/cache.py`): in-memory TTL/LRU via `cachetools`. Use `@cached("cache_name")` decorator; `invalidate_cache("name")` to bust.
-- **Config precedence**: env vars (`COMFY_*`) > `config.json` (runtime-editable via API) > `DEFAULT_CONFIG` dict in `config.py`.
-- **`metadata_` aliasing**: The `metadata` field is stored as `metadata_` in Python (avoids `BaseModel.metadata` conflict) but serialized as `"metadata"` via Pydantic `alias="metadata"`.
-- **Logging**: `structlog` via `get_logger("module_name")` from `infrastructure/logging.py`.
+## Build And Test
 
-## Frontend Patterns
-
-- **State management** — read `frontend_v2/STATE_MANAGEMENT.md` before changing state logic:
-  - **Zustand** (`src/store/`): client-only state (UI, forms, WebSocket job progress)
-  - **React Query** (`@tanstack/react-query`): server data fetching, caching, mutations
-  - Never duplicate state between Zustand and React Query
-- **API client** (`src/api/client.js`): centralized `request()` with `api.get/post/put/delete/patch` helpers. Dev mode uses Vite proxy (relative URLs).
-- **WebSocket** (`src/api/websocket.js`): Socket.IO singleton with room-based topic subscriptions. Backend mounts Socket.IO at `/socket.io`.
-- **Stores** have co-located tests (e.g., `jobStore.test.js`). Use Vitest + Testing Library.
-
-## Provider Workers
-
-Workers in `provider_containers/` share `provider_core/models.py` for the API contract:
-- `POST /inference` — streaming NDJSON response with progress updates
-- `POST /download`, `POST /list-models`, `POST /delete-model`, `POST /upload`
-
-Standardized model directories: `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
-
-## Development & Testing
+Use these entry points unless a task requires something else.
 
 ```bash
+# Full stack (agent/dev shell)
+bash setup_jules.sh
+
 # Full stack (Docker)
-docker-compose up -d          # Backend :8002, Frontend :5174
+docker-compose up -d
 
-# Cloud/agent workspace
-bash setup_jules.sh            # Starts backend :8002 + frontend :5173
-
-# Backend tests (from backend_v2/)
+# Backend (from backend_v2/)
 pip install -r requirements.txt
-pytest                         # asyncio_mode=auto, in-memory SQLite
+uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+pytest
 
-# Frontend tests (from frontend_v2/)
+# Frontend (from frontend_v2/)
 npm install
-npm test                       # vitest run
-npm run test:watch             # vitest watch mode
+npm run dev -- --host 0.0.0.0 --port 5173
+npm test
 ```
 
-**Test gotcha**: test fixtures must override **both** `api.deps.get_session` AND `infrastructure.database.get_session` — some routes import from different locations. See `tests/conftest.py`.
+## Conventions
 
-## Key Conventions
+### Backend (`backend_v2/`)
 
-- Route files define inline Pydantic request/response models at top, then `router = APIRouter(prefix="/api/...", tags=[...])`.
-- `LoadBalancer` uses **class-level** state with `threading.Lock` (not instance-level) — state persists across instances within the same process.
-- Image post-processing (WebP thumbnails at 512px + blurhash) runs as async background task after job completion.
-- On startup, PENDING/RUNNING jobs are recovered from DB and re-enqueued (in-memory `asyncio.Queue`).
-- Request deduplication via `infrastructure/request_dedup.py` — `deduplicated(key, coro)` prevents duplicate concurrent work.
-- Never run ComfyUI locally or commit model checkpoints/output images.
+- Services take a request-scoped `Session` and instantiate repositories internally.
+- Route handlers should resolve dependencies via `api/deps.py` (`get_session`, `get_*_service`).
+- Emit domain events through `core/events.py` helpers (`emit_job_event`, `emit_download_event`).
+- Use `core/exceptions.py` (`ComfyError` hierarchy) for domain errors.
+- Migrations are manual in `infrastructure/database.py` (`_run_migrations()`), no Alembic.
+- Config precedence is: `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`.
+- `metadata` is represented as `metadata_` in Python models and aliased back to `metadata` in API payloads.
+
+### Frontend (`frontend_v2/`)
+
+- Read `frontend_v2/STATE_MANAGEMENT.md` before changing app state.
+- Keep state ownership strict:
+  - Zustand: client/UI and realtime socket state
+  - React Query: server-fetched data and cache
+- Use `src/api/client.js` for HTTP requests and `src/api/websocket.js` for socket usage.
+- Keep store tests close to stores and use Vitest + Testing Library patterns already present.
+
+### Provider Contract (`provider_containers/`)
+
+- Shared API models live in `provider_containers/provider_core/models.py`.
+- `POST /inference` must stream NDJSON progress and finish with a success or error payload.
+- Keep model directory conventions unchanged:
+  `models/checkpoints`, `models/loras`, `models/vae`, `models/controlnet`, `models/unet`, `models/clip`.
+
+## Pitfalls
+
+- Tests that create DB sessions must override both dependency sources:
+  `api.deps.get_session` and `infrastructure.database.get_session` (see `backend_v2/tests/conftest.py`).
+- Vite uses proxy fallbacks in `frontend_v2/vite.config.js`:
+  `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:8002`.
+- Docker frontend file watching depends on polling (`CHOKIDAR_USEPOLLING=true`).
+- `LoadBalancer` currently uses class-level state in `backend_v2/services/load_balancer.py`; avoid introducing more shared mutable globals.
+- Startup recovers pending/running jobs from DB and re-enqueues them; preserve that behavior when changing lifecycle code.
