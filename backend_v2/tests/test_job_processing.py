@@ -53,7 +53,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
 
     monkeypatch.setattr("api.main.get_session", _session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.main.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 
@@ -87,7 +87,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
 
     monkeypatch.setattr("api.main.get_session", _session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.main.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
 
     await process_job(job.id)
@@ -135,7 +135,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
 
     monkeypatch.setattr("api.main.get_session", _session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.main.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
     monkeypatch.setattr("api.job_processing.os.path.relpath", lambda target, base: ".")
     monkeypatch.setattr("infrastructure.image_processor.get_output_path", lambda base_dir: str(tmp_path))

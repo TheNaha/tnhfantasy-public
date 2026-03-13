@@ -365,7 +365,7 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
                     return {"provider_id": provider_id, "error": f"HTTP {response.status}", "total": 0}
             
     except Exception as e:
-        print(f"[ModalStats] Error fetching from {provider_id}: {e}")
+        logger.error("modal_stats_fetch_failed", provider_id=provider_id, error=str(e))
         return {"provider_id": provider_id, "error": str(e), "total": 0}
 
 
@@ -997,7 +997,7 @@ async def deploy_provider_app(
     provider_type = provider.type
     
     if provider_type == "modal":
-        print(f"[Deploy] Deploying Modal app for {provider_id} via container exec...")
+        logger.info("deploy_modal_start", provider_id=provider_id)
         
         try:
             # Run modal deploy in worker container
@@ -1011,7 +1011,7 @@ async def deploy_provider_app(
             stderr = exec_result.output[1].decode('utf-8') if exec_result.output[1] else ""
             output = stdout + stderr
             
-            print(f"[Deploy] Output: {output}")
+            logger.info("deploy_modal_output", output=output)
             
             if exec_result.exit_code != 0:
                 raise HTTPException(
@@ -1032,7 +1032,7 @@ async def deploy_provider_app(
             raise HTTPException(status_code=500, detail=f"Deployment error: {str(e)}")
     
     elif provider_type == "beam":
-        print(f"[Deploy] Deploying Beam apps for {provider_id} via container exec...")
+        logger.info("deploy_beam_start", provider_id=provider_id)
         
         # Beam has two endpoints to deploy
         deployments = [
@@ -1042,7 +1042,7 @@ async def deploy_provider_app(
         
         results = []
         for name, cmd in deployments:
-            print(f"[Deploy] Running: {' '.join(cmd)}")
+            logger.info("deploy_beam_running", command=" ".join(cmd))
             
             try:
                 exec_result = container.exec_run(
@@ -1055,7 +1055,7 @@ async def deploy_provider_app(
                 stderr = exec_result.output[1].decode('utf-8') if exec_result.output[1] else ""
                 output = stdout + stderr
                 
-                print(f"[Deploy] {name} output: {output}")
+                logger.info("deploy_beam_output", name=name, output=output)
                 
                 results.append({
                     "name": name,

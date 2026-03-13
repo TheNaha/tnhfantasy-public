@@ -14,7 +14,10 @@ from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter
 from infrastructure.cache import cache_stats
+from infrastructure.logging import get_logger
 from services.gallery_indexer import gallery_indexer
+
+logger = get_logger("statistics_route")
 
 router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 
@@ -126,7 +129,7 @@ def _calculate_statistics() -> Dict[str, Any]:
                         pass
 
     except Exception as e:
-        print(f"Error calculating statistics: {e}")
+        logger.error("statistics_calculation_failed", error=str(e))
     
     # Calculate averages
     if duration_count > 0:
@@ -422,7 +425,7 @@ def _calculate_detailed_statistics() -> Dict[str, Any]:
                     })
                 
     except Exception as e:
-        print(f"Error calculating statistics: {e}")
+        logger.error("statistics_calculation_failed", error=str(e))
     
     # === POST-PROCESSING ===
     

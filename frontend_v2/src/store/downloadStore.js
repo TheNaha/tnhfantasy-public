@@ -121,7 +121,7 @@ export const useDownloadStore = create((set, get) => ({
     fetchDownloads: async () => {
         try {
             const response = await api.get('/api/downloads');
-            get().setDownloads(response.data.downloads || []);
+            get().setDownloads(response.downloads || []);
         } catch (error) {
             console.error("Failed to fetch downloads", error);
         }

@@ -946,7 +946,7 @@ def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
         return image_data, content_type
         
     except Exception as e:
-        print(f"Failed to fetch CivitAI preview for {model_id}: {e}")
+        logger.warning("civitai_preview_fetch_failed", model_id=model_id, error=str(e))
         return None, None
 
 

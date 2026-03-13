@@ -11,6 +11,9 @@ from core.entities_v2 import (
     ProviderVersionStatus, ModelTag, compute_storage_filename, get_directory_from_type,
     is_unet_only_model, FLUX_DEFAULT_COMPONENTS
 )
+from infrastructure.logging import get_logger
+
+logger = get_logger("model_repo_v2")
 
 
 def parse_civitai_datetime(value: Any) -> Optional[datetime]:
@@ -489,7 +492,7 @@ class ModelRepositoryV2:
         if existing_file:
             # Check if URL needs update (e.g. converting from gated to public mirror)
             if existing_file.download_url != download_url:
-                print(f"[ModelRepo] Updating dependency URL for {filename}: {existing_file.download_url} -> {download_url}")
+                logger.info("dependency_url_updated", filename=filename, old_url=existing_file.download_url, new_url=download_url)
                 existing_file.download_url = download_url
                 self.session.add(existing_file)
                 self.session.commit()
@@ -539,7 +542,7 @@ class ModelRepositoryV2:
         self.session.add(file)
         
         self.session.commit()
-        print(f"[ModelRepo] Created system dependency: {name} -> {directory}/{filename}")
+        logger.info("system_dependency_created", name=name, directory=directory, filename=filename)
         
         return model
 
@@ -916,12 +919,12 @@ class ModelRepositoryV2:
                         "old_directory": old_dir,
                         "new_directory": "unet"
                     })
-                    print(f"[Migration] Moved {model.name} from {old_dir} to unet (base: {version.base_model})")
+                    logger.info("migration_model_moved", model_name=model.name, old_directory=old_dir, new_directory="unet", base_model=version.base_model)
                     break  # Only need to find one UNET-only version
         
         if migrated:
             self.session.commit()
         
-        print(f"[Migration] Migrated {len(migrated)} models to unet directory")
+        logger.info("migration_complete", migrated_count=len(migrated))
         return {"migrated": migrated, "count": len(migrated)}
 

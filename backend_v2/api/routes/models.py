@@ -13,6 +13,9 @@ from pydantic import BaseModel
 
 from api.deps import get_session, get_model_service
 from services.model_service import ModelService
+from infrastructure.logging import get_logger
+
+logger = get_logger("models_route")
 from core.entities import ModelStatus
 from core.exceptions import NotFoundError
 
@@ -310,7 +313,7 @@ async def receive_sync_progress(
                 extra_data={"size_bytes": request.size_bytes}
             )
         except Exception as e:
-            print(f"Failed to update provider status: {e}")
+            logger.warning("provider_status_update_failed", error=str(e))
     elif request.status == "failed":
         service = get_model_service(session)
         try:
@@ -322,7 +325,7 @@ async def receive_sync_progress(
                 extra_data={"error": request.message}
             )
         except Exception as e:
-            print(f"Failed to update provider status: {e}")
+            logger.warning("provider_status_update_failed", error=str(e))
     
     return {"status": "ok"}
 
@@ -561,7 +564,7 @@ async def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
         return image_data, content_type
         
     except Exception as e:
-        print(f"Failed to fetch CivitAI preview for {model_id}: {e}")
+        logger.warning("civitai_preview_fetch_failed", model_id=model_id, error=str(e))
         return None, None
 
 

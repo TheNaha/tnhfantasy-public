@@ -103,7 +103,7 @@ class ContainerManager:
             if "podman" in str(info).lower():
                 return "podman"
             return "docker"
-        except:
+        except Exception:
             return "unknown"
     
     def build_worker_image(self, provider_type: str) -> str:
@@ -294,7 +294,7 @@ class ContainerManager:
                             logger.info("container_healthy", container=container.name, method="localhost")
                             return
                         last_error = f"localhost health returned {response.status_code}"
-                    except:
+                    except Exception:
                         last_error = "localhost health probe failed"
                     
                     # Try host.containers.internal (Podman/Docker from container)
@@ -304,7 +304,7 @@ class ContainerManager:
                             logger.info("container_healthy", container=container.name, method="host_internal")
                             return
                         last_error = f"host_internal health returned {response.status_code}"
-                    except:
+                    except Exception:
                         last_error = "host_internal health probe failed"
             except Exception as e:
                 last_error = str(e)

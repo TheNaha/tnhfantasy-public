@@ -20,6 +20,9 @@ from sqlmodel import Session
 import config as app_config
 from api.deps import get_session
 from services.model_service import ModelService
+from infrastructure.logging import get_logger
+
+logger = get_logger("settings_route")
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -364,7 +367,7 @@ def get_branding_config() -> Dict[str, Any]:
             with open(BRANDING_CONFIG_PATH, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading branding config: {e}")
+            logger.error("branding_config_load_failed", error=str(e))
             return default_branding
     else:
         save_branding_config(default_branding)

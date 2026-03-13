@@ -99,6 +99,8 @@ export function connect() {
 
         socket.on('connect_error', (error) => {
             console.warn('[WebSocket] Connection error:', error.message);
+            // Clear connectionPromise so future connect() calls can retry
+            connectionPromise = null;
             emitLocal('connection', { connected: false, error: error.message });
         });
 

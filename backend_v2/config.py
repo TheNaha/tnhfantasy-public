@@ -413,25 +413,30 @@ def get_max_concurrent_jobs() -> int:
     return get_config()["jobs"]["max_concurrent"]
 
 
+def _env_var_is_set(env_name: str) -> bool:
+    """Check if an environment variable is explicitly set (with COMFY_ prefix)."""
+    return os.environ.get(f"COMFY_{env_name}") is not None
+
+
 def get_job_timeout() -> int:
     """Get job timeout in seconds. Prefers env var (settings), falls back to file config."""
     # Use Pydantic settings if explicitly set via env var, else use file config for runtime updates
-    return settings.job_timeout if settings.job_timeout != 300 else get_config()["jobs"]["timeout"]
+    return settings.job_timeout if _env_var_is_set("JOB_TIMEOUT") else get_config()["jobs"]["timeout"]
 
 
 def get_job_max_retries() -> int:
     """Get maximum number of job retries. Prefers env var, falls back to file config."""
-    return settings.job_max_retries if settings.job_max_retries != 3 else get_config()["jobs"]["max_retries"]
+    return settings.job_max_retries if _env_var_is_set("JOB_MAX_RETRIES") else get_config()["jobs"]["max_retries"]
 
 
 def get_job_retry_base_delay() -> float:
     """Get base delay for exponential backoff in seconds. Prefers env var, falls back to file config."""
-    return settings.job_retry_base_delay if settings.job_retry_base_delay != 1.0 else get_config()["jobs"]["retry_base_delay"]
+    return settings.job_retry_base_delay if _env_var_is_set("JOB_RETRY_BASE_DELAY") else get_config()["jobs"]["retry_base_delay"]
 
 
 def get_job_retry_max_delay() -> float:
     """Get maximum delay for exponential backoff in seconds. Prefers env var, falls back to file config."""
-    return settings.job_retry_max_delay if settings.job_retry_max_delay != 60.0 else get_config()["jobs"]["retry_max_delay"]
+    return settings.job_retry_max_delay if _env_var_is_set("JOB_RETRY_MAX_DELAY") else get_config()["jobs"]["retry_max_delay"]
 
 
 # Model sync settings
@@ -453,7 +458,7 @@ def get_reconciliation_interval() -> int:
 def get_worker_backend_url() -> str:
     """Get backend URL exposed to provider containers. Prefers env var, falls back to file config."""
     default_url = "http://comfy-backend-v2:8002"
-    return settings.worker_backend_url if settings.worker_backend_url != default_url else get_config()["api"].get("worker_backend_url", default_url)
+    return settings.worker_backend_url if _env_var_is_set("WORKER_BACKEND_URL") else get_config()["api"].get("worker_backend_url", default_url)
 
 
 

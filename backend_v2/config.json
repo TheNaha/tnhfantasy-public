@@ -33,7 +33,8 @@
       "http://localhost:5174",
       "http://localhost:8000"
     ],
-    "gzip_minimum_size": 1000
+    "gzip_minimum_size": 1000,
+    "worker_backend_url": "http://comfy-backend-v2:8002"
   },
   "jobs_cleanup": {
     "max_age_hours": 24,
