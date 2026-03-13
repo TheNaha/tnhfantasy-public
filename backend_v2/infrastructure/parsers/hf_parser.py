@@ -5,6 +5,10 @@ import re
 import hashlib
 from typing import Dict, List, Optional, Any
 
+from infrastructure.logging import get_logger
+
+logger = get_logger("hf_parser")
+
 
 def infer_model_type(tags: List[str], pipeline_tag: str = None) -> str:
     """
@@ -309,7 +313,7 @@ def fetch_hf_files(repo_id: str) -> List[Dict[str, Any]]:
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        print(f"Warning: Could not fetch HF files for {repo_id}: {e}")
+        logger.warning("hf_files_fetch_failed", repo_id=repo_id, error=str(e))
         return []
 
 

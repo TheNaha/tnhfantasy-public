@@ -25,6 +25,9 @@ import tempfile
 import asyncio
 
 from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
+from infrastructure.logging import get_logger
+
+logger = get_logger("files_route")
 
 router = APIRouter(tags=["files"])
 
@@ -168,7 +171,7 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         return {"files": paginated, "total": total}
 
     except Exception as e:
-        print(f"Model cache read failed: {e}")
+        logger.warning("model_cache_read_failed", error=str(e))
         return {"files": [], "total": 0}
 
 
@@ -189,7 +192,7 @@ async def list_files_endpoint(
             return gallery_indexer.get_files(limit=limit, offset=offset, sort=sort, search=search)
             
         except Exception as e:
-            print(f"Local file list failed: {e}")
+            logger.warning("local_file_list_failed", error=str(e))
             return {"files": [], "total": 0}
 
     # Handle Models directories - query from SQLite model service
@@ -305,9 +308,7 @@ async def list_files_endpoint(
             return {"files": paginated, "total": total}
             
         except Exception as e:
-            print(f"Model service query failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("model_service_query_failed", error=str(e), exc_info=True)
         
         # Fallback: try to read from local cache directory
         # Run in thread pool to avoid blocking I/O
@@ -625,7 +626,7 @@ async def upload_input_image(
         img = Image.open(io.BytesIO(content))
         width, height = img.size
     except Exception as e:
-        print(f"[Upload] Could not get image dimensions: {e}")
+        logger.warning("upload_image_dimensions_failed", error=str(e))
         width, height = 0, 0
     
     # Sync to ALL active providers (so job can go to any of them)
@@ -637,7 +638,7 @@ async def upload_input_image(
         service = get_provider_service(session)
         providers = await service.list_providers()
         
-        print(f"[Upload] DEBUG: Found {len(providers)} providers")
+        logger.debug("upload_providers_found", count=len(providers))
         
         # Filter enabled providers and construct worker URLs
         active_providers = []
@@ -647,14 +648,14 @@ async def upload_input_image(
             config = p.get("container_config") if isinstance(p, dict) else getattr(p, "container_config", {})
             
             if not enabled or not p_id:
-                print(f"[Upload] DEBUG: Skipping {p_id}: enabled={enabled}")
+                logger.debug("upload_provider_skipped", provider_id=p_id, enabled=enabled)
                 continue
             
             # Construct worker URL from provider ID
             # Container naming: comfy-provider-{id} running on internal port 8000
             worker_url = f"http://comfy-provider-{p_id}:8000"
             
-            print(f"[Upload] DEBUG: Provider {p_id}: enabled={enabled}, worker_url={worker_url}")
+            logger.debug("upload_provider_active", provider_id=p_id, enabled=enabled, worker_url=worker_url)
             active_providers.append({"id": p_id, "worker_url": worker_url})
         
         if active_providers:
@@ -677,14 +678,14 @@ async def upload_input_image(
                         ) as response:
                             if response.status == 200:
                                 synced_count += 1
-                                print(f"[Upload] ✓ Synced {unique_name} to provider {provider_id}")
+                                logger.info("upload_synced", filename=unique_name, provider_id=provider_id)
                             else:
                                 failed_count += 1
                                 body = await response.text()
-                                print(f"[Upload] Sync to {provider_id} failed: {response.status} - {body[:100]}")
+                                logger.warning("upload_sync_failed", provider_id=provider_id, status=response.status, body=body[:100])
                     except Exception as e:
                         failed_count += 1
-                        print(f"[Upload] Warning: Failed to sync to provider {provider_id}: {e}")
+                        logger.warning("upload_sync_error", provider_id=provider_id, error=str(e))
             
             if synced_count > 0:
                 sync_status = "synced"
@@ -692,12 +693,10 @@ async def upload_input_image(
                 sync_status = "sync_failed"
                 
     except Exception as e:
-        print(f"[Upload] Warning: Could not sync to providers: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.warning("upload_provider_sync_failed", error=str(e), exc_info=True)
         sync_status = "sync_failed"
     
-    print(f"[Upload] Image {unique_name}: synced to {synced_count} providers, {failed_count} failed")
+    logger.info("upload_complete", filename=unique_name, synced=synced_count, failed=failed_count)
     
     return {
         "status": "success",
@@ -799,14 +798,14 @@ async def upload_mask_image(
                         ) as response:
                             if response.status == 200:
                                 synced_count += 1
-                                print(f"[Upload] ✓ Synced mask {mask_filename} to provider {provider_id}")
+                                logger.info("upload_mask_synced", filename=mask_filename, provider_id=provider_id)
                     except Exception as e:
-                        print(f"[Upload] Warning: Failed to sync mask to provider {provider_id}: {e}")
+                        logger.warning("upload_mask_sync_error", provider_id=provider_id, error=str(e))
             
             if synced_count > 0:
                 sync_status = "synced"
     except Exception as e:
-        print(f"[Upload] Warning: Could not sync mask to providers: {e}")
+        logger.warning("upload_mask_provider_sync_failed", error=str(e))
     
     return {
         "status": "success",
@@ -838,7 +837,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                 try:
                     local_path = get_safe_path(OUTPUT_DIR, filename)
                 except HTTPException:
-                    print(f"[Delete] Security warning: Attempt to delete file outside output dir: {filename}")
+                    logger.warning("delete_path_traversal_blocked", filename=filename, directory="output")
                     continue
                 
                 if not os.path.exists(local_path):
@@ -850,13 +849,13 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                     if matches:
                         local_path = matches[0]
                     else:
-                        print(f"[Delete] File not found: {filename}")
+                        logger.info("delete_file_not_found", filename=filename)
                         continue
                 
                 if os.path.exists(local_path):
                     try:
                         os.remove(local_path)
-                        print(f"[Delete] Removed: {local_path}")
+                        logger.info("delete_file_removed", path=local_path)
                         
                         # Also remove metadata sidecar if exists
                         meta_path = f"{local_path}.json"
@@ -871,14 +870,14 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                             
                         success_count += 1
                     except Exception as e:
-                        print(f"[Delete] Failed to delete {filename}: {e}")
+                        logger.warning("delete_file_failed", filename=filename, error=str(e))
             else:
                 # Handle model files
                 try:
                     target_dir = os.path.join(CACHE_DIR, req.directory)
                     model_path = get_safe_path(target_dir, filename)
                 except HTTPException:
-                    print(f"[Delete] Security warning: Attempt to delete file outside model dir: {filename}")
+                    logger.warning("delete_path_traversal_blocked", filename=filename, directory="models")
                     continue
 
                 if os.path.exists(model_path):
@@ -886,7 +885,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         os.remove(model_path)
                         success_count += 1
                     except Exception as e:
-                        print(f"Failed to delete {filename}: {e}")
+                        logger.warning("delete_file_failed", filename=filename, error=str(e))
         
         return {"status": "success", "deleted": success_count, "total": len(req.files)}
         

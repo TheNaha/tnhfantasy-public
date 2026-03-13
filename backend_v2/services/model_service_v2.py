@@ -182,7 +182,7 @@ class ModelServiceV2:
             components = AURAFLOW_DEFAULT_COMPONENTS
             model_type = "AuraFlow"
         
-        print(f"[ModelService] {model_type} model detected - creating dependency entries")
+        logger.info("dependency_model_detected", model_type=model_type)
         
         # Create database entries for each dependency and trigger downloads
         models_to_download = []
@@ -236,14 +236,14 @@ class ModelServiceV2:
                             existing_model = self.repo.get_model(version.model_id)
                             if existing_model:
                                 models_to_download.append(existing_model)
-                                print(f"[ModelService] Re-syncing existing dependency: {filename}")
+                                logger.debug("dependency_resync", filename=filename)
         
         # Now trigger downloads for all models (new and existing that need re-sync)
         for model in models_to_download:
-            print(f"[ModelService] Triggering download for dependency: {model.name}")
+            logger.info("dependency_download_triggered", model_name=model.name)
             await self.trigger_download_to_providers(model.id)
         
-        print(f"[ModelService] ✓ Triggered downloads for {len(models_to_download)} dependencies for {model_type}")
+        logger.info("dependency_downloads_complete", count=len(models_to_download), model_type=model_type)
         
         return {
             "triggered": True,
@@ -348,7 +348,7 @@ class ModelServiceV2:
                                     storage_path=storage_path
                                 )
                     except Exception as e:
-                        print(f"[ModelService] Failed to trigger download to {provider.id}: {e}")
+                        logger.warning("provider_download_trigger_failed", provider_id=provider.id, error=str(e))
                         results["providers"].append({
                             "provider_id": provider.id,
                             "file_id": file.id,
@@ -416,7 +416,7 @@ class ModelServiceV2:
                                     "status": "not_found"
                                 })
                     except Exception as e:
-                        print(f"[ModelService] Failed to delete from {provider.id}: {e}")
+                        logger.warning("provider_delete_failed", provider_id=provider.id, error=str(e))
                         # Don't fail the whole operation - provider might be offline
                         results["providers"].append({
                             "provider_id": provider.id,
