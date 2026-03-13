@@ -404,7 +404,7 @@ async def delete_model_internal(path: str) -> bool:
                 headers=get_beam_headers(),
             )
             return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 
@@ -418,7 +418,7 @@ async def get_beam_stats():
         try:
             files = await list_models_internal(d)
             count = len(files)
-        except:
+        except Exception:
             count = 0
         stats[d.replace("models/", "")] = count
         total += count

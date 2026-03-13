@@ -126,7 +126,7 @@ class ImageService:
         if blurhash:
             result["blurhash"] = blurhash
         
-        print(f"[ImageService] Saved image: {filename} ({width}x{height})")
+        logger.info("image_saved", filename=filename, width=width, height=height)
         
         return result
     
@@ -162,7 +162,7 @@ class ImageService:
             try:
                 image_data = base64.b64decode(b64_data)
             except Exception as e:
-                print(f"[ImageService] Failed to decode image {i}: {e}")
+                logger.warning("image_decode_failed", index=i, error=str(e))
                 continue
             
             # Save image

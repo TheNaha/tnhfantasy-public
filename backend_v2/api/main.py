@@ -41,7 +41,6 @@ from config import (
 )
 from infrastructure.database import get_session
 from services.job_queue import job_queue
-from services.provider_service import ProviderService
 
 # Import routers
 from api.routes.websocket import ws_manager

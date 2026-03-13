@@ -243,6 +243,7 @@ class TestWorkerBackendUrl:
         assert get_worker_backend_url() == "http://custom-backend:9002"
 
     def test_prefers_settings_override_when_non_default(self, monkeypatch):
+        monkeypatch.setenv("COMFY_WORKER_BACKEND_URL", "http://env-backend:9100")
         monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://env-backend:9100")
         cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://config-backend:9002"}})
 
