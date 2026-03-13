@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { Images } from 'lucide-react';
 
+import ProgressiveImage from '../ProgressiveImage';
+
 /**
  * ImageGroup component displays multiple images from a single job as a stacked effect.
  * Used when a job produces multiple output images.
@@ -40,11 +42,14 @@ const ImageGroup = memo(function ImageGroup({
 
             {/* Primary image */}
             <div className="absolute inset-0 rounded-xl overflow-hidden bg-gray-800">
-                <img
+                {/* ⚡ Bolt: Use ProgressiveImage with shared IntersectionObserver instead of raw <img> to prevent loading hundreds of images outside the viewport and blocking the main thread during scroll */}
+                <ProgressiveImage
+                    blurhash={primaryImage.blurhash}
                     src={getThumbnail(primaryImage)}
+                    medium={getThumbnail(primaryImage)}
                     alt={primaryImage.name}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    loading="lazy"
+                    size="medium"
+                    className="w-full h-full [&>img]:object-cover [&>img]:transition-transform [&>img]:duration-300 group-hover:[&>img]:scale-105"
                 />
             </div>
 
@@ -83,12 +88,15 @@ const ImageGroup = memo(function ImageGroup({
             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                 <div className="grid grid-cols-2 gap-1 p-3 w-full h-full">
                     {images.slice(0, 4).map((img, i) => (
-                        <div key={img.name} className="relative overflow-hidden rounded">
-                            <img
+                        <div key={img.name} className="relative overflow-hidden rounded bg-gray-800">
+                            {/* ⚡ Bolt: Use ProgressiveImage here too to prevent mass eager-loading of hover thumbnails */}
+                            <ProgressiveImage
+                                blurhash={img.blurhash}
                                 src={getThumbnail(img)}
+                                medium={getThumbnail(img)}
                                 alt={img.name}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
+                                size="medium"
+                                className="w-full h-full [&>img]:object-cover"
                             />
                             {i === 3 && count > 4 && (
                                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold">
