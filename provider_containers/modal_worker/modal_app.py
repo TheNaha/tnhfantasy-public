@@ -547,12 +547,18 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
     import requests
     import time
     import math
+    from provider_core.utils import get_safe_path
     
     logger.info(f"[Download] Starting: {path}")
     logger.info(f"[Download] URL: {url[:80]}...")
     
     base_path = "/mnt/data"
-    full_path = os.path.join(base_path, path)
+    try:
+        full_path = get_safe_path(base_path, path)
+    except Exception as e:
+        logger.error(f"[Download] Path traversal blocked: {e}")
+        return {"status": "error", "error": "Invalid path"}
+
     temp_path = full_path + ".downloading"  # Safe temp file
     
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -799,7 +805,12 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
     
     def validate_single_file_in_dir(directory, name):
         """Helper to validate a single file, returns (directory, result)."""
-        target_dir = os.path.join("/mnt/data", directory)
+        from provider_core.utils import get_safe_path
+        try:
+            target_dir = get_safe_path("/mnt/data", directory)
+        except Exception:
+            return None
+
         if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
             return None
             
@@ -916,11 +927,18 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
         
         return {"directory": directory, "type": "valid", "data": model_info}
 
+    from provider_core.utils import get_safe_path
     # Collect all file tasks
     all_file_tasks = []
     
     for directory in directories:
-        target_dir = os.path.join("/mnt/data", directory)
+        try:
+            target_dir = get_safe_path("/mnt/data", directory)
+        except Exception:
+            logger.error(f"[Validate] Path traversal attempt blocked for: {directory}")
+            validation_results["by_directory"][directory] = {"valid": 0, "invalid": 0, "partial": 0}
+            continue
+
         if not os.path.exists(target_dir):
             validation_results["by_directory"][directory] = {"valid": 0, "invalid": 0, "partial": 0}
             continue
