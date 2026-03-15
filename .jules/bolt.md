@@ -13,3 +13,7 @@
 ## 2024-05-19 - Memoize Large Container Components
 **Learning:** Large, conditionally rendered container components (like `GroupedDashboardContent` in a dashboard view) that map over large arrays and render many complex child components (like `JobCard`, `ImageGroup`, `FeedCard`) can cause significant rendering overhead if they are not memoized and their parent component re-renders frequently due to unrelated state changes.
 **Action:** Wrap such components in `React.memo()` to prevent unnecessary re-renders when their props haven't changed.
+
+## 2024-05-30 - O(N²) Performance Bottleneck in Dashboard Item Processing
+**Learning:** Using `Array.prototype.find()` inside a loop over another collection (e.g., matching jobs to images by filename) creates an O(N²) complexity that severely degrades frontend performance as the gallery grows, potentially locking the main thread.
+**Action:** Always pre-compute a Hash Map (e.g., `new Map()`) keyed by the matching property before the loop to achieve O(1) lookups and O(N) overall complexity.

@@ -27,7 +27,12 @@ export function buildDashboardItems(data, activeJobs) {
     activeJobs.forEach((job) => mergedJobs.set(job.id, toJobItem(job)));
 
     const imagesByJobId = new Map();
+    // ⚡ Bolt: Create a hash map for O(1) image lookups by filename to prevent O(N^2) performance degradation on large galleries
+    const imagesByName = new Map();
+
     historicalFiles.forEach((image) => {
+        imagesByName.set(image.name, image);
+
         const jobId = image.metadata?.job_id;
         if (!jobId) {
             return;
@@ -78,7 +83,8 @@ export function buildDashboardItems(data, activeJobs) {
             }
 
             const outputFilename = job.outputs[0];
-            const matchingImage = historicalFiles.find((image) => image.name === outputFilename);
+            // ⚡ Bolt: Use O(1) hash map lookup instead of O(N) array find
+            const matchingImage = imagesByName.get(outputFilename);
             if (matchingImage && !usedImages.has(matchingImage.name)) {
                 combined.push({
                     ...matchingImage,
