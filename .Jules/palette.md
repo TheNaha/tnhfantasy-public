@@ -32,3 +32,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 2. The icons themselves are hidden from screen readers using `aria-hidden="true"`.
 3. Custom indicators (like carousel dots) use `aria-label` to describe their target (e.g., "Go to image 1") and use `aria-pressed="true"` for the currently active state.
 4. All interactive elements have clear focus indicators for keyboard navigation (e.g., `focus-visible:ring-2 focus-visible:ring-blue-500 outline-none`).
+
+## 2024-05-26 - Interactive Divs and Toggle Buttons Accessibility
+**Learning:** Some custom components, like `JobCard`, rely on `div` wrappers with `onClick` handlers but lack native keyboard navigation (`tabIndex`, `onKeyDown`) and semantic roles (`role="button"`). Similarly, action buttons functioning as toggles (e.g., Favorite button in `SelectionToolbar`) frequently omit `aria-pressed` states.
+**Action:** Always assign `role="button"`, `tabIndex={0}`, and `onKeyDown` handlers to `div` elements intended to act as interactive components to support keyboard accessibility. Include proper `aria-label` and `aria-pressed` properties to convey state correctly to screen readers. Include proper focus indicators (like `focus-visible:ring-2 outline-none`) to show the user when the component has focus.

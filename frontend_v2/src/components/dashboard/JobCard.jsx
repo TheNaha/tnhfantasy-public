@@ -44,6 +44,13 @@ const JobCard = memo(function JobCard({ job, onClick }) {
         onClick?.(job);
     }, [onClick, job]);
 
+    const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleClick();
+        }
+    }, [handleClick]);
+
     // Calculate elapsed time
     const getElapsedTime = () => {
         if (!job.created_at) return null;
@@ -59,8 +66,12 @@ const JobCard = memo(function JobCard({ job, onClick }) {
 
     return (
         <div
+            role="button"
+            tabIndex={0}
+            aria-label={`Job ${job.id || ''} - ${job.status}`}
             onClick={handleClick}
-            className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated"
+            onKeyDown={handleKeyDown}
+            className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
         >
             {/* Top Row: Provider + Status */}
             <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-2 z-10">
