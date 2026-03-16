@@ -74,6 +74,7 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                     onClick={() => setIsOpen(!isOpen)}
                     aria-expanded={isOpen}
                     aria-controls={filterPanelId}
+                    aria-label="Toggle filters"
                     className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-colors ${isOpen || activeFilterCount > 0
                         ? 'bg-blue-600 border-blue-500 text-white'
                         : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
