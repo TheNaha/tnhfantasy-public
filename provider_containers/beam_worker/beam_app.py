@@ -744,11 +744,17 @@ async def validate_models(request: Request):
     Checks: minimum size, magic bytes, partial downloads.
     Returns: valid models, invalid models (to redownload), partial downloads (to clean up).
     """
+    from provider_core.utils import get_safe_path
+
     data = await request.json()
     directory = data.get("directory", "models/checkpoints")
     delete_invalid = data.get("delete_invalid", False)  # If True, auto-delete invalid files
     
-    target_dir = os.path.join("/mnt/data", directory)
+    try:
+        target_dir = get_safe_path("/mnt/data", directory)
+    except Exception as e:
+        return {"valid": [], "invalid": [], "partial": [], "total": 0, "error": f"Invalid directory: {e}"}
+
     if not os.path.exists(target_dir):
         return {"valid": [], "invalid": [], "partial": [], "total": 0}
     

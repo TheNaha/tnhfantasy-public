@@ -11,6 +11,11 @@
 3. Use `os.path.abspath(os.path.join(base_dir, clean_path))` to resolve the final path.
 4. Verify the resolved path remains strictly within the intended base directory using `os.path.commonpath([base_path, full_path]) == base_path`.
 
+## 2025-10-26 - [Path Traversal in Provider Worker Apps]
+**Vulnerability:** Found path traversal vulnerabilities in `provider_containers/modal_worker/modal_app.py` and `provider_containers/beam_worker/beam_app.py`.
+**Learning:** External inputs like `path` and `directory` were being passed directly to `os.path.join(base_path, user_input)`. This permitted attackers to use absolute paths or `../` to break out of the intended `/mnt/data` directory and interact with arbitrary files.
+**Prevention:** Always use `get_safe_path(base_path, user_input)` from shared utilities before performing any file system operations (like downloading, validating, or verifying files). Handle the potential exception raised by `get_safe_path` when a malicious path is detected, returning a generic error to the caller without exposing system details or stack traces.
+
 ## 2025-05-18 - [Path Traversal in Model List]
 **Vulnerability:** The API endpoint `GET /api/files?directory=models/{model_type}` passes `model_type` into `os.path.join(CACHE_DIR, "models", model_type)` without path sanitization inside `_scan_local_model_directory`. This allows an attacker to bypass the directory restrictions and list arbitrary directories on the server using `..` like `models/../../../etc`.
 **Learning:** Even if a global `get_safe_path` utility exists in the module, it must be consistently applied to all paths formed from user input, even in background threads/functions like `_scan_local_model_directory` that handle fallback/legacy functionality.
