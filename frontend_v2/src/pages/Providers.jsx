@@ -59,6 +59,15 @@ export default function Providers() {
         enabled: provider.enabled !== undefined ? provider.enabled : true // Default to enabled if not set
     })), [providers, containerStatuses]);
 
+    // ⚡ Bolt: Create an O(1) Hash Map for provider stats to avoid O(N²) lookups during render
+    const providerStatsMap = useMemo(() => {
+        const map = new Map();
+        if (lbStats?.provider_stats) {
+            lbStats.provider_stats.forEach(stat => map.set(stat.id, stat));
+        }
+        return map;
+    }, [lbStats]);
+
     const pageVariants = {
         initial: { opacity: 0, y: 20 },
         animate: { opacity: 1, y: 0 },
@@ -299,8 +308,8 @@ export default function Providers() {
                             onEdit={() => handleEdit(provider)}
                             onDelete={() => handleDelete(provider.id)}
                             onToggleEnabled={handleToggleEnabled}
-                            providerFailures={lbStats?.provider_stats?.find(p => p.id === provider.id)?.failures ?? 0}
-                            jobsAssigned={lbStats?.provider_stats?.find(p => p.id === provider.id)?.jobs_assigned ?? 0}
+                            providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                            jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
                         />
                     ))}
                 </div>
