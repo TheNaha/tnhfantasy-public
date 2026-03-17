@@ -401,8 +401,8 @@ class ComfyUIStable:
         logger.info("[ComfyUIStable] Starting ComfyUI server via comfy-cli...")
         
         # Start ComfyUI in background using comfy launch with Popen
-        cmd = f"comfy launch --background -- --listen 0.0.0.0 --port {self.port}"
-        subprocess.Popen(cmd, shell=True)
+        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
+        subprocess.Popen(cmd)
         
         # Wait for server to be ready
         logger.info("[ComfyUIStable] Waiting for ComfyUI to be ready...")
@@ -452,8 +452,8 @@ class ComfyUISnapshot:
         logger.info("[ComfyUISnapshot] Snapshotting: Starting ComfyUI via comfy-cli...")
         
         # Start ComfyUI in background using comfy launch with Popen
-        cmd = f"comfy launch --background -- --listen 0.0.0.0 --port {self.port}"
-        subprocess.Popen(cmd, shell=True)
+        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
+        subprocess.Popen(cmd)
         
         # Wait for server to be ready
         logger.info("[ComfyUISnapshot] Waiting for ComfyUI to be ready...")
@@ -486,8 +486,8 @@ class ComfyUISnapshot:
             logger.info(f"[ComfyUISnapshot] Failed to re-enable CUDA: {e}")
             # Server might not be running, try to restart it via comfy-cli
             logger.info("[ComfyUISnapshot] Attempting to restart ComfyUI via comfy-cli...")
-            cmd = f"comfy launch --background -- --listen 0.0.0.0 --port {self.port}"
-            subprocess.Popen(cmd, shell=True)
+            cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
+            subprocess.Popen(cmd)
             
             for i in range(60):
                 try:
