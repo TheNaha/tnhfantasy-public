@@ -2,7 +2,7 @@
  * Provider Management Component
  * UI for configuring serverless providers (Modal, Beam, RunPod)
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Plus, Settings, Trash2, Power, PowerOff, Edit2,
@@ -37,6 +37,15 @@ export default function ProviderManagement() {
     useEffect(() => {
         connectProviders();
     }, [connectProviders]);
+
+    // ⚡ Bolt: Create an O(1) Hash Map for provider stats to avoid O(N²) lookups during render
+    const providerStatsMap = useMemo(() => {
+        const map = new Map();
+        if (lbStats?.provider_stats) {
+            lbStats.provider_stats.forEach(stat => map.set(stat.id, stat));
+        }
+        return map;
+    }, [lbStats]);
 
     const deployModalApp = async (providerId) => {
         try {
@@ -361,9 +370,9 @@ export default function ProviderManagement() {
                                 )}
                             </div>
 
-                            {lbStats?.provider_stats?.find((item) => item.id === provider.id)?.failures > 0 && (
+                            {providerStatsMap.get(provider.id)?.failures > 0 && (
                                 <div className="mt-4 px-5 py-3 bg-orange-500/15 border-l-4 border-orange-500 rounded-lg text-orange-400 text-sm font-medium">
-                                    ⚠️ {lbStats.provider_stats.find((item) => item.id === provider.id).failures} consecutive failures
+                                    ⚠️ {providerStatsMap.get(provider.id).failures} consecutive failures
                                 </div>
                             )}
                         </motion.div>
