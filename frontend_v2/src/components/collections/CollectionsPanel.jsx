@@ -114,10 +114,12 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                                             ? 'bg-gray-800 border-blue-500'
                                             : 'bg-gray-800/50 border-gray-700 hover:border-gray-600'
                                             }`}
+                                        aria-label="View all images"
+                                        aria-pressed={!activeCollection}
                                     >
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded bg-gray-700 flex items-center justify-center">
-                                                <FolderOpen size={20} className="text-gray-400" />
+                                                <FolderOpen size={20} className="text-gray-400" aria-hidden="true" />
                                             </div>
                                             <div>
                                                 <div className="font-medium text-white">All Images</div>
@@ -194,15 +196,17 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                                                         onClick={(e) => startEdit(collection, e)}
                                                         className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white"
                                                         title="Rename"
+                                                        aria-label={`Rename collection ${collection.name}`}
                                                     >
-                                                        <Edit2 size={14} />
+                                                        <Edit2 size={14} aria-hidden="true" />
                                                     </button>
                                                     <button
                                                         onClick={(e) => handleDelete(collection.id, e)}
                                                         className="p-1.5 hover:bg-red-900/50 rounded text-gray-400 hover:text-red-400"
                                                         title="Delete"
+                                                        aria-label={`Delete collection ${collection.name}`}
                                                     >
-                                                        <Trash2 size={14} />
+                                                        <Trash2 size={14} aria-hidden="true" />
                                                     </button>
                                                 </div>
                                             </div>

@@ -32,8 +32,9 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
                                 <button
                                     onClick={onClose}
                                     className="p-2 hover:bg-gray-700/50 rounded-full text-gray-400 hover:text-white transition-colors"
+                                    aria-label="Close modal"
                                 >
-                                    <X size={20} />
+                                    <X size={20} aria-hidden="true" />
                                 </button>
                             </div>
                             <p className="text-sm text-gray-400 mt-2">
@@ -52,6 +53,7 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
                                             onClose();
                                         }}
                                         className="w-full p-4 rounded-lg border border-gray-700 hover:border-gray-600 bg-gray-800/50 hover:bg-gray-800 transition-all text-left group"
+                                        aria-label={`Select collection ${collection.name}`}
                                     >
                                         <div className="flex items-center gap-3">
                                             {/* Thumbnail or Icon */}

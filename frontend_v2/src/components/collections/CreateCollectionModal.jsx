@@ -51,8 +51,9 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
                                 <button
                                     onClick={onClose}
                                     className="p-2 hover:bg-gray-700/50 rounded-full text-gray-400 hover:text-white transition-colors"
+                                    aria-label="Close modal"
                                 >
-                                    <X size={20} />
+                                    <X size={20} aria-hidden="true" />
                                 </button>
                             </div>
                         </div>
@@ -90,6 +91,8 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
                                                     : 'hover:scale-105'
                                                 }`}
                                             style={{ backgroundColor: c }}
+                                            aria-label={`Select color ${c}`}
+                                            aria-pressed={color === c}
                                         />
                                     ))}
                                 </div>
