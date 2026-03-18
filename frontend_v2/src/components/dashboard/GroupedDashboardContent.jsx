@@ -79,6 +79,7 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                     className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
                     title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                     aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-pressed={isFavorite}
                 >
                     <Star
                         size={16}

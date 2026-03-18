@@ -115,6 +115,8 @@ export default function ProviderCard({
                         onClick={() => onToggleEnabled?.(provider.id, provider.enabled)}
                         className="p-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-lg text-gray-300 hover:text-white transition-colors"
                         title={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
+                        aria-label={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
+                        aria-pressed={provider.enabled}
                     >
                         {provider.enabled ? <Power size={14} /> : <PowerOff size={14} />}
                     </button>
@@ -124,6 +126,7 @@ export default function ProviderCard({
                         onClick={() => onEdit?.(provider)}
                         className="p-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-lg text-gray-300 hover:text-white transition-colors"
                         title="Edit Provider"
+                        aria-label="Edit Provider"
                     >
                         <Edit2 size={14} />
                     </button>
@@ -133,6 +136,7 @@ export default function ProviderCard({
                         onClick={() => onDelete?.(provider.id)}
                         className="p-2 bg-gray-700/50 hover:bg-red-500/20 border border-gray-600 hover:border-red-500/50 rounded-lg text-gray-300 hover:text-red-400 transition-colors"
                         title="Delete Provider"
+                        aria-label="Delete Provider"
                     >
                         <Trash2 size={14} />
                     </button>
