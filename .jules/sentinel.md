@@ -36,3 +36,8 @@
 **Vulnerability:** The `list_models` internal provider methods for `ModalProvider` and `BeamProvider` passed the user-provided `directory` string directly into the worker proxy URL (`f"{self.worker_url}/list-models?directory={directory}"`) without URL encoding.
 **Learning:** Internal service-to-service calls must rigorously encode dynamically substituted path and query parameters, particularly when proxying external user inputs to avoid Parameter Injection/SSRF on internal networks. Unencoded characters (like `&` and `=`) allow attackers to manipulate queries to upstream services.
 **Prevention:** Ensure that all dynamically injected query parameters to downstream services are properly encoded using `urllib.parse.quote(param, safe='')`.
+
+## 2025-02-29 - [Command Injection Risk via shell=True]
+**Vulnerability:** The application used `subprocess.Popen(..., shell=True)` to launch the ComfyUI server in `modal_app.py` and `beam_app.py`.
+**Learning:** Using `shell=True` allows the shell to interpret the command string, which can lead to command injection if any part of the command string is user-controlled. Even if the current usage seems safe (e.g., interpolating an integer port), it's a dangerous pattern that should be avoided.
+**Prevention:** Always pass arguments to `subprocess.Popen` as a list of strings and omit `shell=True` (which defaults to `False`). This ensures the command and its arguments are passed directly to the OS, bypassing the shell and eliminating the risk of command injection.

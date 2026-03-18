@@ -124,8 +124,8 @@ def _ensure_comfyui_running():
         pass
     
     print("[ComfyUI] Starting server via comfy-cli...")
-    cmd = f"comfy launch --background -- --listen 0.0.0.0 --port {_comfy_port}"
-    _comfy_process = subprocess.Popen(cmd, shell=True)
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(_comfy_port)]
+    _comfy_process = subprocess.Popen(cmd)
     
     print("[ComfyUI] Waiting for server to be ready...")
     for i in range(120):
