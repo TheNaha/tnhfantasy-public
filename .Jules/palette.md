@@ -36,3 +36,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-26 - Interactive Divs and Toggle Buttons Accessibility
 **Learning:** Some custom components, like `JobCard`, rely on `div` wrappers with `onClick` handlers but lack native keyboard navigation (`tabIndex`, `onKeyDown`) and semantic roles (`role="button"`). Similarly, action buttons functioning as toggles (e.g., Favorite button in `SelectionToolbar`) frequently omit `aria-pressed` states.
 **Action:** Always assign `role="button"`, `tabIndex={0}`, and `onKeyDown` handlers to `div` elements intended to act as interactive components to support keyboard accessibility. Include proper `aria-label` and `aria-pressed` properties to convey state correctly to screen readers. Include proper focus indicators (like `focus-visible:ring-2 outline-none`) to show the user when the component has focus.
+
+## 2025-03-16 - Hidden Text in Responsive Buttons
+**Learning:** Responsive designs often hide text labels on smaller screens to save space (e.g., `<span className="hidden sm:inline">Filters</span>`). This practice inadvertently removes the accessible name for screen reader users on mobile devices if the button only contains an icon visually and the text is hidden using CSS like `display: none` (which `hidden` in Tailwind applies).
+**Action:** Whenever text inside a button is conditionally hidden using CSS media queries, explicitly provide an `aria-label` to the `<button>` element to guarantee a persistent accessible name across all device sizes.
