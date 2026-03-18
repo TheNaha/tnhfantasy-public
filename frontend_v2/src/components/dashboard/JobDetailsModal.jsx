@@ -3,7 +3,10 @@ import { X, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ConfirmationModal from '../ConfirmationModal';
 
-export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
+import { memo } from 'react';
+
+// ⚡ Bolt: Wrap JobDetailsModal in React.memo to prevent unnecessary re-renders when parent Dashboard updates
+export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
     const [confirmAction, setConfirmAction] = useState(null);
     const [confirmConfig, setConfirmConfig] = useState(null);
 
@@ -316,4 +319,4 @@ export default function JobDetailsModal({ job, onClose, onCancel, onDelete, onRe
             />
         </div>
     );
-}
+});

@@ -1,7 +1,10 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Download, Star, Plus, X, Trash2 } from 'lucide-react';
 
-export default function SelectionToolbar({
+import { memo } from 'react';
+
+// ⚡ Bolt: Wrap SelectionToolbar in React.memo to prevent unnecessary re-renders when parent Dashboard updates
+export default memo(function SelectionToolbar({
     selectedFiles,
     onDownload,
     onDelete,
@@ -89,4 +92,4 @@ export default function SelectionToolbar({
             </motion.div>
         </AnimatePresence>
     );
-}
+});

@@ -2,7 +2,10 @@ import { useState, useCallback, useEffect } from 'react';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 
-export default function ImageLightbox({
+import { memo } from 'react';
+
+// ⚡ Bolt: Wrap ImageLightbox in React.memo to prevent unnecessary re-renders when parent Dashboard updates
+export default memo(function ImageLightbox({
     image,
     images = [], // Array of images for carousel navigation
     currentIndex = 0, // Current index in the carousel
@@ -277,4 +280,4 @@ export default function ImageLightbox({
             </div>
         </div>
     );
-}
+});
