@@ -40,3 +40,10 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2025-03-16 - Hidden Text in Responsive Buttons
 **Learning:** Responsive designs often hide text labels on smaller screens to save space (e.g., `<span className="hidden sm:inline">Filters</span>`). This practice inadvertently removes the accessible name for screen reader users on mobile devices if the button only contains an icon visually and the text is hidden using CSS like `display: none` (which `hidden` in Tailwind applies).
 **Action:** Whenever text inside a button is conditionally hidden using CSS media queries, explicitly provide an `aria-label` to the `<button>` element to guarantee a persistent accessible name across all device sizes.
+
+## 2026-03-18 - Missing ARIA Labels on Modals and Icon Buttons
+**Learning:** Custom UI panels and modals (such as the CollectionsPanel, SelectCollectionModal, and CreateCollectionModal) often utilize icon-only buttons for critical actions (e.g., "Rename", "Delete", "Close"). Using only `title` attributes on these buttons is insufficient for comprehensive screen reader support. Moreover, selection grids (like color pickers or collection lists) built with `<button>` elements require explicit `aria-label` and `aria-pressed` states to communicate their purpose and active status accurately.
+**Action:** When creating or updating custom modals, panels, and selection grids:
+1. Ensure all icon-only buttons (including modal close buttons and action toggles) have descriptive `aria-label` attributes.
+2. Hide purely decorative icons from screen readers using `aria-hidden="true"`.
+3. For selection grids, use `aria-label` to describe the option and `aria-pressed` to indicate selection state, instead of relying purely on visual cues like styling differences.
