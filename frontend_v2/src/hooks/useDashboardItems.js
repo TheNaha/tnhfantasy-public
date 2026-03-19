@@ -23,13 +23,15 @@ export function useDashboardItems({
     const displayedItems = useMemo(() => {
         let items = allItems;
 
+        // ⚡ Bolt: Pre-compute Set for O(1) lookups to prevent O(N^2) complexity during filtering
         if (activeCollection && collections[activeCollection]) {
-            const collectionImages = collections[activeCollection].images;
-            items = items.filter((item) => item.type === 'image' && collectionImages.includes(item.name));
+            const collectionImagesSet = new Set(collections[activeCollection].images);
+            items = items.filter((item) => item.type === 'image' && collectionImagesSet.has(item.name));
         }
 
         if (showFavorites) {
-            items = items.filter((item) => item.type === 'image' && favorites.includes(item.name));
+            const favoritesSet = new Set(favorites);
+            items = items.filter((item) => item.type === 'image' && favoritesSet.has(item.name));
         }
 
         return items;

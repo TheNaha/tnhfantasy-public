@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Image as ImageIcon, Loader2, Trash2, RefreshCw, Check, LayoutGrid, List, Square, Star, FolderOpen, BarChart3, LineChart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -41,7 +41,7 @@ export default function Dashboard() {
     const settings = useSettings();
     // Global State - now uses WebSocket for real-time updates
     const { connect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
-    const { favorites, toggleFavorite, isFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
+    const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
@@ -94,14 +94,20 @@ export default function Dashboard() {
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState(new Set());
     const [showComparison, setShowComparison] = useState(false);
+
+    // ⚡ Bolt: Pre-compute a Set of favorites to prevent O(N*M) performance degradation during rendering
+    // when calling `isFavorite` for every item in large galleries.
+    const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
+    const fastIsFavorite = useCallback((filename) => favoritesSet.has(filename), [favoritesSet]);
+
     // Stable handler for toggling favorite
     const handleToggleFavorite = useCallback((filename) => {
         toggleFavorite(filename);
         toast.success(
-            isFavorite(filename) ? "Removed from favorites" : "Added to favorites",
-            { icon: isFavorite(filename) ? '*' : '*' }
+            fastIsFavorite(filename) ? "Removed from favorites" : "Added to favorites",
+            { icon: fastIsFavorite(filename) ? '*' : '*' }
         );
-    }, [toggleFavorite, isFavorite]);
+    }, [toggleFavorite, fastIsFavorite]);
 
     // Stable handler for job click
     const handleJobClick = useCallback((job) => {
@@ -578,7 +584,7 @@ export default function Dashboard() {
                             selectionMode={selectionMode}
                             selectedFiles={selectedFiles}
                             onToggleSelection={toggleSelection}
-                            isFavorite={isFavorite}
+                            isFavorite={fastIsFavorite}
                             onToggleFavorite={handleToggleFavorite}
                         />
                     ) : (
@@ -592,7 +598,7 @@ export default function Dashboard() {
                             handleJobClick={handleJobClick}
                             handleImageClick={handleImageClick}
                             toggleSelection={toggleSelection}
-                            isFavorite={isFavorite}
+                            isFavorite={fastIsFavorite}
                             handleToggleFavorite={handleToggleFavorite}
                             handleDelete={handleDelete}
                         />
