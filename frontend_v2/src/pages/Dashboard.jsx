@@ -36,7 +36,6 @@ import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
 
 export default function Dashboard() {
-
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const settings = useSettings();
@@ -63,6 +62,23 @@ export default function Dashboard() {
         selectImage,
         closeSelectedImage,
     } = useSelectedImageState();
+
+    const handleLightboxNavigate = useCallback((newIndex) => {
+        if (selectedImage?.siblingImages?.[newIndex]) {
+            selectImage({
+                ...selectedImage.siblingImages[newIndex],
+                siblingImages: selectedImage.siblingImages,
+                associatedJob: selectedImage.associatedJob
+            });
+        }
+    }, [selectImage, selectedImage]);
+
+    const handleJobDetailsClose = useCallback(() => setSelectedJobId(null), [setSelectedJobId]);
+
+    const lightboxImages = React.useMemo(() => {
+        if (!selectedImage) return [];
+        return selectedImage.siblingImages || [selectedImage];
+    }, [selectedImage]);
 
 
     // Filters
@@ -598,22 +614,14 @@ export default function Dashboard() {
             {selectedImage && (
                 <ImageLightbox
                     image={selectedImage}
-                    images={selectedImage.siblingImages || [selectedImage]}
+                    images={lightboxImages}
                     currentIndex={selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) || 0}
-                    onNavigate={(newIndex) => {
-                        if (selectedImage.siblingImages?.[newIndex]) {
-                            selectImage({
-                                ...selectedImage.siblingImages[newIndex],
-                                siblingImages: selectedImage.siblingImages,
-                                associatedJob: selectedImage.associatedJob
-                            });
-                        }
-                    }}
+                    onNavigate={handleLightboxNavigate}
                     metadata={metadata}
                     loadingMeta={loadingMeta}
                     job={selectedImage.associatedJob}
                     onClose={closeSelectedImage}
-                    onDelete={(name) => handleDelete(name)}
+                    onDelete={handleDelete}
                     onReuseParameters={useParameters}
                 />
             )}
@@ -622,7 +630,7 @@ export default function Dashboard() {
             {selectedJob && (
                 <JobDetailsModal
                     job={selectedJob}
-                    onClose={() => setSelectedJobId(null)}
+                    onClose={handleJobDetailsClose}
                     onCancel={cancelJob}
                     onDelete={deleteJob}
                     onRetry={retryJob}
