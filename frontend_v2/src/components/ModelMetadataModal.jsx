@@ -1,6 +1,7 @@
 import { X, Copy, Check, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 import { copyToClipboard } from '../utils/clipboard';
 
 function ModelMetadataHeader({
@@ -208,7 +209,7 @@ export default function ModelMetadataModal({ metadata, onClose }) {
                                 <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Model Description</h3>
                                 <div
                                     className="prose prose-invert prose-sm max-w-none text-gray-300 bg-gray-950/30 p-4 rounded-xl border border-gray-800/50 break-words max-h-40 overflow-y-auto overflow-x-hidden select-text cursor-text [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_pre]:text-xs [&_code]:break-all [&_code]:text-xs"
-                                    dangerouslySetInnerHTML={{ __html: description }}
+                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(description) }}
                                 />
                             </div>
                         )}
@@ -219,7 +220,7 @@ export default function ModelMetadataModal({ metadata, onClose }) {
                                 <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Version Notes</h3>
                                 <div
                                     className="prose prose-invert prose-sm max-w-none text-gray-300 bg-blue-950/20 p-4 rounded-xl border border-blue-800/30 break-words max-h-40 overflow-y-auto overflow-x-hidden select-text cursor-text [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_pre]:text-xs [&_code]:break-all [&_code]:text-xs"
-                                    dangerouslySetInnerHTML={{ __html: metadata.version_description }}
+                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(metadata.version_description) }}
                                 />
                             </div>
                         )}
