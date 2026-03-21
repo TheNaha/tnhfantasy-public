@@ -634,7 +634,13 @@ async def list_models(request: Request):
     data = await request.json()
     directory = data.get("directory", "models/checkpoints")
     
-    target_dir = os.path.join("/mnt/data", directory)
+    from provider_core.utils import get_safe_path
+    try:
+        target_dir = get_safe_path("/mnt/data", directory)
+    except Exception:
+        print(f"[ListModels] Path traversal blocked: {directory}")
+        return {"files": []}
+
     if not os.path.exists(target_dir):
         return {"files": []}
         

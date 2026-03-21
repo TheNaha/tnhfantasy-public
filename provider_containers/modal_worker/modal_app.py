@@ -714,7 +714,13 @@ def list_models_with_metadata(directory: str):
     import json
     
     base_path = "/mnt/data"
-    target_dir = os.path.join(base_path, directory)
+    from provider_core.utils import get_safe_path
+
+    try:
+        target_dir = get_safe_path(base_path, directory)
+    except Exception:
+        logger.warning(f"[ListModels] Path traversal blocked: {directory}")
+        return []
     
     if not os.path.exists(target_dir):
         return []
