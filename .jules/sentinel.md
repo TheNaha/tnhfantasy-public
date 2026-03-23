@@ -41,6 +41,11 @@
 **Vulnerability:** The application used `subprocess.Popen(..., shell=True)` to launch the ComfyUI server in `modal_app.py` and `beam_app.py`.
 **Learning:** Using `shell=True` allows the shell to interpret the command string, which can lead to command injection if any part of the command string is user-controlled. Even if the current usage seems safe (e.g., interpolating an integer port), it's a dangerous pattern that should be avoided.
 **Prevention:** Always pass arguments to `subprocess.Popen` as a list of strings and omit `shell=True` (which defaults to `False`). This ensures the command and its arguments are passed directly to the OS, bypassing the shell and eliminating the risk of command injection.
+
+## 2025-03-21 - [Path Traversal in Model Listing]
+**Vulnerability:** The `list_models_with_metadata` and `list_models` functions in `modal_app.py` and `beam_app.py` respectively were vulnerable to path traversal. They directly concatenated user-provided `directory` input with the base path using `os.path.join()`.
+**Learning:** While other methods in these files properly used `get_safe_path()`, these list endpoints were missed, demonstrating that every single endpoint that handles file paths must be secured. `os.path.join()` is fundamentally unsafe for joining trusted base paths with untrusted user input because absolute paths or `../` in the user input can escape the base directory.
+**Prevention:** Always use a utility like `get_safe_path()` that explicitly checks for and prevents path traversal (e.g., by checking `os.path.commonpath()`) instead of relying on standard path joining functions when dealing with user input.
 ## 2025-02-14 - Fix Cross-Site Scripting (XSS) in HTML rendering
 **Vulnerability:** Arbitrary external HTML from API responses (such as model descriptions and version notes) was rendered directly into the DOM using `dangerouslySetInnerHTML` without sanitization. This allowed any script embedded in those third-party inputs to execute in the user's browser.
 **Learning:** `dangerouslySetInnerHTML` passes raw HTML directly to the browser. Any text containing `<script>` or event handlers (like `onerror`) can execute arbitrary code. React's default XSS protection does not apply when explicitly using `dangerouslySetInnerHTML`.
