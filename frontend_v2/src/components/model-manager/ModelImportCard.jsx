@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Download, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 import { api } from '../../api';
 
 export default function ModelImportCard({ model, onCancel }) {
@@ -112,7 +113,7 @@ export default function ModelImportCard({ model, onCancel }) {
                             {model.type}
                         </span>
                     </div>
-                    <p className="text-gray-400 text-sm mt-2 line-clamp-3" dangerouslySetInnerHTML={{ __html: model.description }}></p>
+                    <p className="text-gray-400 text-sm mt-2 line-clamp-3" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(model.description) }}></p>
                 </div>
 
                 <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700 space-y-3">
