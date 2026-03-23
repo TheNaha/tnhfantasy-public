@@ -11,16 +11,18 @@ from api.routes import jobs, providers, health, files, downloads, settings as se
 from api.routes import models_v2, prompts, collections
 from api.routes import worker_ws, kaggle
 from api.routes.websocket import socket_app
-from config import settings
+from config import settings, get_cors_origins
 from infrastructure.logging import api_logger
 from infrastructure.metrics import metrics
 
 
 def configure_app(app: FastAPI):
+    cors_origins = get_cors_origins()
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials="*" not in cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
