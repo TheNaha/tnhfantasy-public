@@ -17,3 +17,7 @@
 ## 2024-05-30 - O(N²) Performance Bottleneck in Dashboard Item Processing
 **Learning:** Using `Array.prototype.find()` inside a loop over another collection (e.g., matching jobs to images by filename) creates an O(N²) complexity that severely degrades frontend performance as the gallery grows, potentially locking the main thread.
 **Action:** Always pre-compute a Hash Map (e.g., `new Map()`) keyed by the matching property before the loop to achieve O(1) lookups and O(N) overall complexity.
+
+## 2024-06-05 - Hidden O(N²) Loop in Array Searches for Duplicate Prevention
+**Learning:** Using `Array.prototype.find()` inside an array iteration (e.g. processing dashboard items) to check if an item was already added creates a hidden O(N²) performance bottleneck. When the logic already maintains a `Set` (e.g., `usedJobIds`) to prevent duplicate processing, the `.find` call is guaranteed to fail (returning `undefined`), making the O(N) scan completely redundant and purely wasteful.
+**Action:** Trust your existing `Set` or `Map` data structures. If a `Set` guarantees an item hasn't been processed, remove any subsequent `.find()` checks for that item in the result array, transforming O(N²) complexity into O(N).
