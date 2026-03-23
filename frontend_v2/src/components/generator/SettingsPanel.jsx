@@ -73,9 +73,9 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
                         <div className="flex justify-between items-center">
                             <label className="text-xs font-medium text-gray-500 uppercase">Resolution</label>
                             <div className="flex gap-2">
-                                <button onClick={() => setResolution(512, 512)} className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">512x512</button>
-                                <button onClick={() => setResolution(768, 768)} className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">768x768</button>
-                                <button onClick={() => setResolution(1024, 1024)} className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">1024x1024</button>
+                                <button onClick={() => setResolution(512, 512)} aria-label="Set resolution to 512 by 512" className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">512x512</button>
+                                <button onClick={() => setResolution(768, 768)} aria-label="Set resolution to 768 by 768" className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">768x768</button>
+                                <button onClick={() => setResolution(1024, 1024)} aria-label="Set resolution to 1024 by 1024" className="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">1024x1024</button>
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
