@@ -45,8 +45,9 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                         }`}
                     title={prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}
                     aria-label={prompt.favorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-pressed={prompt.favorite}
                 >
-                    <Star size={18} fill={prompt.favorite ? 'currentColor' : 'none'} />
+                    <Star size={18} fill={prompt.favorite ? 'currentColor' : 'none'} aria-hidden="true" />
                 </button>
             </div>
 
@@ -109,7 +110,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                     title={isCopied ? "Copied!" : "Copy to clipboard"}
                     aria-label={isCopied ? "Copied!" : "Copy to clipboard"}
                 >
-                    {isCopied ? <Check size={16} /> : <Copy size={16} />}
+                    {isCopied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
                 </button>
                 <button
                     onClick={() => onEdit(prompt)}
@@ -117,7 +118,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                     title="Edit prompt"
                     aria-label="Edit prompt"
                 >
-                    <Edit2 size={16} />
+                    <Edit2 size={16} aria-hidden="true" />
                 </button>
                 <button
                     onClick={() => onDelete(prompt.id)}
@@ -125,7 +126,7 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
                     title="Delete prompt"
                     aria-label="Delete prompt"
                 >
-                    <Trash2 size={16} />
+                    <Trash2 size={16} aria-hidden="true" />
                 </button>
             </div>
 
