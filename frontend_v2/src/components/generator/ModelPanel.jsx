@@ -44,8 +44,9 @@ export default function ModelPanel({ checkpoints, vaeModels, embeddingModels }) 
                         onClick={() => setViewingMetadata(selectedCheckpoint.metadata)}
                         className="p-3 bg-gray-800/80 rounded-lg border border-gray-700 text-gray-400 hover:text-blue-300 hover:border-blue-500/50 transition-all mb-[1px]"
                         title="View Model Details"
+                        aria-label="View Model Details"
                     >
-                        <Info size={20} />
+                        <Info size={20} aria-hidden="true" />
                     </button>
                 )}
             </div>
@@ -141,11 +142,11 @@ export default function ModelPanel({ checkpoints, vaeModels, embeddingModels }) 
                                             value={lora.strength}
                                             onChange={(e) => updateLora(idx, 'strength', parseFloat(e.target.value))}
                                         />
-                                        <button onClick={() => setViewingMetadata(lora.metadata)} className="text-gray-400 hover:text-blue-300 p-2 bg-gray-800 rounded-lg border border-gray-700 ml-2 transition-colors" title="View Metadata">
-                                            <Info size={16} />
+                                        <button onClick={() => setViewingMetadata(lora.metadata)} className="text-gray-400 hover:text-blue-300 p-2 bg-gray-800 rounded-lg border border-gray-700 ml-2 transition-colors" title="View Metadata" aria-label="View Metadata">
+                                            <Info size={16} aria-hidden="true" />
                                         </button>
-                                        <button onClick={() => removeLora(idx)} className="text-red-400 hover:text-red-300 p-2 bg-gray-800 rounded-lg border border-gray-700 ml-2 transition-colors">
-                                            <Trash2 size={16} />
+                                        <button onClick={() => removeLora(idx)} className="text-red-400 hover:text-red-300 p-2 bg-gray-800 rounded-lg border border-gray-700 ml-2 transition-colors" title="Remove LoRA" aria-label="Remove LoRA">
+                                            <Trash2 size={16} aria-hidden="true" />
                                         </button>
                                     </div>
                                 </div>
