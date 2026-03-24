@@ -98,7 +98,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                 {runningJobs.map((job) => (
                                     <div
                                         key={job.id}
-                                        className="relative h-full bg-gray-700 flex items-center justify-center cursor-pointer min-w-[60px] overflow-hidden"
+                                        className="relative h-full bg-gray-700 flex items-center justify-center cursor-pointer min-w-[60px] flex-1 overflow-hidden"
                                         onClick={() => onJobClick?.(job.id)}
                                         title={job.prompt || 'Running...'}
                                     >
@@ -119,7 +119,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                 {pendingJobs.map((job) => (
                                     <div
                                         key={job.id}
-                                        className="h-full bg-gray-700 border-l-2 border-gray-600 flex items-center justify-center cursor-pointer hover:bg-gray-600 transition-colors min-w-[50px]"
+                                        className="h-full bg-gray-700 border-l-2 border-gray-600 flex items-center justify-center cursor-pointer hover:bg-gray-600 transition-colors min-w-[50px] flex-1"
                                         onClick={() => onJobClick?.(job.id)}
                                         title={job.prompt || 'Pending...'}
                                     >
