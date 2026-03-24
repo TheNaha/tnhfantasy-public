@@ -21,3 +21,7 @@
 ## 2024-06-05 - Hidden O(N²) Loop in Array Searches for Duplicate Prevention
 **Learning:** Using `Array.prototype.find()` inside an array iteration (e.g. processing dashboard items) to check if an item was already added creates a hidden O(N²) performance bottleneck. When the logic already maintains a `Set` (e.g., `usedJobIds`) to prevent duplicate processing, the `.find` call is guaranteed to fail (returning `undefined`), making the O(N) scan completely redundant and purely wasteful.
 **Action:** Trust your existing `Set` or `Map` data structures. If a `Set` guarantees an item hasn't been processed, remove any subsequent `.find()` checks for that item in the result array, transforming O(N²) complexity into O(N).
+
+## 2024-06-12 - O(N²) Bottleneck in State Change Comparisons
+**Learning:** In global store subscriptions (like `useJobStore.subscribe`), comparing large current state arrays against large previous state arrays using `.filter(item => !prevState.items.find(prev => prev.id === item.id))` introduces an O(N * M) performance bottleneck that blocks the main thread on every state update.
+**Action:** Always pre-compute a Hash Set (e.g., `new Set(prevState.items.map(...))`) of the previous state identifiers before the filtering loop. This transforms the O(N * M) comparison into an efficient O(N + M) operation via O(1) `Set.has()` lookups.
