@@ -81,8 +81,9 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
                     <button
                         onClick={onClose}
                         className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors"
+                        aria-label="Close form"
                     >
-                        <X size={20} />
+                        <X size={20} aria-hidden="true" />
                     </button>
                 </div>
 
@@ -207,8 +208,9 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
                                             type="button"
                                             onClick={() => handleRemoveTag(tag)}
                                             className="hover:text-white"
+                                            aria-label={`Remove tag ${tag}`}
                                         >
-                                            <X size={14} />
+                                            <X size={14} aria-hidden="true" />
                                         </button>
                                     </span>
                                 ))}

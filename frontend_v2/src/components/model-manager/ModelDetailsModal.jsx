@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, AlertCircle, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 
 export default function ModelDetailsModal({ file, onClose }) {
     const [activeImage, setActiveImage] = useState(null);
@@ -164,7 +165,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                                     <h3 className="text-sm font-medium text-gray-400 mb-2">Model Description</h3>
                                     <div
                                         className="prose prose-invert prose-sm max-w-none text-gray-300 bg-gray-950/30 p-4 rounded-xl border border-gray-800/50 break-words max-h-40 overflow-y-auto"
-                                        dangerouslySetInnerHTML={{ __html: modelDescription }}
+                                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(modelDescription) }}
                                     />
                                 </div>
                             )}
@@ -177,7 +178,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                                     </h3>
                                     <div
                                         className="prose prose-invert prose-sm max-w-none text-gray-300 bg-blue-950/20 p-4 rounded-xl border border-blue-800/30 break-words max-h-40 overflow-y-auto"
-                                        dangerouslySetInnerHTML={{ __html: versionDescription }}
+                                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(versionDescription) }}
                                     />
                                 </div>
                             )}

@@ -494,6 +494,8 @@ def get_modal_scaledown_window() -> int:
 # API settings
 def get_cors_origins() -> List[str]:
     """Get CORS origins list."""
+    if _env_var_is_set("CORS_ORIGINS"):
+        return settings.cors_origins
     return get_config()["api"]["cors_origins"]
 
 

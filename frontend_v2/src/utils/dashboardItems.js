@@ -111,24 +111,24 @@ export function buildDashboardItems(data, activeJobs) {
 
         const jobId = image.metadata?.job_id;
         if (jobId && !usedJobIds.has(jobId)) {
-            const existingGroup = combined.find((item) => item.type === 'imageGroup' && item.id === `group-${jobId}`);
-            if (!existingGroup) {
-                const groupedImages = imagesByJobId.get(jobId);
-                if (groupedImages && groupedImages.length > 1) {
-                    combined.push({
-                        type: 'imageGroup',
-                        images: groupedImages,
-                        job: null,
-                        date: getLatestDate(groupedImages.map((groupedImage) => groupedImage.date)).toISOString(),
-                        timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
-                        id: `group-${jobId}`,
-                    });
-                    groupedImages.forEach((groupedImage) => usedImages.add(groupedImage.name));
-                    usedJobIds.add(jobId);
-                } else {
-                    combined.push(image);
-                    usedImages.add(image.name);
-                }
+            // ⚡ Bolt: Removed O(N) `combined.find` for `existingGroup` here.
+            // Since `usedJobIds` tracks all processed job IDs, if `!usedJobIds.has(jobId)` is true,
+            // we are guaranteed that `group-${jobId}` does not exist in `combined`.
+            const groupedImages = imagesByJobId.get(jobId);
+            if (groupedImages && groupedImages.length > 1) {
+                combined.push({
+                    type: 'imageGroup',
+                    images: groupedImages,
+                    job: null,
+                    date: getLatestDate(groupedImages.map((groupedImage) => groupedImage.date)).toISOString(),
+                    timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
+                    id: `group-${jobId}`,
+                });
+                groupedImages.forEach((groupedImage) => usedImages.add(groupedImage.name));
+                usedJobIds.add(jobId);
+            } else {
+                combined.push(image);
+                usedImages.add(image.name);
             }
             return;
         }
