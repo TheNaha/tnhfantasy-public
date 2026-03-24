@@ -295,7 +295,7 @@ const FeedCard = memo(function FeedCard({
             aria-label={showDetails ? "Hide Details" : "Show Details"}
             aria-pressed={showDetails}
           >
-            {showDetails ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {showDetails ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
           </button>
           {selectionMode ? (
             <button
@@ -307,7 +307,7 @@ const FeedCard = memo(function FeedCard({
               aria-label={selected ? "Deselect item" : "Select item"}
               aria-pressed={selected}
             >
-              <Check size={18} />
+              <Check size={18} aria-hidden="true" />
             </button>
           ) : (
             <>
@@ -318,7 +318,7 @@ const FeedCard = memo(function FeedCard({
                 title="Reuse Parameters"
                 aria-label="Reuse Parameters"
               >
-                <RefreshCw size={18} />
+                <RefreshCw size={18} aria-hidden="true" />
               </button>
               <a
                 href={imageEndpoint}
@@ -327,7 +327,7 @@ const FeedCard = memo(function FeedCard({
                 title="Download"
                 aria-label="Download"
               >
-                <Download size={18} />
+                <Download size={18} aria-hidden="true" />
               </a>
               <button
                 onClick={(e) => {
@@ -338,7 +338,7 @@ const FeedCard = memo(function FeedCard({
                 title="Delete"
                 aria-label="Delete"
               >
-                <Trash2 size={18} />
+                <Trash2 size={18} aria-hidden="true" />
               </button>
 
               {/* Secondary actions - visible on md+ screens */}
@@ -351,9 +351,9 @@ const FeedCard = memo(function FeedCard({
                   aria-label="Quick Remix (new seed)"
                 >
                   {remixing ? (
-                    <Loader2 size={18} className="animate-spin" />
+                    <Loader2 size={18} className="animate-spin" aria-hidden="true" />
                   ) : (
-                    <Sparkles size={18} />
+                    <Sparkles size={18} aria-hidden="true" />
                   )}
                 </button>
                 <button
@@ -362,7 +362,7 @@ const FeedCard = memo(function FeedCard({
                   title="Use as Img2Img source"
                   aria-label="Use as Img2Img source"
                 >
-                  <ImageIcon size={18} />
+                  <ImageIcon size={18} aria-hidden="true" />
                 </button>
                 <button
                   onClick={handleInpaint}
@@ -370,7 +370,7 @@ const FeedCard = memo(function FeedCard({
                   title="Inpaint this image"
                   aria-label="Inpaint this image"
                 >
-                  <Paintbrush size={18} />
+                  <Paintbrush size={18} aria-hidden="true" />
                 </button>
               </div>
 
@@ -381,7 +381,7 @@ const FeedCard = memo(function FeedCard({
                   title="More actions"
                   aria-label="More actions"
                 >
-                  <MoreHorizontal size={18} />
+                  <MoreHorizontal size={18} aria-hidden="true" />
                 </button>
                 {/* Dropdown menu */}
                 <div className="absolute right-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 z-10 opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible transition-all min-w-[160px]">
@@ -391,9 +391,9 @@ const FeedCard = memo(function FeedCard({
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800 disabled:opacity-50"
                   >
                     {remixing ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                     ) : (
-                      <Sparkles size={16} />
+                      <Sparkles size={16} aria-hidden="true" />
                     )}
                     Remix
                   </button>
@@ -401,14 +401,14 @@ const FeedCard = memo(function FeedCard({
                     onClick={handleImg2Img}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800"
                   >
-                    <ImageIcon size={16} />
+                    <ImageIcon size={16} aria-hidden="true" />
                     Img2Img
                   </button>
                   <button
                     onClick={handleInpaint}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800"
                   >
-                    <Paintbrush size={16} />
+                    <Paintbrush size={16} aria-hidden="true" />
                     Inpaint
                   </button>
                 </div>
