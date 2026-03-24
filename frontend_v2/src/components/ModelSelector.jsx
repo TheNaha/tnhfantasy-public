@@ -38,6 +38,7 @@ const ModelSelector = memo(function ModelSelector({
   const offsetRef = useRef(0); // Track offset with ref to avoid stale closures
   const loadingRef = useRef(false);
   const loadingMoreRef = useRef(false);
+  const abortControllerRef = useRef(null);
   const [expandedModel, setExpandedModel] = useState(null);
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
 
@@ -141,14 +142,25 @@ const ModelSelector = memo(function ModelSelector({
   const fetchModels = useCallback(async (loadMore = false) => {
     if (!directory) return;
 
+    // Cancel any ongoing request for initial load (not pagination)
+    if (!loadMore && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
     if (loadMore) {
       if (loadingMoreRef.current) return;
       loadingMoreRef.current = true;
       setLoadingMore(true);
     } else {
-      if (loadingRef.current) return;
+      // Don't block new searches - allow them to proceed and cancel old ones
       loadingRef.current = true;
       setLoading(true);
+    }
+
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    if (!loadMore) {
+      abortControllerRef.current = abortController;
     }
 
     try {
@@ -170,7 +182,9 @@ const ModelSelector = memo(function ModelSelector({
       });
       if (search) params.append("search", search);
 
-      const data = await filesApi.list(Object.fromEntries(params.entries()));
+      const data = await filesApi.list(Object.fromEntries(params.entries()), {
+        signal: abortController.signal,
+      });
       const newModels = data.files || [];
 
       if (loadMore) {
@@ -186,6 +200,10 @@ const ModelSelector = memo(function ModelSelector({
 
       setHasMore(newModels.length === 50);
     } catch (error) {
+      // Don't show error for aborted requests
+      if (error.name === 'AbortError') {
+        return;
+      }
       console.error("Failed to fetch models", error);
     } finally {
       if (loadMore) {
@@ -219,7 +237,13 @@ const ModelSelector = memo(function ModelSelector({
       fetchModels(false);
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      // Abort any pending request when effect cleans up
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [isOpen, directory, initialModels.length, fetchModels]);
 
   // Filter and sort models
