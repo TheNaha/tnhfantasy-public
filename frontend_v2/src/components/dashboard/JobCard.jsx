@@ -1,7 +1,7 @@
 import { memo, useState, useEffect, useCallback } from 'react';
-import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock } from 'lucide-react';
+import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X } from 'lucide-react';
 
-const JobCard = memo(function JobCard({ job, onClick }) {
+const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
     const [currentTime, setCurrentTime] = useState(() => Date.now());
 
     const isSuccess = job.status === 'completed';
@@ -51,6 +51,11 @@ const JobCard = memo(function JobCard({ job, onClick }) {
         }
     }, [handleClick]);
 
+    const handleDismiss = useCallback((e) => {
+        e.stopPropagation();
+        onDelete?.(job.id);
+    }, [onDelete, job.id]);
+
     // Calculate elapsed time
     const getElapsedTime = () => {
         if (!job.created_at) return null;
@@ -71,7 +76,7 @@ const JobCard = memo(function JobCard({ job, onClick }) {
             aria-label={`Job ${job.id || ''} - ${job.status}`}
             onClick={handleClick}
             onKeyDown={handleKeyDown}
-            className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
+            className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none group"
         >
             {/* Top Row: Provider + Status */}
             <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-2 z-10">
@@ -82,13 +87,25 @@ const JobCard = memo(function JobCard({ job, onClick }) {
                         {providerName}
                     </div>
                 )}
-                {/* Status Badge */}
-                <div className={`px-2 py-1 rounded text-xs font-bold uppercase backdrop-blur-sm ${isSuccess ? 'bg-green-500/20 text-green-400' :
-                    isError ? 'bg-red-500/20 text-red-400' :
-                        isCancelled ? 'bg-gray-500/50 text-gray-300' :
-                        'bg-blue-500/20 text-blue-400'
-                    }`}>
-                    {job.status}
+                {/* Status Badge + Dismiss Button for terminal states */}
+                <div className="flex items-center gap-1 ml-auto">
+                    <div className={`px-2 py-1 rounded text-xs font-bold uppercase backdrop-blur-sm ${isSuccess ? 'bg-green-500/20 text-green-400' :
+                        isError ? 'bg-red-500/20 text-red-400' :
+                            isCancelled ? 'bg-gray-500/50 text-gray-300' :
+                            'bg-blue-500/20 text-blue-400'
+                        }`}>
+                        {job.status}
+                    </div>
+                    {(isCancelled || isError) && onDelete && (
+                        <button
+                            onClick={handleDismiss}
+                            className="p-1 rounded bg-black/40 hover:bg-red-600/80 text-gray-400 hover:text-white transition-colors backdrop-blur-sm opacity-0 group-hover:opacity-100"
+                            title="Remove from history"
+                            aria-label="Remove job from history"
+                        >
+                            <X size={12} />
+                        </button>
+                    )}
                 </div>
             </div>
 

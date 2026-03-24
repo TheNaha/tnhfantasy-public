@@ -228,6 +228,7 @@ export default memo(function GroupedDashboardContent({
     isFavorite,
     handleToggleFavorite,
     handleDelete,
+    handleJobDelete,
 }) {
     // ⚡ Bolt: Use a stable callback to prevent re-renders in memoized ImageGroup components
     const handleImageGroupSelection = useCallback((images) => {
@@ -254,7 +255,7 @@ export default memo(function GroupedDashboardContent({
                                     key={item.id || item.name}
                                 >
                                     {item.type === 'job' ? (
-                                        <JobCard job={item} onClick={handleJobClick} />
+                                        <JobCard job={item} onClick={handleJobClick} onDelete={handleJobDelete} />
                                     ) : item.type === 'imageGroup' ? (
                                         <ImageGroup
                                             images={item.images}
@@ -282,7 +283,7 @@ export default memo(function GroupedDashboardContent({
                         <div className="space-y-2">
                             {groupItems.map((item) => (
                                 item.type === 'job' ? (
-                                    <JobCard key={item.id} job={item} onClick={handleJobClick} />
+                                    <JobCard key={item.id} job={item} onClick={handleJobClick} onDelete={handleJobDelete} />
                                 ) : item.type === 'imageGroup' ? (
                                     <ListImageGroupCard
                                         key={item.id}
@@ -308,7 +309,7 @@ export default memo(function GroupedDashboardContent({
                         <div className="space-y-8 max-w-3xl mx-auto">
                             {groupItems.map((item) => (
                                 item.type === 'job' ? (
-                                    <JobCard key={item.id} job={item} onClick={handleJobClick} />
+                                    <JobCard key={item.id} job={item} onClick={handleJobClick} onDelete={handleJobDelete} />
                                 ) : item.type === 'imageGroup' ? (
                                     <div key={item.id} className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
                                         <div className="flex items-center gap-2 mb-3">

@@ -18,6 +18,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
     const isPending = ['pending', 'queued'].includes(job.status);
     const isCompleted = job.status === 'completed';
     const isFailed = job.status === 'failed' || job.status === 'error';
+    const isCancelled = job.status === 'cancelled';
 
     const handleActionClick = (actionType) => {
         if (actionType === 'cancel') {
@@ -104,6 +105,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                         <span className={`px-3 py-1.5 rounded-lg text-sm font-bold uppercase ${isCompleted ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
                             isFailed ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
                                 isProcessing ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
+                                    isCancelled ? 'bg-gray-500/20 text-gray-300 border border-gray-500/30' :
                                     'bg-gray-700 text-gray-400 border border-gray-600'
                             }`}>
                             {isProcessing && <Loader2 className="inline animate-spin mr-1" size={14} />}
@@ -273,7 +275,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                             <X size={16} /> Cancel Job
                         </button>
                     )}
-                    {(isCompleted || isFailed) && onDelete && (
+                    {(isCompleted || isFailed || isCancelled) && onDelete && (
                         <button
                             onClick={() => handleActionClick('delete')}
                             className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"

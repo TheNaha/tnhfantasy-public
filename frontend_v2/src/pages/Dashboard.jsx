@@ -48,6 +48,25 @@ export default function Dashboard() {
         await storeDeleteJob(jobId);
         queryClient.invalidateQueries(['gallery']);
     }, [storeDeleteJob, queryClient]);
+
+    // Wrapped deleteJob with confirmation modal for card dismiss button
+    const handleJobDelete = useCallback((jobId) => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Remove Job',
+            message: 'Are you sure you want to remove this job from history? The generated images will remain in your gallery.',
+            isDangerous: true,
+            confirmText: 'Remove',
+            onConfirm: async () => {
+                try {
+                    await deleteJob(jobId);
+                    toast.success('Job removed from history');
+                } catch (e) {
+                    toast.error(e.message || 'Failed to remove job');
+                }
+            }
+        });
+    }, [deleteJob]);
     // Local State
     const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
     const [selectedJobId, setSelectedJobId] = useState(null);  // Store ID, not object
@@ -601,6 +620,7 @@ export default function Dashboard() {
                             isFavorite={fastIsFavorite}
                             handleToggleFavorite={handleToggleFavorite}
                             handleDelete={handleDelete}
+                            handleJobDelete={handleJobDelete}
                         />
                     )
                 )}
