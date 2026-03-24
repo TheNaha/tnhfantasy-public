@@ -8,9 +8,9 @@ import { getApiUrl } from './config';
 
 export const filesApi = {
     // List files with pagination
-    list: (params = {}) => {
+    list: (params = {}, options = {}) => {
         const query = new URLSearchParams(params).toString();
-        return api.get(`/api/files${query ? `?${query}` : ''}`);
+        return api.get(`/api/files${query ? `?${query}` : ''}`, options);
     },
 
     // Delete file
