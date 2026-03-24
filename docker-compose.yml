@@ -47,6 +47,11 @@ services:
       - traefik.docker.network=proxy
       - traefik.http.routers.tnhcomfy.rule=Host(`comfy.lan.thenaha.my.id`)
       - traefik.http.services.tnhcomfy.loadbalancer.server.port=5174
+      - homepage.group=Projects
+      - homepage.name=ComfyUI
+      - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
+      - homepage.href=http://comfy.lan.thenaha.my.id/
+      - homepage.description=Image generation service
     networks:
       - comfy-network
       - proxy
