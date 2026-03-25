@@ -25,3 +25,7 @@
 ## 2024-06-12 - O(N²) Bottleneck in State Change Comparisons
 **Learning:** In global store subscriptions (like `useJobStore.subscribe`), comparing large current state arrays against large previous state arrays using `.filter(item => !prevState.items.find(prev => prev.id === item.id))` introduces an O(N * M) performance bottleneck that blocks the main thread on every state update.
 **Action:** Always pre-compute a Hash Set (e.g., `new Set(prevState.items.map(...))`) of the previous state identifiers before the filtering loop. This transforms the O(N * M) comparison into an efficient O(N + M) operation via O(1) `Set.has()` lookups.
+
+## 2024-06-18 - Avoid O(N) Array Operations Inside Render Loops
+**Learning:** Calling array methods like `.filter()` multiple times inside the map function of a render loop (e.g. calculating stats for grouped timeline items) creates hidden array allocations and O(N) execution paths that run every single time the component renders, degrading performance when interacting with large datasets.
+**Action:** Pre-compute metadata or statistics during the initial data transformation pass (like inside a `useMemo` that groups data) by keeping running totals in the accumulator object. This changes O(N * renders) complexity into a single O(1) increment per item during the memoized data preparation phase.
