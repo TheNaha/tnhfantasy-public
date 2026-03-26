@@ -49,15 +49,14 @@ export const TimelineView = memo(function TimelineView({
 
     // Calculate stats for each day
     const getDayStats = (items) => {
-        const images = items.filter(item => item.type === 'image');
-        const jobs = items.filter(item => item.type === 'job');
-        const successful = jobs.filter(job => job.status === 'success').length;
-
-        return {
-            totalImages: images.length,
-            totalJobs: jobs.length,
-            successful
-        };
+        return items.reduce((acc, item) => {
+            if (item.type === 'image') acc.totalImages++;
+            if (item.type === 'job') {
+                acc.totalJobs++;
+                if (item.status === 'success') acc.successful++;
+            }
+            return acc;
+        }, { totalImages: 0, totalJobs: 0, successful: 0 });
     };
 
     if (timelineGroups.length === 0) {

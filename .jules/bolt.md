@@ -25,3 +25,7 @@
 ## 2024-06-12 - O(N²) Bottleneck in State Change Comparisons
 **Learning:** In global store subscriptions (like `useJobStore.subscribe`), comparing large current state arrays against large previous state arrays using `.filter(item => !prevState.items.find(prev => prev.id === item.id))` introduces an O(N * M) performance bottleneck that blocks the main thread on every state update.
 **Action:** Always pre-compute a Hash Set (e.g., `new Set(prevState.items.map(...))`) of the previous state identifiers before the filtering loop. This transforms the O(N * M) comparison into an efficient O(N + M) operation via O(1) `Set.has()` lookups.
+
+## 2024-06-25 - Prevent O(N) Processing Overhead with `reduce`
+**Learning:** In React frontend components, executing multiple sequential `.filter()` operations over the same large array to calculate different statistics (e.g. counting jobs, images, and successes in `TimelineView`) introduces unnecessary O(N) processing overhead during render loops.
+**Action:** Replace multiple `.filter()` passes with a single `reduce()` operation to pre-compute all required statistics in a single O(N) pass, significantly improving rendering performance for large data sets.

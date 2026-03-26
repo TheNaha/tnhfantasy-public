@@ -49,6 +49,15 @@ export default function Dashboard() {
         queryClient.invalidateQueries(['gallery']);
     }, [storeDeleteJob, queryClient]);
 
+    // Confirmation Modal
+    const [confirmModal, setConfirmModal] = useState({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+        isDangerous: false
+    });
+
     // Wrapped deleteJob with confirmation modal for card dismiss button
     const handleJobDelete = useCallback((jobId) => {
         setConfirmModal({
@@ -138,15 +147,6 @@ export default function Dashboard() {
     const handleImageClick = useCallback((image) => {
         selectImage(image);
     }, [selectImage]);
-
-    // Confirmation Modal
-    const [confirmModal, setConfirmModal] = useState({
-        isOpen: false,
-        title: '',
-        message: '',
-        onConfirm: () => { },
-        isDangerous: false
-    });
 
     // Track last completed job to avoid duplicate refreshes
     const lastCompletedJobRef = useRef(null);
