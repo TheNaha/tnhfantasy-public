@@ -163,11 +163,19 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
             onClick={onCardClick}
         >
             {selectionMode && (
-                <div className={`w-5 h-5 rounded border flex items-center justify-center ${selected ? 'bg-blue-500 border-blue-500' : 'border-gray-600'}`}>
-                    {selected && <Check size={12} />}
-                </div>
+                <button
+                    aria-label={selected ? 'Deselect image' : 'Select image'}
+                    aria-pressed={selected}
+                    className={`w-5 h-5 rounded border flex items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 focus-visible:ring-offset-gray-800 ${selected ? 'bg-blue-500 border-blue-500' : 'border-gray-600'}`}
+                >
+                    {selected && <Check size={12} aria-hidden="true" />}
+                </button>
             )}
-            <div onClick={onImageOnlyClick} className="flex-shrink-0 w-32 bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all">
+            <button
+                onClick={onImageOnlyClick}
+                aria-label="View full image"
+                className="flex-shrink-0 w-32 bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none transition-all block p-0 text-left border-none"
+            >
                 <ProgressiveImage
                     blurhash={item.blurhash}
                     src={`/api/view/output/${item.name}`}
@@ -177,7 +185,7 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
                     aspectRatio="auto"
                     className="w-full"
                 />
-            </div>
+            </button>
             <div className="flex-1 min-w-0">
                 <h4 className="text-sm font-medium text-white truncate">{item.name}</h4>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
