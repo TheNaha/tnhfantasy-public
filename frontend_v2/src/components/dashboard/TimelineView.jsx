@@ -35,30 +35,34 @@ export const TimelineView = memo(function TimelineView({
                 acc[dateKey] = {
                     date: dateKey,
                     timestamp: date.getTime(),
-                    items: []
+                    items: [],
+                    stats: {
+                        totalImages: 0,
+                        totalJobs: 0,
+                        successful: 0
+                    }
                 };
             }
 
             acc[dateKey].items.push(item);
+
+            // ⚡ Bolt: Pre-compute stats during the initial O(N) grouping pass
+            // rather than calling .filter() three times per group on every render
+            if (item.type === 'image') {
+                acc[dateKey].stats.totalImages++;
+            } else if (item.type === 'job') {
+                acc[dateKey].stats.totalJobs++;
+                if (item.status === 'success') {
+                    acc[dateKey].stats.successful++;
+                }
+            }
+
             return acc;
         }, {});
 
         // Convert to array and sort by date (newest first)
         return Object.values(groups).sort((a, b) => b.timestamp - a.timestamp);
     }, [items]);
-
-    // Calculate stats for each day
-    const getDayStats = (items) => {
-        const images = items.filter(item => item.type === 'image');
-        const jobs = items.filter(item => item.type === 'job');
-        const successful = jobs.filter(job => job.status === 'success').length;
-
-        return {
-            totalImages: images.length,
-            totalJobs: jobs.length,
-            successful
-        };
-    };
 
     if (timelineGroups.length === 0) {
         return (
@@ -76,7 +80,7 @@ export const TimelineView = memo(function TimelineView({
 
             <div className="space-y-12">
                 {timelineGroups.map((group, groupIndex) => {
-                    const stats = getDayStats(group.items);
+                    const stats = group.stats;
 
                     return (
                         <Motion.div

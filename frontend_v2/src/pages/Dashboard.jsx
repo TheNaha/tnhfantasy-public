@@ -43,6 +43,19 @@ export default function Dashboard() {
     const { connect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
     const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
+    // Local State
+    const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
+
+    // Confirmation Modal
+    const [confirmModal, setConfirmModal] = useState({
+        isOpen: false,
+        title: '',
+        message: '',
+        isDangerous: false,
+        confirmText: 'Confirm',
+        onConfirm: () => { }
+    });
+
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
         await storeDeleteJob(jobId);
@@ -67,8 +80,6 @@ export default function Dashboard() {
             }
         });
     }, [deleteJob]);
-    // Local State
-    const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
     const [selectedJobId, setSelectedJobId] = useState(null);  // Store ID, not object
     const [gridCols, setGridCols] = useState(settings.ui.defaultGridColumns);
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
@@ -138,15 +149,6 @@ export default function Dashboard() {
     const handleImageClick = useCallback((image) => {
         selectImage(image);
     }, [selectImage]);
-
-    // Confirmation Modal
-    const [confirmModal, setConfirmModal] = useState({
-        isOpen: false,
-        title: '',
-        message: '',
-        onConfirm: () => { },
-        isDangerous: false
-    });
 
     // Track last completed job to avoid duplicate refreshes
     const lastCompletedJobRef = useRef(null);
