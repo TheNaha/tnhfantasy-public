@@ -8,6 +8,8 @@ Provides:
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
+import shlex
+import json
 
 router = APIRouter(prefix="/api/kaggle", tags=["kaggle"])
 
@@ -316,27 +318,31 @@ async def get_setup_code(
     
     # Cell 1: Tailscale setup (if authkey provided)
     if tailscale_authkey:
+        safe_authkey = shlex.quote(tailscale_authkey)
         cells.append({
             "name": "Setup Tailscale",
             "code": f'''# Install and connect Tailscale
 !curl -fsSL https://tailscale.com/install.sh | sh
 !tailscaled --state=mem: &
 !sleep 3
-!tailscale up --authkey={tailscale_authkey} --ephemeral --hostname=kaggle-worker-${{RANDOM}}
+!tailscale up --authkey={safe_authkey} --ephemeral --hostname=kaggle-worker-${{RANDOM}}
 print("Tailscale connected!")'''
         })
     
     # Cell 2: Run worker
+    safe_backend_url = json.dumps(backend_url)
+    safe_token = json.dumps(token)
+    safe_provider_id = json.dumps(provider_id)
     cells.append({
         "name": "Run Worker",
         "code": f'''# Connect to ComfyUI backend
-BACKEND = "{backend_url}"
+BACKEND = {safe_backend_url}
 exec(__import__('urllib.request').urlopen(f'{{BACKEND}}/api/kaggle/worker.py').read())
 
 worker = KaggleWorker(
     backend_url=BACKEND,
-    token="{token}",
-    provider_id="{provider_id}"
+    token={safe_token},
+    provider_id={safe_provider_id}
 )
 worker.run()'''
     })

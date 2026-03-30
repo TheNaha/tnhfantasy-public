@@ -35,11 +35,28 @@ export const TimelineView = memo(function TimelineView({
                 acc[dateKey] = {
                     date: dateKey,
                     timestamp: date.getTime(),
-                    items: []
+                    items: [],
+                    stats: {
+                        totalImages: 0,
+                        totalJobs: 0,
+                        successful: 0
+                    }
                 };
             }
 
             acc[dateKey].items.push(item);
+
+            // ⚡ Bolt: Pre-compute stats during the initial O(N) grouping pass
+            // rather than calling .filter() three times per group on every render
+            if (item.type === 'image') {
+                acc[dateKey].stats.totalImages++;
+            } else if (item.type === 'job') {
+                acc[dateKey].stats.totalJobs++;
+                if (item.status === 'success') {
+                    acc[dateKey].stats.successful++;
+                }
+            }
+
             return acc;
         }, {});
 
@@ -75,7 +92,7 @@ export const TimelineView = memo(function TimelineView({
 
             <div className="space-y-12">
                 {timelineGroups.map((group, groupIndex) => {
-                    const stats = getDayStats(group.items);
+                    const stats = group.stats;
 
                     return (
                         <Motion.div
