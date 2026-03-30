@@ -64,6 +64,18 @@ export const TimelineView = memo(function TimelineView({
         return Object.values(groups).sort((a, b) => b.timestamp - a.timestamp);
     }, [items]);
 
+    // Calculate stats for each day
+    const getDayStats = (items) => {
+        return items.reduce((acc, item) => {
+            if (item.type === 'image') acc.totalImages++;
+            if (item.type === 'job') {
+                acc.totalJobs++;
+                if (item.status === 'success') acc.successful++;
+            }
+            return acc;
+        }, { totalImages: 0, totalJobs: 0, successful: 0 });
+    };
+
     if (timelineGroups.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center py-20 text-gray-500">
