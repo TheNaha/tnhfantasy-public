@@ -103,7 +103,7 @@ const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
                             title="Remove from history"
                             aria-label="Remove job from history"
                         >
-                            <X size={12} />
+                            <X size={12} aria-hidden="true" />
                         </button>
                     )}
                 </div>
