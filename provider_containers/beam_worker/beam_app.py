@@ -495,8 +495,15 @@ async def download_model(request: Request):
     preview_url = data.get("preview_url")
     metadata = data.get("metadata")
     
+    from provider_core.utils import get_safe_path
+
     base_path = "/mnt/data"
-    full_path = os.path.join(base_path, path)
+    try:
+        full_path = get_safe_path(base_path, path)
+    except Exception as e:
+        logger.error(f"[Download] Path traversal blocked: {e}")
+        return {"status": "error", "error": "Invalid path"}
+
     temp_path = full_path + ".downloading"  # Temp file suffix
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     
@@ -1002,8 +1009,15 @@ async def download_model_endpoint(request: Request):
     preview_url = data.get("preview_url")
     metadata = data.get("metadata")
     
+    from provider_core.utils import get_safe_path
+
     base_path = "/mnt/data"
-    full_path = os.path.join(base_path, path)
+    try:
+        full_path = get_safe_path(base_path, path)
+    except Exception as e:
+        logger.error(f"[Download] Path traversal blocked: {e}")
+        return {"status": "error", "error": "Invalid path"}
+
     temp_path = full_path + ".downloading"
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     
