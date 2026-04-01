@@ -12,6 +12,10 @@
 #
 # For workflow validation (check model availability before submitting)
 # use POST /api/jobs/validate (routes/jobs.py).
+#
+# Optional idempotency:
+#   - POST /api/generate and POST /api/generate/batch accept `Idempotency-Key`
+#     to deduplicate duplicate submissions within a short server-side window.
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, Header
 from sqlmodel import Session
@@ -42,13 +46,22 @@ class GenerateBatchRequest(BaseModel):
 @router.post("/generate")
 async def generate(
     request: GenerateRequest,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: Optional[str] = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",
+    ),
     session: Session = Depends(get_session)
 ):
     """Create a new generation job.
     
     Accepts a ComfyUI workflow and optional metadata.
     Returns the created job with its ID for tracking.
+
+        Idempotency:
+        - If `Idempotency-Key` is provided, duplicate submissions with the same key
+            return the same response during a short deduplication window.
+        - If omitted, each request creates a new job.
     """
     try:
         if not request.workflow:
@@ -77,7 +90,11 @@ async def generate(
 @router.post("/generate/batch")
 async def generate_batch(
     request: GenerateBatchRequest,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: Optional[str] = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description="Optional request key. Re-using the same key reuses the same batch response for a short deduplication window.",
+    ),
     session: Session = Depends(get_session)
 ):
     """Create multiple generation jobs at once.
@@ -86,6 +103,11 @@ async def generate_batch(
     Each job gets a `batch_index` and `batch_total` added to its metadata
     so the UI can group the results.
     Returns an array of created job records.
+
+    Idempotency:
+    - If `Idempotency-Key` is provided, duplicate submissions with the same key
+      return the same batch response during a short deduplication window.
+    - If omitted, each request creates a new set of jobs.
     """
     try:
         if not request.workflows:

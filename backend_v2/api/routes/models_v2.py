@@ -209,58 +209,6 @@ async def add_model(
     return result
 
 
-@router.post("/{model_id}/set-default-version/{version_id}")
-async def set_default_version_legacy(
-    model_id: int,
-    version_id: int,
-    session: Session = Depends(get_session)
-):
-    """
-    Set the default version for a model.
-    The default version is what gets selected when the model is chosen in the generator.
-    """
-    from core.entities_v2 import ModelVersion
-    from sqlmodel import select
-    
-    # Verify model exists
-    service = get_model_service(session)
-    model = service.repo.get_model(model_id)
-    if not model:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
-    
-    # Verify version belongs to this model
-    version = session.exec(
-        select(ModelVersion).where(
-            ModelVersion.id == version_id,
-            ModelVersion.model_id == model_id
-        )
-    ).first()
-    
-    if not version:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Version {version_id} not found for model {model_id}"
-        )
-    
-    # Clear existing defaults
-    all_versions = session.exec(
-        select(ModelVersion).where(ModelVersion.model_id == model_id)
-    ).all()
-    
-    for v in all_versions:
-        v.is_default = (v.id == version_id)
-        session.add(v)
-    
-    session.commit()
-    
-    return {
-        "status": "success",
-        "model_id": model_id,
-        "new_default_version_id": version_id,
-        "new_default_version_name": version.name
-    }
-
-
 @router.get("/directory/{directory}")
 async def list_models_by_directory(
     directory: str,

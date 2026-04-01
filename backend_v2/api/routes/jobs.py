@@ -9,6 +9,10 @@
 #   POST   /api/jobs/{id}/retry – Re-submit a failed job with the same workflow
 #   POST   /api/jobs/validate   – Pre-flight model-availability check
 #
+# Optional idempotency:
+#   - POST /api/jobs accepts `Idempotency-Key` for short-window response reuse
+#     to prevent duplicate submissions from client retries.
+#
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
 from typing import Optional, Dict, List
@@ -78,7 +82,11 @@ async def validate_workflow(
 @router.post("")
 async def create_job(
     request: CreateJobRequest,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: Optional[str] = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",
+    ),
     session: Session = Depends(get_session)
 ):
     """
@@ -86,6 +94,11 @@ async def create_job(
     
     Validates that at least one provider has all required models.
     Returns 400 with detailed missing model info if validation fails.
+
+    Idempotency:
+    - If `Idempotency-Key` is provided, duplicate submissions with the same key
+      return the same response during a short deduplication window.
+    - If omitted, each request creates a new job.
     """
     submission_service = JobSubmissionService(session)
 
@@ -237,17 +250,9 @@ async def delete_job(
     return {"status": "success"}
 
 
-@router.post("/clear")
-async def clear_jobs(session: Session = Depends(get_session)):
-    """Clear all jobs."""
-    service = get_job_service(session)
-    count = await service.clear_all_jobs()
-    return {"status": "success", "deleted": count}
-
-
 @router.delete("")
 async def delete_all_jobs(session: Session = Depends(get_session)):
-    """Delete all jobs (alias for POST /clear)."""
+    """Delete all jobs."""
     service = get_job_service(session)
     count = await service.clear_all_jobs()
     return {"status": "success", "deleted": count}

@@ -488,8 +488,9 @@ const ModelSelector = memo(function ModelSelector({
                                     selectedModel._originalModel ||
                                     selectedModel;
                                   try {
-                                    await api.post(
-                                      `/api/v2/models/${baseModel.model_id}/set-default-version/${version.id}`,
+                                    await api.put(
+                                      `/api/v2/models/${baseModel.model_id}/default-version`,
+                                      { version_id: version.id },
                                     );
                                     toast.success(
                                       `Set "${version.name}" as default`,

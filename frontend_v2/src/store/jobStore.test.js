@@ -13,6 +13,7 @@ vi.mock('../api/websocket', () => ({
         JOB_CREATED: 'job.created',
         JOB_UPDATED: 'job.updated',
         JOB_PROGRESS: 'job.progress',
+        JOB_POST_PROCESSING: 'job.post_processing',
         JOB_COMPLETED: 'job.completed',
         JOB_FAILED: 'job.failed',
         JOB_CANCELLED: 'job.cancelled',
@@ -48,6 +49,7 @@ describe('useJobStore', () => {
                 JOB_CREATED: 'job.created',
                 JOB_UPDATED: 'job.updated',
                 JOB_PROGRESS: 'job.progress',
+                JOB_POST_PROCESSING: 'job.post_processing',
                 JOB_COMPLETED: 'job.completed',
                 JOB_FAILED: 'job.failed',
                 JOB_CANCELLED: 'job.cancelled',
@@ -92,6 +94,42 @@ describe('useJobStore', () => {
         it('starts with null lastCompletedJob', () => {
             const { lastCompletedJob } = useJobStore.getState();
             expect(lastCompletedJob).toBeNull();
+        });
+    });
+
+    describe('browser lifecycle', () => {
+        it('registers listeners on setup and removes them on teardown', () => {
+            const addDocSpy = vi.spyOn(document, 'addEventListener');
+            const addWindowSpy = vi.spyOn(window, 'addEventListener');
+            const removeDocSpy = vi.spyOn(document, 'removeEventListener');
+            const removeWindowSpy = vi.spyOn(window, 'removeEventListener');
+
+            const { setupBrowserLifecycle, teardownBrowserLifecycle } = useJobStore.getState();
+
+            setupBrowserLifecycle();
+            setupBrowserLifecycle(); // Should be idempotent
+
+            expect(useJobStore.getState()._browserLifecycleInitialized).toBe(true);
+            expect(addDocSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+            expect(addWindowSpy).toHaveBeenCalledWith('online', expect.any(Function));
+            expect(addWindowSpy).toHaveBeenCalledWith('offline', expect.any(Function));
+
+            teardownBrowserLifecycle();
+
+            expect(useJobStore.getState()._browserLifecycleInitialized).toBe(false);
+            expect(removeDocSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+            expect(removeWindowSpy).toHaveBeenCalledWith('online', expect.any(Function));
+            expect(removeWindowSpy).toHaveBeenCalledWith('offline', expect.any(Function));
+        });
+
+        it('tears down browser lifecycle on disconnect', () => {
+            const { setupBrowserLifecycle, disconnect } = useJobStore.getState();
+
+            setupBrowserLifecycle();
+            expect(useJobStore.getState()._browserLifecycleInitialized).toBe(true);
+
+            disconnect();
+            expect(useJobStore.getState()._browserLifecycleInitialized).toBe(false);
         });
     });
 

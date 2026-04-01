@@ -15,6 +15,20 @@ function normalizeActiveJobs(jobs) {
     return sortJobsByCreatedAt(filterActiveJobs(jobs));
 }
 
+const browserLifecycleState = {
+    initialized: false,
+    mobilePollingInterval: null,
+    lastEventTime: Date.now(),
+    consecutiveFailures: 0,
+    connectionToastId: null,
+    unsubscribeStore: null,
+    onVisibilityChange: null,
+    onOnline: null,
+    onOffline: null,
+    stopMobilePolling: null,
+    dismissConnectionToast: null,
+};
+
 export const useJobStore = create((set, get) => ({
     jobs: [],
     activeJobs: [],
@@ -25,6 +39,7 @@ export const useJobStore = create((set, get) => ({
     connectionError: null,
     _wsInitialized: false,
     _unsubscribers: [],
+    _browserLifecycleInitialized: false,
 
     setJobs: (jobs) => {
         // Only active, websocket-owned jobs belong in this store.
@@ -190,6 +205,7 @@ export const useJobStore = create((set, get) => ({
     },
 
     disconnect: () => {
+        get().teardownBrowserLifecycle();
         const { _unsubscribers } = get();
 
         // Clean up listeners
@@ -198,6 +214,188 @@ export const useJobStore = create((set, get) => ({
         ws.unsubscribe('job');
         ws.disconnect();
         set({ isConnected: false, _wsInitialized: false, _unsubscribers: [] });
+    },
+
+    setupBrowserLifecycle: () => {
+        if (browserLifecycleState.initialized) {
+            return;
+        }
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            return;
+        }
+
+        const isMobile = () => 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+        const markEventReceived = () => {
+            browserLifecycleState.lastEventTime = Date.now();
+            browserLifecycleState.consecutiveFailures = 0;
+        };
+
+        const dismissConnectionToast = () => {
+            if (!browserLifecycleState.connectionToastId) {
+                return;
+            }
+
+            import('react-hot-toast').then(({ default: toast }) => {
+                toast.dismiss('mobile-connection-error');
+            });
+            browserLifecycleState.connectionToastId = null;
+        };
+
+        const stopMobilePolling = () => {
+            if (browserLifecycleState.mobilePollingInterval) {
+                clearInterval(browserLifecycleState.mobilePollingInterval);
+                browserLifecycleState.mobilePollingInterval = null;
+                browserLifecycleState.consecutiveFailures = 0;
+                console.log('[JobStore] Mobile polling stopped');
+            }
+        };
+
+        const startMobilePolling = () => {
+            if (browserLifecycleState.mobilePollingInterval) {
+                return;
+            }
+
+            console.log('[JobStore] Starting mobile polling fallback...');
+            browserLifecycleState.consecutiveFailures = 0;
+
+            browserLifecycleState.mobilePollingInterval = setInterval(async () => {
+                const store = useJobStore.getState();
+                const hasActiveJobs = store.activeJobs.length > 0;
+                const wsEventsFlowing = Date.now() - browserLifecycleState.lastEventTime < 5000;
+
+                if (!hasActiveJobs) {
+                    console.log('[JobStore] No active jobs, stopping mobile polling');
+                    stopMobilePolling();
+                    return;
+                }
+
+                if (wsEventsFlowing && store.isConnected) {
+                    console.log('[JobStore] WebSocket events flowing, stopping mobile polling');
+                    stopMobilePolling();
+                    return;
+                }
+
+                console.log('[JobStore] Mobile polling: fetching jobs...');
+                try {
+                    await store.fetchJobs();
+                    browserLifecycleState.consecutiveFailures = 0;
+                } catch (e) {
+                    console.error('[JobStore] Mobile polling fetch failed:', e);
+                    browserLifecycleState.consecutiveFailures += 1;
+
+                    if (browserLifecycleState.consecutiveFailures >= 3) {
+                        import('react-hot-toast').then(({ default: toast }) => {
+                            browserLifecycleState.connectionToastId = toast.error('Connection issues - trying to reconnect...', {
+                                id: 'mobile-connection-error',
+                                duration: 4000,
+                            });
+                        });
+                        browserLifecycleState.consecutiveFailures = 0;
+                    }
+                }
+            }, 2000);
+        };
+
+        browserLifecycleState.unsubscribeStore = useJobStore.subscribe((state, prevState) => {
+            if (state.jobs !== prevState.jobs) {
+                markEventReceived();
+            }
+        });
+
+        browserLifecycleState.onVisibilityChange = () => {
+            const store = useJobStore.getState();
+
+            if (document.visibilityState === 'visible') {
+                dismissConnectionToast();
+                console.log('[JobStore] Page became visible, checking WebSocket connection...');
+
+                if (isMobile()) {
+                    console.log('[JobStore] Mobile detected, forcing WebSocket reconnect...');
+                    store.reconnect();
+
+                    if (store.activeJobs.length > 0) {
+                        startMobilePolling();
+                    }
+                } else if (!store.isConnected) {
+                    store.connect();
+                }
+
+                store.fetchJobs().catch(console.error);
+            } else {
+                stopMobilePolling();
+            }
+        };
+
+        browserLifecycleState.onOnline = () => {
+            console.log('[JobStore] Network online, reconnecting WebSocket...');
+            const store = useJobStore.getState();
+            dismissConnectionToast();
+            store.reconnect();
+            store.fetchJobs().catch(console.error);
+
+            if (isMobile() && store.activeJobs.length > 0) {
+                startMobilePolling();
+            }
+        };
+
+        browserLifecycleState.onOffline = () => {
+            console.log('[JobStore] Network offline, stopping mobile polling');
+            stopMobilePolling();
+        };
+
+        document.addEventListener('visibilitychange', browserLifecycleState.onVisibilityChange);
+        window.addEventListener('online', browserLifecycleState.onOnline);
+        window.addEventListener('offline', browserLifecycleState.onOffline);
+
+        browserLifecycleState.stopMobilePolling = stopMobilePolling;
+        browserLifecycleState.dismissConnectionToast = dismissConnectionToast;
+        browserLifecycleState.lastEventTime = Date.now();
+        browserLifecycleState.consecutiveFailures = 0;
+        browserLifecycleState.initialized = true;
+
+        set({ _browserLifecycleInitialized: true });
+    },
+
+    teardownBrowserLifecycle: () => {
+        if (!browserLifecycleState.initialized) {
+            return;
+        }
+
+        if (typeof document !== 'undefined' && browserLifecycleState.onVisibilityChange) {
+            document.removeEventListener('visibilitychange', browserLifecycleState.onVisibilityChange);
+        }
+        if (typeof window !== 'undefined' && browserLifecycleState.onOnline) {
+            window.removeEventListener('online', browserLifecycleState.onOnline);
+        }
+        if (typeof window !== 'undefined' && browserLifecycleState.onOffline) {
+            window.removeEventListener('offline', browserLifecycleState.onOffline);
+        }
+
+        if (browserLifecycleState.unsubscribeStore) {
+            browserLifecycleState.unsubscribeStore();
+            browserLifecycleState.unsubscribeStore = null;
+        }
+
+        if (browserLifecycleState.stopMobilePolling) {
+            browserLifecycleState.stopMobilePolling();
+        }
+        if (browserLifecycleState.dismissConnectionToast) {
+            browserLifecycleState.dismissConnectionToast();
+        }
+
+        browserLifecycleState.onVisibilityChange = null;
+        browserLifecycleState.onOnline = null;
+        browserLifecycleState.onOffline = null;
+        browserLifecycleState.stopMobilePolling = null;
+        browserLifecycleState.dismissConnectionToast = null;
+        browserLifecycleState.mobilePollingInterval = null;
+        browserLifecycleState.connectionToastId = null;
+        browserLifecycleState.consecutiveFailures = 0;
+        browserLifecycleState.lastEventTime = Date.now();
+        browserLifecycleState.initialized = false;
+
+        set({ _browserLifecycleInitialized: false });
     },
 
     // API methods
@@ -356,146 +554,3 @@ export const useJobStore = create((set, get) => ({
         }
     }
 }));
-
-// Handle page visibility changes (mobile tab switching, app backgrounding)
-if (typeof document !== 'undefined') {
-    // Detect mobile via touch support
-    const isMobile = () => 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-
-    // Mobile polling fallback - polls when WebSocket may be unreliable
-    let mobilePollingInterval = null;
-    let lastEventTime = Date.now();
-    let consecutiveFailures = 0;
-    const MAX_FAILURES_BEFORE_NOTIFY = 3;
-    let connectionToastId = null;  // Track toast ID for dismissal
-
-    // Track when we receive WebSocket events to detect stale connections
-    const markEventReceived = () => {
-        lastEventTime = Date.now();
-        consecutiveFailures = 0;  // Reset on successful event
-    };
-
-    // Start mobile polling fallback
-    const startMobilePolling = () => {
-        if (mobilePollingInterval) return; // Already polling
-
-        console.log('[JobStore] Starting mobile polling fallback...');
-        consecutiveFailures = 0;  // Reset failures when starting
-        
-        mobilePollingInterval = setInterval(async () => {
-            const store = useJobStore.getState();
-
-            // Check if we have active jobs that need updates
-            const hasActiveJobs = store.activeJobs.length > 0;
-
-            // Check if WebSocket events are flowing (received in last 5 seconds)
-            const timeSinceLastEvent = Date.now() - lastEventTime;
-            const wsEventsFlowing = timeSinceLastEvent < 5000;
-
-            if (!hasActiveJobs) {
-                // No active jobs, stop polling
-                console.log('[JobStore] No active jobs, stopping mobile polling');
-                stopMobilePolling();
-                return;
-            }
-
-            if (wsEventsFlowing && store.isConnected) {
-                // WebSocket is working, we can stop polling
-                console.log('[JobStore] WebSocket events flowing, stopping mobile polling');
-                stopMobilePolling();
-                return;
-            }
-
-            // Poll for job updates
-            console.log('[JobStore] Mobile polling: fetching jobs...');
-            try {
-                await store.fetchJobs();
-                consecutiveFailures = 0;  // Reset on success
-            } catch (e) {
-                console.error('[JobStore] Mobile polling fetch failed:', e);
-                consecutiveFailures++;
-                
-                if (consecutiveFailures >= MAX_FAILURES_BEFORE_NOTIFY) {
-                    // Show toast notification for connection issues
-                    import('react-hot-toast').then(({ default: toast }) => {
-                        connectionToastId = toast.error('Connection issues - trying to reconnect...', {
-                            id: 'mobile-connection-error',  // Prevent duplicate toasts
-                            duration: 4000,
-                        });
-                    });
-                    consecutiveFailures = 0;  // Reset after notification
-                }
-            }
-        }, 2000); // Poll every 2 seconds
-    };
-
-    // Stop mobile polling
-    const stopMobilePolling = () => {
-        if (mobilePollingInterval) {
-            clearInterval(mobilePollingInterval);
-            mobilePollingInterval = null;
-            consecutiveFailures = 0;
-            console.log('[JobStore] Mobile polling stopped');
-        }
-    };
-    
-    // Dismiss connection toast on navigation (fixes toast persistence bug)
-    const dismissConnectionToast = () => {
-        if (connectionToastId) {
-            import('react-hot-toast').then(({ default: toast }) => {
-                toast.dismiss('mobile-connection-error');
-            });
-            connectionToastId = null;
-        }
-    };
-
-    // Hook into jobStore to track WebSocket event reception
-    useJobStore.subscribe((state, prevState) => {
-        // If jobs changed, mark event received (indicates WebSocket is working)
-        if (state.jobs !== prevState.jobs) {
-            markEventReceived();
-        }
-    });
-
-    document.addEventListener('visibilitychange', () => {
-        const store = useJobStore.getState();
-        if (document.visibilityState === 'visible') {
-            dismissConnectionToast();
-            // Page became visible - ensure WebSocket is connected and fetch fresh data
-            console.log('[JobStore] Page became visible, checking WebSocket connection...');
-
-            // On mobile, always force reconnect because mobile browsers may kill connections
-            if (isMobile()) {
-                console.log('[JobStore] Mobile detected, forcing WebSocket reconnect...');
-                store.reconnect();
-
-                // Start polling fallback for mobile - will auto-stop when WS works
-                if (store.activeJobs.length > 0) {
-                    startMobilePolling();
-                }
-            } else if (!store.isConnected) {
-                store.connect();
-            }
-
-            // Always fetch fresh jobs when page becomes visible
-            store.fetchJobs().catch(console.error);
-        } else {
-            // Page hidden - stop polling to save battery
-            stopMobilePolling();
-        }
-    });
-
-    // Also handle online/offline events for network recovery
-    window.addEventListener('online', () => {
-        console.log('[JobStore] Network online, reconnecting WebSocket...');
-        const store = useJobStore.getState();
-        dismissConnectionToast();
-        store.reconnect();
-        store.fetchJobs().catch(console.error);
-
-        // Start polling if on mobile with active jobs
-        if (isMobile() && store.activeJobs.length > 0) {
-            startMobilePolling();
-        }
-    });
-}

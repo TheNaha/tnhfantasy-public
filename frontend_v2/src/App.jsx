@@ -88,7 +88,13 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-    const { connect: connectJobs, fetchJobs } = useJobStore();
+    const {
+        connect: connectJobs,
+        disconnect: disconnectJobs,
+        fetchJobs,
+        setupBrowserLifecycle,
+        teardownBrowserLifecycle,
+    } = useJobStore();
     const { connect: connectReconciliation } = useReconciliationStore();
     const { connect: connectProviders } = useProviderStore();
 
@@ -104,12 +110,26 @@ function App() {
     useEffect(() => {
         // Connect all global stores
         connectJobs();
+        setupBrowserLifecycle();
         connectReconciliation();
         connectProviders();
         
         // Fetch initial data
         fetchJobs();
-    }, [connectJobs, connectReconciliation, connectProviders, fetchJobs]);
+
+        return () => {
+            teardownBrowserLifecycle();
+            disconnectJobs();
+        };
+    }, [
+        connectJobs,
+        connectReconciliation,
+        connectProviders,
+        disconnectJobs,
+        fetchJobs,
+        setupBrowserLifecycle,
+        teardownBrowserLifecycle,
+    ]);
 
     useEffect(() => {
         api.post('/api/providers/wake').catch((error) => {

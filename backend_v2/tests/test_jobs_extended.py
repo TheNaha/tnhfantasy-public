@@ -76,7 +76,7 @@ class TestJobsRouteExtended:
         assert response.status_code in (200, 404)
 
     def test_clear_jobs(self, client):
-        response = client.post("/api/jobs/clear")
+        response = client.delete("/api/jobs")
         assert response.status_code == 200
 
     def test_delete_all_jobs(self, client):

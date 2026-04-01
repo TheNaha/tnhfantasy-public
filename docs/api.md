@@ -1,60 +1,68 @@
 # API Reference
 
-The TNHComfy Backend exposes a robust REST API for managing jobs, models, parameters, and application state.
+TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, providers, and runtime state.
 
 ## Base URL
-Typically `http://localhost:8002` (or whatever the backend is configured to listen on).
+Typically `http://localhost:8002`.
 
 ## Authentication
-Currently, TNHComfy is a local/self-hosted application, meaning it expects to run in a secure environment without explicit user authentication mechanisms built into the API layer. Ensure you implement reverse-proxy level authentication if exposing to the public internet.
+TNHComfy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
 
-## Common Endpoints
+## Idempotency-Key
 
-### 1. Jobs (`/api/v2/jobs`)
-Handles queuing, monitoring, and controlling image generation tasks.
+The following endpoints support optional `Idempotency-Key` headers:
 
-#### GET `/api/v2/jobs`
-- **Description:** Returns a list of jobs (all states: pending, processing, completed, failed).
-- **Query Parameters:** Optional filters based on state, model, or timeframe.
-- **Returns:** A JSON array of job objects.
+- `POST /api/jobs`
+- `POST /api/generate`
+- `POST /api/generate/batch`
 
-#### POST `/api/v2/jobs`
-- **Description:** Submits a new generation request.
-- **Body:** JSON payload containing prompt, negative prompt, model, CFG scale, steps, LoRAs, and provider preferences.
-- **Returns:** The created job ID and initial state.
+Behavior:
 
-#### GET `/api/v2/jobs/{job_id}`
-- **Description:** Returns the status and details of a specific job.
-- **Returns:** A job object including generated file URLs if completed.
+- When the header is provided, identical retries with the same key reuse the same response during a short server deduplication window.
+- Deduplication is endpoint-scoped (the same key on different endpoints is treated independently).
+- When the header is omitted, each request is treated as a new submission.
 
-#### DELETE `/api/v2/jobs/{job_id}`
-- **Description:** Cancels a pending/processing job or deletes a completed job record (and potentially its output).
-- **Returns:** Confirmation message.
+## Core Endpoints
 
-### 2. Models (`/api/v2/models`)
-Manages access to available checkpoints, LoRAs, and their parameters.
+### Jobs (`/api/jobs`)
 
-#### GET `/api/v2/models`
-- **Description:** Retrieves a list of available models and LoRAs.
-- **Returns:** A categorized JSON structure of models, their metadata, and required tags/trigger words.
+- `GET /api/jobs`: List jobs (supports pagination via `limit` and `offset`).
+- `POST /api/jobs`: Create and enqueue one job from a workflow payload.
+- `GET /api/jobs/{job_id}`: Fetch one job.
+- `DELETE /api/jobs/{job_id}`: Delete one job record.
+- `DELETE /api/jobs`: Delete all jobs.
+- `POST /api/jobs/{job_id}/retry`: Retry a failed job.
+- `POST /api/jobs/validate`: Pre-flight validation for provider/model availability.
+- `GET /api/jobs/queue`: Queue status and ETA hints.
+- `GET /api/jobs/stats/summary`: Aggregate job statistics.
 
-### 3. Providers (`/api/v2/providers`)
-Interacts with the configured serverless inference providers.
+### Generation (`/api/generate`)
 
-#### GET `/api/v2/providers`
-- **Description:** Returns the status of active providers (Modal, Beam) and their available containers.
-- **Returns:** A JSON list of provider statuses.
+- `POST /api/generate`: Submit a single generation workflow.
+- `POST /api/generate/batch`: Submit multiple workflows in one request.
 
-### 4. Configuration (`/api/v2/config`)
-Retrieves system-wide configurations and generation defaults.
+### Models V2 (`/api/v2/models`)
 
-#### GET `/api/v2/config`
-- **Description:** Returns default settings (e.g., default CFG, default steps, available samplers).
-- **Returns:** A JSON object with configuration parameters.
+- `GET /api/v2/models`: Grouped model listing.
+- `POST /api/v2/models`: Import a model/version selection.
+- `PUT /api/v2/models/{model_id}/default-version`: Set model default version.
+- `DELETE /api/v2/models/{model_id}`: Delete model and associated status rows.
+- `GET /api/v2/models/external/civitai`: Search CivitAI.
+- `GET /api/v2/models/external/huggingface`: Search HuggingFace.
 
-### 5. WebSockets (`/ws`)
-Real-time bi-directional communication.
+### Providers (`/api/providers`)
 
-#### Endpoint: `ws://localhost:8002/ws`
-- **Description:** Connects to the backend WebSocket server.
-- **Usage:** Clients subscribe to `job` events. The backend emits updates like `job.started`, `job.processing`, `job.completed`, and `job.failed`.
+- `GET /api/providers`: List providers and runtime info.
+- `POST /api/providers/wake`: Warm/ensure providers are ready.
+- Additional provider management routes are available under `/api/providers/...`.
+
+### Settings and Statistics
+
+- `GET /api/settings`: Read runtime settings.
+- `POST /api/settings`: Persist runtime settings.
+- `GET /api/statistics`: Retrieve usage and metadata statistics.
+
+### WebSocket
+
+- Endpoint: `ws://localhost:8002/socket.io` (Socket.IO transport).
+- Clients subscribe to job/provider events and receive real-time updates (created, progress, completed, failed, cancelled).

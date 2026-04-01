@@ -83,7 +83,7 @@ def test_clear_jobs(client, sample_job_data):
     client.post("/api/jobs", json=sample_job_data)
     
     # Clear all
-    response = client.post("/api/jobs/clear")
+    response = client.delete("/api/jobs")
     assert response.status_code == 200
     data = response.json()
     assert data["deleted"] == 2

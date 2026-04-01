@@ -100,7 +100,10 @@ class TestModelsV2Extended:
         data = create_resp.json()
         model_id = data["id"]
         version_id = data["versions"][0]["id"]
-        response = client.post(f"/api/v2/models/{model_id}/set-default-version/{version_id}")
+        response = client.put(
+            f"/api/v2/models/{model_id}/default-version",
+            json={"version_id": version_id},
+        )
         assert response.status_code == 200
 
     def test_batch_status_update(self, client):
