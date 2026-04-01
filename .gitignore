@@ -30,3 +30,6 @@ backend_v2/input/
 backend_v2/output/
 backend_v2/cache/
 .coverage
+transcode_results.json
+transcode_test.py
+transcode_test2.py
