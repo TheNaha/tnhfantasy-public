@@ -6,7 +6,7 @@ import docker
 import os
 import requests
 import time
-from typing import Dict, Optional, List, Iterable
+from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
 
 from config import get_worker_backend_url
@@ -14,6 +14,7 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("container_manager")
 _container_manager_singleton = None
+DEFAULT_HEALTH_TIMEOUT_SECONDS = int(os.getenv("COMFY_CONTAINER_HEALTH_TIMEOUT_SECONDS", "60"))
 
 
 class ContainerManager:
@@ -256,7 +257,7 @@ class ContainerManager:
             logger.debug("container_network_joined", network=target_network)
             
             # Wait for container to be healthy
-            self._wait_for_health(container, timeout=30)
+            self._wait_for_health(container, timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS)
             
             self.running_containers[provider_id] = container
             logger.info("container_started", container_name=container_name, provider_id=provider_id)
@@ -267,6 +268,44 @@ class ContainerManager:
             logger.error("container_start_failed", provider_id=provider_id, error=str(e))
             raise
     
+    def _health_probe_targets(self, container: docker.models.containers.Container) -> List[Tuple[str, str]]:
+        """Build health probe targets in order of reliability for current runtime."""
+        targets: List[Tuple[str, str]] = []
+        seen_urls = set()
+
+        def add_target(name: str, url: Optional[str]):
+            if not url or url in seen_urls:
+                return
+            seen_urls.add(url)
+            targets.append((name, url))
+
+        container_name = getattr(container, "name", None)
+        if container_name:
+            # Primary path when backend and worker are on the same container network.
+            add_target("container_dns", f"http://{container_name}:8000/health")
+
+        container_attrs = getattr(container, "attrs", None) or {}
+        if isinstance(container_attrs, dict):
+            network_settings = container_attrs.get("NetworkSettings", {})
+            if isinstance(network_settings, dict):
+                networks = network_settings.get("Networks", {})
+                if isinstance(networks, dict):
+                    for net_data in networks.values():
+                        if not isinstance(net_data, dict):
+                            continue
+                        ip_address = net_data.get("IPAddress")
+                        if ip_address:
+                            add_target("container_ip", f"http://{ip_address}:8000/health")
+
+        ports = container.ports.get("8000/tcp") if isinstance(container.ports, dict) else None
+        if ports and len(ports) > 0:
+            host_port = ports[0].get("HostPort")
+            if host_port:
+                add_target("localhost", f"http://localhost:{host_port}/health")
+                add_target("host_internal", f"http://host.containers.internal:{host_port}/health")
+
+        return targets
+
     def _wait_for_health(self, container: docker.models.containers.Container, timeout: int = 30):
         """Wait for container to become healthy."""
         logger.debug("container_health_check_start", container=container.name, timeout=timeout)
@@ -280,35 +319,19 @@ class ContainerManager:
             if container.status != 'running':
                 raise RuntimeError(f"Container {container.name} is not running: {container.status}")
             
-            # Try health check endpoint
-            # Note: This may fail if backend is containerized since port is on host
-            try:
-                # Get the host port
-                ports = container.ports.get('8000/tcp')
-                if ports and len(ports) > 0:
-                    host_port = ports[0]['HostPort']
-                    
-                    # Try localhost first (works if backend is on host)
+            probe_targets = self._health_probe_targets(container)
+            if not probe_targets:
+                last_error = "no health probe targets available"
+            else:
+                for method, url in probe_targets:
                     try:
-                        response = requests.get(f"http://localhost:{host_port}/health", timeout=2)
+                        response = requests.get(url, timeout=2)
                         if response.status_code == 200:
-                            logger.info("container_healthy", container=container.name, method="localhost")
+                            logger.info("container_healthy", container=container.name, method=method)
                             return
-                        last_error = f"localhost health returned {response.status_code}"
-                    except Exception:
-                        last_error = "localhost health probe failed"
-                    
-                    # Try host.containers.internal (Podman/Docker from container)
-                    try:
-                        response = requests.get(f"http://host.containers.internal:{host_port}/health", timeout=2)
-                        if response.status_code == 200:
-                            logger.info("container_healthy", container=container.name, method="host_internal")
-                            return
-                        last_error = f"host_internal health returned {response.status_code}"
-                    except Exception:
-                        last_error = "host_internal health probe failed"
-            except Exception as e:
-                last_error = str(e)
+                        last_error = f"{method} health returned {response.status_code}"
+                    except Exception as exc:
+                        last_error = f"{method} health probe failed ({exc.__class__.__name__})"
             
             time.sleep(1)
         

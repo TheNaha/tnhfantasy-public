@@ -189,6 +189,31 @@ class TestContainerManager:
              patch("services.container_manager.time.sleep", return_value=None):
             cm._wait_for_health(container, timeout=1)
 
+    def test_wait_for_health_uses_container_dns_probe_first(self):
+        cm = ContainerManager.__new__(ContainerManager)
+        container = MagicMock()
+        container.name = "test-container"
+        container.status = "running"
+        container.ports = {}
+        container.attrs = {
+            "NetworkSettings": {
+                "Networks": {
+                    "comfy-network": {
+                        "IPAddress": "172.20.0.12",
+                    }
+                }
+            }
+        }
+
+        response = MagicMock()
+        response.status_code = 200
+
+        with patch("services.container_manager.requests.get", return_value=response) as mock_get, \
+             patch("services.container_manager.time.sleep", return_value=None):
+            cm._wait_for_health(container, timeout=1)
+
+        mock_get.assert_called_once_with("http://test-container:8000/health", timeout=2)
+
     def test_wait_for_health_times_out_when_only_running(self):
         cm = ContainerManager.__new__(ContainerManager)
         container = MagicMock()

@@ -262,10 +262,12 @@ export default function SimpleGenerator() {
 
 // ...
 
-    const handleGenerate = async (shouldRedirect = true) => {
+    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
         console.log('[Generate] Starting generation...');
-        setGenerating(true);
-        setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
+        if (trackQueuedJob) {
+            setGenerating(true);
+            setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
+        }
 
         try {
             const builder = new WorkflowBuilder();
@@ -344,15 +346,19 @@ export default function SimpleGenerator() {
 
             // Job queued successfully - keep the page in queued/running state until completion.
             if (data && data.id) {
-                setCurrentJobId(data.id);
-                setGenerating(true);
-                setProgress({
-                    value: 0,
-                    max: 100,
-                    status: 'queued',
-                    node: 'Job queued...',
-                });
-                toast.success('Job queued!', { icon: '⏳' });
+                if (trackQueuedJob) {
+                    setCurrentJobId(data.id);
+                    setGenerating(true);
+                    setProgress({
+                        value: 0,
+                        max: 100,
+                        status: 'queued',
+                        node: 'Job queued...',
+                    });
+                    toast.success('Job queued!', { icon: '⏳' });
+                } else {
+                    toast.success('Added to queue!', { icon: '➕' });
+                }
 
                 // Redirect to gallery if requested, otherwise stay on page
                 if (shouldRedirect) {
@@ -368,8 +374,10 @@ export default function SimpleGenerator() {
         } catch (e) {
             console.error('[Generate] Error:', e);
             toast.error("Error: " + e.message);
-            setGenerating(false);
-            setProgress(null);
+            if (trackQueuedJob) {
+                setGenerating(false);
+                setProgress(null);
+            }
         }
     };
 
@@ -1310,9 +1318,9 @@ export default function SimpleGenerator() {
                     <div className="hidden md:block">
                         <div className="flex gap-2">
                             <button
-                                onClick={() => handleGenerate(false)}
-                                disabled={generating || !prompt}
-                                className={`flex-1 h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 border border-gray-700 flex items-center justify-center ${generating
+                                onClick={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                                disabled={!prompt}
+                                className={`flex-1 h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 border border-gray-700 flex items-center justify-center ${!prompt
                                     ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
                                     : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
                                     }`}
@@ -1352,7 +1360,7 @@ export default function SimpleGenerator() {
                             </div>
 
                             <button
-                                onClick={() => handleGenerate(true)}
+                                onClick={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
                                 disabled={generating || !prompt}
                                 className={`flex-[3] h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 flex items-center justify-center ${generating
                                     ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
@@ -1389,9 +1397,9 @@ export default function SimpleGenerator() {
             <div className="fixed bottom-0 left-0 right-0 p-3 bg-gray-900/95 backdrop-blur-xl border-t border-gray-800 md:hidden z-30 pb-safe">
                 <div className="flex gap-2">
                     <button
-                        onClick={() => handleGenerate(false)}
-                        disabled={generating || !prompt}
-                        className={`flex-1 h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 border border-gray-700 flex items-center justify-center ${generating
+                        onClick={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                        disabled={!prompt}
+                        className={`flex-1 h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 border border-gray-700 flex items-center justify-center ${!prompt
                             ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
                             : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
                             }`}
@@ -1431,7 +1439,7 @@ export default function SimpleGenerator() {
                     </div>
 
                     <button
-                        onClick={() => handleGenerate(true)}
+                        onClick={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
                         disabled={generating || !prompt}
                         className={`flex-[3] h-12 rounded-xl font-bold text-base shadow-lg transition-all transform active:scale-95 flex items-center justify-center ${generating
                             ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
