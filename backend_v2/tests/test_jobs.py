@@ -94,3 +94,38 @@ def test_clear_jobs(client, sample_job_data):
     # Verify empty
     list_response = client.get("/api/jobs")
     assert list_response.json()["total"] == 0
+
+
+def test_create_job_idempotency_key_reuses_existing_result(client, sample_job_data):
+    """Providing the same Idempotency-Key should not create duplicate jobs."""
+    clear_dedup_cache()
+
+    headers = {"Idempotency-Key": "job-create-key-1"}
+    first = client.post("/api/jobs", json=sample_job_data, headers=headers)
+    second = client.post("/api/jobs", json=sample_job_data, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+
+    clear_dedup_cache()
+    listed = client.get("/api/jobs")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+
+def test_create_job_without_idempotency_key_creates_distinct_jobs(client, sample_job_data):
+    """Without Idempotency-Key, repeated submits should still create separate jobs."""
+    clear_dedup_cache()
+
+    first = client.post("/api/jobs", json=sample_job_data)
+    second = client.post("/api/jobs", json=sample_job_data)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] != second.json()["id"]
+
+    clear_dedup_cache()
+    listed = client.get("/api/jobs")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 2

@@ -12,7 +12,7 @@
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
 from typing import Optional, Dict, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlmodel import Session
 from pydantic import BaseModel
 
@@ -78,6 +78,7 @@ async def validate_workflow(
 @router.post("")
 async def create_job(
     request: CreateJobRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     session: Session = Depends(get_session)
 ):
     """
@@ -87,12 +88,22 @@ async def create_job(
     Returns 400 with detailed missing model info if validation fails.
     """
     submission_service = JobSubmissionService(session)
-    job = await submission_service.create_and_enqueue_job(
-        request.workflow,
-        request.metadata,
-    )
-    logger.info("job_enqueued", job_id=job.id)
-    return submission_service.job_service._job_to_dict(job)
+
+    async def _create_and_enqueue():
+        job = await submission_service.create_and_enqueue_job(
+            request.workflow,
+            request.metadata,
+        )
+        logger.info("job_enqueued", job_id=job.id)
+        return submission_service.job_service._job_to_dict(job)
+
+    # Opt-in idempotency for clients that can safely provide a request key.
+    # Default behavior remains unchanged for repeated submissions without the header.
+    if idempotency_key:
+        dedup_key = make_key("create_job", idempotency_key.strip())
+        return await deduplicated(dedup_key, _create_and_enqueue)
+
+    return await _create_and_enqueue()
 
 
 

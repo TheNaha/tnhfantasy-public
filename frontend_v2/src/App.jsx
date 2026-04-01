@@ -24,7 +24,7 @@ import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
-import { useSettings } from './store/settingsStore';
+import useSettingsStore from './store/settingsStore';
 import { BrandingProvider } from './context/BrandingContext';
 import { ConfirmationProvider } from './context/ConfirmationContext';
 import { useJobStore } from './store/jobStore';
@@ -67,11 +67,14 @@ function AnimatedRoutes() {
 
 // Create QueryClient once at module load - NOT inside component
 // This prevents cache loss on every re-render
+const persistedSettings = useSettingsStore.getState().settings;
+const querySettings = persistedSettings?.ui || { queryStaleTime: 1000 * 60 * 5, queryCacheTime: 1000 * 60 * 30 };
+
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
-            staleTime: 1000 * 60 * 5, // 5 minutes default
-            gcTime: 1000 * 60 * 30,   // 30 minutes cache
+            staleTime: querySettings.queryStaleTime,
+            gcTime: querySettings.queryCacheTime,
             retry: 1,
             refetchOnWindowFocus: false,
             refetchOnReconnect: true,
@@ -85,7 +88,6 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-    const settings = useSettings();
     const { connect: connectJobs, fetchJobs } = useJobStore();
     const { connect: connectReconciliation } = useReconciliationStore();
     const { connect: connectProviders } = useProviderStore();
@@ -114,23 +116,6 @@ function App() {
             console.warn('Failed to warm providers:', error);
         });
     }, []);
-
-    useEffect(() => {
-        queryClient.setDefaultOptions({
-            queries: {
-                staleTime: settings.ui.queryStaleTime,
-                gcTime: settings.ui.queryCacheTime,
-                retry: 1,
-                refetchOnWindowFocus: false,
-                refetchOnReconnect: true,
-                networkMode: 'online',
-            },
-            mutations: {
-                retry: 1,
-                networkMode: 'online',
-            },
-        });
-    }, [settings.ui.queryCacheTime, settings.ui.queryStaleTime]);
 
     return (
         <ErrorBoundary>

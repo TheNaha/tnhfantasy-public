@@ -12,13 +12,14 @@
 #
 # For workflow validation (check model availability before submitting)
 # use POST /api/jobs/validate (routes/jobs.py).
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Depends, Header
 from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session
 from core.exceptions import ValidationError
+from infrastructure.request_dedup import deduplicated, make_key
 from infrastructure.logging import api_logger
 from services.job_submission_service import JobSubmissionService
 
@@ -41,6 +42,7 @@ class GenerateBatchRequest(BaseModel):
 @router.post("/generate")
 async def generate(
     request: GenerateRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     session: Session = Depends(get_session)
 ):
     """Create a new generation job.
@@ -53,12 +55,20 @@ async def generate(
             raise ValidationError("workflow is required", field="workflow")
         
         submission_service = JobSubmissionService(session)
-        job = await submission_service.create_and_enqueue_job(
-            workflow=request.workflow,
-            metadata=request.metadata,
-        )
-        logger.info("generate_job_created", job_id=job.id)
-        return submission_service.job_service._job_to_dict(job)
+
+        async def _create_generation_job():
+            job = await submission_service.create_and_enqueue_job(
+                workflow=request.workflow,
+                metadata=request.metadata,
+            )
+            logger.info("generate_job_created", job_id=job.id)
+            return submission_service.job_service._job_to_dict(job)
+
+        if idempotency_key:
+            dedup_key = make_key("generate", idempotency_key.strip())
+            return await deduplicated(dedup_key, _create_generation_job)
+
+        return await _create_generation_job()
     except Exception as e:
         logger.error("generate_failed", error=str(e))
         raise
@@ -67,6 +77,7 @@ async def generate(
 @router.post("/generate/batch")
 async def generate_batch(
     request: GenerateBatchRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     session: Session = Depends(get_session)
 ):
     """Create multiple generation jobs at once.
@@ -81,23 +92,31 @@ async def generate_batch(
             raise ValidationError("workflows array is required", field="workflows")
         
         submission_service = JobSubmissionService(session)
-        created_jobs = []
-        
-        for i, workflow in enumerate(request.workflows):
-            # Add batch index to metadata
-            job_metadata = {
-                **request.metadata,
-                "batch_index": i,
-                "batch_total": len(request.workflows),
-            }
-            job = await submission_service.create_and_enqueue_job(
-                workflow=workflow,
-                metadata=job_metadata,
-            )
-            created_jobs.append(submission_service.job_service._job_to_dict(job))
-        
-        logger.info("generate_batch_created", count=len(created_jobs))
-        return {"jobs": created_jobs, "count": len(created_jobs)}
+
+        async def _create_batch_jobs():
+            created_jobs = []
+
+            for i, workflow in enumerate(request.workflows):
+                # Add batch index to metadata
+                job_metadata = {
+                    **request.metadata,
+                    "batch_index": i,
+                    "batch_total": len(request.workflows),
+                }
+                job = await submission_service.create_and_enqueue_job(
+                    workflow=workflow,
+                    metadata=job_metadata,
+                )
+                created_jobs.append(submission_service.job_service._job_to_dict(job))
+
+            logger.info("generate_batch_created", count=len(created_jobs))
+            return {"jobs": created_jobs, "count": len(created_jobs)}
+
+        if idempotency_key:
+            dedup_key = make_key("generate_batch", idempotency_key.strip())
+            return await deduplicated(dedup_key, _create_batch_jobs)
+
+        return await _create_batch_jobs()
     except Exception as e:
         logger.error("generate_batch_failed", error=str(e))
         raise

@@ -180,8 +180,9 @@ async def call_provider(
                 is_retryable=True,
             )
         except httpx.HTTPError as error:
+            is_retryable = not isinstance(error, httpx.LocalProtocolError)
             raise ProviderCallError(
                 f"HTTP error: {error}",
                 provider_id=provider_id,
-                is_retryable=True,
+                is_retryable=is_retryable,
             )

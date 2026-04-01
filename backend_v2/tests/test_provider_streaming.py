@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import httpx
 
 from api.provider_client import JobCancelledError, ProviderCallError, call_provider
 
@@ -155,3 +156,38 @@ async def test_call_provider_raises_job_cancelled_error(monkeypatch):
     assert str(exc_info.value) == "Job cancelled by user"
     assert exc_info.value.provider_id == "provider-cancelled"
     job_service.update_job.assert_awaited_once_with("job-cancelled", message="Queued in ComfyUI...")
+
+
+@pytest.mark.asyncio
+async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
+    class RaisingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, *args, **kwargs):
+            raise httpx.LocalProtocolError("invalid request framing")
+
+    @asynccontextmanager
+    async def fake_get_streaming_client(timeout=600.0):
+        yield RaisingClient()
+
+    monkeypatch.setattr("api.provider_client.get_streaming_client", fake_get_streaming_client)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    with pytest.raises(ProviderCallError) as exc_info:
+        await call_provider(
+            worker_url="http://worker",
+            workflow={"nodes": {}},
+            job_id="job-proto",
+            job_service=job_service,
+            total_nodes=0,
+            timeout=5.0,
+            provider_id="provider-proto",
+        )
+
+    assert exc_info.value.provider_id == "provider-proto"
+    assert exc_info.value.is_retryable is False
+    job_service.update_job.assert_not_called()

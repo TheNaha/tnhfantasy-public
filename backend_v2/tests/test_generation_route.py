@@ -2,6 +2,7 @@
 import pytest
 
 from core.entities import Provider
+from infrastructure.request_dedup import clear_dedup_cache
 
 
 class TestGenerationRoute:
@@ -94,6 +95,36 @@ class TestGenerationRoute:
 
         assert generate_response.status_code == 200
         assert jobs_response.status_code == 200
+
+    def test_generate_idempotency_key_reuses_job(self, client, sample_workflow):
+        clear_dedup_cache()
+        payload = {"workflow": sample_workflow, "metadata": {"prompt": "idempotent generate"}}
+        headers = {"Idempotency-Key": "generate-key-1"}
+
+        first = client.post("/api/generate", json=payload, headers=headers)
+        second = client.post("/api/generate", json=payload, headers=headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["id"] == second.json()["id"]
+
+    def test_generate_batch_idempotency_key_reuses_batch(self, client, sample_workflow):
+        clear_dedup_cache()
+        payload = {
+            "workflows": [sample_workflow, sample_workflow],
+            "metadata": {"prompt": "idempotent batch"},
+        }
+        headers = {"Idempotency-Key": "generate-batch-key-1"}
+
+        first = client.post("/api/generate/batch", json=payload, headers=headers)
+        second = client.post("/api/generate/batch", json=payload, headers=headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["count"] == 2
+        assert second.json()["count"] == 2
+        assert first.json()["jobs"][0]["id"] == second.json()["jobs"][0]["id"]
+        assert first.json()["jobs"][1]["id"] == second.json()["jobs"][1]["id"]
 
 
 def test_generate_and_jobs_share_missing_model_validation(client, session):

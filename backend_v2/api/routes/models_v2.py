@@ -210,7 +210,7 @@ async def add_model(
 
 
 @router.post("/{model_id}/set-default-version/{version_id}")
-async def set_default_version(
+async def set_default_version_legacy(
     model_id: int,
     version_id: int,
     session: Session = Depends(get_session)
@@ -308,7 +308,7 @@ async def get_versions(
 
 
 @router.put("/{model_id}/default-version")
-async def set_default_version(
+async def set_default_version_modern(
     model_id: int,
     request: SetDefaultVersionRequest,
     session: Session = Depends(get_session)
