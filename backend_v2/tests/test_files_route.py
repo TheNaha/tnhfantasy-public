@@ -251,12 +251,12 @@ class TestFilesRoute:
         mock_service.get_provider.return_value = mock_provider
         mock_get_provider_service.return_value = mock_service
 
-        # Mock ModalProvider
-        with patch("infrastructure.providers.ModalProvider") as MockProvider:
-            mock_instance = MockProvider.return_value
+        with patch("infrastructure.providers.create_provider_client") as mock_create_provider:
+            mock_instance = MagicMock()
             mock_proxy = MagicMock()
             mock_proxy.get_file = AsyncMock(return_value=b"content")
             mock_instance.get_file_proxy.return_value = mock_proxy
+            mock_create_provider.return_value = mock_instance
 
             response = client.get("/api/files/proxy/123/path/to/image.png")
             assert response.status_code == 200

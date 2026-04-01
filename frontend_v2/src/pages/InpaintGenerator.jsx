@@ -8,8 +8,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { usePingProviders } from '../hooks/usePingProviders';
-import { useProviderStore } from '../store/providerStore';
+import { useModelDirectories } from '../hooks/useModelDirectories';
 import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
@@ -24,13 +23,10 @@ import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 
 export default function InpaintGenerator() {
-    usePingProviders();
     const navigate = useNavigate();
     const location = useLocation();
     const settings = useSettings();
     const [generating, setGenerating] = useState(false);
-    const [checkpoints, setCheckpoints] = useState([]);
-    const [vaeModels, setVaeModels] = useState([]);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
     const [showCanvas, setShowCanvas] = useState(false);
 
@@ -46,24 +42,13 @@ export default function InpaintGenerator() {
     } = useGeneratorStore();
 
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
-    const getEnrichedProviders = useProviderStore(state => state.getEnrichedProviders);
-
-    // Load models on mount
-    useEffect(() => {
-        const loadModels = async () => {
-            try {
-                const ckptData = await filesApi.list({ directory: 'models/checkpoints' });
-                setCheckpoints(ckptData.files || []);
-
-                const vaeData = await filesApi.list({ directory: 'models/vae' });
-                setVaeModels(vaeData.files || []);
-            } catch (e) {
-                console.error("Failed to load models", e);
-                toast.error("Failed to load models");
-            }
-        };
-        loadModels();
-    }, []);
+    const modelRequests = useMemo(() => ([
+        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
+        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
+    ]), []);
+    const { modelsByKey } = useModelDirectories(modelRequests);
+    const checkpoints = modelsByKey.checkpoints || [];
+    const vaeModels = modelsByKey.vaeModels || [];
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
@@ -118,22 +103,11 @@ export default function InpaintGenerator() {
         try {
             // Use inpaint model if detected, otherwise use selected
             const checkpointToUse = inpaintCheckpoint?.name || selectedCheckpoint.name;
-            const fullCheckpointData = inpaintCheckpoint || selectedCheckpoint;
-
-            // Find an active provider that has this model
-            const activeProviders = getEnrichedProviders().filter(p => p.enabled && p.container_status === 'running');
-            const syncedProvider = activeProviders.find(p => {
-                const status = fullCheckpointData.provider_statuses?.[p.id];
-                const statusValue = typeof status === 'object' ? status.status : status;
-                return statusValue === 'installed' || statusValue === 'ready';
-            });
-            const targetProviderId = syncedProvider ? syncedProvider.id : null;
 
             // First, upload the mask to the backend
             const maskResult = await filesApi.uploadMask(
                 maskImage,
                 sourceImage.filename,
-                targetProviderId
             );
 
             const builder = new WorkflowBuilder();

@@ -234,7 +234,7 @@ async def list_files_endpoint(
                 preview_url = (
                     preview_image.get("url") if preview_image else None
                 ) or (
-                    f"/api/models/preview-image?model_id={civitai_id}" if civitai_id else ""
+                    f"/api/v2/models/preview/{civitai_id}" if civitai_id else ""
                 )
                 
                 # Provider statuses

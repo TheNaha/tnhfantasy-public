@@ -18,8 +18,8 @@ from typing import Dict, Optional
 from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from api.deps import get_session_context
+from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
 from core.exceptions import NotFoundError
-from infrastructure.background_tasks import start_background_task
 
 logger = logging.getLogger(__name__)
 
@@ -62,35 +62,6 @@ def get_connected_workers() -> Dict[str, dict]:
 def is_worker_connected(provider_id: str) -> bool:
     """Check if a worker is connected for this provider."""
     return provider_id in connected_workers
-
-
-def _normalize_external_outputs(outputs) -> list:
-    """Accept only persisted structured outputs from external workers."""
-    if not isinstance(outputs, list):
-        raise ValueError("Worker result outputs must be a list")
-
-    normalized = []
-    for output in outputs:
-        if not isinstance(output, dict):
-            raise ValueError("External worker outputs must be structured objects")
-        if not output.get("filename"):
-            raise ValueError("External worker outputs must include filename")
-        if not (output.get("relative_path") or output.get("path") or output.get("subfolder")):
-            raise ValueError("External worker outputs must include a persisted path")
-
-        normalized.append({
-            "type": output.get("type", "image"),
-            "filename": output["filename"],
-            "relative_path": output.get("relative_path"),
-            "subfolder": output.get("subfolder", ""),
-            "path": output.get("path"),
-            "thumbnail": output.get("thumbnail"),
-            "blurhash": output.get("blurhash"),
-            "width": output.get("width"),
-            "height": output.get("height"),
-        })
-
-    return normalized
 
 
 async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
@@ -185,7 +156,7 @@ async def worker_websocket(
                 job_id = data.get("job_id")
                 result = data.get("result", {})
                 try:
-                    outputs = _normalize_external_outputs(result.get("outputs", []))
+                    outputs = normalize_external_outputs(result.get("outputs", []))
                 except ValueError as exc:
                     async with get_session_context() as session:
                         from services.job_service import JobService
@@ -202,73 +173,20 @@ async def worker_websocket(
                     logger.error(f"[Worker WS] Invalid completed payload for {job_id}: {exc}")
                     continue
                 
-                # Update job in database to POST_PROCESSING first
                 async with get_session_context() as session:
                     from services.job_service import JobService
-                    from core.entities import JobStatus
                     job_service = JobService(session)
-                    await job_service.update_job(
-                        job_id,
-                        status=JobStatus.POST_PROCESSING,
-                        outputs=outputs
+                    await finalize_persisted_job_outputs(
+                        job_service=job_service,
+                        job_id=job_id,
+                        outputs=outputs,
+                        provider_id=provider_id,
                     )
                 
                 worker.current_job = None
                 worker.jobs_completed += 1
                 logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
-                
-                # Broadcast post-processing
-                from api.routes.websocket import broadcast_to_room
-                await broadcast_to_room("job", "job.post_processing", {
-                    "job": {
-                        "id": job_id,
-                        "provider_id": provider_id,
-                        "status": "post_processing",
-                        "outputs": outputs
-                    }
-                })
 
-                # Schedule background task to wait for GalleryIndexer
-                async def finalize_job(j_id, outps, p_id):
-                    from api.routes.statistics import gallery_indexer
-                    import asyncio
-
-                    # Poll for up to 10 seconds (20 * 0.5s)
-                    output_refs = [
-                        output.get("relative_path") or output.get("filename")
-                        for output in outps
-                        if isinstance(output, dict) and output.get("filename")
-                    ]
-
-                    for _ in range(20):
-                        if output_refs and all(gallery_indexer.get_path(ref) for ref in output_refs):
-                            break
-                        await asyncio.sleep(0.5)
-
-                    try:
-                        async with get_session_context() as session:
-                            js = JobService(session)
-                            await js.update_job(
-                                j_id,
-                                status=JobStatus.COMPLETED
-                            )
-                        logger.info(f"[Worker WS] Job completed: {j_id}")
-                        await broadcast_to_room("job", "job.completed", {
-                            "job": {
-                                "id": j_id,
-                                "provider_id": p_id,
-                                "status": "completed",
-                                "outputs": outps
-                            }
-                        })
-                    except Exception as e:
-                        logger.error(f"[Worker WS] Finalize failed for {j_id}: {e}")
-
-                start_background_task(
-                    finalize_job(job_id, outputs, provider_id),
-                    task_name=f"worker_finalize_job:{job_id}",
-                )
-            
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
                 error = data.get("error", "Unknown error")

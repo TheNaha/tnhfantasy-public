@@ -12,15 +12,15 @@
 #
 # For workflow validation (check model availability before submitting)
 # use POST /api/jobs/validate (routes/jobs.py).
-from typing import Dict, Any
-from fastapi import APIRouter, Depends, Request
+from typing import Dict, Any, List
+from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_job_service
+from api.deps import get_session
 from core.exceptions import ValidationError
-from services.job_queue import job_queue
 from infrastructure.logging import api_logger
+from services.job_submission_service import JobSubmissionService
 
 logger = api_logger()
 
@@ -29,13 +29,18 @@ router = APIRouter(prefix="/api", tags=["generation"])
 
 class GenerateRequest(BaseModel):
     """Request body for single-image generation."""
-    workflow: Dict[str, Any]   # Full ComfyUI workflow node graph
+    workflow: Dict[str, Any] | None = None  # Full ComfyUI workflow node graph
     metadata: Dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
+
+
+class GenerateBatchRequest(BaseModel):
+    workflows: List[Dict[str, Any]] | None = None
+    metadata: Dict[str, Any] = {}
 
 
 @router.post("/generate")
 async def generate(
-    request: Request,
+    request: GenerateRequest,
     session: Session = Depends(get_session)
 ):
     """Create a new generation job.
@@ -44,31 +49,24 @@ async def generate(
     Returns the created job with its ID for tracking.
     """
     try:
-        data = await request.json()
-        workflow = data.get("workflow")
-        metadata = data.get("metadata", {})
-        
-        if not workflow:
+        if not request.workflow:
             raise ValidationError("workflow is required", field="workflow")
         
-        service = get_job_service(session)
-        job = await service.create_job(workflow=workflow, metadata=metadata)
-        
-        # Enqueue job for processing
-        await job_queue.enqueue(job.id)
+        submission_service = JobSubmissionService(session)
+        job = await submission_service.create_and_enqueue_job(
+            workflow=request.workflow,
+            metadata=request.metadata,
+        )
         logger.info("generate_job_created", job_id=job.id)
-        
-        return service._job_to_dict(job)
+        return submission_service.job_service._job_to_dict(job)
     except Exception as e:
         logger.error("generate_failed", error=str(e))
-        import traceback
-        traceback.print_exc()
         raise
 
 
 @router.post("/generate/batch")
 async def generate_batch(
-    request: Request,
+    request: GenerateBatchRequest,
     session: Session = Depends(get_session)
 ):
     """Create multiple generation jobs at once.
@@ -79,25 +77,24 @@ async def generate_batch(
     Returns an array of created job records.
     """
     try:
-        data = await request.json()
-        workflows = data.get("workflows", [])
-        metadata = data.get("metadata", {})
-        
-        if not workflows:
+        if not request.workflows:
             raise ValidationError("workflows array is required", field="workflows")
         
-        service = get_job_service(session)
+        submission_service = JobSubmissionService(session)
         created_jobs = []
         
-        for i, workflow in enumerate(workflows):
+        for i, workflow in enumerate(request.workflows):
             # Add batch index to metadata
-            job_metadata = {**metadata, "batch_index": i, "batch_total": len(workflows)}
-            job = await service.create_job(workflow=workflow, metadata=job_metadata)
-            
-            # Enqueue job for processing
-            await job_queue.enqueue(job.id)
-            
-            created_jobs.append(service._job_to_dict(job))
+            job_metadata = {
+                **request.metadata,
+                "batch_index": i,
+                "batch_total": len(request.workflows),
+            }
+            job = await submission_service.create_and_enqueue_job(
+                workflow=workflow,
+                metadata=job_metadata,
+            )
+            created_jobs.append(submission_service.job_service._job_to_dict(job))
         
         logger.info("generate_batch_created", count=len(created_jobs))
         return {"jobs": created_jobs, "count": len(created_jobs)}

@@ -1,0 +1,91 @@
+from typing import Any, Dict, Optional, Tuple
+
+from fastapi import HTTPException
+from sqlmodel import Session
+
+from core.workflow_parser import extract_models_from_workflow
+from infrastructure.logging import get_logger
+from services.job_queue import job_queue
+from services.job_service import JobService
+from services.model_availability_service import AvailabilityResult, ModelAvailabilityService
+
+logger = get_logger("job_submission")
+
+
+class JobSubmissionService:
+    """Canonical job submission path shared by all active job-creation routes."""
+
+    def __init__(self, session: Session):
+        self.session = session
+        self.job_service = JobService(session)
+        self.availability_service = ModelAvailabilityService(session)
+
+    def validate_workflow(
+        self,
+        workflow: Dict[str, Any],
+        *,
+        preferred_provider_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], AvailabilityResult]:
+        required_models = extract_models_from_workflow(workflow)
+        availability = self.availability_service.check_availability(required_models)
+
+        if (
+            preferred_provider_id
+            and preferred_provider_id not in availability.eligible_providers
+        ):
+            preferred_missing = availability.missing_models.get(preferred_provider_id, {})
+            if preferred_missing:
+                availability.missing_models[preferred_provider_id] = preferred_missing
+
+        return required_models, availability
+
+    def build_validation_response(
+        self,
+        workflow: Dict[str, Any],
+        *,
+        preferred_provider_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        required_models, result = self.validate_workflow(
+            workflow,
+            preferred_provider_id=preferred_provider_id,
+        )
+        return {
+            "valid": result.valid,
+            "eligible_providers": result.eligible_providers,
+            "missing_models": result.missing_models,
+            "global_missing": result.global_missing,
+            "can_trigger_download": result.can_trigger_download,
+            "required_models": required_models,
+        }
+
+    async def create_and_enqueue_job(
+        self,
+        workflow: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        preferred_provider_id: Optional[str] = None,
+    ):
+        metadata = metadata or {}
+        required_models, availability = self.validate_workflow(
+            workflow,
+            preferred_provider_id=preferred_provider_id,
+        )
+
+        if required_models and not availability.valid:
+            logger.warning("job_creation_missing_models", global_missing=availability.global_missing)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "missing_models",
+                    "message": "No provider has all required models installed",
+                    "required_models": required_models,
+                    "global_missing": availability.global_missing,
+                    "missing_by_provider": availability.missing_models,
+                    "can_trigger_download": availability.can_trigger_download,
+                },
+            )
+
+        job = await self.job_service.create_job(workflow, metadata)
+        await job_queue.enqueue(job.id)
+        logger.info("job_enqueued", job_id=job.id)
+        return job

@@ -19,6 +19,8 @@ export const useJobStore = create((set, get) => ({
     jobs: [],
     activeJobs: [],
     lastCompletedJob: null,  // Track the most recently completed job for gallery auto-refresh
+    lastFailedJob: null,
+    lastCancelledJob: null,
     isConnected: false,
     connectionError: null,
     _wsInitialized: false,
@@ -102,7 +104,9 @@ export const useJobStore = create((set, get) => ({
                     return {
                         jobs: remainingActiveJobs,
                         activeJobs: remainingActiveJobs,
-                        lastCompletedJob: eventType === 'job.completed' ? job : state.lastCompletedJob
+                        lastCompletedJob: eventType === 'job.completed' ? job : state.lastCompletedJob,
+                        lastFailedJob: eventType === 'job.failed' ? job : state.lastFailedJob,
+                        lastCancelledJob: eventType === 'job.cancelled' ? job : state.lastCancelledJob,
                     };
                 });
             }
@@ -149,6 +153,7 @@ export const useJobStore = create((set, get) => ({
                 ws.EventTypes.JOB_CREATED,
                 ws.EventTypes.JOB_UPDATED,
                 ws.EventTypes.JOB_PROGRESS,
+                ws.EventTypes.JOB_POST_PROCESSING,
                 ws.EventTypes.JOB_COMPLETED,
                 ws.EventTypes.JOB_FAILED,
                 ws.EventTypes.JOB_CANCELLED,
@@ -494,4 +499,3 @@ if (typeof document !== 'undefined') {
         }
     });
 }
-

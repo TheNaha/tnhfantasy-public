@@ -613,6 +613,24 @@ class ModelRepositoryV2:
             )
         )
         return self.session.exec(stmt).first()
+
+    def get_provider_statuses_for_files(
+        self,
+        file_ids: List[int],
+        provider_name: str,
+    ) -> Dict[int, ProviderVersionStatus]:
+        """Get provider statuses for many files in one query."""
+        if not file_ids:
+            return {}
+
+        stmt = select(ProviderVersionStatus).where(
+            and_(
+                ProviderVersionStatus.file_id.in_(file_ids),
+                ProviderVersionStatus.provider_name == provider_name,
+            )
+        )
+        statuses = self.session.exec(stmt).all()
+        return {status.file_id: status for status in statuses}
     
     def update_provider_status(
         self,

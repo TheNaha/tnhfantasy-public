@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import { useBranding } from '../context/BrandingContext';
+import { useProviderStore } from '../store/providerStore';
 
 const NavItem = ({ to, icon: Icon, label }) => {
     const location = useLocation();
@@ -30,6 +31,14 @@ export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const { branding } = useBranding();
+    const providers = useProviderStore(state => state.providers);
+    const containerStatuses = useProviderStore(state => state.containerStatuses);
+    const runningProviders = providers.filter(provider =>
+        ['running', 'starting'].includes(containerStatuses[provider.id]?.status)
+    );
+    const statusLabel = runningProviders.length > 0
+        ? `${runningProviders.length} provider${runningProviders.length === 1 ? '' : 's'} online`
+        : 'No providers online';
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -101,9 +110,9 @@ export default function Layout({ children }) {
                     <div className="bg-gray-900 rounded-lg p-3 text-sm text-gray-400">
                         <div className="flex justify-between items-center mb-2">
                             <span>Status</span>
-                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            <span className={`w-2 h-2 rounded-full ${runningProviders.length > 0 ? 'bg-green-500' : 'bg-gray-600'}`}></span>
                         </div>
-                        <p>Modal: Connected</p>
+                        <p>{statusLabel}</p>
                     </div>
                 </div>
             </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Trash2, RefreshCw, CheckCircle, Clock, Download, XCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Trash2, CheckCircle, Clock, Download, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRemoveModelFromProvider } from '../../hooks/useProviderModels';
 import { useConfirmation } from '../../context/ConfirmationContext';
@@ -83,14 +83,6 @@ export default function ProviderModelList({ providerId, models }) {
                                             </div>
 
                                             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                {status === 'failed' && (
-                                                    <button
-                                                        className="p-1 hover:bg-blue-500/20 rounded text-blue-400"
-                                                        title="Retry"
-                                                    >
-                                                        <RefreshCw size={14} />
-                                                    </button>
-                                                )}
                                                 <button
                                                     onClick={() => handleRemove(directory, model.name)}
                                                     className="p-1 hover:bg-red-500/20 rounded text-red-400"

@@ -19,8 +19,8 @@ class StubLoadBalancer:
         self.provider = provider
         self.calls = []
 
-    def get_next_provider(self, preferred_provider_id=None, exclude_provider_ids=None):
-        self.calls.append((preferred_provider_id, exclude_provider_ids))
+    def get_next_provider(self, preferred_provider_id=None, required_models=None, exclude_provider_ids=None):
+        self.calls.append((preferred_provider_id, required_models, exclude_provider_ids))
         return self.provider
 
 
@@ -98,4 +98,4 @@ async def test_select_next_provider_returns_provider_when_available():
 
     assert result is provider
     assert job_service.calls == []
-    assert load_balancer.calls == [("provider-1", exhausted)]
+    assert load_balancer.calls == [("provider-1", None, exhausted)]

@@ -2,11 +2,8 @@
  * Enhanced Sync Status Display
  * Shows BOTH reconciliation status AND model storage in separate blocks
  */
-import { useEffect, useCallback } from 'react';
 import { CheckCircle, Clock, Download, XCircle, RefreshCw, Database, AlertCircle, Loader2, Trash2, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import useReconciliationStore from '../../store/reconciliationStore';
-import * as ws from '../../api/websocket';
 
 // Phase display configuration
 const PHASE_CONFIG = {
@@ -29,42 +26,6 @@ export default function SyncStatusBadge({
     onReconciliationClick,
     onStorageClick
 }) {
-    const { updateReconciliation, endReconciliation } = useReconciliationStore();
-
-    // Handle WebSocket events for real-time updates
-    const handleReconciliationEvent = useCallback((data) => {
-        if (data.data?.provider_id !== providerId) return;
-
-        const eventData = data.data;
-        updateReconciliation(providerId, {
-            status: eventData.status,
-            phase: eventData.phase,
-            stats: eventData.stats,
-            current_download: eventData.current_download,
-            active_downloads: eventData.active_downloads || [],
-            errors: eventData.errors,
-            message: eventData.message,
-        });
-
-        // Auto-cleanup on completion (after delay)
-        if (eventData.status === 'completed' || eventData.status === 'failed') {
-            setTimeout(() => endReconciliation(providerId), 5000);
-        }
-    }, [providerId, updateReconciliation, endReconciliation]);
-
-    // Subscribe to WebSocket events
-    useEffect(() => {
-        const unsubStarted = ws.on(ws.EventTypes.RECONCILIATION_STARTED, handleReconciliationEvent);
-        const unsubProgress = ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, handleReconciliationEvent);
-        const unsubCompleted = ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, handleReconciliationEvent);
-
-        return () => {
-            unsubStarted();
-            unsubProgress();
-            unsubCompleted();
-        };
-    }, [handleReconciliationEvent]);
-
     const isReconciling = reconciliation &&
         (reconciliation.status === 'reconciling' ||
             reconciliation.status === 'completed' ||

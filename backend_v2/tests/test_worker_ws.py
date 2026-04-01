@@ -98,10 +98,9 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
-         patch("api.routes.statistics.gallery_indexer", gallery_indexer), \
-         patch("api.routes.websocket.broadcast_to_room", new=AsyncMock()) as broadcast_mock:
+         patch("services.gallery_indexer.gallery_indexer", gallery_indexer):
         await worker_websocket(websocket, "provider-a", "token-1")
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
 
     assert websocket.accepted is True
     gallery_indexer.get_path.assert_called_with("2026/03/06/image-1.png")
@@ -119,15 +118,14 @@ async def test_worker_websocket_finalization_uses_output_filenames():
             "width": None,
             "height": None,
         }],
+        progress=100,
+        overall_progress=100,
+        provider_id="provider-a",
     )
     job_service.update_job.assert_any_await(
         "job-1",
         status=JobStatus.COMPLETED,
-    )
-    broadcast_mock.assert_any_await(
-        "job",
-        "job.completed",
-        {"job": {"id": "job-1", "provider_id": "provider-a", "status": "completed", "outputs": [{
+        outputs=[{
             "type": "image",
             "filename": "image-1.png",
             "relative_path": "2026/03/06/image-1.png",
@@ -137,7 +135,10 @@ async def test_worker_websocket_finalization_uses_output_filenames():
             "blurhash": None,
             "width": None,
             "height": None,
-        }]}},
+        }],
+        progress=100,
+        overall_progress=100,
+        provider_id="provider-a",
     )
 
 
@@ -159,8 +160,7 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
 
     with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
-         patch("services.job_service.JobService", return_value=job_service), \
-         patch("api.routes.websocket.broadcast_to_room", new=AsyncMock()) as broadcast_mock:
+         patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
 
     job_service.update_job.assert_any_await(
@@ -168,4 +168,3 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
         status=JobStatus.FAILED,
         error="External worker outputs must be structured objects",
     )
-    broadcast_mock.assert_not_awaited()

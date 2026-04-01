@@ -3,11 +3,7 @@
  * Centralized configuration for backend endpoints.
  */
 
-// Backend options
-export const BACKENDS = {
-    V1: 'http://localhost:8000',
-    V2: 'http://localhost:8002',
-};
+export const DEFAULT_API_URL = 'http://localhost:8002';
 
 function canUseBrowserStorage() {
     return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -26,8 +22,7 @@ function getBackendUrl() {
         return import.meta.env.VITE_API_URL;
     }
 
-    // Default to V2 for frontend_v2
-    return BACKENDS.V2;
+    return DEFAULT_API_URL;
 }
 
 // Current backend URL (reactive)
@@ -42,12 +37,4 @@ export function setApiUrl(url) {
     if (canUseBrowserStorage()) {
         window.localStorage.setItem('comfy_backend_url', url);
     }
-}
-
-export function useBackendV2() {
-    setApiUrl(BACKENDS.V2);
-}
-
-export function useBackendV1() {
-    setApiUrl(BACKENDS.V1);
 }

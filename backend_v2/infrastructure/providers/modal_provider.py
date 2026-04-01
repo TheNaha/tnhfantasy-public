@@ -5,6 +5,7 @@ import urllib.parse
 from typing import Dict, List, AsyncIterator, Any, Optional
 
 from .base import ServerlessProvider, FileProxyProvider
+from .runtime import get_provider_worker_base_url
 from infrastructure.http_client import get_http_client
 
 
@@ -52,7 +53,7 @@ class ModalProvider(ServerlessProvider):
         self.container_name = f"comfy-provider-{provider_id}"
         
         # Worker URL (inside podman network)
-        self.worker_url = f"http://{self.container_name}:{self.container_port}"
+        self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)
         
         # File proxy
         self._file_proxy = ModalFileProxy(provider_id, config, self.worker_url)

@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from pydantic import BaseModel
 import aiohttp
 
-from api.deps import get_session, get_provider_service, get_container_manager, get_session_context
+from api.deps import get_session, get_provider_service, get_container_manager
 from services.provider_service import ProviderService
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.background_tasks import start_background_task
@@ -95,22 +95,6 @@ async def save_generated_image(request: SaveImageRequest):
         image_data = base64.b64decode(request.image_base64, validate=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
-    
-    from services.job_service import JobService
-    from core.entities import JobStatus
-    from infrastructure.logging import get_logger
-
-    logger = get_logger("providers_route")
-
-    if request.job_id:
-        try:
-            async with get_session_context() as session:
-                job_service = JobService(session)
-                job = await job_service.get_job(request.job_id)
-                if job.status in [JobStatus.RUNNING, JobStatus.PROCESSING]:
-                    await job_service.update_job(request.job_id, status=JobStatus.POST_PROCESSING)
-        except Exception as e:
-            logger.error(f"Error updating job status to POST_PROCESSING: {e}")
 
     service = get_image_service()
     
@@ -390,6 +374,12 @@ async def get_provider_sync_status(provider_id: str, session: Session = Depends(
         ModelVersion.is_enabled == True
     )
 
+    rows = session.exec(stmt).all()
+    status_map = service.repo.get_provider_statuses_for_files(
+        [file.id for file, _version, _model in rows],
+        provider_id,
+    )
+
     stats = {
         "installed": 0,
         "pending": 0,
@@ -398,8 +388,8 @@ async def get_provider_sync_status(provider_id: str, session: Session = Depends(
     }
     models = []
 
-    for file, _version, model in session.exec(stmt).all():
-        provider_status = service.repo.get_provider_status(file.id, provider_id)
+    for file, _version, model in rows:
+        provider_status = status_map.get(file.id)
         status = provider_status.status if provider_status else "pending"
         normalized_status = "installed" if status == "ready" else status
         stats[normalized_status] = stats.get(normalized_status, 0) + 1

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -12,97 +12,21 @@ import GeneratorTabs from '../components/generator/GeneratorTabs';
 import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
-import { usePingProviders } from '../hooks/usePingProviders';
+import { useModelDirectories } from '../hooks/useModelDirectories';
 import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { filesApi, api } from '../api';
-import { useWebSocket, EventTypes } from '../api/websocket';
+import { api } from '../api';
 
 export default function SimpleGenerator() {
-    usePingProviders();
     const navigate = useNavigate();
     const settings = useSettings();
     const [generating, setGenerating] = useState(false);
-    const [checkpoints, setCheckpoints] = useState([]);
-    const [controlNetModels, setControlNetModels] = useState([]);
-    const [upscalerModels, setUpscalerModels] = useState([]);
-    const [vaeModels, setVaeModels] = useState([]);
-    const [unetModels, setUnetModels] = useState([]);
-    const [clipModels, setClipModels] = useState([]);
-    const [embeddingModels, setEmbeddingModels] = useState([]);
-    const [adetailerModels, setAdetailerModels] = useState([]);
     const [viewingMetadata, setViewingMetadata] = useState(null);
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null); // { value, max, node, status }
     const [expandedTriggerGroups, setExpandedTriggerGroups] = useState({}); // { "loraIdx-groupIdx": true }
-
-    // WebSocket Integration
-    const { subscribe: on } = useWebSocket(['job']);
-
-    // Use ref to track current job ID without triggering effect re-runs
-    const currentJobIdRef = useRef(currentJobId);
-    currentJobIdRef.current = currentJobId;
-
-    const extractEventJob = (payload) => payload?.data?.job || payload?.job || payload;
-
-    useEffect(() => {
-        // Listen for progress updates
-        const unsubProgress = on(EventTypes.JOB_PROGRESS, (payload) => {
-            const jobId = currentJobIdRef.current;
-            const eventJob = extractEventJob(payload);
-            if (jobId && eventJob?.id === jobId) {
-                // Determine message based on progress type
-                let message = `${eventJob.progress ?? 0}%`;
-                if (eventJob.node) message = `${eventJob.node} (${eventJob.progress ?? 0}%)`;
-
-                setProgress({
-                    value: eventJob.progress ?? 0,
-                    max: 100,
-                    status: 'processing',
-                    node: eventJob.message || message
-                });
-                setGenerating(true);
-            }
-        });
-
-        // Listen for completion
-        const unsubComplete = on(EventTypes.JOB_COMPLETED, (payload) => {
-            const jobId = currentJobIdRef.current;
-            const eventJob = extractEventJob(payload);
-            console.log('[WebSocket] JOB_COMPLETED event:', eventJob?.id, 'current:', jobId);
-            if (jobId && eventJob?.id === jobId) {
-                setGenerating(false);
-                setProgress(null);
-                setCurrentJobId(null);
-                toast.success('Generation complete!', { icon: '✨' });
-
-                if (settings.generator.redirectAfterGenerate) {
-                    setTimeout(() => navigate('/'), settings.generator.redirectDelay);
-                }
-            }
-        });
-
-        // Listen for failure
-        const unsubFailed = on(EventTypes.JOB_FAILED, (payload) => {
-            const jobId = currentJobIdRef.current;
-            const eventJob = extractEventJob(payload);
-            console.log('[WebSocket] JOB_FAILED event:', eventJob?.id, 'current:', jobId);
-            if (jobId && eventJob?.id === jobId) {
-                setGenerating(false);
-                setProgress(null);
-                setCurrentJobId(null);
-                toast.error(`Generation failed: ${eventJob?.error || 'Unknown error'}`);
-            }
-        });
-
-        return () => {
-            unsubProgress();
-            unsubComplete();
-            unsubFailed();
-        };
-    }, [navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay, on]);
 
     // Global State from Store
     const {
@@ -118,7 +42,31 @@ export default function SimpleGenerator() {
         aspectRatioLocked
     } = useGeneratorStore();
 
+    const modelRequests = useMemo(() => ([
+        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
+        { key: 'controlNetModels', directory: 'models/controlnet', label: 'controlnet models' },
+        { key: 'upscalerModels', directory: 'models/upscale_models', label: 'upscaler models' },
+        { key: 'adetailerModels', directory: 'models/ultralytics/bbox', label: 'adetailer models' },
+        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
+        { key: 'clipModels', directory: 'models/clip', label: 'CLIP models' },
+        { key: 'unetModels', directory: 'models/unet', label: 'UNET models' },
+        { key: 'embeddingModels', directory: 'models/embeddings', label: 'embedding models' },
+    ]), []);
+    const { modelsByKey } = useModelDirectories(modelRequests);
+    const checkpoints = modelsByKey.checkpoints || [];
+    const controlNetModels = modelsByKey.controlNetModels || [];
+    const upscalerModels = modelsByKey.upscalerModels || [];
+    const vaeModels = modelsByKey.vaeModels || [];
+    const unetModels = modelsByKey.unetModels || [];
+    const clipModels = modelsByKey.clipModels || [];
+    const embeddingModels = modelsByKey.embeddingModels || [];
+    const adetailerModels = modelsByKey.adetailerModels || [];
+
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
+    const activeJobs = useJobStore(state => state.activeJobs);
+    const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
+    const lastFailedJob = useJobStore(state => state.lastFailedJob);
+    const lastCancelledJob = useJobStore(state => state.lastCancelledJob);
 
     // Settings for auto-randomize seed
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
@@ -175,48 +123,61 @@ export default function SimpleGenerator() {
         }
     };
 
-    // Load models on mount
     useEffect(() => {
-        const loadModels = async () => {
-            try {
-                // Load Checkpoints
-                const ckptData = await filesApi.list({ directory: 'models/checkpoints' });
-                setCheckpoints(ckptData.files || []);
+        if (!currentJobId) {
+            return;
+        }
 
-                const cnData = await filesApi.list({ directory: 'models/controlnet' });
-                setControlNetModels(cnData.files || []);
+        const trackedJob = activeJobs.find(job => job.id === currentJobId);
+        if (trackedJob) {
+            const isQueued = trackedJob.status === 'pending';
+            const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
+            setGenerating(true);
+            setProgress({
+                value: progressValue,
+                max: 100,
+                status: isQueued ? 'queued' : trackedJob.status,
+                node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
+            });
+            return;
+        }
 
-                // Load Upscalers
-                const upData = await filesApi.list({ directory: 'models/upscale_models' });
-                setUpscalerModels(upData.files || []);
+        if (lastCompletedJob?.id === currentJobId) {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.success('Generation complete!', { icon: '✨' });
 
-                // Load ADetailer Models (bbox)
-                const adData = await filesApi.list({ directory: 'models/ultralytics/bbox' });
-                setAdetailerModels(adData.files || []);
-
-                // Load VAEs
-                const vaeData = await filesApi.list({ directory: 'models/vae' });
-                setVaeModels(vaeData.files || []);
-
-                // Load CLIP models (for Flux)
-                const clipData = await filesApi.list({ directory: 'models/clip' });
-                setClipModels(clipData.files || []);
-
-                // Load UNET models (for Flux - stored separately from checkpoints)
-                const unetData = await filesApi.list({ directory: 'models/unet' });
-                setUnetModels(unetData.files || []);
-
-                // Load Embeddings
-                const embData = await filesApi.list({ directory: 'models/embeddings' });
-                setEmbeddingModels(embData.files || []);
-
-            } catch (e) {
-                console.error("Failed to load models", e);
-                toast.error("Failed to load models");
+            if (settings.generator.redirectAfterGenerate) {
+                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
             }
-        };
-        loadModels();
-    }, []);
+            return;
+        }
+
+        if (lastFailedJob?.id === currentJobId) {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.error(`Generation failed: ${lastFailedJob.error || 'Unknown error'}`);
+            return;
+        }
+
+        if (lastCancelledJob?.id === currentJobId) {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast('Generation cancelled');
+        }
+    }, [
+        activeJobs,
+        currentJobId,
+        lastCancelledJob,
+        lastCompletedJob,
+        lastFailedJob,
+        navigate,
+        settings.generator.redirectAfterGenerate,
+        settings.generator.redirectDelay,
+    ]);
 
     const handleAddLora = () => {
         addLora();

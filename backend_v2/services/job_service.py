@@ -50,6 +50,10 @@ class JobService:
         if not job:
             logger.warning("job_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
+        try:
+            self.session.refresh(job)
+        except Exception:
+            pass
         return job
     
     async def list_jobs(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
@@ -109,6 +113,8 @@ class JobService:
         # Determine event type based on status
         if status == JobStatus.COMPLETED:
             event_type = EventType.JOB_COMPLETED
+        elif status == JobStatus.POST_PROCESSING:
+            event_type = EventType.JOB_POST_PROCESSING
         elif status == JobStatus.FAILED:
             event_type = EventType.JOB_FAILED
         elif "progress" in updates:
@@ -243,4 +249,3 @@ class JobService:
             "error": job.error,
             "provider_id": job.provider_id,
         }
-

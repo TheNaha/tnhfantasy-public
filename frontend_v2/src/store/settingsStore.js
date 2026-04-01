@@ -38,7 +38,6 @@ const DEFAULT_SETTINGS = {
     },
     models: {
         itemsPerPage: 20,            // models shown per page in Model Manager
-        autoSync: true,              // automatically sync models with providers on startup
         autoRemoveDownloads: true    // remove download records after they complete
     },
     generator: {

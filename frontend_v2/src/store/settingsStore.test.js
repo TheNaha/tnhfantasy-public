@@ -27,7 +27,6 @@ const DEFAULT_SETTINGS = {
     },
     models: {
         itemsPerPage: 20,
-        autoSync: true,
         autoRemoveDownloads: true
     },
     generator: {
@@ -65,7 +64,7 @@ describe('useSettingsStore', () => {
         it('has default models settings', () => {
             const { settings } = useSettingsStore.getState();
             expect(settings.models.itemsPerPage).toBe(20);
-            expect(settings.models.autoSync).toBe(true);
+            expect(settings.models.autoRemoveDownloads).toBe(true);
         });
 
         it('has default generator settings', () => {

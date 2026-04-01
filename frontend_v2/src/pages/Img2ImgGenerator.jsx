@@ -5,29 +5,26 @@
  * Uses a source image and transforms it based on prompts and denoise setting.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ImageIcon, Wand2, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { usePingProviders } from '../hooks/usePingProviders';
+import { useModelDirectories } from '../hooks/useModelDirectories';
 import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
-import { filesApi, api } from '../api';
+import { api } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 
 export default function Img2ImgGenerator() {
-    usePingProviders();
     const navigate = useNavigate();
     const location = useLocation();
     const settings = useSettings();
     const [generating, setGenerating] = useState(false);
-    const [checkpoints, setCheckpoints] = useState([]);
-    const [vaeModels, setVaeModels] = useState([]);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
 
     // Global State from Store
@@ -41,24 +38,15 @@ export default function Img2ImgGenerator() {
         randomizeSeed, addLora, removeLora, updateLora
     } = useGeneratorStore();
 
+    const modelRequests = useMemo(() => ([
+        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
+        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
+    ]), []);
+    const { modelsByKey } = useModelDirectories(modelRequests);
+    const checkpoints = modelsByKey.checkpoints || [];
+    const vaeModels = modelsByKey.vaeModels || [];
+
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
-
-    // Load models on mount
-    useEffect(() => {
-        const loadModels = async () => {
-            try {
-                const ckptData = await filesApi.list({ directory: 'models/checkpoints' });
-                setCheckpoints(ckptData.files || []);
-
-                const vaeData = await filesApi.list({ directory: 'models/vae' });
-                setVaeModels(vaeData.files || []);
-            } catch (e) {
-                console.error("Failed to load models", e);
-                toast.error("Failed to load models");
-            }
-        };
-        loadModels();
-    }, []);
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {

@@ -11,22 +11,16 @@
 #
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
-import json
-from typing import Optional, Dict, List, Any
-from fastapi import APIRouter, Depends, Request, HTTPException
-from fastapi.responses import Response, JSONResponse
+from typing import Optional, Dict, List
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_event_bus, get_job_service
-from services.job_service import JobService
-from services.job_queue import job_queue
-from services.model_availability_service import ModelAvailabilityService
-from core.events import EventBus
-from core.exceptions import NotFoundError
-from core.workflow_parser import extract_models_from_workflow
+from api.deps import get_session, get_job_service
 from infrastructure.request_dedup import deduplicated, make_key
 from infrastructure.logging import api_logger
+from services.job_submission_service import JobSubmissionService
+from services.job_queue import job_queue
 
 logger = api_logger()
 
@@ -71,29 +65,13 @@ async def validate_workflow(
     Returns detailed breakdown to allow UI to show missing models
     and offer download triggers.
     """
-    # Extract models from workflow
-    required_models = extract_models_from_workflow(request.workflow)
-    
-    logger.debug("workflow_validation_start", model_count=len(required_models))
-    # Check availability
-    availability_service = ModelAvailabilityService(session)
-    result = availability_service.check_availability(required_models)
-    
-    # If preferred provider specified but not eligible, add specific info
-    if request.preferred_provider_id and request.preferred_provider_id not in result.eligible_providers:
-        # Get specific missing models for preferred provider
-        preferred_missing = result.missing_models.get(request.preferred_provider_id, {})
-        if preferred_missing:
-            result.missing_models[request.preferred_provider_id] = preferred_missing
-    
-    return {
-        "valid": result.valid,
-        "eligible_providers": result.eligible_providers,
-        "missing_models": result.missing_models,
-        "global_missing": result.global_missing,
-        "can_trigger_download": result.can_trigger_download,
-        "required_models": required_models
-    }
+    submission_service = JobSubmissionService(session)
+    response = submission_service.build_validation_response(
+        request.workflow,
+        preferred_provider_id=request.preferred_provider_id,
+    )
+    logger.debug("workflow_validation_start", model_count=len(response["required_models"]))
+    return response
 
 
 @router.post("")
@@ -107,37 +85,13 @@ async def create_job(
     Validates that at least one provider has all required models.
     Returns 400 with detailed missing model info if validation fails.
     """
-    # Extract and validate models
-    required_models = extract_models_from_workflow(request.workflow)
-    
-    if required_models:
-        availability_service = ModelAvailabilityService(session)
-        availability = availability_service.check_availability(required_models)
-        
-        if not availability.valid:
-            # No provider has all required models - return detailed error
-            logger.warning("job_creation_missing_models", global_missing=availability.global_missing)
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "missing_models",
-                    "message": "No provider has all required models installed",
-                    "required_models": required_models,
-                    "global_missing": availability.global_missing,
-                    "missing_by_provider": availability.missing_models,
-                    "can_trigger_download": availability.can_trigger_download
-                }
-            )
-    
-    service = get_job_service(session)
-    job = await service.create_job(request.workflow, request.metadata)
-    
-    # Enqueue for processing
-    await job_queue.enqueue(job.id)
-    
+    submission_service = JobSubmissionService(session)
+    job = await submission_service.create_and_enqueue_job(
+        request.workflow,
+        request.metadata,
+    )
     logger.info("job_enqueued", job_id=job.id)
-    
-    return service._job_to_dict(job)
+    return submission_service.job_service._job_to_dict(job)
 
 
 
@@ -245,12 +199,11 @@ async def retry_job(
             detail="Only failed jobs can be retried"
         )
     
-    # Create new job with same workflow
-    new_job = await service.create_job(
+    submission_service = JobSubmissionService(session)
+    new_job = await submission_service.create_and_enqueue_job(
         original_job.workflow,
-        original_job.metadata_
+        original_job.metadata_,
     )
-    await job_queue.enqueue(new_job.id)
     
     logger.info("job_retried", original_job_id=job_id, new_job_id=new_job.id)
     

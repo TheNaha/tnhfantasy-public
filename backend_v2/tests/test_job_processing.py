@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -38,6 +39,21 @@ def _add_provider(session: Session, provider_id: str, priority: int, container_c
     return provider
 
 
+async def _get_job_from_fresh_session(session: Session, job_id: str, attempts: int = 250):
+    bind = session.get_bind()
+    for _ in range(attempts):
+        with Session(bind) as fresh_session:
+            fresh_job_service = JobService(fresh_session)
+            job = await fresh_job_service.get_job(job_id)
+            if job.status == JobStatus.COMPLETED:
+                return job
+        await asyncio.sleep(0.05)
+
+    with Session(bind) as fresh_session:
+        fresh_job_service = JobService(fresh_session)
+        return await fresh_job_service.get_job(job_id)
+
+
 @pytest.mark.asyncio
 async def test_process_job_falls_back_when_provider_missing_container_config(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
@@ -57,7 +73,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
 
     await process_job(job.id)
 
-    updated_job = await job_service.get_job(job.id)
+    updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
@@ -92,7 +108,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
 
     await process_job(job.id)
 
-    updated_job = await job_service.get_job(job.id)
+    updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
@@ -157,7 +173,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
     assert stored_metadata["prompt"] == "hello"
     assert stored_metadata["seed"] == 42
 
-    updated_job = await job_service.get_job(job.id)
+    updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.COMPLETED
 
     LoadBalancer.reset_state()

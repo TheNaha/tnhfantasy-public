@@ -4,7 +4,7 @@
  */
 
 // Configuration
-export { getApiUrl, setApiUrl, useBackendV1, useBackendV2, BACKENDS } from './config';
+export { getApiUrl, setApiUrl, DEFAULT_API_URL } from './config';
 
 // HTTP Client
 export { default as api, ApiError } from './client';

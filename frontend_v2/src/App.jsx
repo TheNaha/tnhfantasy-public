@@ -32,6 +32,7 @@ import useReconciliationStore from './store/reconciliationStore';
 import { useProviderStore } from './store/providerStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobNotifications } from './hooks/useJobNotifications.jsx';
+import { api } from './api';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
@@ -107,6 +108,12 @@ function App() {
         // Fetch initial data
         fetchJobs();
     }, [connectJobs, connectReconciliation, connectProviders, fetchJobs]);
+
+    useEffect(() => {
+        api.post('/api/providers/wake').catch((error) => {
+            console.warn('Failed to warm providers:', error);
+        });
+    }, []);
 
     useEffect(() => {
         queryClient.setDefaultOptions({
