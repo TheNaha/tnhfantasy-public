@@ -12,7 +12,7 @@ def test_build_provider_worker_images_attempts_default_builds():
         "beam": "comfy-provider-beam:latest",
     }
 
-    with patch("services.container_manager.ContainerManager", return_value=container_manager):
+    with patch("services.container_manager.get_container_manager", return_value=container_manager):
         build_provider_worker_images()
 
     container_manager.build_worker_images.assert_called_once_with()
@@ -33,7 +33,7 @@ def test_autostart_provider_containers_starts_enabled_containerized_providers():
 
     with patch("api.startup_helpers.get_session_sync", return_value=session), \
          patch("infrastructure.repositories.ProviderRepository", return_value=provider_repo), \
-         patch("services.container_manager.ContainerManager", return_value=container_manager), \
+         patch("services.container_manager.get_container_manager", return_value=container_manager), \
          patch("infrastructure.providers.ProviderRegistry.build_container_env", return_value={"TOKEN": "abc"}):
         autostart_provider_containers()
 
@@ -73,7 +73,7 @@ async def test_startup_application_refreshes_provider_images_before_autostart():
          patch("api.lifecycle.autostart_provider_containers", side_effect=lambda: events.append("autostart")), \
          patch("api.lifecycle.monitor_provider_changes", new_callable=AsyncMock), \
          patch("api.lifecycle.start_background_task", side_effect=start_background_task_side_effect), \
-            patch("services.gallery_indexer.gallery_indexer.start"), \
+         patch("services.gallery_indexer.gallery_indexer.start"), \
          patch("api.lifecycle.job_queue") as job_queue:
         recover_pending_jobs.return_value = None
         job_queue.start = AsyncMock()

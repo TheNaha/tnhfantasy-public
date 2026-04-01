@@ -14,7 +14,10 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("container_manager")
 _container_manager_singleton = None
-DEFAULT_HEALTH_TIMEOUT_SECONDS = int(os.getenv("COMFY_CONTAINER_HEALTH_TIMEOUT_SECONDS", "60"))
+try:
+    DEFAULT_HEALTH_TIMEOUT_SECONDS = max(10, int(os.getenv("COMFY_CONTAINER_HEALTH_TIMEOUT_SECONDS", "180")))
+except ValueError:
+    DEFAULT_HEALTH_TIMEOUT_SECONDS = 180
 
 
 class ContainerManager:
