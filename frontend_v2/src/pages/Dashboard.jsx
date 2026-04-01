@@ -62,15 +62,6 @@ export default function Dashboard() {
         queryClient.invalidateQueries(['gallery']);
     }, [storeDeleteJob, queryClient]);
 
-    // Confirmation Modal
-    const [confirmModal, setConfirmModal] = useState({
-        isOpen: false,
-        title: '',
-        message: '',
-        onConfirm: () => { },
-        isDangerous: false
-    });
-
     // Wrapped deleteJob with confirmation modal for card dismiss button
     const handleJobDelete = useCallback((jobId) => {
         setConfirmModal({

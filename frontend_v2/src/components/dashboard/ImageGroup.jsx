@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Images } from 'lucide-react';
 
 import ProgressiveImage from '../ProgressiveImage';
@@ -18,6 +18,9 @@ const ImageGroup = memo(function ImageGroup({
 }) {
     const count = images.length;
     const primaryImage = images[0];
+
+    // ⚡ Bolt: Pre-compute sliced images to prevent array allocations on every render
+    const previewImages = useMemo(() => images.slice(0, 4), [images]);
 
     // Get thumbnail URL for an image
     const getThumbnail = (img) => {
@@ -87,7 +90,7 @@ const ImageGroup = memo(function ImageGroup({
             {/* Hover overlay showing thumbnails grid preview */}
             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                 <div className="grid grid-cols-2 gap-1 p-3 w-full h-full">
-                    {images.slice(0, 4).map((img, i) => (
+                    {previewImages.map((img, i) => (
                         <div key={img.name} className="relative overflow-hidden rounded bg-gray-800">
                             {/* ⚡ Bolt: Use ProgressiveImage here too to prevent mass eager-loading of hover thumbnails */}
                             <ProgressiveImage
