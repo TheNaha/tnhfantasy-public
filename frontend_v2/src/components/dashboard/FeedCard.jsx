@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
-import { api, ApiError } from "../../api";
+import { api, ApiError, createIdempotencyKey } from "../../api";
 import { useGeneratorStore } from "../../store/generatorStore";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
@@ -168,7 +168,9 @@ const FeedCard = memo(function FeedCard({
         },
       };
 
-      await api.post("/api/generate", jobData);
+      await api.post("/api/generate", jobData, {
+        idempotencyKey: createIdempotencyKey("generate-remix"),
+      });
       toast.success("Remix queued! Creating variation...", {
         icon: "✨",
         duration: settings.ui.toastSuccessDuration,

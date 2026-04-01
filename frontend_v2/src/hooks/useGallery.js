@@ -1,6 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { filesApi, jobsApi } from '../api';
-import { filterHistoricalJobs } from '../utils/jobStatus';
+import { filesApi } from '../api';
 
 const LIMIT = 20;
 
@@ -29,13 +28,10 @@ export function useGallery(filters = {}) {
             // Fetch Files using API client
             const filesData = await filesApi.list(params);
 
-            // Fetch terminal/historical jobs only. Active jobs are owned by the websocket store.
-            const jobsData = await jobsApi.list({ limit: LIMIT, offset });
-
             return {
                 files: filesData.files || [],
-                jobs: filterHistoricalJobs(jobsData.jobs || []),
-                nextPage: (filesData.files?.length === LIMIT || jobsData.jobs?.length === LIMIT) ? pageParam + 1 : undefined
+                jobs: [],
+                nextPage: filesData.files?.length === LIMIT ? pageParam + 1 : undefined
             };
         },
         getNextPageParam: (lastPage) => lastPage.nextPage,

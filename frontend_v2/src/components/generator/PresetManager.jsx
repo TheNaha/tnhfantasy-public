@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Save, Trash2, Settings, ChevronDown, Check, Plus, X } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 import toast from 'react-hot-toast';
-import { useConfirmation } from '../../context/ConfirmationContext';
+import { useConfirmation } from '../../store/confirmationStore';
 
 /**
  * Component to manage parameter presets

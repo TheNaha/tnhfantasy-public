@@ -106,6 +106,32 @@ async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monk
 
 
 @pytest.mark.asyncio
+async def test_call_provider_parses_success_without_trailing_newline(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"success","images":[{"filename":"tail.png"}]}'
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    result = await call_provider(
+        worker_url="http://worker",
+        workflow={"nodes": {}},
+        job_id="job-tail-success",
+        job_service=job_service,
+        total_nodes=0,
+        timeout=5.0,
+        provider_id="provider-tail",
+    )
+
+    assert result["status"] == "success"
+    assert result["images"][0]["filename"] == "tail.png"
+    job_service.update_job.assert_awaited_once_with("job-tail-success", message="Queued in ComfyUI...")
+
+
+@pytest.mark.asyncio
 async def test_call_provider_formats_http_error_payload(monkeypatch):
     response = FakeResponse(
         status_code=502,

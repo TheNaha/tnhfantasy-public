@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { api } from '../api';
+import { api, createIdempotencyKey } from '../api';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -341,7 +341,9 @@ export default function SimpleGenerator() {
             };
 
             console.log('[Generate] Sending POST to /api/generate...');
-            const data = await api.post('/api/generate', { workflow, metadata });
+            const data = await api.post('/api/generate', { workflow, metadata }, {
+                idempotencyKey: createIdempotencyKey('generate-simple')
+            });
             console.log('[Generate] Response received:', data);
 
             // Job queued successfully - keep the page in queued/running state until completion.
@@ -469,7 +471,9 @@ export default function SimpleGenerator() {
                     adetailerModel
                 };
 
-                jobs.push(api.post('/api/generate', { workflow, metadata }));
+                jobs.push(api.post('/api/generate', { workflow, metadata }, {
+                    idempotencyKey: createIdempotencyKey(`generate-variation-${i}`)
+                }));
             }
 
             await Promise.all(jobs);

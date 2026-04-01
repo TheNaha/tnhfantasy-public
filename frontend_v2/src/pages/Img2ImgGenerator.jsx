@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
-import { api } from '../api';
+import { api, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
@@ -103,7 +103,9 @@ export default function Img2ImgGenerator() {
                 loras: selectedLoras
             };
 
-            await api.post('/api/generate', { workflow, metadata });
+            await api.post('/api/generate', { workflow, metadata }, {
+                idempotencyKey: createIdempotencyKey('generate-img2img')
+            });
 
             if (settings.generator.redirectAfterGenerate) {
                 toast.success('Job queued! Redirecting to gallery...');

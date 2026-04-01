@@ -4,7 +4,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
-import { useBranding } from '../context/BrandingContext';
+import { useBrandingStore } from '../store/brandingStore';
 import { useProviderStore } from '../store/providerStore';
 
 const NavItem = ({ to, icon: Icon, label }) => {
@@ -30,7 +30,7 @@ const NavItem = ({ to, icon: Icon, label }) => {
 export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
-    const { branding } = useBranding();
+    const branding = useBrandingStore(state => state.branding);
     const providers = useProviderStore(state => state.providers);
     const containerStatuses = useProviderStore(state => state.containerStatuses);
     const runningProviders = providers.filter(provider =>

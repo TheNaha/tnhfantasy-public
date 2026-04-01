@@ -6,7 +6,7 @@
  * For WebSocket-based real-time progress updates see `websocket.js`.
  */
 
-import api from './client';
+import api, { createIdempotencyKey } from './client';
 
 export const generateApi = {
     /**
@@ -18,7 +18,9 @@ export const generateApi = {
      * @param {object} params - Generation parameters (prompt, model, steps, etc.)
      * @returns {Promise<{job: object}>} Newly created job record.
      */
-    simple: (params) => api.post('/api/generate', params),
+    simple: (params, options = {}) => api.post('/api/generate', params, {
+        idempotencyKey: options.idempotencyKey || createIdempotencyKey('generate'),
+    }),
 
     /**
      * Submit a raw ComfyUI workflow for execution.

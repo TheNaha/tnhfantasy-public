@@ -1,10 +1,49 @@
 """Tests for infrastructure/providers/base.py, beam_provider.py, and modal_provider.py"""
+from contextlib import asynccontextmanager
 import base64
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from infrastructure.providers.base import ServerlessProvider, FileProxyProvider
 from infrastructure.providers.beam_provider import BeamProvider, BeamFileProxy
 from infrastructure.providers.modal_provider import ModalProvider, ModalFileProxy
+
+
+class _FakeStreamResponse:
+    def __init__(self, status_code=200, chunks=None):
+        self.status_code = status_code
+        self._chunks = chunks or []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeStreamingClient:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def stream(self, *args, **kwargs):
+        return self._response
+
+
+def _install_streaming_client(monkeypatch, response):
+    @asynccontextmanager
+    async def fake_get_streaming_client(timeout=600.0):
+        yield _FakeStreamingClient(response)
+
+    monkeypatch.setattr("infrastructure.http_client.get_streaming_client", fake_get_streaming_client)
 
 
 # ===== BASE PROVIDER TESTS =====
@@ -201,6 +240,21 @@ class TestBeamProvider:
         provider = self.get_provider()
         assert provider.provider_type == "beam"
 
+    async def test_run_inference_parses_tail_without_newline(self, monkeypatch):
+        response = _FakeStreamResponse(
+            chunks=[
+                b'{"status":"progress","value":1,"max":2}\n',
+                b'{"status":"success","images":[{"filename":"beam-tail.png"}]}'
+            ]
+        )
+        _install_streaming_client(monkeypatch, response)
+
+        provider = self.get_provider()
+        updates = [update async for update in provider.run_inference({"nodes": {}})]
+
+        assert updates[-1]["status"] == "success"
+        assert updates[-1]["images"][0]["filename"] == "beam-tail.png"
+
 
 # ===== MODAL PROVIDER TESTS =====
 
@@ -226,6 +280,24 @@ class TestModalFileProxy:
         mock_client.get = AsyncMock(return_value=mock_response)
         with patch("infrastructure.providers.modal_provider.get_http_client", return_value=mock_client):
             result = await proxy.get_file("models/test.safetensors")
+        assert result == b"modal_content"
+
+    async def test_get_file_json_payload_decodes_content(self):
+        proxy = self.get_proxy()
+        encoded = base64.b64encode(b"modal_content").decode()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.content = f'{{"content_base64":"{encoded}"}}'.encode()
+        mock_response.json.return_value = {"content_base64": encoded}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("infrastructure.providers.modal_provider.get_http_client", return_value=mock_client):
+            result = await proxy.get_file("models/test.safetensors")
+
         assert result == b"modal_content"
 
     async def test_get_file_failure_raises(self):
@@ -298,3 +370,18 @@ class TestModalProvider:
         provider = self.get_provider()
         info = provider.get_provider_info()
         assert info["id"] == "modal-primary"
+
+    async def test_run_inference_parses_tail_without_newline(self, monkeypatch):
+        response = _FakeStreamResponse(
+            chunks=[
+                b'{"status":"queued"}\n',
+                b'{"status":"success","images":[{"filename":"modal-tail.png"}]}'
+            ]
+        )
+        _install_streaming_client(monkeypatch, response)
+
+        provider = self.get_provider()
+        updates = [update async for update in provider.run_inference({"nodes": {}})]
+
+        assert updates[-1]["status"] == "success"
+        assert updates[-1]["images"][0]["filename"] == "modal-tail.png"

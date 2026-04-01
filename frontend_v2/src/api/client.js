@@ -24,19 +24,32 @@ class ApiError extends Error {
     }
 }
 
+export function createIdempotencyKey(scope = 'request') {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return `${scope}-${crypto.randomUUID()}`;
+    }
+    return `${scope}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /**
  * Base fetch wrapper with error handling
  */
 async function request(endpoint, options = {}) {
     const url = `${getBaseUrl()}${endpoint}`;
 
+    const { idempotencyKey, ...requestOptions } = options;
+
     const config = {
         headers: {
             'Content-Type': 'application/json',
-            ...options.headers,
+            ...requestOptions.headers,
         },
-        ...options,
+        ...requestOptions,
     };
+
+    if (idempotencyKey) {
+        config.headers['Idempotency-Key'] = idempotencyKey;
+    }
 
     // Don't set Content-Type for FormData
     if (options.body instanceof FormData) {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../api';
+import { api, createIdempotencyKey } from '../api';
 
 export default function AdvancedGenerator() {
     const [workflowJson, setWorkflowJson] = useState("");
@@ -12,7 +12,9 @@ export default function AdvancedGenerator() {
             const workflow = JSON.parse(workflowJson);
             setGenerating(true);
 
-            await api.post('/api/generate', { workflow });
+            await api.post('/api/generate', { workflow }, {
+                idempotencyKey: createIdempotencyKey('generate-advanced')
+            });
             toast.success("Job queued!");
         } catch (e) {
             console.error(e);

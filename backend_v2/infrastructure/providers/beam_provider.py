@@ -106,6 +106,12 @@ class BeamProvider(ServerlessProvider):
                                 yield data
                             except json.JSONDecodeError:
                                 pass
+
+                if buffer.strip():
+                    try:
+                        yield json.loads(buffer.strip())
+                    except json.JSONDecodeError:
+                        pass
     
     async def download_model(
         self,

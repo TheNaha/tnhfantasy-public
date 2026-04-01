@@ -7,7 +7,7 @@
 export { getApiUrl, setApiUrl, DEFAULT_API_URL } from './config';
 
 // HTTP Client
-export { default as api, ApiError } from './client';
+export { default as api, ApiError, createIdempotencyKey } from './client';
 
 
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp, Trash2, CheckCircle, Clock, Download, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRemoveModelFromProvider } from '../../hooks/useProviderModels';
-import { useConfirmation } from '../../context/ConfirmationContext';
+import { useConfirmation } from '../../store/confirmationStore';
 
 const STATUS_ICONS = {
     installed: { icon: CheckCircle, color: 'text-green-400' },

@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { Settings as SettingsIcon, RotateCcw, Save, Info, Server } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useConfirmation } from '../context/ConfirmationContext';
+import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api';
+import { useEffect } from 'react';
+import { useBrandingStore } from '../store/brandingStore';
 
 
 export default function Settings() {
@@ -146,41 +146,41 @@ export default function Settings() {
 
 // Branding Settings Component
 function BrandingSettings() {
-    const queryClient = useQueryClient();
+    const branding = useBrandingStore((state) => state.branding);
+    const isLoading = useBrandingStore((state) => state.isLoading);
+    const loadBranding = useBrandingStore((state) => state.loadBranding);
+    const saveBranding = useBrandingStore((state) => state.saveBranding);
     const [localBranding, setLocalBranding] = useState(null);
 
-    // Fetch current branding
-    const { data: branding, isLoading } = useQuery({
-        queryKey: ['branding'],
-        queryFn: () => api.get('/api/settings/branding'),
-    });
-
-    // Save branding mutation
-    const saveMutation = useMutation({
-        mutationFn: (data) => api.post('/api/settings/branding', data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['branding'] });
-            toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });
-        },
-        onError: () => {
-            toast.error('Failed to save branding settings');
-        },
-    });
+    useEffect(() => {
+        loadBranding();
+    }, [loadBranding]);
 
     const effectiveBranding = localBranding || branding;
 
-    const handleSave = () => {
-        saveMutation.mutate(effectiveBranding);
+    const handleSave = async () => {
+        try {
+            await saveBranding(effectiveBranding);
+            setLocalBranding(null);
+            toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });
+        } catch {
+            toast.error('Failed to save branding settings');
+        }
     };
 
-    const handleReset = () => {
+    const handleReset = async () => {
         const defaultBranding = {
             appName: "TNH-Comfy",
             logoUrl: "/logo.png",
             faviconUrl: "/favicon.ico"
         };
-        setLocalBranding(defaultBranding);
-        saveMutation.mutate(defaultBranding);
+        try {
+            await saveBranding(defaultBranding);
+            setLocalBranding(null);
+            toast.success('Branding reset to defaults. Refresh the page to see changes.', { duration: 3000 });
+        } catch {
+            toast.error('Failed to reset branding settings');
+        }
     };
 
     if (isLoading || !effectiveBranding) {
@@ -205,11 +205,11 @@ function BrandingSettings() {
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={saveMutation.isPending}
+                        disabled={isLoading}
                         className="px-4 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg flex items-center gap-2 disabled:opacity-50"
                     >
                         <Save size={16} />
-                        {saveMutation.isPending ? 'Saving...' : 'Save'}
+                        {isLoading ? 'Saving...' : 'Save'}
                     </button>
                 </div>
             </div>

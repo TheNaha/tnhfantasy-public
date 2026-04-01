@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
-import { filesApi, api } from '../api';
+import { filesApi, api, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
@@ -150,7 +150,9 @@ export default function InpaintGenerator() {
                 usedInpaintModel: !!inpaintCheckpoint
             };
 
-            await api.post('/api/generate', { workflow, metadata });
+            await api.post('/api/generate', { workflow, metadata }, {
+                idempotencyKey: createIdempotencyKey('generate-inpaint')
+            });
 
             if (settings.generator.redirectAfterGenerate) {
                 toast.success('Job queued! Redirecting to gallery...');

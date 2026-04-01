@@ -86,74 +86,91 @@ async def call_provider(
                     buffer = ""
                     executed_nodes = set()
 
+                    async def handle_update(update: dict) -> None:
+                        nonlocal final_result
+
+                        status = update.get("status")
+
+                        if status == "progress":
+                            val = update.get("value", 0)
+                            max_val = update.get("max", 1)
+                            percent = int((val / max_val) * 100) if max_val > 0 else 0
+                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
+                            await job_service.update_job(
+                                job_id,
+                                progress=percent,
+                                overall_progress=overall,
+                                message=f"Rendering: {percent}%",
+                            )
+                        elif status == "executing":
+                            node_id = update.get("node")
+                            if node_id:
+                                executed_nodes.add(node_id)
+
+                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
+                            await job_service.update_job(
+                                job_id,
+                                overall_progress=overall,
+                                message=f"Executing node {len(executed_nodes)}/{total_nodes}...",
+                            )
+                        elif status == "execution_cached":
+                            nodes = update.get("nodes", [])
+                            for node in nodes:
+                                executed_nodes.add(node)
+
+                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
+                            await job_service.update_job(
+                                job_id,
+                                overall_progress=overall,
+                                message=f"Restored {len(nodes)} cached nodes...",
+                            )
+                        elif status == "queued":
+                            await job_service.update_job(job_id, message="Queued in ComfyUI...")
+                        elif status == "success":
+                            final_result = update
+                        elif status == "error":
+                            error_message = extract_worker_error_message(update)
+                            raise ProviderCallError(
+                                error_message,
+                                provider_id=provider_id,
+                                is_retryable=bool(update.get("retryable", False)),
+                            )
+                        elif status == "cancelled":
+                            raise JobCancelledError(
+                                update.get("message") or "Job cancelled by user",
+                                provider_id=provider_id,
+                            )
+
+                    async def process_line(raw_line: str, source: str) -> None:
+                        line = raw_line.strip()
+                        if not line:
+                            return
+
+                        try:
+                            update = json.loads(line)
+                        except json.JSONDecodeError as error:
+                            logger.warning(
+                                "job_parse_error",
+                                job_id=job_id,
+                                source=source,
+                                line_length=len(line),
+                                error=str(error),
+                            )
+                            return
+
+                        await handle_update(update)
+
                     async for chunk in response.aiter_bytes():
                         buffer += chunk.decode("utf-8")
 
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
-                            if not line.strip():
-                                continue
+                            await process_line(line, source="stream")
 
-                            try:
-                                update = json.loads(line)
-                                status = update.get("status")
-
-                                if status == "progress":
-                                    val = update.get("value", 0)
-                                    max_val = update.get("max", 1)
-                                    percent = int((val / max_val) * 100) if max_val > 0 else 0
-                                    overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                                    await job_service.update_job(
-                                        job_id,
-                                        progress=percent,
-                                        overall_progress=overall,
-                                        message=f"Rendering: {percent}%",
-                                    )
-                                elif status == "executing":
-                                    node_id = update.get("node")
-                                    if node_id:
-                                        executed_nodes.add(node_id)
-
-                                    overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                                    await job_service.update_job(
-                                        job_id,
-                                        overall_progress=overall,
-                                        message=f"Executing node {len(executed_nodes)}/{total_nodes}...",
-                                    )
-                                elif status == "execution_cached":
-                                    nodes = update.get("nodes", [])
-                                    for node in nodes:
-                                        executed_nodes.add(node)
-
-                                    overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                                    await job_service.update_job(
-                                        job_id,
-                                        overall_progress=overall,
-                                        message=f"Restored {len(nodes)} cached nodes...",
-                                    )
-                                elif status == "queued":
-                                    await job_service.update_job(job_id, message="Queued in ComfyUI...")
-                                elif status == "success":
-                                    final_result = update
-                                elif status == "error":
-                                    error_message = extract_worker_error_message(update)
-                                    raise ProviderCallError(
-                                        error_message,
-                                        provider_id=provider_id,
-                                        is_retryable=bool(update.get("retryable", False)),
-                                    )
-                                elif status == "cancelled":
-                                    raise JobCancelledError(
-                                        update.get("message") or "Job cancelled by user",
-                                        provider_id=provider_id,
-                                    )
-                            except json.JSONDecodeError as error:
-                                logger.warning(
-                                    "job_parse_error",
-                                    job_id=job_id,
-                                    line_length=len(line),
-                                    error=str(error),
-                                )
+                    # Some workers can end streams without a trailing newline.
+                    # Parse any remaining buffered JSON so terminal payloads aren't lost.
+                    if buffer.strip():
+                        await process_line(buffer, source="stream_tail")
 
                     if final_result:
                         return final_result

@@ -9,9 +9,8 @@
  *     initialised here so that WebSocket connections are established regardless
  *     of which page the user lands on.
  *   - Data fetching: React Query (QueryClient) provides server-state caching.
- *   - Context providers (outermost → innermost):
- *       ErrorBoundary → QueryClientProvider → BrandingProvider →
- *       ConfirmationProvider → Router → Layout
+ *   - Global UI overlays:
+ *       ErrorBoundary → QueryClientProvider → Router → Layout → ConfirmationHost
  *   - Notifications: react-hot-toast for user-facing toasts; positioned
  *     top-right with a dark theme matching the overall UI.
  */
@@ -23,10 +22,10 @@ import { Loader2 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import Layout from './components/Layout';
+import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
-import { BrandingProvider } from './context/BrandingContext';
-import { ConfirmationProvider } from './context/ConfirmationContext';
+import { useBrandingStore } from './store/brandingStore';
 import { useJobStore } from './store/jobStore';
 import useReconciliationStore from './store/reconciliationStore';
 import { useProviderStore } from './store/providerStore';
@@ -97,6 +96,7 @@ function App() {
     } = useJobStore();
     const { connect: connectReconciliation } = useReconciliationStore();
     const { connect: connectProviders } = useProviderStore();
+    const loadBranding = useBrandingStore((state) => state.loadBranding);
 
     // Initialize dynamic viewport height for iOS Safari
     // This sets --vh CSS variable that works correctly with address bar
@@ -137,47 +137,48 @@ function App() {
         });
     }, []);
 
+    useEffect(() => {
+        loadBranding();
+    }, [loadBranding]);
+
     return (
         <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
-                <BrandingProvider>
-                    <ConfirmationProvider>
-                        <Router>
-                            <Layout>
-                                <Suspense fallback={
-                                    <div className="flex items-center justify-center h-screen bg-gray-900">
-                                        <Loader2 className="animate-spin text-blue-500" size={48} />
-                                    </div>
-                                }>
-                                    <AnimatedRoutes />
-                                </Suspense>
-                            </Layout>
-                        </Router>
-                        <Toaster
-                            position="top-right"
-                            toastOptions={{
-                                className: '',
-                                style: {
-                                    background: '#1f2937',
-                                    color: '#f3f4f6',
-                                    border: '1px solid #374151',
-                                },
-                                success: {
-                                    iconTheme: {
-                                        primary: '#10b981',
-                                        secondary: '#1f2937',
-                                    },
-                                },
-                                error: {
-                                    iconTheme: {
-                                        primary: '#ef4444',
-                                        secondary: '#1f2937',
-                                    },
-                                },
-                            }}
-                        />
-                    </ConfirmationProvider>
-                </BrandingProvider>
+                <Router>
+                    <Layout>
+                        <Suspense fallback={
+                            <div className="flex items-center justify-center h-screen bg-gray-900">
+                                <Loader2 className="animate-spin text-blue-500" size={48} />
+                            </div>
+                        }>
+                            <AnimatedRoutes />
+                        </Suspense>
+                    </Layout>
+                </Router>
+                <ConfirmationHost />
+                <Toaster
+                    position="top-right"
+                    toastOptions={{
+                        className: '',
+                        style: {
+                            background: '#1f2937',
+                            color: '#f3f4f6',
+                            border: '1px solid #374151',
+                        },
+                        success: {
+                            iconTheme: {
+                                primary: '#10b981',
+                                secondary: '#1f2937',
+                            },
+                        },
+                        error: {
+                            iconTheme: {
+                                primary: '#ef4444',
+                                secondary: '#1f2937',
+                            },
+                        },
+                    }}
+                />
             </QueryClientProvider>
         </ErrorBoundary>
     );

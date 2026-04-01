@@ -4,6 +4,7 @@
  */
 
 import api from './client';
+import { createIdempotencyKey } from './client';
 
 export const jobsApi = {
     // List jobs with pagination
@@ -16,7 +17,9 @@ export const jobsApi = {
     get: (jobId) => api.get(`/api/jobs/${jobId}`),
 
     // Create job (generate image)
-    create: (payload) => api.post('/api/jobs', payload),
+    create: (payload, options = {}) => api.post('/api/jobs', payload, {
+        idempotencyKey: options.idempotencyKey || createIdempotencyKey('jobs-create'),
+    }),
 
     // Delete job
     delete: (jobId) => api.delete(`/api/jobs/${jobId}`),

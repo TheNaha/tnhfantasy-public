@@ -1,6 +1,7 @@
 # Modal provider implementation
 import os
 import json
+import base64
 import urllib.parse
 from typing import Dict, List, AsyncIterator, Any, Optional
 
@@ -23,6 +24,18 @@ class ModalFileProxy(FileProxyProvider):
         url = f"{self.base_url}/get-file/{encoded_path}"
         response = await client.get(url)
         if response.status_code == 200:
+            content_type = response.headers.get("content-type", "") or ""
+            if not isinstance(content_type, str):
+                content_type = str(content_type)
+            if "json" in content_type.lower() or response.content[:1] in (b"{", b"["):
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    content_base64 = payload.get("content_base64")
+                    if isinstance(content_base64, str):
+                        return base64.b64decode(content_base64)
             return response.content
         raise Exception(f"Failed to get file: {response.status_code}")
     
@@ -89,6 +102,12 @@ class ModalProvider(ServerlessProvider):
                                 yield data
                             except json.JSONDecodeError:
                                 pass
+
+                if buffer.strip():
+                    try:
+                        yield json.loads(buffer.strip())
+                    except json.JSONDecodeError:
+                        pass
     
     async def download_model(
         self,

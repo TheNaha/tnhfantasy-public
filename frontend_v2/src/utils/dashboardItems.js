@@ -20,7 +20,7 @@ function toJobItem(job) {
 
 export function buildDashboardItems(data, activeJobs) {
     const historicalFiles = data ? data.pages.flatMap((page) => page.files.map(toImageItem)) : [];
-    const historicalJobs = data ? data.pages.flatMap((page) => page.jobs.map(toJobItem)) : [];
+    const historicalJobs = data ? data.pages.flatMap((page) => (page.jobs || []).map(toJobItem)) : [];
 
     const mergedJobs = new Map();
     historicalJobs.forEach((job) => mergedJobs.set(job.id, job));

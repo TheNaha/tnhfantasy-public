@@ -4,7 +4,7 @@ import { usePromptStore } from '../../store/promptStore';
 import PromptCard from './PromptCard';
 import PromptForm from './PromptForm';
 import toast from 'react-hot-toast';
-import { useConfirmation } from '../../context/ConfirmationContext';
+import { useConfirmation } from '../../store/confirmationStore';
 
 /**
  * Prompt Library Modal Component

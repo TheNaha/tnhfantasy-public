@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { providersApi } from '../api';
-import { useConfirmation } from '../context/ConfirmationContext';
+import { useConfirmation } from '../store/confirmationStore';
 import useProviderStore from '../store/providerStore';
 
 export default function ProviderManagement() {
