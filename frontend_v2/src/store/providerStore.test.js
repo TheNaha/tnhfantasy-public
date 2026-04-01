@@ -122,4 +122,34 @@ describe('useProviderStore', () => {
         expect(providersApi.setup).toHaveBeenCalledWith('provider-1');
         expect(providersApi.resetModelStatus).toHaveBeenCalledWith('provider-1');
     });
-});
+
+    it('normalizes provider.stats_update payloads before storing lbStats', () => {
+        useProviderStore.getState()._processProviderStats({
+            data: {
+                provider_id: 'provider-1',
+                provider_stats: {
+                    total_providers: 2,
+                    provider_stats: [],
+                },
+            },
+        });
+
+        expect(useProviderStore.getState().lbStats.total_providers).toBe(2);
+    });
+
+    it('normalizes provider container status payloads with camelCase ids', () => {
+        useProviderStore.getState()._processContainerStatus({
+            data: {
+                providerId: 'provider-1',
+                status: 'running',
+                healthy: true,
+            },
+        });
+
+        expect(useProviderStore.getState().containerStatuses['provider-1']).toEqual({
+            status: 'running',
+            running: true,
+            healthy: true,
+        });
+    });
+}); 

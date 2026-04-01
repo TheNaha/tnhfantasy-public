@@ -13,8 +13,7 @@ export default function AdvancedGenerator() {
             setGenerating(true);
 
             await api.post('/api/generate', { workflow });
-
-            toast.success("Generation complete!");
+            toast.success("Job queued!");
         } catch (e) {
             console.error(e);
             toast.error("Error: Invalid JSON or generation failed");

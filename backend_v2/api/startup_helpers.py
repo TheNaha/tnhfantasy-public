@@ -40,9 +40,11 @@ async def recover_pending_jobs() -> None:
 def build_provider_worker_images() -> None:
     """Attempt to refresh built provider worker images before container startup."""
     try:
-        from services.container_manager import ContainerManager
+        from services.container_manager import get_container_manager
 
-        container_manager = ContainerManager()
+        container_manager = get_container_manager()
+        if not container_manager:
+            return
         image_tags = container_manager.build_worker_images()
         logger.info("provider_image_refresh_complete", built=list(image_tags.keys()))
     except Exception as exc:
@@ -54,13 +56,15 @@ def autostart_provider_containers() -> None:
     try:
         from infrastructure.providers import ProviderRegistry
         from infrastructure.repositories import ProviderRepository
-        from services.container_manager import ContainerManager
+        from services.container_manager import get_container_manager
 
         session = get_session_sync()
         try:
             provider_repo = ProviderRepository(session)
             providers = provider_repo.get_all()
-            container_manager = ContainerManager()
+            container_manager = get_container_manager()
+            if not container_manager:
+                return
 
             for provider in providers:
                 if provider.enabled and provider.container_config:

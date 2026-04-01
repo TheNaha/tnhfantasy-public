@@ -209,33 +209,6 @@ async def add_model(
     return result
 
 
-@router.get("/{model_id}")
-async def get_model(
-    model_id: int,
-    session: Session = Depends(get_session)
-):
-    """Get model with versions, files, and images."""
-    service = get_model_service(session)
-    try:
-        return await service.get_model(model_id)
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
-
-
-@router.delete("/{model_id}")
-async def delete_model(
-    model_id: int,
-    session: Session = Depends(get_session)
-):
-    """Delete a model and all related data."""
-    service = get_model_service(session)
-    try:
-        await service.delete_model(model_id)
-        return {"status": "success"}
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
-
-
 @router.post("/{model_id}/set-default-version/{version_id}")
 async def set_default_version(
     model_id: int,
@@ -445,6 +418,33 @@ async def get_model_cache(session: Session = Depends(get_session)):
     """Get full model cache for reconciliation."""
     service = get_model_service(session)
     return {"models": service.get_full_cache()}
+
+
+@router.get("/{model_id}")
+async def get_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Get model with versions, files, and images."""
+    service = get_model_service(session)
+    try:
+        return await service.get_model(model_id)
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+
+
+@router.delete("/{model_id}")
+async def delete_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Delete a model and all related data."""
+    service = get_model_service(session)
+    try:
+        await service.delete_model(model_id)
+        return {"status": "success"}
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
 
 
@@ -1123,6 +1123,7 @@ async def backfill_provider_statuses(
     import aiohttp
     from core.entities import Provider
     from sqlmodel import select
+    from api.provider_runtime import resolve_provider_runtime
 
     service = get_model_service(session)
 
@@ -1130,13 +1131,15 @@ async def backfill_provider_statuses(
         select(Provider).where(Provider.enabled == True)
     ).all()
 
-    all_models = await service.list_models()
+    all_models = await service.list_models(include_versions=True)
     all_files_by_path = {}
     for model in all_models:
         for version in model.get("versions", []):
-            for file in version.get("files", []):
-                storage_path = f"models/{model['directory']}/{file['storage_filename']}"
-                all_files_by_path[storage_path] = file["id"]
+            file = version.get("file")
+            if not file:
+                continue
+            storage_path = f"models/{model['directory']}/{file['filename']}"
+            all_files_by_path[storage_path] = file["id"]
     
     results = {
         "providers_checked": 0,
@@ -1145,7 +1148,11 @@ async def backfill_provider_statuses(
     }
     
     for provider in providers:
-        worker_url = f"http://comfy-provider-{provider.id}:8000"
+        runtime = resolve_provider_runtime(provider)
+        if runtime.mode != "container_http":
+            continue
+
+        worker_url = runtime.worker_url
         
         results["providers_checked"] += 1
         

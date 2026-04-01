@@ -714,8 +714,8 @@ async def get_file(request: Request):
     
     with open(full_path, "rb") as f:
         content = f.read()
-    
-    return {"path": path, "size": len(content), "content_base64": base64.b64encode(content).decode('utf-8')}
+
+    return Response(content=content, media_type="application/octet-stream")
 
 
 @storage_app.post("/delete-file")

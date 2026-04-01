@@ -9,6 +9,7 @@ from api.job_orchestration import (
 )
 from api.job_processing import finalize_successful_job
 from api.provider_client import JobTimeoutError, ProviderCallError
+from api.provider_runtime import resolve_provider_runtime
 from core.workflow_parser import extract_models_from_workflow
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
@@ -89,9 +90,9 @@ async def execute_job(
                 message=f"Starting on {current_provider.id}...",
             )
 
-            container_config = current_provider.container_config or {}
-            if not container_config:
-                logger.warning("provider_missing_container_config", job_id=job_id, provider=current_provider.id)
+            runtime = resolve_provider_runtime(current_provider)
+            if not runtime.connected:
+                logger.warning("provider_runtime_unavailable", job_id=job_id, provider=current_provider.id, mode=runtime.mode)
                 load_balancer.report_failure(current_provider.id)
                 await mark_provider_exhausted(
                     load_balancer=load_balancer,
@@ -104,34 +105,56 @@ async def execute_job(
                 current_provider = None
                 continue
 
-            worker_url = f"http://comfy-provider-{current_provider.id}:8000"
             total_nodes = len(job.workflow) if isinstance(job.workflow, dict) else 0
             provider_config = current_provider.config or {}
             use_snapshot = provider_config.get("enable_memory_snapshot", False)
 
             try:
-                final_result = await asyncio.wait_for(
-                    call_provider_fn(
-                        worker_url=worker_url,
-                        workflow=job.workflow,
+                if runtime.mode == "container_http":
+                    final_result = await asyncio.wait_for(
+                        call_provider_fn(
+                            worker_url=runtime.worker_url,
+                            workflow=job.workflow,
+                            job_id=job_id,
+                            job_service=job_service,
+                            total_nodes=total_nodes,
+                            timeout=timeout,
+                            use_snapshot=use_snapshot,
+                        ),
+                        timeout=timeout + 10,
+                    )
+                elif runtime.mode == "external_worker":
+                    from api.routes.worker_ws import dispatch_job_to_worker
+
+                    final_result = await dispatch_job_to_worker(
+                        current_provider.id,
+                        {
+                            "id": job.id,
+                            "workflow": job.workflow,
+                            "metadata": job.metadata_ or {},
+                        },
+                        timeout=timeout + 10,
+                    )
+                else:
+                    raise ProviderCallError(
+                        f"Provider runtime for {current_provider.id} is unavailable",
+                        provider_id=current_provider.id,
+                        is_retryable=True,
+                    )
+
+                if final_result.get("__handled_by_external_worker"):
+                    load_balancer.report_success(current_provider.id)
+                    load_balancer.release_job(current_provider.id)
+                else:
+                    await finalize_successful_job(
+                        job=job,
                         job_id=job_id,
                         job_service=job_service,
-                        total_nodes=total_nodes,
-                        timeout=timeout,
-                        use_snapshot=use_snapshot,
-                    ),
-                    timeout=timeout + 10,
-                )
-
-                await finalize_successful_job(
-                    job=job,
-                    job_id=job_id,
-                    job_service=job_service,
-                    load_balancer=load_balancer,
-                    provider_id=current_provider.id,
-                    final_result=final_result,
-                    process_image_background_fn=process_image_background_fn,
-                )
+                        load_balancer=load_balancer,
+                        provider_id=current_provider.id,
+                        final_result=final_result,
+                        process_image_background_fn=process_image_background_fn,
+                    )
                 return
 
             except JobTimeoutError:
@@ -165,6 +188,11 @@ async def execute_job(
 
             except ProviderCallError as error:
                 logger.warning("provider_error", job_id=job_id, error=str(error))
+                refreshed_job = await job_service.get_job(job_id)
+                if refreshed_job.status == JobStatus.FAILED:
+                    load_balancer.report_failure(current_provider.id)
+                    load_balancer.release_job(current_provider.id)
+                    return
                 load_balancer.report_failure(current_provider.id)
                 should_retry = False
                 if error.is_retryable:

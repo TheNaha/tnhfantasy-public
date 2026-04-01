@@ -24,15 +24,15 @@ class TestModelsV2Extended:
         assert data.get("model_installed") is True
 
     def test_search_models_empty(self, client):
-        # /search is matched as /{model_id} due to route ordering, expect 422 or 404
         response = client.get("/api/v2/models/search?q=nonexistent_xyz")
-        assert response.status_code in (200, 404, 422)
+        assert response.status_code == 200
+        assert response.json() == []
 
     def test_search_models_finds_match(self, client, sample_model_v2_data):
         client.post("/api/v2/models", json=sample_model_v2_data)
-        # /search is matched as /{model_id} due to route ordering
         response = client.get("/api/v2/models/search?q=Test+Model")
-        assert response.status_code in (200, 404, 422)
+        assert response.status_code == 200
+        assert len(response.json()) == 1
 
     def test_search_by_tag_empty(self, client):
         response = client.get("/api/v2/models/search/tag/nonexistent_tag")
@@ -61,9 +61,9 @@ class TestModelsV2Extended:
         assert response.status_code == 200
 
     def test_get_model_cache(self, client):
-        # /cache is matched as /{model_id} due to route ordering
         response = client.get("/api/v2/models/cache")
-        assert response.status_code in (200, 404, 422)
+        assert response.status_code == 200
+        assert "models" in response.json()
 
     def test_cleanup_orphans(self, client):
         response = client.post("/api/v2/models/cleanup-orphans")

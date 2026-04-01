@@ -20,6 +20,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from api.deps import get_session_context
 from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
 from core.exceptions import NotFoundError
+from api.provider_client import ProviderCallError
+from core.entities import JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class ConnectedWorker:
 
 # Global registry of connected workers
 connected_workers: Dict[str, ConnectedWorker] = {}  # provider_id -> worker
+pending_job_futures: Dict[str, asyncio.Future] = {}
 
 
 def get_connected_workers() -> Dict[str, dict]:
@@ -79,6 +82,62 @@ async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
         return True
     except Exception as e:
         logger.error(f"[Worker WS] Failed to push job to {provider_id}: {e}")
+        return False
+
+
+async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
+    """Send a job to a connected external worker and await its terminal result."""
+    worker = connected_workers.get(provider_id)
+    if not worker:
+        raise ProviderCallError(
+            f"No external worker connected for provider {provider_id}",
+            provider_id=provider_id,
+            is_retryable=True,
+        )
+
+    job_id = job_data.get("id")
+    if not job_id:
+        raise ValueError("job_data.id is required")
+
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    pending_job_futures[job_id] = future
+
+    try:
+        await worker.ws.send_json({
+            "type": "job",
+            "data": job_data,
+        })
+        worker.current_job = job_id
+    except Exception as exc:
+        pending_job_futures.pop(job_id, None)
+        raise ProviderCallError(
+            f"Failed to dispatch job to external worker: {exc}",
+            provider_id=provider_id,
+            is_retryable=True,
+        ) from exc
+
+    try:
+        return await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        pending_job_futures.pop(job_id, None)
+        raise exc
+
+
+async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
+    """Request cancellation from a connected external worker."""
+    worker = connected_workers.get(provider_id)
+    if not worker:
+        return False
+
+    try:
+        await worker.ws.send_json({
+            "type": "cancel_job",
+            "job_id": job_id,
+        })
+        return True
+    except Exception as exc:
+        logger.warning(f"[Worker WS] Failed to send cancellation for {job_id} to {provider_id}: {exc}")
         return False
 
 
@@ -148,9 +207,31 @@ async def worker_websocket(
                 logger.info(f"[Worker WS] Job started: {job_id}")
             
             elif msg_type == "job_progress":
-                # Forward progress to main WebSocket for frontend
-                from api.routes.websocket import broadcast_to_room
-                await broadcast_to_room("job", "job.progress", data.get("data", {}))
+                payload = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
+                job_id = data.get("job_id") or payload.get("job_id") or payload.get("id")
+                if job_id:
+                    updates = {}
+
+                    if "status" in payload:
+                        try:
+                            updates["status"] = JobStatus(payload["status"])
+                        except ValueError:
+                            pass
+                    if "progress" in payload:
+                        updates["progress"] = payload["progress"]
+                    if "overall_progress" in payload:
+                        updates["overall_progress"] = payload["overall_progress"]
+                    elif "progress" in payload:
+                        updates["overall_progress"] = payload["progress"]
+                    if "message" in payload:
+                        updates["message"] = payload["message"]
+
+                    if updates:
+                        async with get_session_context() as session:
+                            from services.job_service import JobService
+
+                            job_service = JobService(session)
+                            await job_service.update_job(job_id, **updates)
             
             elif msg_type == "job_completed":
                 job_id = data.get("job_id")
@@ -183,6 +264,12 @@ async def worker_websocket(
                         provider_id=provider_id,
                     )
                 
+                future = pending_job_futures.pop(job_id, None)
+                if future and not future.done():
+                    future.set_result({
+                        "__handled_by_external_worker": True,
+                        "outputs": outputs,
+                    })
                 worker.current_job = None
                 worker.jobs_completed += 1
                 logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
@@ -201,6 +288,15 @@ async def worker_websocket(
                         error=error
                     )
                 
+                future = pending_job_futures.pop(job_id, None)
+                if future and not future.done():
+                    future.set_exception(
+                        ProviderCallError(
+                            error,
+                            provider_id=provider_id,
+                            is_retryable=False,
+                        )
+                    )
                 worker.current_job = None
                 logger.error(f"[Worker WS] Job failed: {job_id} - {error}")
             
@@ -221,6 +317,16 @@ async def worker_websocket(
         logger.error(f"[Worker WS] Error for {provider_id}: {e}")
     finally:
         # Cleanup
+        if worker.current_job:
+            future = pending_job_futures.pop(worker.current_job, None)
+            if future and not future.done():
+                future.set_exception(
+                    ProviderCallError(
+                        f"External worker {provider_id} disconnected during job execution",
+                        provider_id=provider_id,
+                        is_retryable=True,
+                    )
+                )
         if provider_id in connected_workers:
             del connected_workers[provider_id]
 

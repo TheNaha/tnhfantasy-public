@@ -13,6 +13,12 @@ from .state import ReconciliationState
 from .models import MODEL_DIRECTORIES
 
 
+def _chunked(items: List[Dict], chunk_size: int):
+    """Yield item batches for large reconciliation updates."""
+    for start in range(0, len(items), chunk_size):
+        yield items[start:start + chunk_size]
+
+
 async def report_file_status_v2(
     backend_url: str,
     provider_id: str,
@@ -78,25 +84,41 @@ async def batch_update_file_status_v2(
         return
     
     url = f"{backend_url}/api/v2/models/providers/batch-status-update"
-    payload = {
-        "provider_name": provider_id,
-        "updates": updates,
-    }
+    chunk_size = 500
+    total_updated = 0
+    total_failed = 0
     
-    try:
-        if http_client:
-            response = await http_client.post(url, json=payload, timeout=30.0)
-        else:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, json=payload)
+    for batch in _chunked(updates, chunk_size):
+        payload = {
+            "provider_name": provider_id,
+            "updates": batch,
+        }
         
-        if response.status_code == 200:
-            result = response.json()
-            print(f"[V2 Reconciliation] Batch update: {result.get('updated', 0)} updated, {result.get('failed', 0)} failed")
-        else:
-            print(f"[V2 Reconciliation] Warning: Batch update failed: {response.status_code}")
-    except Exception as e:
-        print(f"[V2 Reconciliation] Warning: Batch update error: {e}")
+        try:
+            if http_client:
+                response = await http_client.post(url, json=payload, timeout=30.0)
+            else:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, json=payload)
+            
+            if response.status_code == 200:
+                result = response.json()
+                updated = result.get("updated", 0)
+                failed = result.get("failed", 0)
+                total_updated += updated
+                total_failed += failed
+                print(f"[V2 Reconciliation] Batch update: {updated} updated, {failed} failed")
+            else:
+                total_failed += len(batch)
+                print(f"[V2 Reconciliation] Warning: Batch update failed: {response.status_code}")
+        except Exception as e:
+            total_failed += len(batch)
+            print(f"[V2 Reconciliation] Warning: Batch update error: {e}")
+    
+    if len(updates) > chunk_size:
+        print(
+            f"[V2 Reconciliation] Batch update complete: {total_updated} updated, {total_failed} failed across {len(updates)} updates"
+        )
 
 
 async def push_reconciliation_event(

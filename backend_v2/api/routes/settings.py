@@ -19,7 +19,7 @@ from sqlmodel import Session
 
 import config as app_config
 from api.deps import get_session
-from services.model_service import ModelService
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.logging import get_logger
 
 logger = get_logger("settings_route")
@@ -477,15 +477,14 @@ PRESETS = [
 @router.get("/presets")
 async def get_presets(session: Session = Depends(get_session)):
     """Returns a list of curated models with installation status."""
-    model_service = ModelService(session)
+    model_repo = ModelRepositoryV2(session)
     
     presets = []
     for preset in PRESETS:
-        directory = f"models/{preset['type']}"
-        
-        # Check if model is installed
-        model = await model_service.get_model_by_name(preset["filename"], directory)
-        installed = model is not None
+        installed = model_repo.get_file_by_storage_path(
+            preset["type"],
+            preset["filename"],
+        ) is not None
         
         presets.append({
             **preset,

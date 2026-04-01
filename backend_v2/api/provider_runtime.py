@@ -1,12 +1,65 @@
 import asyncio
+from dataclasses import dataclass
+from typing import Optional
+from types import SimpleNamespace
 
-from api.deps import get_session_sync
 from infrastructure.http_client import get_http_client
+from infrastructure.database import get_session_sync
 from infrastructure.logging import get_logger
 from services.job_queue import job_queue
-from services.provider_service import ProviderService
 
 logger = get_logger("provider_runtime")
+
+
+@dataclass(frozen=True)
+class ProviderRuntimeTarget:
+    """Resolved execution/runtime target for a provider."""
+
+    provider_id: str
+    mode: str
+    worker_url: Optional[str] = None
+    container_name: Optional[str] = None
+    supports_setup: bool = False
+    supports_reconciliation: bool = False
+    connected: bool = False
+
+
+def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
+    """Resolve the canonical runtime target for a provider."""
+    from api.routes.worker_ws import is_worker_connected
+
+    container_config = getattr(provider, "container_config", None) or {}
+    provider_id = getattr(provider, "id")
+    provider_type = getattr(provider, "type", "")
+
+    if container_config:
+        container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
+        return ProviderRuntimeTarget(
+            provider_id=provider_id,
+            mode="container_http",
+            worker_url=f"http://{container_name}:8000",
+            container_name=container_name,
+            supports_setup=provider_type == "modal",
+            supports_reconciliation=True,
+            connected=True,
+        )
+
+    if is_worker_connected(provider_id):
+        return ProviderRuntimeTarget(
+            provider_id=provider_id,
+            mode="external_worker",
+            supports_setup=False,
+            supports_reconciliation=False,
+            connected=True,
+        )
+
+    return ProviderRuntimeTarget(
+        provider_id=provider_id,
+        mode="unavailable",
+        supports_setup=False,
+        supports_reconciliation=False,
+        connected=False,
+    )
 
 
 async def run_reconciliation_for_all_providers():
@@ -15,6 +68,8 @@ async def run_reconciliation_for_all_providers():
 
     session = get_session_sync()
     try:
+        from services.provider_service import ProviderService
+
         service = ProviderService(session)
         providers_list = await service.list_providers()
         http_client = get_http_client()
@@ -23,17 +78,15 @@ async def run_reconciliation_for_all_providers():
             if not provider.get("enabled", True):
                 continue
 
-            container_config = provider.get("container_config")
-            if not container_config:
+            runtime = resolve_provider_runtime(SimpleNamespace(**provider))
+            if runtime.mode != "container_http":
                 continue
 
             provider_id = provider.get("id")
-            container_name = f"comfy-provider-{provider_id}"
-            worker_url = f"http://{container_name}:8000"
 
             try:
                 response = await http_client.post(
-                    f"{worker_url}/reconcile",
+                    f"{runtime.worker_url}/reconcile",
                     timeout=5.0,
                 )
                 if response.status_code == 200:

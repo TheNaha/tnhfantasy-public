@@ -13,6 +13,7 @@ from config import get_worker_backend_url
 from infrastructure.logging import get_logger
 
 logger = get_logger("container_manager")
+_container_manager_singleton = None
 
 
 class ContainerManager:
@@ -321,17 +322,20 @@ class ContainerManager:
     def stop_container(self, provider_id: str):
         """Stop a provider worker container."""
         container = self.running_containers.get(provider_id)
-        
         if not container:
-            logger.warning("container_not_found", provider_id=provider_id)
-            return
+            container_name = f"comfy-provider-{provider_id}"
+            try:
+                container = self.client.containers.get(container_name)
+            except docker.errors.NotFound:
+                logger.warning("container_not_found", provider_id=provider_id)
+                return
         
         logger.info("container_stopping", container=container.name, provider_id=provider_id)
         
         try:
             container.stop(timeout=10)
             container.remove()
-            del self.running_containers[provider_id]
+            self.running_containers.pop(provider_id, None)
             logger.info("container_stopped", container=container.name, provider_id=provider_id)
         except Exception as e:
             logger.error("container_stop_failed", provider_id=provider_id, error=str(e))
@@ -339,9 +343,12 @@ class ContainerManager:
     def get_container_logs(self, provider_id: str, tail: int = 100) -> str:
         """Get logs from a provider container."""
         container = self.running_containers.get(provider_id)
-        
         if not container:
-            return f"Container for provider {provider_id} not found"
+            container_name = f"comfy-provider-{provider_id}"
+            try:
+                container = self.client.containers.get(container_name)
+            except docker.errors.NotFound:
+                return f"Container for provider {provider_id} not found"
         
         try:
             return container.logs(tail=tail).decode('utf-8')
@@ -373,3 +380,15 @@ class ContainerManager:
             self.stop_container(provider_id)
         
         logger.info("container_cleanup_all_complete")
+
+
+def get_container_manager() -> Optional[ContainerManager]:
+    """Return the shared container manager singleton."""
+    global _container_manager_singleton
+    if _container_manager_singleton is None:
+        try:
+            _container_manager_singleton = ContainerManager()
+        except Exception as exc:
+            logger.warning("container_manager_init_failed", error=str(exc))
+            return None
+    return _container_manager_singleton

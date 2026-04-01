@@ -8,6 +8,7 @@ from core.events import event_bus, Event, EventType, emit_provider_event
 from core.exceptions import NotFoundError, ProviderError, ValidationError
 from infrastructure.repositories import ProviderRepository, LoadBalancingRepository
 from infrastructure.logging import provider_logger
+from api.provider_runtime import resolve_provider_runtime
 
 logger = provider_logger()
 
@@ -132,6 +133,7 @@ class ProviderService:
     
     def _provider_to_dict(self, provider: Provider) -> Dict[str, Any]:
         """Convert provider to dictionary for API responses."""
+        runtime = resolve_provider_runtime(provider)
         return {
             "id": provider.id,
             "type": provider.type,
@@ -140,6 +142,23 @@ class ProviderService:
             "credentials": provider.credentials,
             "config": provider.config,
             "container_config": provider.container_config,
+            "runtime": {
+                "mode": runtime.mode,
+                "connected": runtime.connected,
+                "supports_setup": runtime.supports_setup,
+                "supports_reconciliation": runtime.supports_reconciliation,
+            },
+            "capabilities": {
+                "container": runtime.mode == "container_http",
+                "start_container": provider.container_config is not None,
+                "stop_container": provider.container_config is not None,
+                "restart_container": provider.container_config is not None,
+                "view_logs": provider.container_config is not None,
+                "deploy": provider.type in {"modal", "beam"},
+                "setup": runtime.supports_setup,
+                "reconcile": runtime.supports_reconciliation,
+                "reset_status": True,
+            },
         }
     
     def get_model_cache(self) -> Dict[str, Any]:

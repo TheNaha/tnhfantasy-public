@@ -20,6 +20,7 @@ import aiohttp
 from api.deps import get_session, get_provider_service, get_container_manager
 from services.provider_service import ProviderService
 from core.exceptions import NotFoundError, ValidationError
+from api.provider_runtime import resolve_provider_runtime
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import api_logger
 
@@ -311,24 +312,25 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
     
-    # Check if container is running
+    runtime = resolve_provider_runtime(provider)
+    if runtime.mode != "container_http":
+        return {
+            "provider_id": provider_id,
+            "error": "Stats are only available for container-backed providers",
+            "total": 0,
+        }
+
     container_manager = get_container_manager()
     if not container_manager:
         raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
-    container_name = f"comfy-provider-{provider_id}"
-    
+
     try:
-        container = container_manager.client.containers.get(container_name)
+        container = container_manager.client.containers.get(runtime.container_name or f"comfy-provider-{provider_id}")
         if container.status != "running":
             return {"provider_id": provider_id, "error": "Container not running", "total": 0}
     except Exception:
         return {"provider_id": provider_id, "error": "Container not found", "total": 0}
-    
-    # Get port from container config (provider is a Pydantic model)
-    # Workers always run on internal port 8000
-    internal_port = 8000
-    
+
     # Use correct endpoint based on provider type
     provider_type = provider.type if hasattr(provider, 'type') else "modal"
     if provider_type == "beam":
@@ -337,8 +339,8 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
         stats_endpoint = "/modal-stats"
     else:
         stats_endpoint = "/provider-stats"  # Generic fallback
-    
-    worker_url = f"http://{container_name}:{internal_port}{stats_endpoint}"
+
+    worker_url = f"{runtime.worker_url}{stats_endpoint}"
     
     try:
         async with aiohttp.ClientSession() as http_session:
@@ -911,33 +913,24 @@ async def setup_provider(
     """Run Modal's setup_models function to initialize directories."""
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    
-    if provider.type != "modal":
-        raise HTTPException(status_code=400, detail="Setup is only available for Modal providers")
-    
-    # Check container config for worker URL
-    container_config = provider.container_config or {}
-    if container_config:
-        # Use internal port (workers always run on 8000)
-        internal_port = 8000
-        container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
-        worker_url = f"http://{container_name}:{internal_port}"
-        
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.post(f"{worker_url}/setup") as response:
-                response.raise_for_status()
-                result = await response.json()
-        
-        return {
-            "status": "success",
-            "message": f"Provider '{provider_id}' setup complete (via worker)",
-            "result": result
-        }
-    else:
+
+    runtime = resolve_provider_runtime(provider)
+    if not runtime.supports_setup or runtime.mode != "container_http":
         raise HTTPException(
             status_code=400,
-            detail="Setup requires containerized mode with worker"
+            detail="Setup requires a Modal provider with container-backed worker runtime"
         )
+
+    async with aiohttp.ClientSession() as http_session:
+        async with http_session.post(f"{runtime.worker_url}/setup") as response:
+            response.raise_for_status()
+            result = await response.json()
+
+    return {
+        "status": "success",
+        "message": f"Provider '{provider_id}' setup complete (via worker)",
+        "result": result
+    }
 
 
 # ============================================================================
@@ -952,24 +945,18 @@ async def reconcile_provider(
     """Trigger model reconciliation for a provider."""
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    
-    container_config = provider.container_config or {}
-    if not container_config:
+
+    runtime = resolve_provider_runtime(provider)
+    if not runtime.supports_reconciliation or runtime.mode != "container_http":
         raise HTTPException(
             status_code=400,
-            detail="Reconciliation only supported for containerized providers"
+            detail="Reconciliation is only available for container-backed providers"
         )
-    
-    # Note: container_config['port'] is the HOST port (external mapping)
-    # Workers always run on port 8000 internally
-    internal_port = 8000
-    container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
-    worker_url = f"http://{container_name}:{internal_port}"
     
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.post(
-                f"{worker_url}/reconcile",
+                f"{runtime.worker_url}/reconcile",
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as response:
                 if response.status == 200:
@@ -999,24 +986,19 @@ async def get_reconciliation_status(
     """Get current reconciliation status for a provider."""
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    
-    container_config = provider.container_config or {}
-    if not container_config:
+
+    runtime = resolve_provider_runtime(provider)
+    if runtime.mode != "container_http":
         return {
             "provider_id": provider_id,
             "status": "idle",
-            "message": "Status tracking only available for containerized providers"
+            "message": "Status tracking is only available for container-backed providers"
         }
-    
-    # Use internal port (workers always run on 8000)
-    internal_port = 8000
-    container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
-    worker_url = f"http://{container_name}:{internal_port}"
     
     try:
         async with aiohttp.ClientSession() as http_session:
             async with http_session.get(
-                f"{worker_url}/reconciliation-status",
+                f"{runtime.worker_url}/reconciliation-status",
                 timeout=aiohttp.ClientTimeout(total=30)  # Increased for slow Modal SDK calls
             ) as response:
                 if response.status == 200:

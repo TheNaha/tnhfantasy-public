@@ -542,6 +542,9 @@ async def perform_reconciliation_v2():
     
     # Helper to push current state
     async def push_state(phase: str, message: str = None, active_downloads: list = None):
+        reconciliation_state.set_phase(phase)
+        reconciliation_state.set_message(message)
+        reconciliation_state.set_active_downloads(active_downloads or [])
         await push_reconciliation_event(
             backend_url=BACKEND_URL,
             provider_id=PROVIDER_ID,
@@ -610,7 +613,7 @@ async def perform_reconciliation_v2():
         missing_files = all_expected_paths - modal_files
         if missing_files:
             print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from Modal")
-            missing_updates = [{"storage_path": path, "status": "pending"} for path in list(missing_files)[:500]]
+            missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
             await batch_update_file_status_v2(BACKEND_URL, PROVIDER_ID, missing_updates)
             
             # Re-fetch pending downloads

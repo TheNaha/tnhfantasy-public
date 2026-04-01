@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { Play, Square, Settings, Rocket, Server, Circle, Loader2, FileText, RefreshCw, Edit2, Trash2, Power, PowerOff, AlertTriangle, RotateCcw } from 'lucide-react';
 import SyncStatusBadge from './SyncStatusBadge';
 import ReconciliationStatus from './ReconciliationStatus';
-import { useProviderSyncStatus, useModalStats } from '../../hooks/useProviderModels';
+import { normalizeReconciliationStatus, useProviderSyncStatus, useModalStats } from '../../hooks/useProviderModels';
 import useReconciliationStore from '../../store/reconciliationStore';
 import { providersApi } from '../../api';
 
@@ -34,25 +33,15 @@ export default function ProviderCard({
 }) {
     const { data: syncStatus } = useProviderSyncStatus(provider.id);
     const { data: modalStats } = useModalStats(provider.id);
-    // Get reconciliation state from global store (WebSocket updates happen globally now)
-    const reconciliation = useReconciliationStore(state => state.activeReconciliations[provider.id]);
+    const rawReconciliation = useReconciliationStore(state => state.activeReconciliations[provider.id]);
+    const reconciliation = rawReconciliation ? normalizeReconciliationStatus(rawReconciliation) : null;
     const [showLogs, setShowLogs] = useState(false);
     const [showReconciliation, setShowReconciliation] = useState(false);
     const [logs, setLogs] = useState('');
     const [loadingLogs, setLoadingLogs] = useState(false);
 
-    // Invalidate queries when reconciliation completes
-    const queryClient = useQueryClient();
-    
-    useEffect(() => {
-        // Invalidate sync status when reconciliation completes or fails
-        if (reconciliation?.status === 'completed' || reconciliation?.status === 'failed') {
-            queryClient.invalidateQueries(['providerSyncStatus', provider.id]);
-        }
-    }, [reconciliation?.status, provider.id, queryClient]);
-
-    // Determine if this is a DIRECT mode provider (no container)
-    const isDirect = !provider.container_config;
+    const capabilities = getProviderCapabilities(provider);
+    const isDirect = !capabilities.canManageContainer;
 
     // For DIRECT mode, use 'active' status; for containerized, use actual container status
     const status = isDirect ? 'active' : (provider.container_status || 'stopped');
@@ -207,7 +196,7 @@ export default function ProviderCard({
 
             {/* Actions */}
             <div className="flex items-center gap-2 mt-4 pt-4 border-t border-gray-700 flex-wrap">
-                {(provider.type === 'modal' || provider.type === 'beam') && (
+                {capabilities.canDeploy && (
                     <button
                         onClick={onDeploy}
                         disabled={isLoading}
@@ -219,29 +208,33 @@ export default function ProviderCard({
                 )}
 
                 {/* Only show container controls for containerized providers */}
-                {!isDirect && (
+                {capabilities.canManageContainer && (
                     <>
                         {status === 'running' ? (
                             <>
-                                <button
-                                    onClick={onStop}
-                                    disabled={isLoading}
-                                    className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <Square size={14} />
-                                    Stop
-                                </button>
-                                <button
-                                    onClick={onRestart}
-                                    disabled={isLoading}
-                                    className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title="Restart Container"
-                                >
-                                    <RefreshCw size={14} />
-                                    Restart
-                                </button>
+                                {capabilities.canStop && (
+                                    <button
+                                        onClick={onStop}
+                                        disabled={isLoading}
+                                        className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Square size={14} />
+                                        Stop
+                                    </button>
+                                )}
+                                {capabilities.canRestart && (
+                                    <button
+                                        onClick={onRestart}
+                                        disabled={isLoading}
+                                        className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="Restart Container"
+                                    >
+                                        <RefreshCw size={14} />
+                                        Restart
+                                    </button>
+                                )}
                             </>
-                        ) : (
+                        ) : capabilities.canStart ? (
                             <button
                                 onClick={onStart}
                                 disabled={isLoading}
@@ -250,49 +243,57 @@ export default function ProviderCard({
                                 <Play size={14} />
                                 Start
                             </button>
-                        )}
+                        ) : null}
 
-                        <button
-                            onClick={fetchLogs}
-                            disabled={loadingLogs}
-                            className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="View Docker logs"
-                        >
-                            <FileText size={14} />
-                            Logs
-                        </button>
+                        {capabilities.canLogs && (
+                            <button
+                                onClick={fetchLogs}
+                                disabled={loadingLogs}
+                                className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="View Docker logs"
+                            >
+                                <FileText size={14} />
+                                Logs
+                            </button>
+                        )}
                     </>
                 )}
 
-                <button
-                    onClick={onResetStatus}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Reset all file statuses - forces complete re-download on next reconcile"
-                >
-                    <RotateCcw size={14} />
-                    Reset
-                </button>
+                {capabilities.canResetStatus && (
+                    <button
+                        onClick={onResetStatus}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Reset all file statuses - forces complete re-download on next reconcile"
+                    >
+                        <RotateCcw size={14} />
+                        Reset
+                    </button>
+                )}
 
-                <button
-                    onClick={onReconcile}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg border border-orange-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Sync models with provider storage"
-                >
-                    <RefreshCw size={14} />
-                    Reconcile
-                </button>
+                {capabilities.canReconcile && (
+                    <button
+                        onClick={onReconcile}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg border border-orange-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Sync models with provider storage"
+                    >
+                        <RefreshCw size={14} />
+                        Reconcile
+                    </button>
+                )}
 
-                <button
-                    onClick={onSetup}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Initialize Modal directories and download default models"
-                >
-                    <Rocket size={14} />
-                    Setup
-                </button>
+                {capabilities.canSetup && (
+                    <button
+                        onClick={onSetup}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Initialize Modal directories and download default models"
+                    >
+                        <Rocket size={14} />
+                        Setup
+                    </button>
+                )}
 
                 <button
                     onClick={onConfigure}
@@ -349,4 +350,46 @@ export default function ProviderCard({
             )}
         </div>
     );
+}
+
+function getProviderCapabilities(provider) {
+    const explicitCapabilities = provider.capabilities || provider.features || {};
+    const supportedActions = provider.supported_actions || provider.available_actions || provider.actions;
+    const hasExplicit = (key) => {
+        if (Array.isArray(supportedActions)) {
+            return supportedActions.includes(key);
+        }
+        if (supportedActions && typeof supportedActions === 'object' && key in supportedActions) {
+            return Boolean(supportedActions[key]);
+        }
+        if (explicitCapabilities && typeof explicitCapabilities === 'object' && key in explicitCapabilities) {
+            return Boolean(explicitCapabilities[key]);
+        }
+        return undefined;
+    };
+
+    const defaultContainerSupport = Boolean(provider.container_config);
+    const defaultDeploySupport = ['modal', 'beam'].includes(provider.type);
+    const derivedContainerSupport = [
+        hasExplicit('start'),
+        hasExplicit('start_container'),
+        hasExplicit('stop'),
+        hasExplicit('stop_container'),
+        hasExplicit('restart'),
+        hasExplicit('restart_container'),
+        hasExplicit('logs'),
+        hasExplicit('view_logs'),
+    ].some((value) => value === true);
+
+    return {
+        canManageContainer: hasExplicit('container') ?? derivedContainerSupport ?? defaultContainerSupport,
+        canStart: hasExplicit('start') ?? hasExplicit('start_container') ?? defaultContainerSupport,
+        canStop: hasExplicit('stop') ?? hasExplicit('stop_container') ?? defaultContainerSupport,
+        canRestart: hasExplicit('restart') ?? hasExplicit('restart_container') ?? defaultContainerSupport,
+        canLogs: hasExplicit('logs') ?? hasExplicit('view_logs') ?? defaultContainerSupport,
+        canDeploy: hasExplicit('deploy') ?? defaultDeploySupport,
+        canSetup: hasExplicit('setup') ?? defaultDeploySupport,
+        canResetStatus: hasExplicit('reset_status') ?? hasExplicit('reset_model_status') ?? true,
+        canReconcile: hasExplicit('reconcile') ?? true,
+    };
 }

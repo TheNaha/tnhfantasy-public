@@ -3,7 +3,7 @@ Reconciliation state management for provider workers.
 Thread-safe state tracking for reconciliation progress.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 import threading
@@ -51,9 +51,12 @@ class ReconciliationState:
             self._status = "idle"  # idle|reconciling|completed|failed
             self._started_at: Optional[str] = None
             self._completed_at: Optional[str] = None
+            self._phase: Optional[str] = None
+            self._message: Optional[str] = None
             self._download_queue: List[Dict] = []
             self._deletion_queue: List[str] = []
             self._current_download: Optional[Dict] = None
+            self._active_downloads: List[Dict] = []
             self._stats = ReconciliationStats()
             self._errors: List[str] = []
     
@@ -71,11 +74,14 @@ class ReconciliationState:
         """Mark reconciliation as started."""
         with self._lock:
             self._status = "reconciling"
-            self._started_at = datetime.utcnow().isoformat()
+            self._started_at = datetime.now(timezone.utc).isoformat()
             self._completed_at = None
+            self._phase = "validating"
+            self._message = None
             self._download_queue = []
             self._deletion_queue = []
             self._current_download = None
+            self._active_downloads = []
             self._stats = ReconciliationStats()
             self._errors = []
     
@@ -83,8 +89,9 @@ class ReconciliationState:
         """Mark reconciliation as completed."""
         with self._lock:
             self._status = "completed" if success else "failed"
-            self._completed_at = datetime.utcnow().isoformat()
+            self._completed_at = datetime.now(timezone.utc).isoformat()
             self._current_download = None
+            self._active_downloads = []
     
     def set_download_queue(self, queue: List[Dict]):
         """Set the download queue."""
@@ -96,6 +103,33 @@ class ReconciliationState:
         """Set current download info."""
         with self._lock:
             self._current_download = download
+
+    def set_active_downloads(self, downloads: Optional[List[Dict]]):
+        """Set the current list of active downloads."""
+        with self._lock:
+            self._active_downloads = list(downloads or [])
+
+    def set_phase(self, phase: Optional[str]):
+        """Set the current reconciliation phase."""
+        with self._lock:
+            self._phase = phase
+
+    def set_message(self, message: Optional[str]):
+        """Set the current reconciliation status message."""
+        with self._lock:
+            self._message = message
+
+    def _build_stats_snapshot(self) -> Dict[str, int]:
+        """Build a stats snapshot. Caller must hold the lock."""
+        return {
+            "total_models_in_storage": self._stats.total_models_in_storage,
+            "downloads_queued": self._stats.downloads_queued,
+            "downloads_completed": self._stats.downloads_completed,
+            "downloads_failed": self._stats.downloads_failed,
+            "deletions_completed": self._stats.deletions_completed,
+            "invalid_cleaned": self._stats.invalid_cleaned,
+            "missing_reported": self._stats.missing_reported,
+        }
     
     def increment_downloads_completed(self):
         """Increment completed downloads counter."""
@@ -138,33 +172,22 @@ class ReconciliationState:
             return {
                 "provider_id": self.provider_id,
                 "status": self._status,
+                "phase": self._phase,
+                "message": self._message,
                 "started_at": self._started_at,
                 "completed_at": self._completed_at,
                 "download_queue": self._download_queue,
                 "deletion_queue": self._deletion_queue,
                 "current_download": self._current_download,
-                "stats": {
-                    "total_models_in_storage": self._stats.total_models_in_storage,
-                    "downloads_queued": self._stats.downloads_queued,
-                    "downloads_completed": self._stats.downloads_completed,
-                    "downloads_failed": self._stats.downloads_failed,
-                    "deletions_completed": self._stats.deletions_completed,
-                    "invalid_cleaned": self._stats.invalid_cleaned,
-                    "missing_reported": self._stats.missing_reported,
-                },
+                "active_downloads": self._active_downloads,
+                "stats": self._build_stats_snapshot(),
                 "errors": self._errors,
             }
     
     def get_stats(self) -> Dict[str, int]:
         """Get current stats as dictionary."""
         with self._lock:
-            return {
-                "total_models_in_modal": self._stats.total_models_in_storage,
-                "downloads_queued": self._stats.downloads_queued,
-                "downloads_completed": self._stats.downloads_completed,
-                "downloads_failed": self._stats.downloads_failed,
-                "deletions_completed": self._stats.deletions_completed,
-            }
+            return self._build_stats_snapshot()
     
     def get_status(self) -> str:
         """Get current reconciliation status."""

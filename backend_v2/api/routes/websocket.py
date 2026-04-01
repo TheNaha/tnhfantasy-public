@@ -185,6 +185,7 @@ async def cancel_job(sid, data):
     from core.entities import JobStatus
     from api.deps import get_session_context
     from infrastructure.http_client import get_http_client
+    from api.provider_runtime import resolve_provider_runtime
     
     try:
         # Check if job is active in queue
@@ -198,17 +199,13 @@ async def cancel_job(sid, data):
                 if job.provider_id:
                     provider_service = ProviderService(session)
                     provider = await provider_service.get_provider(job.provider_id)
-                    
-                    # Provider is an entity object, use attribute access
-                    if provider and hasattr(provider, 'container_config') and provider.container_config:
-                        # Build worker URL from provider container
-                        container_name = f"comfy-provider-{provider.id}"
-                        worker_url = f"http://{container_name}:8000"
-                        
+                    runtime = resolve_provider_runtime(provider)
+
+                    if runtime.mode == "container_http":
                         try:
                             http_client = get_http_client()
                             response = await http_client.post(
-                                f"{worker_url}/cancel-job",
+                                f"{runtime.worker_url}/cancel-job",
                                 json={"job_id": job_id},
                                 timeout=5.0
                             )
@@ -216,6 +213,13 @@ async def cancel_job(sid, data):
                                 logger.info(f"[WebSocket] Worker acknowledged cancel for {job_id}")
                         except Exception as cancel_err:
                             logger.warning(f"[WebSocket] Could not reach worker to cancel: {cancel_err}")
+                    elif runtime.mode == "external_worker":
+                        try:
+                            from api.routes.worker_ws import request_worker_job_cancel
+
+                            await request_worker_job_cancel(provider.id, job_id)
+                        except Exception as cancel_err:
+                            logger.warning(f"[WebSocket] Could not signal external worker to cancel: {cancel_err}")
                 
                 # Mark as cancelled in DB
                 await job_service.update_job(job_id, status=JobStatus.CANCELLED)

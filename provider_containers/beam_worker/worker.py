@@ -459,7 +459,26 @@ async def get_file(path: str = None):
                 headers=get_beam_headers(),
             )
             if response.status_code == 200:
-                return Response(content=response.content, media_type="application/octet-stream")
+                content_type = response.headers.get("content-type", "") or ""
+                if not isinstance(content_type, str):
+                    content_type = str(content_type)
+                if "json" in content_type.lower() or response.content[:1] in (b"{", b"["):
+                    try:
+                        payload = response.json()
+                    except Exception:
+                        payload = None
+                    if isinstance(payload, dict) and payload.get("content_base64"):
+                        import base64
+
+                        return Response(
+                            content=base64.b64decode(payload["content_base64"]),
+                            media_type=payload.get("media_type", "application/octet-stream"),
+                        )
+
+                return Response(
+                    content=response.content,
+                    media_type=content_type or "application/octet-stream",
+                )
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
     except HTTPException:
         raise
@@ -609,6 +628,9 @@ async def perform_reconciliation_v2():
     
     # Helper to push current state
     async def push_state(phase: str, message: str = None, active_downloads: list = None):
+        reconciliation_state.set_phase(phase)
+        reconciliation_state.set_message(message)
+        reconciliation_state.set_active_downloads(active_downloads or [])
         await push_reconciliation_event(
             backend_url=BACKEND_URL,
             provider_id=PROVIDER_ID,
@@ -669,7 +691,7 @@ async def perform_reconciliation_v2():
         missing_files = all_expected_paths - beam_files
         if missing_files:
             print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from Beam")
-            missing_updates = [{"storage_path": path, "status": "pending"} for path in list(missing_files)[:500]]
+            missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
             await batch_update_file_status_v2(BACKEND_URL, PROVIDER_ID, missing_updates)
             
             pending_downloads = await get_pending_downloads(BACKEND_URL, PROVIDER_ID)

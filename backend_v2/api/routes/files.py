@@ -927,8 +927,14 @@ async def proxy_file(
         file_proxy = provider.get_file_proxy()
         content = await file_proxy.get_file(path)
         
-        if path.endswith(('.png', '.jpg', '.jpeg', '.webp')):
-            media_type = "image/png" if path.endswith('.png') else "image/jpeg"
+        path_lower = path.lower()
+        if path_lower.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            if path_lower.endswith('.png'):
+                media_type = "image/png"
+            elif path_lower.endswith('.webp'):
+                media_type = "image/webp"
+            else:
+                media_type = "image/jpeg"
         else:
             media_type = "application/octet-stream"
         

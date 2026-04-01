@@ -16,6 +16,7 @@ from infrastructure.logging import get_logger
 from infrastructure.scheduler import schedule_vacuum, start_scheduler, stop_scheduler
 from services.job_queue import job_queue
 from services.job_service import JobService
+from sqlmodel import select
 
 logger = get_logger("lifecycle")
 
@@ -91,6 +92,7 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="job_recovery")
     await recover_pending_jobs()
+    await recover_post_processing_jobs()
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
@@ -152,3 +154,44 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     await close_http_client()
 
     logger.info("shutdown_complete")
+
+
+async def recover_post_processing_jobs() -> int:
+    """Resume jobs that already have persisted outputs but were not marked completed yet."""
+    from api.job_processing import finalize_persisted_job_outputs
+    from core.entities import Job
+
+    session = get_session_sync()
+    try:
+        job_service = JobService(session)
+        post_processing_jobs = session.exec(
+            select(Job).where(Job.status == JobStatus.POST_PROCESSING)
+        ).all()
+
+        recovered = 0
+        for job in post_processing_jobs:
+            outputs = job.outputs or []
+            if not outputs:
+                job.status = JobStatus.FAILED
+                job.error = "Job entered post-processing without persisted outputs"
+                session.add(job)
+                continue
+
+            await finalize_persisted_job_outputs(
+                job_service=job_service,
+                job_id=job.id,
+                outputs=outputs,
+                provider_id=job.provider_id,
+                load_balancer=None,
+                process_image_background_fn=None,
+            )
+            recovered += 1
+
+        if post_processing_jobs:
+            session.commit()
+
+        if recovered:
+            logger.info("post_processing_jobs_recovered", count=recovered)
+        return recovered
+    finally:
+        session.close()

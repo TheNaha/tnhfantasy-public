@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import WebSocketDisconnect
 
-from api.routes.worker_ws import connected_workers, worker_websocket
+from api.routes.worker_ws import (
+    ConnectedWorker,
+    connected_workers,
+    dispatch_job_to_worker,
+    pending_job_futures,
+    request_worker_job_cancel,
+    worker_websocket,
+)
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
 
@@ -36,8 +43,10 @@ class DummyWebSocket:
 @pytest.fixture(autouse=True)
 def clear_connected_workers():
     connected_workers.clear()
+    pending_job_futures.clear()
     yield
     connected_workers.clear()
+    pending_job_futures.clear()
 
 
 def _fake_session_context():
@@ -53,7 +62,7 @@ async def test_worker_websocket_closes_when_provider_missing():
     provider_service = AsyncMock()
     provider_service.get_provider.side_effect = NotFoundError("Provider", "missing")
 
-    with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service):
         await worker_websocket(websocket, "missing", "token")
 
@@ -68,7 +77,7 @@ async def test_worker_websocket_closes_when_token_is_invalid():
     provider_service = AsyncMock()
     provider_service.get_provider.return_value = provider
 
-    with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service):
         await worker_websocket(websocket, "provider-a", "bad-token")
 
@@ -95,7 +104,7 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     gallery_indexer = MagicMock()
     gallery_indexer.get_path.return_value = "/app/output/2026/03/06/image-1.png"
 
-    with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
          patch("services.gallery_indexer.gallery_indexer", gallery_indexer):
@@ -158,7 +167,7 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
 
-    with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
+    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service):
         await worker_websocket(websocket, "provider-a", "token-1")
@@ -168,3 +177,75 @@ async def test_worker_websocket_rejects_unpersisted_outputs():
         status=JobStatus.FAILED,
         error="External worker outputs must be structured objects",
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_websocket_normalizes_progress_updates():
+    websocket = DummyWebSocket(
+        messages=[
+            {
+                "type": "job_progress",
+                "job_id": "job-3",
+                "data": {
+                    "progress": 42,
+                    "message": "Rendering node 7",
+                },
+            }
+        ]
+    )
+    provider = SimpleNamespace(config={"worker_token": "token-1"})
+    provider_service = AsyncMock()
+    provider_service.get_provider.return_value = provider
+    job_service = AsyncMock()
+
+    with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
+         patch("services.provider_service.ProviderService", return_value=provider_service), \
+         patch("services.job_service.JobService", return_value=job_service):
+        await worker_websocket(websocket, "provider-a", "token-1")
+
+    job_service.update_job.assert_awaited_with(
+        "job-3",
+        progress=42,
+        overall_progress=42,
+        message="Rendering node 7",
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_job_to_worker_sends_job_and_waits_for_result():
+    websocket = DummyWebSocket()
+    connected_workers["provider-a"] = ConnectedWorker(websocket, "provider-a")
+
+    dispatch_task = asyncio.create_task(
+        dispatch_job_to_worker(
+            "provider-a",
+            {"id": "job-4", "workflow": {"1": {}}, "metadata": {}},
+            timeout=1.0,
+        )
+    )
+    await asyncio.sleep(0)
+
+    future = pending_job_futures["job-4"]
+    future.set_result({"__handled_by_external_worker": True, "outputs": []})
+
+    result = await dispatch_task
+
+    assert result["__handled_by_external_worker"] is True
+    assert websocket.sent == [{
+        "type": "job",
+        "data": {"id": "job-4", "workflow": {"1": {}}, "metadata": {}},
+    }]
+
+
+@pytest.mark.asyncio
+async def test_request_worker_job_cancel_sends_cancel_message():
+    websocket = DummyWebSocket()
+    connected_workers["provider-a"] = ConnectedWorker(websocket, "provider-a")
+
+    cancelled = await request_worker_job_cancel("provider-a", "job-5")
+
+    assert cancelled is True
+    assert websocket.sent == [{
+        "type": "cancel_job",
+        "job_id": "job-5",
+    }]

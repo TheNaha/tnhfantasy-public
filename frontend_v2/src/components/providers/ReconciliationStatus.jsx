@@ -3,6 +3,7 @@ import { X, Download, CheckCircle, XCircle, Clock, HardDrive, AlertCircle, Refre
 import { motion } from 'framer-motion';
 import useReconciliationStore from '../../store/reconciliationStore';
 import { providersApi } from '../../api';
+import { normalizeReconciliationStatus } from '../../hooks/useProviderModels';
 
 // Phase definitions with static Tailwind classes
 const PHASES = {
@@ -54,11 +55,14 @@ const PHASE_ORDER = ['validating', 'fetching', 'downloading', 'deleting', 'compl
 
 export default function ReconciliationStatus({ providerId, onClose }) {
     // Read from global store - WebSocket updates happen globally now
-    const storeStatus = useReconciliationStore(state => state.activeReconciliations[providerId]);
+    const rawStoreStatus = useReconciliationStore(state => state.activeReconciliations[providerId]);
+    const storeStatus = hasReconciliationContent(rawStoreStatus)
+        ? normalizeReconciliationStatus(rawStoreStatus)
+        : null;
     const [localStatus, setLocalStatus] = useState(null);
     
     // Use store status if available, otherwise fall back to local fetch
-    const status = storeStatus || localStatus;
+    const status = storeStatus || (localStatus ? normalizeReconciliationStatus(localStatus) : null);
 
     // Initial fetch only if not in store
     useEffect(() => {
@@ -67,7 +71,7 @@ export default function ReconciliationStatus({ providerId, onClose }) {
         const fetchInitialStatus = async () => {
             try {
                 const data = await providersApi.getReconciliationStatus(providerId);
-                setLocalStatus(data);
+                setLocalStatus(normalizeReconciliationStatus(data));
             } catch (error) {
                 console.error('Failed to fetch reconciliation status:', error);
             }
@@ -166,7 +170,7 @@ export default function ReconciliationStatus({ providerId, onClose }) {
                         <StatCard
                             icon={<HardDrive size={16} />}
                             label="In Storage"
-                            value={stats.total_models_in_modal || 0}
+                            value={stats.total_models_in_storage || stats.total_models_in_modal || 0}
                             colorClass="text-purple-400"
                             borderClass="border-purple-500/20"
                         />
@@ -303,6 +307,19 @@ export default function ReconciliationStatus({ providerId, onClose }) {
                 </div>
             </motion.div>
         </div>
+    );
+}
+
+function hasReconciliationContent(status) {
+    if (!status) return false;
+    return Boolean(
+        status.status ||
+        status.phase ||
+        status.message ||
+        status.stats ||
+        status.current_download ||
+        (Array.isArray(status.active_downloads) && status.active_downloads.length > 0) ||
+        (Array.isArray(status.errors) && status.errors.length > 0)
     );
 }
 

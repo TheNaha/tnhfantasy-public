@@ -28,8 +28,6 @@ from services.model_service import ModelService
 from core.events import event_bus, EventBus
 from infrastructure.logging import get_logger
 
-# Singleton container manager (initialized lazily on first use)
-_container_manager = None
 logger = get_logger("api_deps")
 
 
@@ -78,13 +76,9 @@ def get_model_service_v2(session: Session):
 
 def get_container_manager():
     """Get container manager singleton (lazy initialization)."""
-    global _container_manager
-    if _container_manager is None:
-        try:
-            from services.container_manager import ContainerManager
-            _container_manager = ContainerManager()
-        except Exception as e:
-            logger.warning("container_manager_init_failed", error=str(e))
-            return None
-    return _container_manager
-
+    try:
+        from services.container_manager import get_container_manager as get_shared_container_manager
+        return get_shared_container_manager()
+    except Exception as e:
+        logger.warning("container_manager_init_failed", error=str(e))
+        return None

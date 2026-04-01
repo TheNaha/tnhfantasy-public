@@ -1,5 +1,6 @@
 """Extended tests for api/routes/jobs.py"""
 import pytest
+from core.entities import Job, JobStatus
 
 
 class TestJobsRouteExtended:
@@ -47,6 +48,22 @@ class TestJobsRouteExtended:
         job_id = create_response.json()["id"]
         response = client.post(f"/api/jobs/{job_id}/retry")
         assert response.status_code in (200, 400, 422)
+
+    def test_retry_failed_job_creates_new_job(self, client, session, sample_job_data):
+        create_response = client.post("/api/generate", json=sample_job_data)
+        job_id = create_response.json()["id"]
+
+        # Mutate the job directly in the test session to simulate a terminal failure.
+        real_job = session.get(Job, job_id)
+        real_job.status = JobStatus.FAILED
+        session.add(real_job)
+        session.commit()
+
+        response = client.post(f"/api/jobs/{job_id}/retry")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["new_job_id"] != job_id
 
     def test_delete_job(self, client, sample_job_data):
         create_response = client.post("/api/generate", json=sample_job_data)

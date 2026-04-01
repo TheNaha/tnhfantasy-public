@@ -100,10 +100,10 @@ class ModelServiceV2:
             raise NotFoundError("Model", str(model_id))
         return self.repo.model_to_dict(model)
     
-    async def list_models(self) -> List[Dict[str, Any]]:
+    async def list_models(self, include_versions: bool = False) -> List[Dict[str, Any]]:
         """List all models."""
         models = self.repo.get_all_models()
-        return [self.repo.model_to_dict(m, include_versions=False) for m in models]
+        return [self.repo.model_to_dict(m, include_versions=include_versions) for m in models]
     
     async def list_models_by_directory(self, directory: str) -> List[Dict[str, Any]]:
         """List models in a specific directory."""

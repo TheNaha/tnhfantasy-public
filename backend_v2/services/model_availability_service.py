@@ -6,6 +6,7 @@ Used for pre-flight job validation and model-aware load balancing.
 from typing import Dict, List, Any, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from sqlmodel import Session, select
+from sqlalchemy import and_, or_
 
 from core.entities_v2 import ModelFile, ModelVersion, ModelV2, ProviderVersionStatus
 from core.entities import Provider
@@ -153,12 +154,21 @@ class ModelAvailabilityService:
 
         result: Dict[Tuple[str, str], Dict[str, str]] = {}
 
+        file_filters = [
+            and_(
+                ModelV2.directory == directory,
+                ModelFile.storage_filename == filename,
+            )
+            for directory, filename in requested_pairs
+        ]
+
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
         ).where(
-            ModelVersion.is_enabled == True
+            ModelVersion.is_enabled == True,
+            or_(*file_filters),
         )
         files = self.session.exec(stmt).all()
 

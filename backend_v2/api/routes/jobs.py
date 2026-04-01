@@ -21,6 +21,7 @@ from infrastructure.request_dedup import deduplicated, make_key
 from infrastructure.logging import api_logger
 from services.job_submission_service import JobSubmissionService
 from services.job_queue import job_queue
+from core.entities import JobStatus
 
 logger = api_logger()
 
@@ -193,7 +194,7 @@ async def retry_job(
     service = get_job_service(session)
     original_job = await service.get_job(job_id)
     
-    if original_job.status not in ['failed', 'error']:
+    if original_job.status != JobStatus.FAILED:
         raise HTTPException(
             status_code=400,
             detail="Only failed jobs can be retried"

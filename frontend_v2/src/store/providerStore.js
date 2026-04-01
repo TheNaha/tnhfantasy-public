@@ -2,6 +2,19 @@ import { create } from 'zustand';
 import * as ws from '../api/websocket';
 import { providersApi } from '../api';
 
+function unwrapEventData(data) {
+    return data?.data ?? data ?? {};
+}
+
+function normalizeObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function extractProviderId(data) {
+    const eventData = unwrapEventData(data);
+    return eventData.provider_id ?? eventData.providerId ?? eventData.id ?? null;
+}
+
 /**
  * Provider Store
  * Centralized WebSocket-based provider status tracking.
@@ -25,20 +38,22 @@ export const useProviderStore = create((set, get) => ({
 
     // Process WebSocket events
     _processContainerStatus: (data) => {
-        const eventData = data.data || data;
+        const eventData = unwrapEventData(data);
         
         if (eventData.statuses) {
             // Batch update (all providers)
             set({ containerStatuses: eventData.statuses });
-        } else if (eventData.provider_id && eventData.status) {
+        } else if (extractProviderId(eventData) && eventData.status) {
             // Single provider update
+            const providerId = extractProviderId(eventData);
             set(state => ({
                 containerStatuses: {
                     ...state.containerStatuses,
-                    [eventData.provider_id]: {
-                        ...(state.containerStatuses[eventData.provider_id] || {}),
+                    [providerId]: {
+                        ...(state.containerStatuses[providerId] || {}),
                         status: eventData.status,
-                        running: ['running', 'starting'].includes(eventData.status)
+                        running: eventData.running ?? ['running', 'starting'].includes(eventData.status),
+                        healthy: eventData.healthy ?? state.containerStatuses[providerId]?.healthy
                     }
                 }
             }));
@@ -46,9 +61,10 @@ export const useProviderStore = create((set, get) => ({
     },
 
     _processProviderStats: (data) => {
-        const eventData = data.data || data;
-        if (eventData.stats) {
-            set({ lbStats: eventData.stats });
+        const eventData = unwrapEventData(data);
+        const stats = normalizeObject(eventData.stats ?? eventData.provider_stats ?? eventData.lb_stats ?? eventData);
+        if (Object.keys(stats).length > 0) {
+            set({ lbStats: stats });
         }
     },
 

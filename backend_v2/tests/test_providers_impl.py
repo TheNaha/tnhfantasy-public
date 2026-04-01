@@ -1,4 +1,5 @@
 """Tests for infrastructure/providers/base.py, beam_provider.py, and modal_provider.py"""
+import base64
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from infrastructure.providers.base import ServerlessProvider, FileProxyProvider
@@ -109,6 +110,24 @@ class TestBeamFileProxy:
         mock_client.get = AsyncMock(return_value=mock_response)
         with patch("infrastructure.providers.beam_provider.get_http_client", return_value=mock_client):
             result = await proxy.get_file("path/to/file.safetensors")
+        assert result == b"file_content"
+
+    async def test_get_file_json_payload_decodes_content(self):
+        proxy = self.get_proxy()
+        encoded = base64.b64encode(b"file_content").decode()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.content = f'{{"content_base64":"{encoded}"}}'.encode()
+        mock_response.json.return_value = {"content_base64": encoded}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("infrastructure.providers.beam_provider.get_http_client", return_value=mock_client):
+            result = await proxy.get_file("path/to/file.safetensors")
+
         assert result == b"file_content"
 
     async def test_get_file_failure_raises(self):
