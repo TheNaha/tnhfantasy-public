@@ -16,7 +16,6 @@ import { useGeneratorStore } from '../store/generatorStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { GallerySkeleton } from '../components/Skeleton';
 import ConfirmationModal from '../components/ConfirmationModal';
-import { useSettings } from '../store/settingsStore';
 import useSettingsStore from '../store/settingsStore';
 
 import { FilterBar } from '../components/dashboard/FilterBar';
@@ -38,13 +37,18 @@ import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefr
 export default function Dashboard() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const settings = useSettings();
+    const defaultViewMode = useSettingsStore((state) => state.settings.ui.defaultViewMode);
+    const defaultGridColumns = useSettingsStore((state) => state.settings.ui.defaultGridColumns);
+    const autoRefreshOnJobComplete = useSettingsStore((state) => state.settings.gallery.autoRefreshOnJobComplete);
+    const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
+    const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
+    const updateSetting = useSettingsStore((state) => state.updateSetting);
     // Global State - now uses WebSocket for real-time updates
     const { connect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
     const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
     // Local State
-    const [viewMode, setViewMode] = useState(() => settings.ui.defaultViewMode);
+    const [viewMode, setViewMode] = useState(() => defaultViewMode);
 
     // Confirmation Modal
     const [confirmModal, setConfirmModal] = useState({
@@ -81,7 +85,7 @@ export default function Dashboard() {
         });
     }, [deleteJob]);
     const [selectedJobId, setSelectedJobId] = useState(null);  // Store ID, not object
-    const [gridCols, setGridCols] = useState(settings.ui.defaultGridColumns);
+    const [gridCols, setGridCols] = useState(defaultGridColumns);
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
     const [showSelectCollection, setShowSelectCollection] = useState(false);
     const [showStatsPanel, setShowStatsPanel] = useState(false);
@@ -174,10 +178,15 @@ export default function Dashboard() {
     // Connect to WebSocket on mount and refetch gallery
     // Note: We don't disconnect on unmount because WebSocket is a global singleton
     // and React StrictMode double-renders would cause connection issues
+    const hasInitializedRef = useRef(false);
     useEffect(() => {
+        if (hasInitializedRef.current) {
+            return;
+        }
+        hasInitializedRef.current = true;
         connect();
         // Refetch gallery on mount to ensure fresh data
-        refetch();
+        void refetch();
         // No cleanup - WebSocket connection persists across component lifecycle
     }, [connect, refetch]);
 
@@ -190,18 +199,18 @@ export default function Dashboard() {
             // Check if this is a new completion we haven't handled yet
             if (lastCompletedJobRef.current !== lastCompletedJob.id) {
                 lastCompletedJobRef.current = lastCompletedJob.id;
-                if (settings.gallery.autoRefreshOnJobComplete) {
+                if (autoRefreshOnJobComplete) {
                     // Invalidate all gallery queries regardless of filters
                     queryClient.invalidateQueries({ queryKey: ['gallery'] });
                     // Also trigger immediate refetch
                     refetch();
                     toast.success("🎉 Generation complete! Gallery updated.", {
-                        duration: settings.ui.toastSuccessDuration,
+                        duration: toastSuccessDuration,
                     });
                 }
             }
         }
-    }, [lastCompletedJob, queryClient, refetch, settings.gallery.autoRefreshOnJobComplete, settings.ui.toastSuccessDuration]);
+    }, [lastCompletedJob, queryClient, refetch, autoRefreshOnJobComplete, toastSuccessDuration]);
 
     // Keyboard shortcuts (ESC to close modals)
     useKeyboardShortcuts({
@@ -210,13 +219,6 @@ export default function Dashboard() {
             else if (selectedJob) setSelectedJobId(null);
         }
     });
-
-    // Keep local view mode aligned with persisted UI settings.
-    useEffect(() => {
-        if (viewMode !== settings.ui.defaultViewMode) {
-            useSettingsStore.getState().updateSetting('ui', 'defaultViewMode', viewMode);
-        }
-    }, [settings.ui.defaultViewMode, viewMode]);
 
     const {
         allItems,
@@ -249,17 +251,17 @@ export default function Dashboard() {
                     if (selectedImage?.name === filename) closeSelectedImage();
                     toast.success(`Successfully deleted ${filename}`, {
                         icon: '🗑️',
-                        duration: settings.ui.toastSuccessDuration,
+                        duration: toastSuccessDuration,
                     });
                 } catch (e) {
                     toast.error(`Failed to delete: ${e.message}`, {
                         icon: '❌',
-                        duration: settings.ui.toastErrorDuration,
+                        duration: toastErrorDuration,
                     });
                 }
             }
         });
-    }, [closeSelectedImage, queryClient, selectedImage, settings.ui.toastErrorDuration, settings.ui.toastSuccessDuration]);
+    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration]);
 
     const useParameters = useCallback(() => {
         if (!metadata) return;
@@ -286,10 +288,15 @@ export default function Dashboard() {
 
         toast.success('Parameters loaded! Auto-randomize seed disabled for reproduction.', {
             icon: '🎯',
-            duration: settings.ui.toastSuccessDuration
+            duration: toastSuccessDuration
         });
         navigate('/generate');
-    }, [metadata, navigate, settings.ui.toastSuccessDuration]);
+    }, [metadata, navigate, toastSuccessDuration]);
+
+    const handlePullToRefresh = useCallback(async () => {
+        await refetch();
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }, [refetch]);
 
     const toggleSelection = useCallback((filename) => {
         setSelectedFiles(prev => {
@@ -382,10 +389,7 @@ export default function Dashboard() {
     }, []);
 
     const { containerRef, pullDistance, isRefreshing, isPulling } = usePullToRefresh({
-        onRefresh: async () => {
-            await refetch();
-            await new Promise(resolve => setTimeout(resolve, 500));
-        },
+        onRefresh: handlePullToRefresh,
         threshold: 80
     });
 
@@ -423,7 +427,10 @@ export default function Dashboard() {
                                 {['grid', 'list', 'feed', 'timeline'].map(mode => (
                                     <button
                                         key={mode}
-                                        onClick={() => setViewMode(mode)}
+                                        onClick={() => {
+                                            setViewMode(mode);
+                                            updateSetting('ui', 'defaultViewMode', mode);
+                                        }}
                                         aria-label={`${mode.charAt(0).toUpperCase() + mode.slice(1)} View`}
                                         className={`p-2 rounded-md transition-all ${viewMode === mode ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
                                         type="button"
@@ -675,7 +682,7 @@ export default function Dashboard() {
                 isDangerous={confirmModal.isDangerous}
                 confirmText={confirmModal.confirmText}
                 onConfirm={confirmModal.onConfirm}
-                onCancel={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
             />
 
             {/* Image Comparison Modal */}

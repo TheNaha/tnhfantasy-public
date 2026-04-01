@@ -87,15 +87,13 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-    const {
-        connect: connectJobs,
-        disconnect: disconnectJobs,
-        fetchJobs,
-        setupBrowserLifecycle,
-        teardownBrowserLifecycle,
-    } = useJobStore();
-    const { connect: connectReconciliation } = useReconciliationStore();
-    const { connect: connectProviders } = useProviderStore();
+    const connectJobs = useJobStore((state) => state.connect);
+    const disconnectJobs = useJobStore((state) => state.disconnect);
+    const fetchJobs = useJobStore((state) => state.fetchJobs);
+    const setupBrowserLifecycle = useJobStore((state) => state.setupBrowserLifecycle);
+    const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
+    const connectReconciliation = useReconciliationStore((state) => state.connect);
+    const connectProviders = useProviderStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
 
     // Initialize dynamic viewport height for iOS Safari

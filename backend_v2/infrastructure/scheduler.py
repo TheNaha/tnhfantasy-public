@@ -46,6 +46,7 @@ def add_interval_job(
     interval_seconds: int,
     job_id: str,
     start_immediately: bool = True,
+    misfire_grace_time: int = 60,
     **kwargs
 ):
     """
@@ -85,6 +86,7 @@ def add_interval_job(
         next_run_time=next_run,
         coalesce=True,
         max_instances=1,
+        misfire_grace_time=misfire_grace_time,
     )
     
     logger.info("job_scheduled", job_id=job_id, interval_seconds=interval_seconds)
@@ -94,6 +96,7 @@ def add_cron_job(
     func: Callable,
     cron_expr: str,
     job_id: str,
+    misfire_grace_time: int = 60,
     **kwargs
 ):
     """
@@ -133,6 +136,7 @@ def add_cron_job(
         replace_existing=True,
         coalesce=True,
         max_instances=1,
+        misfire_grace_time=misfire_grace_time,
     )
     
     logger.info("cron_job_scheduled", job_id=job_id, cron_expr=cron_expr)
@@ -223,5 +227,6 @@ def schedule_vacuum(func: Callable, interval_seconds: int = 86400):
         interval_seconds=interval_seconds,
         job_id="database_vacuum",
         start_immediately=False,
+        misfire_grace_time=300,
     )
 
