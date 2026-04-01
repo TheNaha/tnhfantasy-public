@@ -9,7 +9,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
  * - G: Navigate to Generate page
  * - M: Navigate to Models page
  * - A: Navigate to Advanced page
- * - C: Navigate to Direct ComfyUI page
  * - ?: Show keyboard shortcuts help (console log for now)
  * - Escape: Close modals (via callback)
  */
@@ -57,11 +56,6 @@ export const useKeyboardShortcuts = ({ onEscape, onShowHelp } = {}) => {
                 case 'a':
                     if (location.pathname !== '/advanced') {
                         navigate('/advanced');
-                    }
-                    break;
-                case 'c':
-                    if (location.pathname !== '/comfy') {
-                        navigate('/comfy');
                     }
                     break;
                 case '?':

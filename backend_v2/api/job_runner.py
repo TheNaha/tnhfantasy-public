@@ -9,6 +9,7 @@ from api.job_orchestration import (
 )
 from api.job_processing import finalize_successful_job
 from api.provider_client import JobTimeoutError, ProviderCallError
+from core.workflow_parser import extract_models_from_workflow
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
 from infrastructure.logging import get_logger
@@ -55,6 +56,7 @@ async def execute_job(
         exhausted_providers = set()
         current_provider = None
         retry_count = 0
+        required_models = extract_models_from_workflow(job.workflow) if isinstance(job.workflow, dict) else {}
 
         while True:
             if current_provider is None or current_provider.id in exhausted_providers:
@@ -64,6 +66,7 @@ async def execute_job(
                     job_id=job_id,
                     exhausted_providers=exhausted_providers,
                     preferred_provider_id=preferred_provider_id,
+                    required_models=required_models,
                 )
 
                 if not current_provider:

@@ -41,14 +41,7 @@ export default function Img2ImgGenerator() {
         randomizeSeed, addLora, removeLora, updateLora
     } = useGeneratorStore();
 
-    const { connect, disconnect } = useJobStore();
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
-
-    // Connect to job updates
-    useEffect(() => {
-        connect();
-        return () => disconnect();
-    }, [connect, disconnect]);
 
     // Load models on mount
     useEffect(() => {

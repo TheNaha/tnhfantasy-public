@@ -34,7 +34,7 @@ export function useProviderSyncStatus(providerId) {
 
     return useQuery({
         queryKey: ['providerSyncStatus', providerId],
-        queryFn: () => api.get(`/api/models/sync-status?provider=${providerId}`),
+        queryFn: () => api.get(`/api/providers/${providerId}/sync-status`),
         enabled: !!providerId,
         // No refetchInterval - we rely on WebSocket events now
         // But keep staleTime short so invalidation refetches quickly
@@ -66,6 +66,7 @@ export function useModalStats(providerId) {
 
         return () => {
             unsubscribe();
+            ws.unsubscribe('provider');
         };
     }, [providerId, queryClient]);
 
@@ -86,9 +87,9 @@ export function useProviderModels(providerId, status = null) {
     return useQuery({
         queryKey: ['providerModels', providerId, status],
         queryFn: () => {
-            let url = `/api/models?provider=${providerId}`;
+            let url = `/api/providers/${providerId}/models`;
             if (status) {
-                url += `&status=${status}`;
+                url += `?status=${status}`;
             }
             return api.get(url);
         },
@@ -102,8 +103,9 @@ export function useRemoveModelFromProvider() {
 
     return useMutation({
         mutationFn: ({ directory, modelName, providerId }) => {
-            const encodedDirectory = directory.replace(/\//g, '%2F');
-            return api.delete(`/api/models/${encodedDirectory}/${modelName}/providers/${providerId}`);
+            return api.delete(
+                `/api/providers/${providerId}/models?directory=${encodeURIComponent(directory)}&filename=${encodeURIComponent(modelName)}`
+            );
         },
         onSuccess: (_, { providerId }) => {
             queryClient.invalidateQueries(['providerModels', providerId]);
@@ -118,7 +120,7 @@ export function useAddModelToProviders() {
 
     return useMutation({
         mutationFn: ({ directory, modelData, providerIds }) => {
-            return api.post('/api/models', {
+            return api.post('/api/providers/models/custom', {
                 directory,
                 model_data: modelData,
                 provider_ids: providerIds

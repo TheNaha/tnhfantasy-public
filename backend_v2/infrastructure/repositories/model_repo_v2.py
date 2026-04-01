@@ -453,8 +453,14 @@ class ModelRepositoryV2:
     
     def get_file_by_storage_path(self, directory: str, filename: str) -> Optional[ModelFile]:
         """Get a file by its storage path components."""
-        # Build storage path pattern
-        stmt = select(ModelFile).where(ModelFile.storage_filename == filename)
+        stmt = select(ModelFile).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).join(
+            ModelV2, ModelVersion.model_id == ModelV2.id
+        ).where(
+            ModelFile.storage_filename == filename,
+            ModelV2.directory == directory
+        )
         return self.session.exec(stmt).first()
     
     def create_system_dependency(

@@ -495,18 +495,6 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
                 </div>
             </SettingGroup>
 
-            <SettingGroup title="Auto-Sync Models" description="Automatically sync models with Modal Volume">
-                <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                        type="checkbox"
-                        checked={settings.autoSync}
-                        onChange={(e) => onUpdate('autoSync', e.target.checked)}
-                        className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-300">Enabled</span>
-                </label>
-            </SettingGroup>
-
             <SettingGroup title="Auto-Remove Downloads" description="Automatically remove download status after completion">
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input

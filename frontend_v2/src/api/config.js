@@ -9,11 +9,17 @@ export const BACKENDS = {
     V2: 'http://localhost:8002',
 };
 
+function canUseBrowserStorage() {
+    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
 // Get backend URL from environment or localStorage
 function getBackendUrl() {
     // Check localStorage first (for runtime switching)
-    const stored = localStorage.getItem('comfy_backend_url');
-    if (stored) return stored;
+    if (canUseBrowserStorage()) {
+        const stored = window.localStorage.getItem('comfy_backend_url');
+        if (stored) return stored;
+    }
 
     // Check environment variable
     if (import.meta.env.VITE_API_URL) {
@@ -33,7 +39,9 @@ export function getApiUrl() {
 
 export function setApiUrl(url) {
     _backendUrl = url;
-    localStorage.setItem('comfy_backend_url', url);
+    if (canUseBrowserStorage()) {
+        window.localStorage.setItem('comfy_backend_url', url);
+    }
 }
 
 export function useBackendV2() {

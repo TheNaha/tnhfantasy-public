@@ -1050,31 +1050,52 @@ async def receive_batch_sync_progress(
     Receive batch sync progress from worker.
     Updates multiple model statuses in a single request.
     """
-    from core.entities import ModelStatus
-    from api.deps import get_model_service as get_v1_model_service
-    
-    service = get_v1_model_service(session)
+    from sqlmodel import select
+    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+
+    service = get_model_service(session)
+    file_id_by_key = {}
+    stmt = select(ModelFile, ModelVersion, ModelV2).join(
+        ModelVersion, ModelFile.version_id == ModelVersion.id
+    ).join(
+        ModelV2, ModelVersion.model_id == ModelV2.id
+    )
+    for file, _version, model in session.exec(stmt).all():
+        file_id_by_key[(model.directory, file.storage_filename)] = file.id
     
     updated = 0
     failed = 0
     
     for item in request.models:
         try:
+            file_id = file_id_by_key.get((item.directory, item.model_name))
+            if file_id is None:
+                failed += 1
+                continue
+
             if item.status == "completed":
-                await service.update_provider_status(
-                    name=item.model_name,
-                    directory=item.directory,
-                    provider_id=request.provider_id,
-                    status=ModelStatus.INSTALLED,
-                    extra_data={"size_bytes": item.size_bytes}
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="ready",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
+                    size_bytes=item.size_bytes,
                 )
                 updated += 1
             elif item.status == "failed":
-                await service.update_provider_status(
-                    name=item.model_name,
-                    directory=item.directory,
-                    provider_id=request.provider_id,
-                    status=ModelStatus.FAILED
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="failed",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
+                )
+                updated += 1
+            elif item.status == "pending":
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="pending",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
                 )
                 updated += 1
         except Exception as e:
@@ -1100,17 +1121,22 @@ async def backfill_provider_statuses(
     Useful for migrating existing models or after worker issues.
     """
     import aiohttp
-    from api.deps import get_provider_service, get_model_service as get_v1_model_service
-    from core.entities import ModelStatus
-    
-    model_service = get_v1_model_service(session)
-    provider_service = get_provider_service(session)
-    
-    # Get all providers
-    providers = await provider_service.list_providers()
-    
-    # Get all models
-    models = await model_service.list_models()
+    from core.entities import Provider
+    from sqlmodel import select
+
+    service = get_model_service(session)
+
+    providers = session.exec(
+        select(Provider).where(Provider.enabled == True)
+    ).all()
+
+    all_models = await service.list_models()
+    all_files_by_path = {}
+    for model in all_models:
+        for version in model.get("versions", []):
+            for file in version.get("files", []):
+                storage_path = f"models/{model['directory']}/{file['storage_filename']}"
+                all_files_by_path[storage_path] = file["id"]
     
     results = {
         "providers_checked": 0,
@@ -1119,54 +1145,48 @@ async def backfill_provider_statuses(
     }
     
     for provider in providers:
-        container_config = provider.container_config or {}
-        if not container_config:
-            continue
-            
-        # Use internal port (workers always run on 8000)
-        internal_port = 8000
-        container_name = container_config.get("container_name", f"comfy-provider-{provider.id}")
-        worker_url = f"http://{container_name}:{internal_port}"
+        worker_url = f"http://comfy-provider-{provider.id}:8000"
         
         results["providers_checked"] += 1
         
         # Query each directory from the worker
-        directories = ["checkpoints", "loras", "controlnet", "embeddings", "vae", "upscale_models"]
+        directories = ["checkpoints", "loras", "controlnet", "embeddings", "vae", "upscale_models", "clip", "unet"]
         
         async with aiohttp.ClientSession() as http_session:
             for directory in directories:
                 try:
-                    async with http_session.get(
-                        f"{worker_url}/list-models?directory=models/{directory}",
+                    async with http_session.post(
+                        f"{worker_url}/list-models",
+                        json={"directory": f"models/{directory}"},
                         timeout=aiohttp.ClientTimeout(total=10)
                     ) as response:
                         if response.status != 200:
                             continue
                         
                         data = await response.json()
-                        provider_models = {m.get("name"): m for m in data.get("models", [])}
-                        
-                        # Update status for matching models in DB
-                        for model in models:
-                            model_name = model.name if hasattr(model, 'name') else model.get('name')
-                            model_dir = model.directory if hasattr(model, 'directory') else model.get('directory')
-                            
-                            if model_dir != directory:
+                        for provider_file in data.get("files", []):
+                            storage_path = provider_file.get("path") or provider_file.get("storage_path")
+                            if not storage_path:
+                                name = provider_file.get("name")
+                                if not name:
+                                    continue
+                                storage_path = f"models/{directory}/{name}"
+
+                            file_id = all_files_by_path.get(storage_path)
+                            if not file_id:
                                 continue
-                            
-                            if model_name in provider_models:
-                                # Model exists on this provider - mark as installed
-                                try:
-                                    await model_service.update_provider_status(
-                                        name=model_name,
-                                        directory=model_dir,
-                                        provider_id=provider.id,
-                                        status=ModelStatus.INSTALLED,
-                                        extra_data={"size_bytes": provider_models[model_name].get("size")}
-                                    )
-                                    results["models_updated"] += 1
-                                except Exception as e:
-                                    results["errors"].append(f"{model_name}: {str(e)}")
+
+                            try:
+                                await service.update_provider_file_status(
+                                    file_id=file_id,
+                                    provider_name=provider.id,
+                                    status="ready",
+                                    storage_path=storage_path,
+                                    size_bytes=provider_file.get("size"),
+                                )
+                                results["models_updated"] += 1
+                            except Exception as e:
+                                results["errors"].append(f"{storage_path}: {str(e)}")
                                     
                 except Exception as e:
                     results["errors"].append(f"{provider.id}/{directory}: {str(e)}")

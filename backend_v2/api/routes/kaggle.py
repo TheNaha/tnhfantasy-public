@@ -45,6 +45,7 @@ install_deps()
 
 import websockets
 import aiohttp
+import base64
 
 
 class KaggleWorker:
@@ -216,11 +217,12 @@ class KaggleWorker:
                     data = await resp.json()
                     if prompt_id in data:
                         outputs = data[prompt_id].get("outputs", {})
-                        # Extract image filenames
                         images = []
                         for node_output in outputs.values():
                             for img in node_output.get("images", []):
-                                images.append(img.get("filename"))
+                                saved = await self.persist_image(session, prompt_id, img)
+                                if saved:
+                                    images.append(saved)
                         return images
             except Exception as e:
                 print(f"[Worker] Error: {e}")
@@ -228,6 +230,38 @@ class KaggleWorker:
             await asyncio.sleep(1)
         
         raise TimeoutError("Job timed out")
+
+    async def persist_image(self, session, job_id: str, image_info: dict):
+        """Fetch a ComfyUI output image and persist it through the backend."""
+        filename = image_info.get("filename")
+        if not filename:
+            return None
+
+        params = {
+            "filename": filename,
+            "subfolder": image_info.get("subfolder", ""),
+            "type": image_info.get("type", "output"),
+        }
+        async with session.get(
+            f"http://127.0.0.1:{self.comfy_port}/view",
+            params=params,
+        ) as image_resp:
+            image_resp.raise_for_status()
+            image_bytes = await image_resp.read()
+
+        payload = {
+            "image_base64": base64.b64encode(image_bytes).decode("utf-8"),
+            "job_id": job_id,
+            "filename": filename,
+        }
+        async with session.post(
+            f"{self.backend_url}/api/providers/save-image",
+            json=payload,
+        ) as save_resp:
+            save_resp.raise_for_status()
+            saved = await save_resp.json()
+            saved["type"] = "image"
+            return saved
     
     async def message_loop(self):
         """Main message handling loop."""

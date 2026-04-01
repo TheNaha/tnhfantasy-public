@@ -25,21 +25,6 @@ export default function ModelImportCard({ model, onCancel }) {
         selectedVersion?.images?.[0]?.url;
     const isSelectedVersionInstalled = installedVersions.includes(parseInt(selectedVersionId));
 
-    // Map CivitAI model types to directory names
-    const getDirectoryFromType = (type) => ({
-        'Checkpoint': 'checkpoints',
-        'LORA': 'loras',
-        'TextualInversion': 'embeddings',
-        'ControlNet': 'controlnet',
-        'VAE': 'vae',
-        'Upscaler': 'upscale_models',
-        'Hypernetwork': 'hypernetworks',
-        'AestheticGradient': 'aesthetics',
-        'Poses': 'poses',
-        'Wildcards': 'wildcards',
-        'MotionModule': 'motion_modules'
-    })[type] || 'checkpoints';
-
     const handleAddToLibrary = async () => {
         if (!selectedVersion || !primaryFile) return;
 
@@ -59,31 +44,11 @@ export default function ModelImportCard({ model, onCancel }) {
                 ]
             };
 
-            // Try V2 API first, fall back to V1 if not available
-            try {
-                const result = await api.post('/api/v2/models', payload);
-                if (result.skipped_versions?.length > 0) {
-                    toast.success(`Added ${model.name} (${selectedVersion.name}). Skipped ${result.skipped_versions.length} already installed version(s).`);
-                } else {
-                    toast.success(`Added ${model.name} (${selectedVersion.name}) to library. Workers will download on next sync.`);
-                }
-            } catch (v2Error) {
-                // Handle 409 Conflict (already installed)
-                if (v2Error.message?.includes('409') || v2Error.message?.includes('already installed')) {
-                    toast.error('This version is already installed.');
-                    return;
-                }
-                // Fallback to V1 API for backwards compatibility
-                console.log('V2 API unavailable, falling back to V1:', v2Error);
-                const v1Payload = {
-                    name: primaryFile.name,
-                    directory: getDirectoryFromType(model.type),
-                    url: primaryFile.downloadUrl,
-                    source: 'civitai',
-                    metadata: model  // Store full metadata in V1
-                };
-                await api.post('/api/models', v1Payload);
-                toast.success(`Added ${model.name} to library (V1 mode). Workers will download on next sync.`);
+            const result = await api.post('/api/v2/models', payload);
+            if (result.skipped_versions?.length > 0) {
+                toast.success(`Added ${model.name} (${selectedVersion.name}). Skipped ${result.skipped_versions.length} already installed version(s).`);
+            } else {
+                toast.success(`Added ${model.name} (${selectedVersion.name}) to library. Workers will download on next sync.`);
             }
             onCancel();
         } catch (err) {

@@ -12,11 +12,14 @@
 
 import { io } from 'socket.io-client';
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { getApiUrl } from './config';
 
-// Get API URL - use empty string to connect relative to current origin
-// This ensures Socket.IO goes through the Vite proxy (/socket.io -> backend:8002)
-// Works for: localhost, local network IP, and Tailscale access
-const API_URL = '';
+function getSocketBaseUrl() {
+    if (import.meta.env.DEV) {
+        return '';
+    }
+    return getApiUrl();
+}
 
 // WebSocket connection instance
 let socket = null;
@@ -28,8 +31,8 @@ let connectionPromise = null;
 // Event listeners by event name
 const listeners = new Map();
 
-// Subscribed topics
-const subscribedTopics = new Set();
+// Subscribed topics with reference counts so one consumer cannot unsubscribe another.
+const subscribedTopics = new Map();
 
 
 function registerSocketListener(event, callback) {
@@ -58,7 +61,7 @@ export function connect() {
         }
 
         // Create Socket.IO connection
-        socket = io(API_URL, {
+        socket = io(getSocketBaseUrl(), {
             path: '/socket.io/',
             transports: ['websocket', 'polling'],
             reconnection: true,
@@ -73,8 +76,11 @@ export function connect() {
             isConnected = true;
 
             // Re-subscribe to topics after reconnection
-            if (subscribedTopics.size > 0) {
-                socket.emit('subscribe', { topics: Array.from(subscribedTopics) });
+            const activeTopics = Array.from(subscribedTopics.entries())
+                .filter(([, count]) => count > 0)
+                .map(([topic]) => topic);
+            if (activeTopics.length > 0) {
+                socket.emit('subscribe', { topics: activeTopics });
             }
 
             // Re-register all pending listeners with the new socket connection
@@ -140,7 +146,6 @@ export function disconnect() {
     }
     isConnected = false;
     connectionPromise = null;
-    subscribedTopics.clear();
 }
 
 /**
@@ -157,15 +162,21 @@ export function getConnectionStatus() {
  */
 export async function subscribe(topics) {
     const topicArray = Array.isArray(topics) ? topics : [topics];
+    const topicsToSubscribe = [];
 
-    // Track subscriptions locally
-    topicArray.forEach(t => subscribedTopics.add(t));
+    topicArray.forEach((topic) => {
+        const currentCount = subscribedTopics.get(topic) || 0;
+        subscribedTopics.set(topic, currentCount + 1);
+        if (currentCount === 0) {
+            topicsToSubscribe.push(topic);
+        }
+    });
 
     // Ensure connected
     await connect();
 
-    if (socket) {
-        socket.emit('subscribe', { topics: topicArray });
+    if (socket && topicsToSubscribe.length > 0) {
+        socket.emit('subscribe', { topics: topicsToSubscribe });
     }
 }
 
@@ -175,12 +186,20 @@ export async function subscribe(topics) {
  */
 export function unsubscribe(topics) {
     const topicArray = Array.isArray(topics) ? topics : [topics];
+    const topicsToUnsubscribe = [];
 
-    // Remove from local tracking
-    topicArray.forEach(t => subscribedTopics.delete(t));
+    topicArray.forEach((topic) => {
+        const currentCount = subscribedTopics.get(topic) || 0;
+        if (currentCount <= 1) {
+            subscribedTopics.delete(topic);
+            topicsToUnsubscribe.push(topic);
+        } else {
+            subscribedTopics.set(topic, currentCount - 1);
+        }
+    });
 
-    if (socket) {
-        socket.emit('unsubscribe', { topics: topicArray });
+    if (socket && topicsToUnsubscribe.length > 0) {
+        socket.emit('unsubscribe', { topics: topicsToUnsubscribe });
     }
 }
 

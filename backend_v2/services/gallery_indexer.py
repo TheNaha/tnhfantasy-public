@@ -10,7 +10,8 @@
 #
 # INDEX STRUCTURE:
 #   files: { absolute_path -> file_data_dict }
-#   filename_index: { filename -> absolute_path }
+#   relative_path_index: { relative_path -> absolute_path }
+#   filename_index: { filename -> set(absolute_paths) }
 #   sorted_keys_date_desc: [absolute_path, ...] sorted newest-first
 #
 # THREAD SAFETY:
@@ -19,11 +20,11 @@
 #   background thread while API requests read from the main thread.
 
 import os
-import glob
 import time
 import threading
 import re
-from typing import List, Dict, Any, Optional
+from collections import defaultdict
+from typing import List, Dict, Any, Optional, Set
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
@@ -80,7 +81,8 @@ class GalleryIndexer:
             
         self.output_dir = output_dir or os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
         self.files: Dict[str, Dict[str, Any]] = {}
-        self.filename_index: Dict[str, str] = {} # New index: filename -> absolute_path
+        self.relative_path_index: Dict[str, str] = {}
+        self.filename_index: Dict[str, Set[str]] = defaultdict(set)
         self.sorted_keys_date_desc: List[str] = []
         
         self.lock = threading.RLock()
@@ -171,9 +173,9 @@ class GalleryIndexer:
                 "mtime": stat.st_mtime,
                 "modified_time": generation_time,
                 "type": "image",
-                "preview": f"/api/view/output/{base_name}",
-                "thumbnail": f"/api/thumbnail/medium/{base_name}",
-                "thumbnail_medium": f"/api/thumbnail/medium/{base_name}",
+                "preview": f"/api/view/output/{name}",
+                "thumbnail": f"/api/thumbnail/medium/{name}",
+                "thumbnail_medium": f"/api/thumbnail/medium/{name}",
                 "metadata": metadata
             }
             if blurhash:
@@ -192,22 +194,27 @@ class GalleryIndexer:
         logger.info("gallery_indexer_scanning")
         start_time = time.time()
         
-        all_files = []
-        for pattern in ["*.png", "**/*.png"]:
-            all_files.extend(glob.glob(os.path.join(self.output_dir, pattern), recursive=True))
-            
-        all_files = list(set([f for f in all_files if '/thumb/' not in f.replace('\\', '/')]))
-        
         processed_files = {}
-        processed_filename_index = {} # Local index for initial scan
-        for filepath in all_files:
-            data = self._process_file(filepath)
-            if data:
-                processed_files[filepath] = data
-                processed_filename_index[data['name']] = filepath
+        processed_relative_index = {}
+        processed_filename_index: Dict[str, Set[str]] = defaultdict(set)
+        for root, dirs, files in os.walk(self.output_dir):
+            if "thumb" in dirs:
+                dirs.remove("thumb")
+
+            for filename in files:
+                if not filename.lower().endswith(".png"):
+                    continue
+
+                filepath = os.path.join(root, filename)
+                data = self._process_file(filepath)
+                if data:
+                    processed_files[filepath] = data
+                    processed_relative_index[data["relative_path"]] = filepath
+                    processed_filename_index[data["name"]].add(filepath)
                 
         with self.lock:
             self.files = processed_files
+            self.relative_path_index = processed_relative_index
             self.filename_index = processed_filename_index
             self._rebuild_sort_index()
             self.is_ready = True
@@ -229,7 +236,8 @@ class GalleryIndexer:
         if data:
             with self.lock:
                 self.files[filepath] = data
-                self.filename_index[data['name']] = filepath # Update index
+                self.relative_path_index[data["relative_path"]] = filepath
+                self.filename_index[data["name"]].add(filepath)
                 self._rebuild_sort_index()
                 logger.debug("gallery_indexer_added", file=os.path.basename(filepath))
 
@@ -238,27 +246,52 @@ class GalleryIndexer:
         with self.lock:
             if filepath in self.files:
                 filename = self.files[filepath]['name']
+                relative_path = self.files[filepath]["relative_path"]
                 del self.files[filepath]
-                # Only remove from filename index if it matches (handle potential duplicates or stale data)
-                if self.filename_index.get(filename) == filepath:
-                    del self.filename_index[filename]
+                self.relative_path_index.pop(relative_path, None)
+                filename_paths = self.filename_index.get(filename)
+                if filename_paths:
+                    filename_paths.discard(filepath)
+                    if not filename_paths:
+                        del self.filename_index[filename]
 
                 if filepath in self.sorted_keys_date_desc:
                     self.sorted_keys_date_desc.remove(filepath)
                 logger.debug("gallery_indexer_removed", file=os.path.basename(filepath))
 
-    def get_path_by_filename(self, filename: str) -> Optional[str]:
-        """
-        Get the absolute path for a given filename.
-        Thread-safe.
-        """
-        # Optional wait if not ready
+    def _wait_until_ready(self):
         if not self.is_ready:
-            # Short wait, but don't block forever if called during init
             time.sleep(0.1)
 
+    def get_path_by_relative_path(self, relative_path: str) -> Optional[str]:
+        """Get the absolute path for an exact relative path."""
+        self._wait_until_ready()
+        normalized = relative_path.lstrip("/\\").replace("\\", "/")
+
         with self.lock:
-            return self.filename_index.get(filename)
+            return self.relative_path_index.get(normalized)
+
+    def get_path_by_filename(self, filename: str) -> Optional[str]:
+        """
+        Get the absolute path for a basename only when it is unambiguous.
+        Thread-safe.
+        """
+        self._wait_until_ready()
+
+        with self.lock:
+            matches = self.filename_index.get(filename, set())
+            if len(matches) == 1:
+                return next(iter(matches))
+            return None
+
+    def get_path(self, relative_or_filename: str) -> Optional[str]:
+        """Resolve a file path by exact relative path first, then safe basename fallback."""
+        normalized = relative_or_filename.lstrip("/\\").replace("\\", "/")
+        if "/" in normalized:
+            path = self.get_path_by_relative_path(normalized)
+            if path:
+                return path
+        return self.get_path_by_filename(os.path.basename(normalized))
                 
     def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None):
         """

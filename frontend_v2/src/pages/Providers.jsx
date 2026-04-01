@@ -18,7 +18,6 @@ export default function Providers() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     
     const { startReconciliation } = useReconciliationStore();
-    const connectProviders = useProviderStore(state => state.connect);
     const providers = useProviderStore(state => state.providers);
     const isLoading = useProviderStore(state => state.isLoading);
     const containerStatuses = useProviderStore(state => state.containerStatuses);
@@ -47,10 +46,6 @@ export default function Providers() {
             setIsRefreshing(false);
         }
     }, [refreshProviders]);
-
-    useEffect(() => {
-        connectProviders();
-    }, [connectProviders]);
 
     // Enrich providers with container status and default enabled to true
     const enrichedProviders = useMemo(() => providers.map(provider => ({

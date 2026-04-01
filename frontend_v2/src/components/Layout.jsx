@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Cpu, Menu, X, Settings2, BarChart3, Server } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server } from 'lucide-react';
 import { useState } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -95,7 +95,6 @@ export default function Layout({ children }) {
                     <NavItem to="/providers" icon={Server} label="Providers" />
                     <NavItem to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem to="/settings" icon={Settings2} label="Settings" />
-                    <NavItem to="/comfy" icon={Cpu} label="Direct Access" />
                 </nav>
 
                 <div className="p-4 border-t border-gray-800">

@@ -149,8 +149,8 @@ class TestFilesRoute:
 
         mock_file_response.return_value = Response(content=b"content")
 
-        with patch("api.routes.files.get_safe_path", return_value="/tmp/output/test.png"):
-            response = client.get("/api/view/output/test.png")
+        with patch("api.routes.files.get_safe_path", return_value="/tmp/output/date/test.png"):
+            response = client.get("/api/view/output/date/test.png")
             assert response.status_code == 200
 
     def test_view_file_not_found(self, client):

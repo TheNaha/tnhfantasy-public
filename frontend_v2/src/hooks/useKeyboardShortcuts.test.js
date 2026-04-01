@@ -69,12 +69,6 @@ describe('useKeyboardShortcuts', () => {
         expect(mockNavigate).toHaveBeenCalledWith('/advanced');
     });
 
-    it('navigates to /comfy when "c" is pressed', () => {
-        renderHook(() => useKeyboardShortcuts());
-        triggerKeyDown('c');
-        expect(mockNavigate).toHaveBeenCalledWith('/comfy');
-    });
-
     it('calls onShowHelp when "?" is pressed', () => {
         const onShowHelp = vi.fn();
         renderHook(() => useKeyboardShortcuts({ onShowHelp }));

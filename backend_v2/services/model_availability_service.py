@@ -3,7 +3,7 @@
 Service to check if required models are available on providers.
 Used for pre-flight job validation and model-aware load balancing.
 """
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
@@ -80,7 +80,7 @@ class ModelAvailabilityService:
         
         provider_ids = [p.id for p in enabled_providers]
         
-        # Build a lookup: filename -> {provider_id: status}
+        # Build a lookup: (directory, filename) -> {provider_id: status}
         file_provider_status = self._get_file_provider_status(required_models)
         
         # Check each provider for all required models
@@ -91,7 +91,7 @@ class ModelAvailabilityService:
                 missing_files = []
                 for filename in filenames:
                     # Check if this file is ready on this provider
-                    file_status = file_provider_status.get(filename, {})
+                    file_status = file_provider_status.get((directory, filename), {})
                     provider_status = file_status.get(provider_id)
                     
                     if provider_status != "ready":
@@ -114,7 +114,7 @@ class ModelAvailabilityService:
         for directory, filenames in required_models.items():
             global_missing_files = []
             for filename in filenames:
-                file_status = file_provider_status.get(filename, {})
+                file_status = file_provider_status.get((directory, filename), {})
                 # Check if ready on any provider
                 ready_on_any = any(
                     status == "ready" 
@@ -136,50 +136,54 @@ class ModelAvailabilityService:
     def _get_file_provider_status(
         self,
         required_models: Dict[str, List[str]]
-    ) -> Dict[str, Dict[str, str]]:
+    ) -> Dict[Tuple[str, str], Dict[str, str]]:
         """
         Get provider status for each required file.
         
-        Returns: {filename: {provider_id: status}}
+        Returns: {(directory, filename): {provider_id: status}}
         """
-        # Collect all filenames to look up
-        all_filenames: Set[str] = set()
-        for filenames in required_models.values():
-            all_filenames.update(filenames)
+        requested_pairs = {
+            (directory, filename)
+            for directory, filenames in required_models.items()
+            for filename in filenames
+        }
         
-        if not all_filenames:
+        if not requested_pairs:
             return {}
-        
-        # Query to find files by storage_filename
-        # Join through the chain: ModelFile -> ModelVersion -> ModelV2 for directory
-        # Then join ProviderVersionStatus for status per provider
-        result: Dict[str, Dict[str, str]] = {}
-        
-        # First, get file IDs for our filenames
-        stmt = select(ModelFile).where(
-            ModelFile.storage_filename.in_(all_filenames)
+
+        result: Dict[Tuple[str, str], Dict[str, str]] = {}
+
+        stmt = select(ModelFile, ModelVersion, ModelV2).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).join(
+            ModelV2, ModelVersion.model_id == ModelV2.id
+        ).where(
+            ModelVersion.is_enabled == True
         )
         files = self.session.exec(stmt).all()
-        
-        if not files:
+
+        matching_file_ids: List[int] = []
+        file_id_to_key: Dict[int, Tuple[str, str]] = {}
+
+        for file, _version, model in files:
+            key = (model.directory, file.storage_filename)
+            if key in requested_pairs:
+                matching_file_ids.append(file.id)
+                file_id_to_key[file.id] = key
+
+        if not matching_file_ids:
             return result
-        
-        file_id_to_name = {f.id: f.storage_filename for f in files}
-        file_ids = list(file_id_to_name.keys())
-        
-        # Now get provider statuses for these files
+
         status_stmt = select(ProviderVersionStatus).where(
-            ProviderVersionStatus.file_id.in_(file_ids)
+            ProviderVersionStatus.file_id.in_(matching_file_ids)
         )
         statuses = self.session.exec(status_stmt).all()
-        
-        # Build the result dict
+
         for status in statuses:
-            filename = file_id_to_name.get(status.file_id)
-            if filename:
-                if filename not in result:
-                    result[filename] = {}
-                result[filename][status.provider_name] = status.status
+            file_key = file_id_to_key.get(status.file_id)
+            if file_key:
+                result.setdefault(file_key, {})
+                result[file_key][status.provider_name] = status.status
         
         return result
     
@@ -196,8 +200,13 @@ class ModelAvailabilityService:
         for directory, filenames in global_missing.items():
             for filename in filenames:
                 # Check if file exists in ModelFile table
-                stmt = select(ModelFile).where(
-                    ModelFile.storage_filename == filename
+                stmt = select(ModelFile, ModelVersion, ModelV2).join(
+                    ModelVersion, ModelFile.version_id == ModelVersion.id
+                ).join(
+                    ModelV2, ModelVersion.model_id == ModelV2.id
+                ).where(
+                    ModelFile.storage_filename == filename,
+                    ModelV2.directory == directory
                 )
                 file = self.session.exec(stmt).first()
                 if file:

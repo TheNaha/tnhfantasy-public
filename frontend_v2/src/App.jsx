@@ -40,7 +40,6 @@ const Img2ImgGenerator = lazy(() => import('./pages/Img2ImgGenerator'));
 const InpaintGenerator = lazy(() => import('./pages/InpaintGenerator'));
 const ModelManager = lazy(() => import('./pages/ModelManager'));
 const Statistics = lazy(() => import('./pages/Statistics'));
-const DirectComfy = lazy(() => import('./pages/DirectComfy'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Providers = lazy(() => import('./pages/Providers'));
 
@@ -59,7 +58,6 @@ function AnimatedRoutes() {
                 <Route path="/providers" element={<Providers />} />
                 <Route path="/statistics" element={<Statistics />} />
                 <Route path="/settings" element={<Settings />} />
-                <Route path="/comfy" element={<DirectComfy />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         </AnimatePresence>
@@ -86,7 +84,7 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-    const _settings = useSettings();
+    const settings = useSettings();
     const { connect: connectJobs, fetchJobs } = useJobStore();
     const { connect: connectReconciliation } = useReconciliationStore();
     const { connect: connectProviders } = useProviderStore();
@@ -109,6 +107,23 @@ function App() {
         // Fetch initial data
         fetchJobs();
     }, [connectJobs, connectReconciliation, connectProviders, fetchJobs]);
+
+    useEffect(() => {
+        queryClient.setDefaultOptions({
+            queries: {
+                staleTime: settings.ui.queryStaleTime,
+                gcTime: settings.ui.queryCacheTime,
+                retry: 1,
+                refetchOnWindowFocus: false,
+                refetchOnReconnect: true,
+                networkMode: 'online',
+            },
+            mutations: {
+                retry: 1,
+                networkMode: 'online',
+            },
+        });
+    }, [settings.ui.queryCacheTime, settings.ui.queryStaleTime]);
 
     return (
         <ErrorBoundary>

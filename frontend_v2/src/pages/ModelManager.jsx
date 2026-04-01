@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { HardDrive, Globe } from 'lucide-react';
 import ConfirmationModal from '../components/ConfirmationModal';
+import { useSettings } from '../store/settingsStore';
 
 // Extracted Components
 import { DiscoverTab, InstalledTab } from '../components/model-manager';
 
 export default function ModelManager() {
+    const settings = useSettings();
     const [activeTab, setActiveTab] = useState('discover');
     const [confirmModal, setConfirmModal] = useState({
         isOpen: false,
@@ -51,7 +53,10 @@ export default function ModelManager() {
                     {activeTab === 'discover' ? (
                         <DiscoverTab />
                     ) : (
-                        <InstalledTab openConfirm={(config) => setConfirmModal({ ...config, isOpen: true })} />
+                        <InstalledTab
+                            itemsPerPage={settings.models.itemsPerPage}
+                            openConfirm={(config) => setConfirmModal({ ...config, isOpen: true })}
+                        />
                     )}
                 </div>
             </div>
@@ -68,4 +73,3 @@ export default function ModelManager() {
         </div>
     );
 }
-

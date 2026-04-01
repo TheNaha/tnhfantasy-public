@@ -19,6 +19,7 @@ from core.entities_v2 import (
     ModelV2, ModelVersion, ModelFile, ProviderVersionStatus,
     get_directory_from_type, is_unet_only_model, FLUX_DEFAULT_COMPONENTS
 )
+from core.entities import Provider
 from core.exceptions import NotFoundError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.logging import model_logger
@@ -261,7 +262,8 @@ class ModelServiceV2:
     async def trigger_download_to_providers(
         self, 
         model_id: int, 
-        version_ids: List[int] = None
+        version_ids: List[int] = None,
+        provider_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Trigger immediate download of model files to all enabled providers.
@@ -280,11 +282,11 @@ class ModelServiceV2:
             return {"status": "error", "message": f"Model {model_id} not found"}
         
         # Get enabled providers
-        from core.entities import Provider
         from sqlmodel import select
-        providers = list(self.session.exec(
-            select(Provider).where(Provider.enabled == True)
-        ).all())
+        provider_stmt = select(Provider).where(Provider.enabled == True)
+        if provider_ids:
+            provider_stmt = provider_stmt.where(Provider.id.in_(provider_ids))
+        providers = list(self.session.exec(provider_stmt).all())
         
         if not providers:
             return {"status": "skipped", "message": "No enabled providers"}
@@ -357,6 +359,74 @@ class ModelServiceV2:
                         })
         
         return results
+
+    async def add_custom_model(
+        self,
+        *,
+        name: str,
+        directory: str,
+        download_url: str,
+        provider_ids: Optional[List[str]] = None,
+        model_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a V2 model entry for a direct download URL and trigger sync."""
+        filename = name.split("/")[-1].strip()
+        if not filename:
+            raise ValueError("Model filename is required")
+
+        existing_file = self.repo.get_file_by_storage_path(directory, filename)
+        if existing_file:
+            version = self.session.get(ModelVersion, existing_file.version_id)
+            existing_model = self.repo.get_model(version.model_id) if version else None
+            if not existing_model:
+                raise NotFoundError("Model", filename)
+
+            await self.trigger_download_to_providers(existing_model.id, provider_ids=provider_ids)
+            return self.repo.model_to_dict(existing_model)
+
+        resolved_type = model_type or directory.replace("models/", "").replace("_", " ").title()
+
+        model = ModelV2(
+            name=filename,
+            type=resolved_type,
+            directory=directory.replace("models/", ""),
+            description=f"Direct import for {filename}",
+            source="custom",
+            source_url=download_url,
+            nsfw=False,
+            nsfw_level=1,
+        )
+        self.session.add(model)
+        self.session.flush()
+
+        version = ModelVersion(
+            model_id=model.id,
+            name="v1.0",
+            base_model="Custom",
+            base_model_type="Standard",
+            description=f"Direct import for {filename}",
+            is_enabled=True,
+            is_default=True,
+        )
+        self.session.add(version)
+        self.session.flush()
+
+        file = ModelFile(
+            version_id=version.id,
+            original_filename=filename,
+            storage_filename=filename,
+            size_kb=0,
+            format=filename.split(".")[-1] if "." in filename else "Unknown",
+            download_url=download_url,
+            is_primary=True,
+            file_type="Model",
+        )
+        self.session.add(file)
+        self.session.commit()
+        self.session.refresh(model)
+
+        await self.trigger_download_to_providers(model.id, provider_ids=provider_ids)
+        return self.repo.model_to_dict(model)
     
     async def trigger_delete_from_providers(self, model_id: int) -> Dict[str, Any]:
         """

@@ -99,7 +99,7 @@ class SyncProgressReporter:
             self._pending_updates = []
             self._last_batch_time = time.time()
         
-        url = f"{self.backend_url}/api/models/sync-progress/batch"
+        url = f"{self.backend_url}/api/v2/models/sync-progress/batch"
         payload = {
             "provider_id": self.provider_id,
             "models": updates_to_send,

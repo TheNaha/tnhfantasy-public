@@ -19,6 +19,7 @@
 import { create } from 'zustand';
 import * as ws from '../api/websocket';
 import { api } from '../api';
+import useSettingsStore from './settingsStore';
 
 /**
  * Download Store
@@ -64,6 +65,14 @@ export const useDownloadStore = create((set, get) => ({
             // Usually we keep them for a bit, or let user clear them.
             // But if it's 'deleted', we might want to remove.
             // For now, keep all sync'd.
+
+            const autoRemoveDownloads = useSettingsStore.getState().settings.models.autoRemoveDownloads;
+            if (autoRemoveDownloads) {
+                newDownloads = newDownloads.filter((download) => {
+                    const status = download.status;
+                    return !['completed', 'success', 'failed', 'error'].includes(status);
+                });
+            }
 
             return { downloads: newDownloads };
         });

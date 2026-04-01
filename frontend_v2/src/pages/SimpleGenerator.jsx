@@ -45,29 +45,34 @@ export default function SimpleGenerator() {
     const currentJobIdRef = useRef(currentJobId);
     currentJobIdRef.current = currentJobId;
 
+    const extractEventJob = (payload) => payload?.data?.job || payload?.job || payload;
+
     useEffect(() => {
         // Listen for progress updates
-        const unsubProgress = on(EventTypes.JOB_PROGRESS, (data) => {
+        const unsubProgress = on(EventTypes.JOB_PROGRESS, (payload) => {
             const jobId = currentJobIdRef.current;
-            if (jobId && data.id === jobId) {
+            const eventJob = extractEventJob(payload);
+            if (jobId && eventJob?.id === jobId) {
                 // Determine message based on progress type
-                let message = `${data.progress}%`;
-                if (data.node) message = `${data.node} (${data.progress}%)`;
+                let message = `${eventJob.progress ?? 0}%`;
+                if (eventJob.node) message = `${eventJob.node} (${eventJob.progress ?? 0}%)`;
 
                 setProgress({
-                    value: data.progress,
+                    value: eventJob.progress ?? 0,
                     max: 100,
                     status: 'processing',
-                    node: data.message || message
+                    node: eventJob.message || message
                 });
+                setGenerating(true);
             }
         });
 
         // Listen for completion
-        const unsubComplete = on(EventTypes.JOB_COMPLETED, (data) => {
+        const unsubComplete = on(EventTypes.JOB_COMPLETED, (payload) => {
             const jobId = currentJobIdRef.current;
-            console.log('[WebSocket] JOB_COMPLETED event:', data.id, 'current:', jobId);
-            if (jobId && data.id === jobId) {
+            const eventJob = extractEventJob(payload);
+            console.log('[WebSocket] JOB_COMPLETED event:', eventJob?.id, 'current:', jobId);
+            if (jobId && eventJob?.id === jobId) {
                 setGenerating(false);
                 setProgress(null);
                 setCurrentJobId(null);
@@ -80,14 +85,15 @@ export default function SimpleGenerator() {
         });
 
         // Listen for failure
-        const unsubFailed = on(EventTypes.JOB_FAILED, (data) => {
+        const unsubFailed = on(EventTypes.JOB_FAILED, (payload) => {
             const jobId = currentJobIdRef.current;
-            console.log('[WebSocket] JOB_FAILED event:', data.id, 'current:', jobId);
-            if (jobId && data.id === jobId) {
+            const eventJob = extractEventJob(payload);
+            console.log('[WebSocket] JOB_FAILED event:', eventJob?.id, 'current:', jobId);
+            if (jobId && eventJob?.id === jobId) {
                 setGenerating(false);
                 setProgress(null);
                 setCurrentJobId(null);
-                toast.error(`Generation failed: ${data.error}`);
+                toast.error(`Generation failed: ${eventJob?.error || 'Unknown error'}`);
             }
         });
 
@@ -112,18 +118,11 @@ export default function SimpleGenerator() {
         aspectRatioLocked
     } = useGeneratorStore();
 
-    const { connect, disconnect } = useJobStore();
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
 
     // Settings for auto-randomize seed
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     const { updateSetting } = useUpdateSettings();
-
-    // Connect to job updates
-    useEffect(() => {
-        connect();
-        return () => disconnect();
-    }, [connect, disconnect]);
 
     const [showPromptLibrary, setShowPromptLibrary] = useState(false);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null); // Index of LoRA selector to auto-open
@@ -382,9 +381,16 @@ export default function SimpleGenerator() {
             const data = await api.post('/api/generate', { workflow, metadata });
             console.log('[Generate] Response received:', data);
 
-            // Job queued successfully - reset generating state immediately
+            // Job queued successfully - keep the page in queued/running state until completion.
             if (data && data.id) {
                 setCurrentJobId(data.id);
+                setGenerating(true);
+                setProgress({
+                    value: 0,
+                    max: 100,
+                    status: 'queued',
+                    node: 'Job queued...',
+                });
                 toast.success('Job queued!', { icon: '⏳' });
 
                 // Redirect to gallery if requested, otherwise stay on page
@@ -401,8 +407,6 @@ export default function SimpleGenerator() {
         } catch (e) {
             console.error('[Generate] Error:', e);
             toast.error("Error: " + e.message);
-        } finally {
-            // Always reset generating state after job is queued (or failed)
             setGenerating(false);
             setProgress(null);
         }

@@ -78,7 +78,7 @@ async def test_worker_websocket_closes_when_token_is_invalid():
 
 @pytest.mark.asyncio
 async def test_worker_websocket_finalization_uses_output_filenames():
-    outputs = [{"filename": "image-1.png", "subfolder": "2026/03/06"}]
+    outputs = [{"filename": "image-1.png", "relative_path": "2026/03/06/image-1.png", "subfolder": "2026/03/06"}]
     websocket = DummyWebSocket(
         messages=[
             {
@@ -93,7 +93,7 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
     gallery_indexer = MagicMock()
-    gallery_indexer.get_path_by_filename.return_value = "/app/output/2026/03/06/image-1.png"
+    gallery_indexer.get_path.return_value = "/app/output/2026/03/06/image-1.png"
 
     with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
@@ -104,11 +104,21 @@ async def test_worker_websocket_finalization_uses_output_filenames():
         await asyncio.sleep(0.01)
 
     assert websocket.accepted is True
-    gallery_indexer.get_path_by_filename.assert_called_with("image-1.png")
+    gallery_indexer.get_path.assert_called_with("2026/03/06/image-1.png")
     job_service.update_job.assert_any_await(
         "job-1",
         status=JobStatus.POST_PROCESSING,
-        outputs=outputs,
+        outputs=[{
+            "type": "image",
+            "filename": "image-1.png",
+            "relative_path": "2026/03/06/image-1.png",
+            "subfolder": "2026/03/06",
+            "path": None,
+            "thumbnail": None,
+            "blurhash": None,
+            "width": None,
+            "height": None,
+        }],
     )
     job_service.update_job.assert_any_await(
         "job-1",
@@ -117,6 +127,45 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     broadcast_mock.assert_any_await(
         "job",
         "job.completed",
-        {"job_id": "job-1", "provider_id": "provider-a", "outputs": outputs},
+        {"job": {"id": "job-1", "provider_id": "provider-a", "status": "completed", "outputs": [{
+            "type": "image",
+            "filename": "image-1.png",
+            "relative_path": "2026/03/06/image-1.png",
+            "subfolder": "2026/03/06",
+            "path": None,
+            "thumbnail": None,
+            "blurhash": None,
+            "width": None,
+            "height": None,
+        }]}},
     )
 
+
+@pytest.mark.asyncio
+async def test_worker_websocket_rejects_unpersisted_outputs():
+    websocket = DummyWebSocket(
+        messages=[
+            {
+                "type": "job_completed",
+                "job_id": "job-2",
+                "result": {"outputs": ["image-1.png"]},
+            }
+        ]
+    )
+    provider = SimpleNamespace(config={"worker_token": "token-1"})
+    provider_service = AsyncMock()
+    provider_service.get_provider.return_value = provider
+    job_service = AsyncMock()
+
+    with patch("infrastructure.database.get_session_context", side_effect=_fake_session_context), \
+         patch("services.provider_service.ProviderService", return_value=provider_service), \
+         patch("services.job_service.JobService", return_value=job_service), \
+         patch("api.routes.websocket.broadcast_to_room", new=AsyncMock()) as broadcast_mock:
+        await worker_websocket(websocket, "provider-a", "token-1")
+
+    job_service.update_job.assert_any_await(
+        "job-2",
+        status=JobStatus.FAILED,
+        error="External worker outputs must be structured objects",
+    )
+    broadcast_mock.assert_not_awaited()

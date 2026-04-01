@@ -42,10 +42,12 @@ async def select_next_provider(
     job_id: str,
     exhausted_providers: Set[str],
     preferred_provider_id: Optional[str],
+    required_models: Optional[dict] = None,
 ) -> Optional[Provider]:
     """Select the next provider or fail the job when no providers remain."""
     provider = load_balancer.get_next_provider(
         preferred_provider_id,
+        required_models=required_models,
         exclude_provider_ids=exhausted_providers,
     )
 

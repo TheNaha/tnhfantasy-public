@@ -345,8 +345,8 @@ async def view_file_endpoint(path: str):
                 }
             )
 
-        # Optimization: Check index before globbing
-        indexed_path = gallery_indexer.get_path_by_filename(filename)
+        # Optimization: Check the gallery index before any recursive scan
+        indexed_path = gallery_indexer.get_path(filename)
         if indexed_path and os.path.exists(indexed_path):
             return FileResponse(
                 indexed_path,
@@ -355,19 +355,19 @@ async def view_file_endpoint(path: str):
                 }
             )
         
-        # Search in date-based subdirectories (fallback)
-        pattern = os.path.join(OUTPUT_DIR, "**", filename)
-        matches = glob.glob(pattern, recursive=True)
-        # Filter out thumb directory
-        matches = [m for m in matches if "/thumb/" not in m]
-        
-        if matches:
-            return FileResponse(
-                matches[0],
-                headers={
-                    "Content-Disposition": f"attachment; {encode_filename_for_header(os.path.basename(matches[0]))}"
-                }
-            )
+        # Search in date-based subdirectories only for explicit relative paths.
+        if "/" in filename:
+            pattern = os.path.join(OUTPUT_DIR, "**", filename)
+            matches = glob.glob(pattern, recursive=True)
+            matches = [m for m in matches if "/thumb/" not in m]
+
+            if matches:
+                return FileResponse(
+                    matches[0],
+                    headers={
+                        "Content-Disposition": f"attachment; {encode_filename_for_header(os.path.basename(matches[0]))}"
+                    }
+                )
     
     # Try preview cache
     try:
@@ -435,7 +435,9 @@ async def serve_thumbnail(size: str, filename: str):
     thumb_dir = os.path.join(OUTPUT_DIR, "thumb")
     
     # Optimization: Use gallery index to find original image, then infer thumbnail path
-    original_path = gallery_indexer.get_path_by_filename(base_name)
+    original_path = gallery_indexer.get_path(filename)
+    if not original_path:
+        original_path = gallery_indexer.get_path_by_filename(base_name)
 
     if original_path:
         # Check if we have a thumbnail in the mirrored structure
@@ -477,24 +479,25 @@ async def serve_thumbnail(size: str, filename: str):
     # Try new WebP format in date-based hierarchy
     # Search recursively for the filename in the thumb directory
     # Note: If optimization above worked, we wouldn't be here.
-    webp_pattern = os.path.join(thumb_dir, "**", f"{name_only}.webp")
-    webp_matches = glob.glob(webp_pattern, recursive=True)
-    
-    if webp_matches:
-        thumbnail_path = webp_matches[0]
-        stat = os.stat(thumbnail_path)
-        etag_source = f"{thumbnail_path}:{stat.st_mtime}"
-        etag = hashlib.md5(etag_source.encode()).hexdigest()[:16]
+    if "/" in filename:
+        webp_pattern = os.path.join(thumb_dir, "**", f"{name_only}.webp")
+        webp_matches = glob.glob(webp_pattern, recursive=True)
         
-        return FileResponse(
-            thumbnail_path,
-            media_type="image/webp",
-            headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "ETag": f'"{etag}"',
-                "Content-Disposition": f"inline; {encode_filename_for_header(os.path.basename(thumbnail_path))}"
-            }
-        )
+        if webp_matches:
+            thumbnail_path = webp_matches[0]
+            stat = os.stat(thumbnail_path)
+            etag_source = f"{thumbnail_path}:{stat.st_mtime}"
+            etag = hashlib.md5(etag_source.encode()).hexdigest()[:16]
+            
+            return FileResponse(
+                thumbnail_path,
+                media_type="image/webp",
+                headers={
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                    "ETag": f'"{etag}"',
+                    "Content-Disposition": f"inline; {encode_filename_for_header(os.path.basename(thumbnail_path))}"
+                }
+            )
     
     # Try legacy .medium.png in flat thumb directory
     legacy_thumb_flat = os.path.join(thumb_dir, f"{name_only}.{size}.png")
@@ -536,20 +539,20 @@ async def serve_thumbnail(size: str, filename: str):
             }
         )
 
-    original_pattern = os.path.join(OUTPUT_DIR, "**", filename)
-    original_matches = glob.glob(original_pattern, recursive=True)
-    # Filter out thumb directory
-    original_matches = [m for m in original_matches if "/thumb/" not in m]
-    
-    if original_matches:
-        full_path = original_matches[0]
-        return FileResponse(
-            full_path,
-            headers={
-                "Cache-Control": "public, max-age=3600",
-                "Content-Disposition": f"inline; {encode_filename_for_header(filename)}"
-            }
-        )
+    if "/" in filename:
+        original_pattern = os.path.join(OUTPUT_DIR, "**", filename)
+        original_matches = glob.glob(original_pattern, recursive=True)
+        original_matches = [m for m in original_matches if "/thumb/" not in m]
+        
+        if original_matches:
+            full_path = original_matches[0]
+            return FileResponse(
+                full_path,
+                headers={
+                    "Cache-Control": "public, max-age=3600",
+                    "Content-Disposition": f"inline; {encode_filename_for_header(filename)}"
+                }
+            )
     
     # Final fallback: check flat output directory
     full_path = os.path.join(OUTPUT_DIR, filename)
@@ -841,13 +844,20 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                     continue
                 
                 if not os.path.exists(local_path):
-                    # Search in date-based subdirectories (e.g., output/2025-12-07/filename.png)
-                    pattern = os.path.join(OUTPUT_DIR, "**", filename)
-                    matches = glob.glob(pattern, recursive=True)
-                    # Filter out thumb directory
-                    matches = [m for m in matches if "/thumb/" not in m]
-                    if matches:
-                        local_path = matches[0]
+                    from services.gallery_indexer import gallery_indexer
+
+                    indexed_path = gallery_indexer.get_path(filename)
+                    if indexed_path and os.path.exists(indexed_path):
+                        local_path = indexed_path
+                    elif "/" in filename:
+                        pattern = os.path.join(OUTPUT_DIR, "**", filename)
+                        matches = glob.glob(pattern, recursive=True)
+                        matches = [m for m in matches if "/thumb/" not in m]
+                        if matches:
+                            local_path = matches[0]
+                        else:
+                            logger.info("delete_file_not_found", filename=filename)
+                            continue
                     else:
                         logger.info("delete_file_not_found", filename=filename)
                         continue
@@ -901,12 +911,12 @@ async def proxy_file(
     session: Session = Depends(get_session)
 ):
     """Proxy file from provider storage."""
-    from infrastructure.providers import ModalProvider
+    from infrastructure.providers import create_provider_client
     
     service = get_provider_service(session)
     provider_data = await service.get_provider(provider_id)
     
-    provider = ModalProvider(provider_id, {
+    provider = create_provider_client(provider_id, {
         "type": provider_data.type,
         "credentials": provider_data.credentials,
         "config": provider_data.config,
@@ -947,6 +957,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         Dict mapping paths to their metadata
     """
     from infrastructure.image_processor import read_image_metadata
+    from services.gallery_indexer import gallery_indexer
     
     results = {}
     missing_files_map = {}  # path -> filename
@@ -996,40 +1007,45 @@ async def batch_get_metadata(request: BatchMetadataRequest):
             if os.path.exists(full_path):
                 results[path] = _get_metadata_result(full_path)
             else:
-                # Add to missing files list for batch search
-                # Map original path -> basename (what we look for)
-                missing_files_map[path] = os.path.basename(filename)
+                indexed_path = gallery_indexer.get_path(filename)
+                if indexed_path and os.path.exists(indexed_path):
+                    results[path] = _get_metadata_result(indexed_path)
+                else:
+                    # Keep a basename fallback for legacy callers that only store filenames
+                    missing_files_map[path] = filename
                     
         except Exception as e:
             results[path] = {"error": str(e)}
     
     # Phase 2: Single pass scan for missing files
     if missing_files_map:
-        # Optimization: Scan OUTPUT_DIR once to find all missing files
-        found_files = {}  # filename -> full_path
-        target_filenames = set(missing_files_map.values())
-
-        # Walk the directory
-        for root, dirs, files in os.walk(OUTPUT_DIR):
-            # Skip thumb directory for efficiency
-            if "thumb" in dirs:
-                dirs.remove("thumb")
-
-            for f in files:
-                if f in target_filenames:
-                    found_files[f] = os.path.join(root, f)
-
-            # Optimization: Stop if we found all files
-            if len(found_files) == len(target_filenames):
-                break
-
-        # Fill results for missing files
+        unresolved = {}
         for path, filename in missing_files_map.items():
-            if filename in found_files:
-                full_path = found_files[filename]
+            full_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
+            if full_path and os.path.exists(full_path):
                 results[path] = _get_metadata_result(full_path)
             else:
-                results[path] = {"error": "not_found"}
+                unresolved[path] = os.path.basename(filename)
+
+        if unresolved:
+            found_files = {}
+            target_filenames = set(unresolved.values())
+
+            for root, dirs, files in os.walk(OUTPUT_DIR):
+                if "thumb" in dirs:
+                    dirs.remove("thumb")
+
+                for f in files:
+                    if f not in target_filenames:
+                        continue
+                    found_files.setdefault(f, []).append(os.path.join(root, f))
+
+            for path, filename in unresolved.items():
+                matches = found_files.get(filename, [])
+                if len(matches) == 1:
+                    results[path] = _get_metadata_result(matches[0])
+                else:
+                    results[path] = {"error": "not_found"}
 
     return {
         "results": results,

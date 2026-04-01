@@ -144,14 +144,14 @@ class ProviderService:
     
     def get_model_cache(self) -> Dict[str, Any]:
         """Get all model metadata cache for reconciliation."""
-        from services.model_service import ModelService
-        model_service = ModelService(self.session)
+        from services.model_service_v2 import ModelServiceV2
+        model_service = ModelServiceV2(self.session)
         return model_service.get_full_cache()
     
     def get_model_cache_for_directory(self, directory: str) -> List[Dict[str, Any]]:
         """Get model cache for a specific directory."""
-        from services.model_service import ModelService
-        model_service = ModelService(self.session)
+        from services.model_service_v2 import ModelServiceV2
+        model_service = ModelServiceV2(self.session)
         # get_full_cache returns {directory: [models]}
         cache = model_service.get_full_cache()
         return cache.get(directory, [])
@@ -160,6 +160,9 @@ class ProviderService:
         """Get load balancer statistics."""
         from services.load_balancer_factory import create_load_balancer
 
-        load_balancer = create_load_balancer(self.session, strategy="round-robin")
+        config = self.get_load_balancing_config()
+        load_balancer = create_load_balancer(
+            self.session,
+            strategy=config.strategy if config else None,
+        )
         return load_balancer.get_stats()
-

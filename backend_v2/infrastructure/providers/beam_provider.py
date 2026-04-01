@@ -18,8 +18,8 @@ class BeamFileProxy(FileProxyProvider):
     async def get_file(self, path: str) -> bytes:
         """Get file from Beam via worker container."""
         client = get_http_client()
-        encoded_path = urllib.parse.quote(path, safe='')
-        url = f"{self.base_url}/file-proxy?path={encoded_path}"
+        encoded_path = urllib.parse.quote(path, safe="/")
+        url = f"{self.base_url}/get-file/{encoded_path}"
         response = await client.get(url)
         if response.status_code == 200:
             return response.content
@@ -28,8 +28,8 @@ class BeamFileProxy(FileProxyProvider):
     async def delete_file(self, path: str) -> bool:
         """Delete file from Beam volume."""
         client = get_http_client()
-        encoded_path = urllib.parse.quote(path, safe='')
-        url = f"{self.base_url}/file-proxy?path={encoded_path}"
+        encoded_path = urllib.parse.quote(path, safe="/")
+        url = f"{self.base_url}/delete-file/{encoded_path}"
         response = await client.delete(url)
         return response.status_code == 200
     
@@ -48,9 +48,8 @@ class BeamProvider(ServerlessProvider):
         super().__init__(provider_id, config)
         
         # Container mode settings
-        container_config = config.get("container_config", {})
-        self.container_port = container_config.get("port", 8004)  # Default 8004 to avoid Modal conflicts
-        self.container_name = f"beam-worker-{provider_id}"
+        self.container_port = 8000
+        self.container_name = f"comfy-provider-{provider_id}"
         
         # Worker URL (inside podman network)
         self.worker_url = f"http://{self.container_name}:{self.container_port}"
@@ -73,7 +72,7 @@ class BeamProvider(ServerlessProvider):
         """
         from infrastructure.http_client import get_streaming_client
         
-        url = f"{self.worker_url}/run"
+        url = f"{self.worker_url}/run-inference"
         
         async with get_streaming_client(timeout=600.0) as client:
             async with client.stream("POST", url, json={"workflow": workflow}) as response:
@@ -123,9 +122,7 @@ class BeamProvider(ServerlessProvider):
     async def list_models(self, directory: str) -> List[Dict[str, Any]]:
         """List models via worker container."""
         client = get_http_client()
-        encoded_dir = urllib.parse.quote(directory, safe='')
-        url = f"{self.worker_url}/list-models?directory={encoded_dir}"
-        response = await client.get(url)
+        response = await client.post(f"{self.worker_url}/list-models", json={"directory": directory})
         if response.status_code == 200:
             data = response.json()
             return data.get("files", [])

@@ -225,64 +225,18 @@ async def run_inference(request: InferenceRequest):
                         else:
                             print(f"[{PROVIDER_ID}] WARNING: Modal returned success but NO images key!")
                     
-                    # Process and save images via backend
+                    # Normalize image payloads for backend-side persistence.
                     if update.get("status") == "success" and "images" in update:
-                        import aiohttp
-                        
                         saved_images = []
                         for i, img in enumerate(update["images"]):
                             if "data" in img and isinstance(img["data"], bytes):
                                 # Encode as base64
                                 img_b64 = base64.b64encode(img["data"]).decode('utf-8')
-                                
-                                # Save via backend endpoint
-                                try:
-                                    async with aiohttp.ClientSession() as http:
-                                        save_payload = {
-                                            "image_base64": img_b64,
-                                            "job_id": job_id,
-                                            "metadata": {
-                                                "workflow": request.workflow,
-                                                "provider_id": PROVIDER_ID,
-                                                "original_filename": img.get("filename", ""),
-                                            },
-                                            "batch_index": i
-                                        }
-                                        async with http.post(
-                                            f"{BACKEND_URL}/api/providers/save-image",
-                                            json=save_payload,
-                                            timeout=aiohttp.ClientTimeout(total=30)
-                                        ) as response:
-                                            if response.status == 200:
-                                                save_result = await response.json()
-                                                saved_images.append({
-                                                    "filename": save_result.get("filename"),
-                                                    "path": save_result.get("relative_path"),
-                                                    "thumbnail": save_result.get("thumbnail"),
-                                                    "blurhash": save_result.get("blurhash"),
-                                                    "width": save_result.get("width"),
-                                                    "height": save_result.get("height"),
-                                                    "data": img_b64,  # Still include for frontend display
-                                                    "_base64_encoded": True
-                                                })
-                                                print(f"[{PROVIDER_ID}] ✓ Saved image via backend: {save_result.get('filename')}")
-                                            else:
-                                                error_text = await response.text()
-                                                print(f"[{PROVIDER_ID}] Failed to save image: {response.status} - {error_text[:100]}")
-                                                # Fall back to just streaming the image
-                                                saved_images.append({
-                                                    "filename": img.get("filename", f"image_{i}.png"),
-                                                    "data": img_b64,
-                                                    "_base64_encoded": True
-                                                })
-                                except Exception as e:
-                                    print(f"[{PROVIDER_ID}] Error saving image: {e}")
-                                    # Fall back to streaming without save
-                                    saved_images.append({
-                                        "filename": img.get("filename", f"image_{i}.png"),
-                                        "data": img_b64,
-                                        "_base64_encoded": True
-                                    })
+                                saved_images.append({
+                                    "filename": img.get("filename", f"image_{i}.png"),
+                                    "data": img_b64,
+                                    "_base64_encoded": True
+                                })
                         
                         # Replace images with saved versions
                         update["images"] = saved_images

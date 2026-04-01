@@ -8,7 +8,6 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
             { keys: ['G'], description: 'Go to Generator' },
             { keys: ['M'], description: 'Go to Models' },
             { keys: ['A'], description: 'Go to Advanced' },
-            { keys: ['C'], description: 'Direct ComfyUI Access' },
         ],
         'Actions': [
             { keys: ['?'], description: 'Show this help' },

@@ -89,15 +89,15 @@ class TestFileProxyProviderBase:
 
 class TestBeamFileProxy:
     def get_proxy(self):
-        return BeamFileProxy("beam-1", {}, "http://beam-worker:8004")
+        return BeamFileProxy("beam-1", {}, "http://comfy-provider-beam-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = BeamFileProxy("p1", {}, "http://beam-worker:8004/")
-        assert proxy.base_url == "http://beam-worker:8004"
+        proxy = BeamFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
+        assert proxy.base_url == "http://comfy-provider-p1:8000"
 
     def test_get_proxy_url(self):
         proxy = self.get_proxy()
-        assert proxy.get_proxy_url() == "http://beam-worker:8004"
+        assert proxy.get_proxy_url() == "http://comfy-provider-beam-1:8000"
 
     async def test_get_file_success(self):
         proxy = self.get_proxy()
@@ -159,8 +159,7 @@ class TestBeamProvider:
 
     def test_init_sets_worker_url(self):
         provider = self.get_provider()
-        assert "beam-worker-beam-primary" in provider.worker_url
-        assert "8004" in provider.worker_url
+        assert provider.worker_url == "http://comfy-provider-beam-primary:8000"
 
     def test_init_credentials(self):
         provider = self.get_provider()
@@ -172,7 +171,7 @@ class TestBeamProvider:
 
     def test_init_default_port(self):
         provider = BeamProvider("beam-primary", {"type": "beam"})
-        assert "8004" in provider.worker_url
+        assert provider.worker_url == "http://comfy-provider-beam-primary:8000"
 
     def test_get_file_proxy(self):
         provider = self.get_provider()
@@ -188,15 +187,15 @@ class TestBeamProvider:
 
 class TestModalFileProxy:
     def get_proxy(self):
-        return ModalFileProxy("modal-1", {}, "http://modal-worker:8001")
+        return ModalFileProxy("modal-1", {}, "http://comfy-provider-modal-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = ModalFileProxy("p1", {}, "http://modal-worker:8001/")
-        assert proxy.base_url == "http://modal-worker:8001"
+        proxy = ModalFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
+        assert proxy.base_url == "http://comfy-provider-p1:8000"
 
     def test_get_proxy_url(self):
         proxy = self.get_proxy()
-        assert proxy.get_proxy_url() == "http://modal-worker:8001"
+        assert proxy.get_proxy_url() == "http://comfy-provider-modal-1:8000"
 
     async def test_get_file_success(self):
         proxy = self.get_proxy()
@@ -257,8 +256,7 @@ class TestModalProvider:
 
     def test_init_sets_worker_url(self):
         provider = self.get_provider()
-        assert "modal-worker-modal-primary" in provider.worker_url
-        assert "8001" in provider.worker_url
+        assert provider.worker_url == "http://comfy-provider-modal-primary:8000"
 
     def test_init_credentials(self):
         provider = self.get_provider()
@@ -266,7 +264,7 @@ class TestModalProvider:
 
     def test_init_default_port(self):
         provider = ModalProvider("modal-1", {"type": "modal"})
-        assert "8001" in provider.worker_url
+        assert provider.worker_url == "http://comfy-provider-modal-1:8000"
 
     def test_get_file_proxy(self):
         provider = self.get_provider()

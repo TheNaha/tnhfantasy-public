@@ -13,7 +13,7 @@
 from typing import Dict, Any, Optional, List
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 from pydantic import BaseModel
 import aiohttp
 
@@ -62,6 +62,12 @@ class SaveImageRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     filename: Optional[str] = None
     batch_index: int = 0
+
+
+class AddCustomProviderModelRequest(BaseModel):
+    directory: str
+    model_data: Dict[str, Any]
+    provider_ids: List[str]
 
 
 # ============================================================================
@@ -367,6 +373,153 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
     except Exception as e:
         logger.error("modal_stats_fetch_failed", provider_id=provider_id, error=str(e))
         return {"provider_id": provider_id, "error": str(e), "total": 0}
+
+
+@router.get("/{provider_id}/sync-status")
+async def get_provider_sync_status(provider_id: str, session: Session = Depends(get_session)):
+    """Return V2-backed sync counts for a provider."""
+    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+    from services.model_service_v2 import ModelServiceV2
+
+    service = ModelServiceV2(session)
+    stmt = select(ModelFile, ModelVersion, ModelV2).join(
+        ModelVersion, ModelFile.version_id == ModelVersion.id
+    ).join(
+        ModelV2, ModelVersion.model_id == ModelV2.id
+    ).where(
+        ModelVersion.is_enabled == True
+    )
+
+    stats = {
+        "installed": 0,
+        "pending": 0,
+        "downloading": 0,
+        "failed": 0,
+    }
+    models = []
+
+    for file, _version, model in session.exec(stmt).all():
+        provider_status = service.repo.get_provider_status(file.id, provider_id)
+        status = provider_status.status if provider_status else "pending"
+        normalized_status = "installed" if status == "ready" else status
+        stats[normalized_status] = stats.get(normalized_status, 0) + 1
+        models.append({
+            "file_id": file.id,
+            "model_id": model.id,
+            "name": file.storage_filename,
+            "directory": f"models/{model.directory}",
+            "provider_status": {
+                "status": normalized_status,
+                "storage_path": provider_status.storage_path if provider_status else None,
+                "size_bytes": provider_status.size_bytes if provider_status else None,
+                "error_message": provider_status.error_message if provider_status else None,
+            },
+            "size": (file.size_kb or 0) * 1024,
+        })
+
+    return {
+        "provider": provider_id,
+        "total_models": len(models),
+        "stats": stats,
+        "models": models,
+    }
+
+
+@router.get("/{provider_id}/models")
+async def get_provider_models(provider_id: str, status: Optional[str] = None, session: Session = Depends(get_session)):
+    """Return provider models grouped by directory using the V2 schema."""
+    sync_status = await get_provider_sync_status(provider_id, session)
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+
+    for model in sync_status["models"]:
+        model_status = model["provider_status"]["status"]
+        if status and model_status != status:
+            continue
+        grouped.setdefault(model["directory"], []).append(model)
+
+    return {
+        "provider": provider_id,
+        "models": grouped,
+    }
+
+
+@router.delete("/{provider_id}/models")
+async def remove_model_from_provider(
+    provider_id: str,
+    directory: str,
+    filename: str,
+    session: Session = Depends(get_session)
+):
+    """Delete a model file from one provider and mark it pending again in V2."""
+    from services.model_service_v2 import ModelServiceV2
+    from infrastructure.providers import create_provider_client
+
+    normalized_directory = directory.replace("models/", "", 1)
+    service = ModelServiceV2(session)
+    file = service.repo.get_file_by_storage_path(normalized_directory, filename)
+    if not file:
+        raise HTTPException(status_code=404, detail="Model file not found")
+
+    provider_service = get_provider_service(session)
+    provider = await provider_service.get_provider(provider_id)
+    provider_client = create_provider_client(provider_id, {
+        "type": provider.type,
+        "credentials": provider.credentials,
+        "config": provider.config,
+        "container_config": provider.container_config or {}
+    })
+
+    storage_path = f"models/{normalized_directory}/{filename}"
+    try:
+        await provider_client.get_file_proxy().delete_file(storage_path)
+    except Exception as exc:
+        logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
+
+    await service.update_provider_file_status(
+        file_id=file.id,
+        provider_name=provider_id,
+        status="pending",
+        storage_path=storage_path,
+        size_bytes=None,
+        error_message=None,
+    )
+
+    return {
+        "status": "success",
+        "provider_id": provider_id,
+        "directory": f"models/{normalized_directory}",
+        "filename": filename,
+    }
+
+
+@router.post("/models/custom")
+async def add_custom_model_to_providers(
+    request: AddCustomProviderModelRequest,
+    session: Session = Depends(get_session)
+):
+    """Create a V2 custom model entry and trigger downloads for the selected providers."""
+    from services.model_service_v2 import ModelServiceV2
+
+    model_name = request.model_data.get("name", "").strip()
+    model_url = request.model_data.get("url", "").strip()
+    model_type = request.model_data.get("type")
+
+    if not model_name or not model_url:
+        raise HTTPException(status_code=400, detail="Model name and URL are required")
+
+    service = ModelServiceV2(session)
+    result = await service.add_custom_model(
+        name=model_name,
+        directory=request.directory,
+        download_url=model_url,
+        provider_ids=request.provider_ids,
+        model_type=model_type,
+    )
+    return {
+        "status": "success",
+        "model": result,
+        "provider_ids": request.provider_ids,
+    }
 
 
 # ============================================================================

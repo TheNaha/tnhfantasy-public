@@ -45,15 +45,8 @@ export default function InpaintGenerator() {
         randomizeSeed, addLora, removeLora, updateLora
     } = useGeneratorStore();
 
-    const { connect, disconnect } = useJobStore();
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
     const getEnrichedProviders = useProviderStore(state => state.getEnrichedProviders);
-
-    // Connect to job updates
-    useEffect(() => {
-        connect();
-        return () => disconnect();
-    }, [connect, disconnect]);
 
     // Load models on mount
     useEffect(() => {
