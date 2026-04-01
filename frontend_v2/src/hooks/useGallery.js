@@ -30,12 +30,7 @@ export function useGallery(filters = {}) {
             const filesData = await filesApi.list(params);
 
             // Fetch terminal/historical jobs only. Active jobs are owned by the websocket store.
-            const hasComplexFilters = filters.start_date || filters.end_date || filters.model || filters.sampler || filters.aspect_ratio;
-            let jobsData = { jobs: [] };
-
-            if (!hasComplexFilters) {
-                jobsData = await jobsApi.list({ limit: LIMIT, offset });
-            }
+            const jobsData = await jobsApi.list({ limit: LIMIT, offset });
 
             return {
                 files: filesData.files || [],

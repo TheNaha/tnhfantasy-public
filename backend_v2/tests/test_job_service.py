@@ -170,6 +170,23 @@ class TestJobServiceUpdate:
             mock_emit.assert_called_once()
             assert mock_emit.call_args[0][0] == EventType.JOB_FAILED
 
+    @pytest.mark.asyncio
+    async def test_update_cancelled_sets_completed_timestamp_and_emits_cancelled(self, session: Session, sample_workflow):
+        """Updating to cancelled status should mark terminal timestamp and emit JOB_CANCELLED."""
+        from core.events import EventType
+
+        with patch("services.job_service.emit_job_event", new_callable=AsyncMock) as mock_emit:
+            service = JobService(session)
+            job = await service.create_job(workflow=sample_workflow, metadata={})
+            mock_emit.reset_mock()
+
+            updated = await service.update_job(job.id, status=JobStatus.CANCELLED, message="Cancelled by user")
+
+            assert updated.status == JobStatus.CANCELLED
+            assert updated.completed_at is not None
+            mock_emit.assert_called_once()
+            assert mock_emit.call_args[0][0] == EventType.JOB_CANCELLED
+
 
 class TestJobServiceDelete:
     """Tests for JobService.delete_job."""

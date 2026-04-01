@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from api.provider_client import ProviderCallError, call_provider
+from api.provider_client import JobCancelledError, ProviderCallError, call_provider
 
 
 class FakeResponse:
@@ -70,9 +70,11 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
             job_service=job_service,
             total_nodes=1,
             timeout=5.0,
+            provider_id="provider-1",
         )
 
     assert str(exc_info.value) == "beam upstream failed"
+    assert exc_info.value.provider_id == "provider-1"
     assert exc_info.value.is_retryable is True
     job_service.update_job.assert_awaited_once_with("job-1", message="Queued in ComfyUI...")
 
@@ -119,8 +121,37 @@ async def test_call_provider_formats_http_error_payload(monkeypatch):
             job_service=job_service,
             total_nodes=0,
             timeout=5.0,
+            provider_id="provider-3",
         )
 
     assert str(exc_info.value) == "Worker returned 502: upstream unavailable"
+    assert exc_info.value.provider_id == "provider-3"
     assert exc_info.value.is_retryable is True
     job_service.update_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_provider_raises_job_cancelled_error(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"cancelled","message":"Job cancelled by user"}\n',
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    with pytest.raises(JobCancelledError) as exc_info:
+        await call_provider(
+            worker_url="http://worker",
+            workflow={"nodes": {}},
+            job_id="job-cancelled",
+            job_service=job_service,
+            total_nodes=1,
+            timeout=5.0,
+            provider_id="provider-cancelled",
+        )
+
+    assert str(exc_info.value) == "Job cancelled by user"
+    assert exc_info.value.provider_id == "provider-cancelled"
+    job_service.update_job.assert_awaited_once_with("job-cancelled", message="Queued in ComfyUI...")

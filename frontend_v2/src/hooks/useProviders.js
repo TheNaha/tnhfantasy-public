@@ -16,7 +16,7 @@ export function useStartProvider() {
     return useMutation({
         mutationFn: (providerId) => api.post(`/api/providers/${providerId}/container/start`),
         onSuccess: () => {
-            queryClient.invalidateQueries(['providers']);
+            queryClient.invalidateQueries({ queryKey: ['providers'] });
         },
     });
 }
@@ -28,7 +28,7 @@ export function useStopProvider() {
     return useMutation({
         mutationFn: (providerId) => api.post(`/api/providers/${providerId}/container/stop`),
         onSuccess: () => {
-            queryClient.invalidateQueries(['providers']);
+            queryClient.invalidateQueries({ queryKey: ['providers'] });
         },
     });
 }
@@ -40,7 +40,7 @@ export function useDeployProvider() {
     return useMutation({
         mutationFn: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
         onSuccess: () => {
-            queryClient.invalidateQueries(['providers']);
+            queryClient.invalidateQueries({ queryKey: ['providers'] });
         },
     });
 }

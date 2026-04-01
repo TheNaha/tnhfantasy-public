@@ -44,7 +44,7 @@ export default function Dashboard() {
     const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
     // Local State
-    const [viewMode, setViewMode] = useState(() => localStorage.getItem('galleryViewMode') || settings.ui.defaultViewMode);
+    const [viewMode, setViewMode] = useState(() => settings.ui.defaultViewMode);
 
     // Confirmation Modal
     const [confirmModal, setConfirmModal] = useState({
@@ -59,7 +59,7 @@ export default function Dashboard() {
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
         await storeDeleteJob(jobId);
-        queryClient.invalidateQueries(['gallery']);
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
     }, [storeDeleteJob, queryClient]);
 
     // Wrapped deleteJob with confirmation modal for card dismiss button
@@ -211,10 +211,12 @@ export default function Dashboard() {
         }
     });
 
-    // Persist View Mode
+    // Keep local view mode aligned with persisted UI settings.
     useEffect(() => {
-        localStorage.setItem('galleryViewMode', viewMode);
-    }, [viewMode]);
+        if (viewMode !== settings.ui.defaultViewMode) {
+            useSettingsStore.getState().updateSetting('ui', 'defaultViewMode', viewMode);
+        }
+    }, [settings.ui.defaultViewMode, viewMode]);
 
     const {
         allItems,
@@ -243,7 +245,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple([filename]);
-                    queryClient.invalidateQueries(['gallery']);
+                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
                     if (selectedImage?.name === filename) closeSelectedImage();
                     toast.success(`Successfully deleted ${filename}`, {
                         icon: '🗑️',
@@ -362,7 +364,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries(['gallery']);
+                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
                     setSelectedFiles(new Set());
                     setSelectionMode(false);
                     toast.success(`Deleted ${selectedFiles.size} images`);

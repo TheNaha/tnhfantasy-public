@@ -47,8 +47,8 @@ class Job(SQLModel, table=True):
     # Metadata (prompt, seed, dimensions, etc.)
     metadata_: Dict[str, Any] = Field(default={}, sa_column=Column(JSON), alias="metadata")
     
-    # Output filenames
-    outputs: List[str] = Field(default=[], sa_column=Column(JSON))
+    # Structured output entries produced by workers/post-processing.
+    outputs: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     
     # Progress tracking
     progress: float = Field(default=0.0)

@@ -4,6 +4,7 @@ import io
 import json
 import os
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from PIL import Image
 
@@ -11,7 +12,7 @@ import pytest
 from sqlmodel import Session
 
 from api.main import process_job
-from api.provider_client import ProviderCallError
+from api.provider_client import JobTimeoutError, ProviderCallError
 from core.entities import JobStatus, Provider
 from services.job_service import JobService
 from services.load_balancer import LoadBalancer
@@ -175,5 +176,67 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
 
     updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.COMPLETED
+
+    LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_process_job_respects_cancelled_status_before_finalize(session: Session, sample_workflow, monkeypatch):
+    LoadBalancer.reset_state()
+    _add_provider(session, "provider-1", 1, {"port": 8000})
+
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow=sample_workflow, metadata={})
+
+    async def fake_call_provider(**kwargs):
+        await kwargs["job_service"].update_job(
+            kwargs["job_id"],
+            status=JobStatus.CANCELLED,
+            message="Cancelled during processing",
+        )
+        return {"images": []}
+
+    monkeypatch.setattr("api.main.get_session", _session_override(session))
+    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+
+    await process_job(job.id)
+
+    updated_job = await _get_job_from_fresh_session(session, job.id)
+    assert updated_job.status == JobStatus.CANCELLED
+    assert updated_job.completed_at is not None
+
+    LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_process_job_timeout_signals_provider_cancel(session: Session, sample_workflow, monkeypatch):
+    LoadBalancer.reset_state()
+    _add_provider(session, "provider-1", 1, {"port": 8000})
+
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow=sample_workflow, metadata={})
+
+    async def fake_call_provider(**kwargs):
+        raise JobTimeoutError("timed out")
+
+    mock_http_client = AsyncMock()
+    mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
+
+    monkeypatch.setattr("api.main.get_session", _session_override(session))
+    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.job_runner.get_http_client", lambda: mock_http_client)
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+
+    await process_job(job.id)
+
+    assert mock_http_client.post.await_count >= 1
+    cancel_call = mock_http_client.post.await_args_list[0]
+    assert cancel_call.args[0].endswith("/cancel-job")
+    assert cancel_call.kwargs["json"]["job_id"] == job.id
+
+    updated_job = await _get_job_from_fresh_session(session, job.id)
+    assert updated_job.status == JobStatus.FAILED
 
     LoadBalancer.reset_state()

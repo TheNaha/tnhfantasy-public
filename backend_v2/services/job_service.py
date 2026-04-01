@@ -99,7 +99,7 @@ class JobService:
         status = updates.get("status")
         if status == JobStatus.RUNNING or status == JobStatus.PROCESSING:
             updates["started_at"] = datetime.utcnow()
-        elif status == JobStatus.COMPLETED or status == JobStatus.FAILED:
+        elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
             updates["completed_at"] = datetime.utcnow()
         
         job = self.repo.update(job_id, **updates)
@@ -117,6 +117,8 @@ class JobService:
             event_type = EventType.JOB_POST_PROCESSING
         elif status == JobStatus.FAILED:
             event_type = EventType.JOB_FAILED
+        elif status == JobStatus.CANCELLED:
+            event_type = EventType.JOB_CANCELLED
         elif "progress" in updates:
             event_type = EventType.JOB_PROGRESS
         else:

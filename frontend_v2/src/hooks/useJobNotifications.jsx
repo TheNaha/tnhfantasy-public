@@ -38,32 +38,28 @@ export function useJobNotifications() {
                     icon: '🎉',
                 });
             }
-            
-            // ⚡ Bolt: Prevent O(N²) array lookups by pre-computing a Set of previously failed job IDs
-            // This transforms the newFailedJobs check from O(N * M) to O(N + M) complexity.
-            const prevFailedJobIds = new Set(
-                prevState.jobs.filter(j => j.status === 'failed').map(j => j.id)
-            );
 
-            // Detect job failure
-            const newFailedJobs = state.jobs.filter(job => 
-                job.status === 'failed' && !prevFailedJobIds.has(job.id)
-            );
-            
-            if (newFailedJobs.length > 0) {
-                newFailedJobs.forEach(job => {
-                    toast.error(
-                        <div>
-                            <strong>Job failed</strong>
-                            <br />
-                            <span className="text-sm opacity-80">
-                                {job.error || 'Unknown error'}
-                            </span>
-                        </div>,
-                        {
-                            duration: 5000,
-                        }
-                    );
+            // Detect job failure from explicit store marker.
+            if (state.lastFailedJob !== prevState.lastFailedJob && state.lastFailedJob) {
+                const job = state.lastFailedJob;
+                toast.error(
+                    <div>
+                        <strong>Job failed</strong>
+                        <br />
+                        <span className="text-sm opacity-80">
+                            {job.error || 'Unknown error'}
+                        </span>
+                    </div>,
+                    {
+                        duration: 5000,
+                    }
+                );
+            }
+
+            if (state.lastCancelledJob !== prevState.lastCancelledJob && state.lastCancelledJob) {
+                toast('Job cancelled', {
+                    icon: '🛑',
+                    duration: 3000,
                 });
             }
         });

@@ -19,6 +19,14 @@ class JobTimeoutError(Exception):
     """Raised when a job exceeds its timeout."""
 
 
+class JobCancelledError(Exception):
+    """Raised when the worker confirms job cancellation."""
+
+    def __init__(self, message: str, provider_id: str = ""):
+        super().__init__(message)
+        self.provider_id = provider_id
+
+
 def extract_worker_error_message(update: dict) -> str:
     """Normalize worker error payloads from different providers."""
     detail = update.get("detail")
@@ -56,6 +64,7 @@ async def call_provider(
     total_nodes: int,
     timeout: float,
     use_snapshot: bool = False,
+    provider_id: str = "",
 ) -> dict:
     """
     Call the provider worker with the workflow.
@@ -130,8 +139,13 @@ async def call_provider(
                                     error_message = extract_worker_error_message(update)
                                     raise ProviderCallError(
                                         error_message,
-                                        provider_id="",
+                                        provider_id=provider_id,
                                         is_retryable=bool(update.get("retryable", False)),
+                                    )
+                                elif status == "cancelled":
+                                    raise JobCancelledError(
+                                        update.get("message") or "Job cancelled by user",
+                                        provider_id=provider_id,
                                     )
                             except json.JSONDecodeError as error:
                                 logger.warning(
@@ -146,20 +160,28 @@ async def call_provider(
 
                     raise ProviderCallError(
                         "No success response received from worker",
-                        provider_id="",
+                        provider_id=provider_id,
                         is_retryable=True,
                     )
 
                 error_text = await response.aread()
                 raise ProviderCallError(
                     format_worker_http_error(response.status_code, error_text.decode()),
-                    provider_id="",
+                    provider_id=provider_id,
                     is_retryable=response.status_code >= 500,
                 )
 
         except httpx.TimeoutException:
             raise JobTimeoutError(f"Job timed out after {timeout}s")
         except httpx.ConnectError as error:
-            raise ProviderCallError(f"Failed to connect to worker: {error}", provider_id="", is_retryable=True)
+            raise ProviderCallError(
+                f"Failed to connect to worker: {error}",
+                provider_id=provider_id,
+                is_retryable=True,
+            )
         except httpx.HTTPError as error:
-            raise ProviderCallError(f"HTTP error: {error}", provider_id="", is_retryable=True)
+            raise ProviderCallError(
+                f"HTTP error: {error}",
+                provider_id=provider_id,
+                is_retryable=True,
+            )

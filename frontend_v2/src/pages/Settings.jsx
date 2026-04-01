@@ -159,7 +159,7 @@ function BrandingSettings() {
     const saveMutation = useMutation({
         mutationFn: (data) => api.post('/api/settings/branding', data),
         onSuccess: () => {
-            queryClient.invalidateQueries(['branding']);
+            queryClient.invalidateQueries({ queryKey: ['branding'] });
             toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });
         },
         onError: () => {
