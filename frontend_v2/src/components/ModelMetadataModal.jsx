@@ -4,6 +4,58 @@ import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { copyToClipboard } from '../utils/clipboard';
 
+const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected']);
+const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
+
+function normalizeModelStatus(statusData) {
+    if (typeof statusData === 'string') {
+        return statusData.toLowerCase();
+    }
+    if (statusData && typeof statusData === 'object' && typeof statusData.status === 'string') {
+        return statusData.status.toLowerCase();
+    }
+    return 'unknown';
+}
+
+function isProviderOnline(provider) {
+    if (!provider || provider.enabled === false) {
+        return false;
+    }
+    return ONLINE_RUNTIME_STATES.has(provider.runtime_state?.status);
+}
+
+function formatProviderName(providerId) {
+    return providerId
+        .replace('comfy-provider-', '')
+        .replace('modal-', '');
+}
+
+function modelStatusTone(status) {
+    if (AVAILABLE_MODEL_STATES.has(status)) {
+        return 'text-green-300 bg-green-500/15 border-green-500/30';
+    }
+    if (status === 'downloading') {
+        return 'text-yellow-300 bg-yellow-500/15 border-yellow-500/30';
+    }
+    if (status === 'failed') {
+        return 'text-red-300 bg-red-500/15 border-red-500/30';
+    }
+    return 'text-gray-300 bg-gray-500/15 border-gray-500/30';
+}
+
+function availabilityTone(availability) {
+    if (availability === 'Available') {
+        return 'text-green-300 bg-green-500/15 border-green-500/30';
+    }
+    if (availability === 'Partial') {
+        return 'text-yellow-300 bg-yellow-500/15 border-yellow-500/30';
+    }
+    if (availability === 'Unavailable') {
+        return 'text-red-300 bg-red-500/15 border-red-500/30';
+    }
+    return 'text-gray-300 bg-gray-500/15 border-gray-500/30';
+}
+
 function ModelMetadataHeader({
     className,
     showCreator = false,
@@ -37,7 +89,7 @@ function ModelMetadataHeader({
     );
 }
 
-export default function ModelMetadataModal({ metadata, onClose }) {
+export default function ModelMetadataModal({ metadata, onClose, providers = [], providersLoading = false }) {
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
 
@@ -95,6 +147,65 @@ export default function ModelMetadataModal({ metadata, onClose }) {
     const galleryImages = isV2Format
         ? (metadata.images || [])
         : (metadata.modelVersions?.[0]?.images || []);
+
+    const providerStatuses = metadata.provider_statuses && typeof metadata.provider_statuses === 'object'
+        ? metadata.provider_statuses
+        : {};
+    const runtimeProviders = Array.isArray(providers) ? providers : [];
+    const runtimeProviderById = new Map(runtimeProviders.map((provider) => [provider.id, provider]));
+    const onlineProviderIds = new Set(
+        runtimeProviders
+            .filter((provider) => isProviderOnline(provider))
+            .map((provider) => provider.id)
+    );
+
+    const allProviderIds = Array.from(
+        new Set([
+            ...Object.keys(providerStatuses),
+            ...runtimeProviders.map((provider) => provider.id),
+        ])
+    );
+
+    const providerRows = allProviderIds
+        .map((providerId) => {
+            const runtimeProvider = runtimeProviderById.get(providerId);
+            const runtimeStatus = runtimeProvider?.runtime_state?.status || 'offline';
+            const modelStatus = normalizeModelStatus(providerStatuses[providerId]);
+            return {
+                providerId,
+                providerName: formatProviderName(providerId),
+                online: onlineProviderIds.has(providerId),
+                runtimeStatus,
+                modelStatus,
+            };
+        })
+        .sort((left, right) => {
+            if (left.online !== right.online) {
+                return left.online ? -1 : 1;
+            }
+            return left.providerName.localeCompare(right.providerName);
+        });
+
+    const onlineProviderCount = runtimeProviders.filter((provider) => isProviderOnline(provider)).length;
+    const totalProviderCount = runtimeProviders.length;
+    const availableOnlineCount = providerRows.filter(
+        (row) => row.online && AVAILABLE_MODEL_STATES.has(row.modelStatus)
+    ).length;
+
+    let modelAvailability = providersLoading ? 'Loading providers' : 'Unknown';
+    if (providersLoading) {
+        modelAvailability = 'Loading providers';
+    } else if (onlineProviderCount > 0) {
+        if (availableOnlineCount === onlineProviderCount) {
+            modelAvailability = 'Available';
+        } else if (availableOnlineCount > 0) {
+            modelAvailability = 'Partial';
+        } else {
+            modelAvailability = 'Unavailable';
+        }
+    } else if (Object.keys(providerStatuses).length > 0) {
+        modelAvailability = 'No providers online';
+    }
 
 
 
@@ -183,6 +294,54 @@ export default function ModelMetadataModal({ metadata, onClose }) {
                                 <div className="text-xs text-gray-500 uppercase tracking-wider">Base Model</div>
                             </div>
                         </div>
+
+                        {/* Provider Runtime + Model Availability */}
+                        {(providerRows.length > 0 || totalProviderCount > 0 || Object.keys(providerStatuses).length > 0) && (
+                            <div className="space-y-3">
+                                <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Availability</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div className="bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
+                                        <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Provider Status</div>
+                                        <div className="flex items-center gap-2 text-sm text-gray-200">
+                                            <span className={`inline-block h-2 w-2 rounded-full ${providersLoading ? 'bg-blue-400 animate-pulse' : onlineProviderCount > 0 ? 'bg-green-400' : 'bg-gray-500'}`} />
+                                            <span>{providersLoading ? 'Loading...' : `${onlineProviderCount}/${totalProviderCount} online`}</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
+                                        <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Model Availability</div>
+                                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${availabilityTone(modelAvailability)}`}>
+                                            {modelAvailability}
+                                        </span>
+                                        {onlineProviderCount > 0 && (
+                                            <div className="mt-2 text-xs text-gray-400">
+                                                {availableOnlineCount}/{onlineProviderCount} online providers have this model ready
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {providerRows.length > 0 && (
+                                    <div className="space-y-2">
+                                        {providerRows.map((row) => (
+                                            <div key={row.providerId} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-gray-700 bg-gray-900/50">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className={`inline-block h-2 w-2 rounded-full ${row.online ? 'bg-green-400' : 'bg-gray-500'}`} />
+                                                    <span className="text-sm text-gray-200 truncate">{row.providerName}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${row.online ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-gray-300 bg-gray-500/10 border-gray-500/30'}`}>
+                                                        {row.online ? 'online' : row.runtimeStatus}
+                                                    </span>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${modelStatusTone(row.modelStatus)}`}>
+                                                        {row.modelStatus}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Trigger Words */}
                         {trainedWords.length > 0 && (

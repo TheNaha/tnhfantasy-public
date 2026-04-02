@@ -171,6 +171,8 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
     stored_metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
     assert stored_metadata["job_id"] == job.id
     assert stored_metadata["provider"] == "provider-1"
+    assert stored_metadata["job_created_at"] == job.created_at.isoformat()
+    assert stored_metadata["job_timeline_anchor"] == job.created_at.isoformat()
     assert stored_metadata["prompt"] == "hello"
     assert stored_metadata["seed"] == 42
 

@@ -1,5 +1,9 @@
 import { getLatestDate, getItemTimelineDate } from './dateTime';
 
+function getPersistedJobTimelineAnchor(image) {
+    return image?.metadata?.job_timeline_anchor || image?.metadata?.job_created_at || null;
+}
+
 function resolveTimelineDate(jobId, fallbackValues = [], jobTimelineOverrides = null) {
     if (jobId && jobTimelineOverrides && typeof jobTimelineOverrides.get === 'function') {
         const anchored = jobTimelineOverrides.get(jobId);
@@ -18,11 +22,12 @@ function resolveTimelineDate(jobId, fallbackValues = [], jobTimelineOverrides = 
 }
 
 function toImageItem(file) {
+    const persistedAnchor = file?.metadata?.job_timeline_anchor || file?.metadata?.job_created_at;
     return {
         ...file,
         type: 'image',
         date: file.date || file.mtime,
-        timelineDate: file.date || file.mtime,
+        timelineDate: persistedAnchor || file.date || file.mtime,
     };
 }
 
@@ -71,7 +76,14 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
             const groupedImages = imagesByJobId.get(job.id);
             const anchoredTimelineDate = resolveTimelineDate(
                 job.id,
-                [job.created_at, groupedImages?.[0]?.date, groupedImages?.[0]?.mtime, 0],
+                [
+                    job.created_at,
+                    getPersistedJobTimelineAnchor(groupedImages?.[0]),
+                    groupedImages?.[0]?.timelineDate,
+                    groupedImages?.[0]?.date,
+                    groupedImages?.[0]?.mtime,
+                    0,
+                ],
                 jobTimelineOverrides
             );
 
@@ -133,16 +145,23 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
 
         const jobId = image.metadata?.job_id;
         if (jobId && !usedJobIds.has(jobId)) {
+            const groupedImages = imagesByJobId.get(jobId);
             const anchoredTimelineDate = resolveTimelineDate(
                 jobId,
-                [image.date, image.mtime, 0],
+                [
+                    getPersistedJobTimelineAnchor(image),
+                    getPersistedJobTimelineAnchor(groupedImages?.[0]),
+                    image.timelineDate,
+                    image.date,
+                    image.mtime,
+                    0,
+                ],
                 jobTimelineOverrides
             );
 
             // ⚡ Bolt: Removed O(N) `combined.find` for `existingGroup` here.
             // Since `usedJobIds` tracks all processed job IDs, if `!usedJobIds.has(jobId)` is true,
             // we are guaranteed that `group-${jobId}` does not exist in `combined`.
-            const groupedImages = imagesByJobId.get(jobId);
             if (groupedImages && groupedImages.length > 1) {
                 combined.push({
                     type: 'imageGroup',

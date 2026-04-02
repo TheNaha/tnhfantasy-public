@@ -13,6 +13,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
@@ -74,6 +75,7 @@ export default function SimpleGenerator() {
 
     const [showPromptLibrary, setShowPromptLibrary] = useState(false);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null); // Index of LoRA selector to auto-open
+    const { providers, isLoading: providersLoading } = useProvidersPageData();
 
     // Keyboard shortcuts
     useKeyboardShortcuts();
@@ -594,6 +596,9 @@ export default function SimpleGenerator() {
                                     onChange={setSelectedCheckpoint}
                                     onVersionChange={setSelectedCheckpoint}
                                     onInfoClick={(model) => setViewingMetadata(model)}
+                                    showAvailabilityBadge={true}
+                                    providers={providers}
+                                    providersLoading={providersLoading}
                                 />
                             </div>
                         </div>
@@ -903,6 +908,9 @@ export default function SimpleGenerator() {
                                         directory="models/loras"
                                         autoOpen={true}
                                         onAutoOpenComplete={() => setAutoOpenLoraIndex(null)}
+                                        showAvailabilityBadge={true}
+                                        providers={providers}
+                                        providersLoading={providersLoading}
                                     />
                                 )}
                             </div>
@@ -1474,6 +1482,8 @@ export default function SimpleGenerator() {
             {viewingMetadata && (
                 <ModelMetadataModal
                     metadata={viewingMetadata}
+                    providers={providers}
+                    providersLoading={providersLoading}
                     onClose={() => setViewingMetadata(null)}
                 />
             )}

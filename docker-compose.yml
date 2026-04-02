@@ -20,7 +20,7 @@ services:
     environment:
       - OUTPUT_DIR=/app/output
       - INPUT_DIR=/app/input
-      - COMFY_UVICORN_RELOAD=0
+      - COMFY_UVICORN_RELOAD=1
     privileged: true
     security_opt:
       - label=disable

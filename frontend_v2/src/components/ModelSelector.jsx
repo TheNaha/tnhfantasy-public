@@ -12,6 +12,11 @@ import {
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { api, filesApi } from "../api";
 import toast from "react-hot-toast";
+import {
+  availabilityTone,
+  formatAvailabilityBadgeLabel,
+  getModelAvailabilitySummary,
+} from "../utils/modelAvailability";
 
 const ModelSelector = memo(function ModelSelector({
   label,
@@ -26,6 +31,9 @@ const ModelSelector = memo(function ModelSelector({
   onAutoOpenComplete, // Callback when auto-open modal is closed
   onVersionChange, // Callback when version is changed
   onInfoClick, // NEW: Callback for info button click
+  showAvailabilityBadge = false,
+  providers = [],
+  providersLoading = false,
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
   const [search, setSearch] = useState("");
@@ -688,6 +696,16 @@ const ModelSelector = memo(function ModelSelector({
                     const versions = model.versions || [];
                     const hasMultipleVersions = versions.length > 1;
                     const isExpanded = expandedModel === model.model_id;
+                    const availability = getModelAvailabilitySummary(
+                      model.provider_statuses,
+                      providers,
+                      { providersLoading },
+                    );
+                    const shouldShowAvailability =
+                      showAvailabilityBadge && availability.hasStatusData;
+                    const availabilityLabel = formatAvailabilityBadgeLabel(
+                      availability.label,
+                    );
 
                     return (
                       <div
@@ -846,6 +864,16 @@ const ModelSelector = memo(function ModelSelector({
                                 </span>
                               )}
                             </div>
+                            {shouldShowAvailability && (
+                              <div className="mt-2">
+                                <span
+                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${availabilityTone(availability.label)}`}
+                                  title={availability.detail || availability.label}
+                                >
+                                  {availabilityLabel}
+                                </span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Version Badge (top-left) */}

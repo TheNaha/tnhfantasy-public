@@ -82,4 +82,41 @@ describe('buildDashboardItems', () => {
         expect(namesInOrder).toEqual(['top.png', 'result.png', 'bottom.png']);
         expect(replacedImage.timelineDate).toBe('2024-01-03T00:00:00Z');
     });
+
+    it('uses persisted job timeline anchor without live override map', () => {
+        const data = {
+            pages: [
+                {
+                    files: [
+                        {
+                            name: 'top.png',
+                            date: '2024-01-05T00:00:00Z',
+                            metadata: {},
+                        },
+                        {
+                            name: 'result.png',
+                            date: '2024-01-06T00:00:00Z',
+                            metadata: {
+                                job_id: 'job-persisted',
+                                job_timeline_anchor: '2024-01-03T00:00:00Z',
+                            },
+                        },
+                        {
+                            name: 'bottom.png',
+                            date: '2024-01-01T00:00:00Z',
+                            metadata: {},
+                        },
+                    ],
+                    jobs: [],
+                },
+            ],
+        };
+
+        const { items } = buildDashboardItems(data, []);
+        const namesInOrder = items.map((item) => item.name || item.id);
+        const replacedImage = items.find((item) => item.name === 'result.png');
+
+        expect(namesInOrder).toEqual(['top.png', 'result.png', 'bottom.png']);
+        expect(replacedImage.timelineDate).toBe('2024-01-03T00:00:00Z');
+    });
 });

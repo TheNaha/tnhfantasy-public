@@ -3,6 +3,12 @@ import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe } from '
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
+import useProvidersPageData from '../../hooks/useProvidersPageData';
+import {
+    availabilityTone,
+    formatAvailabilityBadgeLabel,
+    getModelAvailabilitySummary,
+} from '../../utils/modelAvailability';
 import ModelDetailsModal from './ModelDetailsModal';
 
 const CATEGORIES = [
@@ -37,6 +43,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const offsetRef = useRef(0);
+    const { providers, isLoading: providersLoading } = useProvidersPageData();
 
     const fetchFiles = useCallback(async (reset = false, search = "") => {
         if (reset) {
@@ -369,102 +376,121 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 </div>
             ) : (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                    {filteredFiles.map(file => (
-                        <div
-                            key={file.name}
-                            onClick={() => setSelectedModel(file)}
-                            className="group relative bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-all aspect-[2/3] cursor-pointer"
-                        >
-                            <div className="absolute inset-0">
-                                {file.civitai_id ? (
-                                    <img
-                                        src={`/api/v2/models/preview/${file.civitai_id}`}
-                                        alt={file.display_name || file.name}
-                                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                        loading="lazy"
-                                        onError={(e) => { e.target.style.display = 'none'; }}
-                                    />
-                                ) : file.preview ? (
-                                    <img
-                                        src={file.preview}
-                                        alt={file.display_name || file.name}
-                                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                        loading="lazy"
-                                        onError={(e) => { e.target.style.display = 'none'; }}
-                                    />
-                                ) : (
-                                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600">
-                                        <Globe size={32} />
-                                    </div>
-                                )}
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-80" />
-                            </div>
+                    {filteredFiles.map(file => {
+                        const availability = getModelAvailabilitySummary(
+                            file.provider_statuses,
+                            providers,
+                            { providersLoading }
+                        );
+                        const showAvailabilityBadge = availability.hasStatusData;
+                        const availabilityLabel = formatAvailabilityBadgeLabel(availability.label);
 
-                            <div className="absolute bottom-0 left-0 right-0 p-3">
-                                <h3 className="text-sm font-medium text-white line-clamp-2 mb-1" title={file.display_name || file.name}>
-                                    {file.display_name || file.name}
-                                </h3>
-                                <div className="flex items-center justify-between text-xs text-gray-400">
-                                    <div className="flex items-center gap-2">
-                                        <span>{(file.size / 1024 / 1024).toFixed(0)} MB</span>
-                                        {/* Provider sync status badges */}
-                                        {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
-                                            <div className="flex gap-1">
-                                                {Object.entries(file.provider_statuses).map(([providerId, status]) => {
-                                                    const providerShort = providerId.replace('comfy-provider-', '').replace('modal-', '');
-                                                    const initial = providerShort.charAt(0).toUpperCase();
-                                                    const statusValue = typeof status === 'object' ? status.status : status;
-                                                    const colorClass = {
-                                                        installed: 'text-green-400',
-                                                        ready: 'text-green-400',
-                                                        downloading: 'text-yellow-400',
-                                                        pending: 'text-gray-400',
-                                                        failed: 'text-red-400'
-                                                    }[statusValue] || 'text-gray-400';
-                                                    return (
-                                                        <span
-                                                            key={providerId}
-                                                            title={`${providerShort}: ${statusValue}`}
-                                                            className={`text-xs font-bold ${colorClass}`}
-                                                        >
-                                                            {initial}
-                                                        </span>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        {/* Dependency Check Button for DB-tracked models */}
-                                        {file.model_id && (
+                        return (
+                            <div
+                                key={file.name}
+                                onClick={() => setSelectedModel(file)}
+                                className="group relative bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-all aspect-[2/3] cursor-pointer"
+                            >
+                                <div className="absolute inset-0">
+                                    {file.civitai_id ? (
+                                        <img
+                                            src={`/api/v2/models/preview/${file.civitai_id}`}
+                                            alt={file.display_name || file.name}
+                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                            loading="lazy"
+                                            onError={(e) => { e.target.style.display = 'none'; }}
+                                        />
+                                    ) : file.preview ? (
+                                        <img
+                                            src={file.preview}
+                                            alt={file.display_name || file.name}
+                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                            loading="lazy"
+                                            onError={(e) => { e.target.style.display = 'none'; }}
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600">
+                                            <Globe size={32} />
+                                        </div>
+                                    )}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-80" />
+                                </div>
+
+                                <div className="absolute bottom-0 left-0 right-0 p-3">
+                                    <h3 className="text-sm font-medium text-white line-clamp-2 mb-1" title={file.display_name || file.name}>
+                                        {file.display_name || file.name}
+                                    </h3>
+                                    <div className="flex items-center justify-between text-xs text-gray-400 gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span>{(file.size / 1024 / 1024).toFixed(0)} MB</span>
+                                            {showAvailabilityBadge && (
+                                                <span
+                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${availabilityTone(availability.label)}`}
+                                                    title={availability.detail || availability.label}
+                                                >
+                                                    {availabilityLabel}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            {/* Dependency Check Button for DB-tracked models */}
+                                            {file.model_id && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleCheckDependencies(file);
+                                                    }}
+                                                    className="p-1.5 hover:bg-blue-500/20 hover:text-blue-400 rounded-full transition-colors"
+                                                    title="Check & Download Dependencies (CLIP/VAE)"
+                                                    aria-label="Check & Download Dependencies"
+                                                >
+                                                    <RotateCw size={14} />
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    handleCheckDependencies(file);
+                                                    handleDelete(file);
                                                 }}
-                                                className="p-1.5 hover:bg-blue-500/20 hover:text-blue-400 rounded-full transition-colors"
-                                                title="Check & Download Dependencies (CLIP/VAE)"
-                                                aria-label="Check & Download Dependencies"
+                                                className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-full transition-colors"
+                                                title="Delete"
+                                                aria-label={`Delete ${file.display_name || file.name}`}
                                             >
-                                                <RotateCw size={14} />
+                                                <Trash2 size={14} />
                                             </button>
-                                        )}
-                                        <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDelete(file);
-                                        }}
-                                        className="p-1.5 hover:bg-red-500/20 hover:text-red-400 rounded-full transition-colors"
-                                        title="Delete"
-                                        aria-label={`Delete ${file.display_name || file.name}`}
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
+                                        </div>
                                     </div>
+
+                                    {/* Provider sync status initials */}
+                                    {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
+                                        <div className="mt-1 flex gap-1">
+                                            {Object.entries(file.provider_statuses).map(([providerId, status]) => {
+                                                const providerShort = providerId.replace('comfy-provider-', '').replace('modal-', '');
+                                                const initial = providerShort.charAt(0).toUpperCase();
+                                                const statusValue = typeof status === 'object' ? status.status : status;
+                                                const colorClass = {
+                                                    installed: 'text-green-400',
+                                                    ready: 'text-green-400',
+                                                    downloading: 'text-yellow-400',
+                                                    pending: 'text-gray-400',
+                                                    failed: 'text-red-400'
+                                                }[statusValue] || 'text-gray-400';
+                                                return (
+                                                    <span
+                                                        key={providerId}
+                                                        title={`${providerShort}: ${statusValue}`}
+                                                        className={`text-xs font-bold ${colorClass}`}
+                                                    >
+                                                        {initial}
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 

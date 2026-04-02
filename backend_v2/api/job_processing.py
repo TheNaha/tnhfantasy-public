@@ -17,6 +17,18 @@ _finalizing_jobs: Set[str] = set()
 _finalizing_jobs_lock = asyncio.Lock()
 
 
+def _serialize_datetime(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        try:
+            return isoformat()
+        except Exception:
+            pass
+    return str(value)
+
+
 async def _reserve_finalization(job_id: str) -> bool:
     async with _finalizing_jobs_lock:
         if job_id in _finalizing_jobs:
@@ -112,11 +124,16 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> Li
                 target_dir = final_output_dir
 
             output_path = os.path.join(target_dir, filename)
+            job_created_at = _serialize_datetime(getattr(job, "created_at", None))
             full_metadata = {
                 "job_id": job.id,
                 "filename": filename,
                 "provider": provider_id,
             }
+            if job_created_at:
+                # Persist a stable timeline anchor so replacement ordering survives reloads.
+                full_metadata["job_created_at"] = job_created_at
+                full_metadata["job_timeline_anchor"] = job_created_at
             if job.metadata_:
                 for key in [
                     "prompt",
