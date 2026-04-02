@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
-import * as ws from '../api/websocket';
 
 function unwrapPayload(payload) {
     return payload?.data ?? payload ?? {};
@@ -148,79 +146,6 @@ export function mergeModalStats(current, patch) {
         ...currentStats,
         ...patchSource,
         stats: mergedStats,
-    });
-}
-
-/**
- * Hook for provider sync status with WebSocket updates
- * Replaces polling with WebSocket event subscription
- */
-export function useProviderSyncStatus(providerId) {
-    const queryClient = useQueryClient();
-
-    useEffect(() => {
-        if (!providerId) return;
-
-        ws.subscribe('model');
-
-        const unsubscribe = ws.on(ws.EventTypes.MODEL_STATUS_UPDATE, (event) => {
-            const eventProviderId = extractProviderId(event);
-            if (eventProviderId === providerId) {
-                queryClient.setQueryData(['providerSyncStatus', providerId], (current) => (
-                    current ? mergeProviderSyncStatus(current, event) : normalizeProviderSyncStatus(event)
-                ));
-            }
-        });
-
-        return () => {
-            unsubscribe();
-            ws.unsubscribe('model');
-        };
-    }, [providerId, queryClient]);
-
-    return useQuery({
-        queryKey: ['providerSyncStatus', providerId],
-        queryFn: async () => normalizeProviderSyncStatus(await api.get(`/api/providers/${providerId}/sync-status`)),
-        enabled: !!providerId,
-        staleTime: 30000,
-        refetchOnWindowFocus: true,
-    });
-}
-
-/**
- * Hook for Modal stats with reduced polling (backend caches this)
- * WebSocket events can trigger cache updates when stats change
- */
-export function useModalStats(providerId) {
-    const queryClient = useQueryClient();
-
-    useEffect(() => {
-        if (!providerId) return;
-
-        ws.subscribe('provider');
-
-        const unsubscribe = ws.on(ws.EventTypes.PROVIDER_STATS_UPDATE, (event) => {
-            const eventProviderId = extractProviderId(event);
-            if (eventProviderId === providerId) {
-                queryClient.setQueryData(['modalStats', providerId], (current) => (
-                    current ? mergeModalStats(current, event) : normalizeModalStats(event)
-                ));
-            }
-        });
-
-        return () => {
-            unsubscribe();
-            ws.unsubscribe('provider');
-        };
-    }, [providerId, queryClient]);
-
-    return useQuery({
-        queryKey: ['modalStats', providerId],
-        queryFn: async () => normalizeModalStats(await api.get(`/api/providers/${providerId}/modal-stats`)),
-        enabled: !!providerId,
-        staleTime: 60000,
-        refetchInterval: 60000,
-        refetchOnWindowFocus: true,
     });
 }
 

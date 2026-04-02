@@ -27,7 +27,7 @@ export default function Providers() {
         lbConfig,
         lbStats,
         refreshAll: refreshProviderServerData,
-    } = useProviderServerData({ realtime: false });
+    } = useProviderServerData();
     const containerLoading = useProviderStore(state => state.containerLoading);
     const startContainer = useProviderStore(state => state.startContainer);
     const stopContainer = useProviderStore(state => state.stopContainer);

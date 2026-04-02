@@ -3,6 +3,9 @@ import {
     extractProviderId,
     mergeContainerStatus,
     mergeProviderStats,
+    mergeStatusCardReconciliation,
+    mergeStatusCardStorage,
+    normalizeReconciliationStatus,
     normalizeProvidersPayload,
     unwrapEventData,
 } from './useProviderServerData';
@@ -70,5 +73,76 @@ describe('useProviderServerData helpers', () => {
 
         expect(merged.config.strategy).toBe('round-robin');
         expect(merged.stats.total_providers).toBe(2);
+    });
+
+    it('normalizes reconciliation status aliases used by worker events', () => {
+        expect(normalizeReconciliationStatus('started')).toBe('reconciling');
+        expect(normalizeReconciliationStatus('progress')).toBe('reconciling');
+        expect(normalizeReconciliationStatus('running')).toBe('reconciling');
+        expect(normalizeReconciliationStatus('completed')).toBe('completed');
+        expect(normalizeReconciliationStatus(undefined)).toBe('idle');
+    });
+
+    it('merges reconciliation events into provider status cards', () => {
+        const merged = mergeStatusCardReconciliation(
+            {
+                'provider-a': {
+                    provider_id: 'provider-a',
+                    reconciliation: {
+                        status: 'idle',
+                        stats: {},
+                        active_downloads: [],
+                    },
+                },
+            },
+            {
+                data: {
+                    provider_id: 'provider-a',
+                    status: 'started',
+                    phase: 'downloading',
+                    message: 'Syncing',
+                    stats: { downloads_queued: 3 },
+                    active_downloads: [{ name: 'model-a' }],
+                },
+            }
+        );
+
+        expect(merged['provider-a'].reconciliation.status).toBe('reconciling');
+        expect(merged['provider-a'].reconciliation.phase).toBe('downloading');
+        expect(merged['provider-a'].reconciliation.stats.downloads_queued).toBe(3);
+        expect(merged['provider-a'].reconciliation.active_downloads).toHaveLength(1);
+    });
+
+    it('merges provider stats storage payload into provider status cards', () => {
+        const merged = mergeStatusCardStorage(
+            {
+                'provider-a': {
+                    provider_id: 'provider-a',
+                    storage: {
+                        total: 1,
+                        by_directory: {
+                            checkpoints: 1,
+                        },
+                    },
+                },
+            },
+            {
+                data: {
+                    provider_id: 'provider-a',
+                    stats: {
+                        total: 3,
+                        by_directory: {
+                            loras: 2,
+                        },
+                    },
+                },
+            }
+        );
+
+        expect(merged['provider-a'].storage.total).toBe(3);
+        expect(merged['provider-a'].storage.by_directory).toEqual({
+            checkpoints: 1,
+            loras: 2,
+        });
     });
 });
