@@ -33,20 +33,32 @@ describe('useSelectedImageState', () => {
         document.body.style.overflow = 'unset';
     });
 
-    it('uses embedded metadata without fetching', () => {
+    it('uses embedded metadata immediately and refreshes from sidecar metadata', async () => {
+        mockGet.mockResolvedValueOnce({ prompt: 'sidecar', width: 768 });
+
         const { result } = renderHook(() => useSelectedImageState());
 
         act(() => {
             result.current.selectImage({
                 name: 'embedded.png',
-                metadata: { prompt: 'embedded' },
+                metadata: { prompt: 'embedded', loras: [{ name: 'test-lora', strength: 1.0 }] },
             });
         });
 
         expect(result.current.selectedImage?.name).toBe('embedded.png');
-        expect(result.current.metadata).toEqual({ prompt: 'embedded' });
+        expect(result.current.metadata).toEqual({ prompt: 'embedded', loras: [{ name: 'test-lora', strength: 1.0 }] });
+        expect(result.current.loadingMeta).toBe(true);
+
+        await waitFor(() => {
+            expect(result.current.metadata).toEqual({
+                prompt: 'sidecar',
+                width: 768,
+                loras: [{ name: 'test-lora', strength: 1.0 }],
+            });
+        });
+
         expect(result.current.loadingMeta).toBe(false);
-        expect(mockGet).not.toHaveBeenCalled();
+        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded.png.json');
         expect(document.body.style.overflow).toBe('hidden');
     });
 
@@ -78,5 +90,26 @@ describe('useSelectedImageState', () => {
         expect(result.current.selectedImage).toBe(null);
         expect(result.current.metadata).toBe(null);
         expect(document.body.style.overflow).toBe('unset');
+    });
+
+    it('keeps embedded metadata when sidecar is missing', async () => {
+        const { ApiError } = await import('../api');
+        mockGet.mockRejectedValueOnce(new ApiError(404));
+
+        const { result } = renderHook(() => useSelectedImageState());
+
+        act(() => {
+            result.current.selectImage({
+                name: 'embedded-only.png',
+                metadata: { prompt: 'embedded only' },
+            });
+        });
+
+        await waitFor(() => {
+            expect(result.current.loadingMeta).toBe(false);
+        });
+
+        expect(result.current.metadata).toEqual({ prompt: 'embedded only' });
+        expect(mockGet).toHaveBeenCalledWith('/api/view/output/embedded-only.png.json');
     });
 });

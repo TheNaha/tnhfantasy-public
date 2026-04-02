@@ -23,6 +23,7 @@ import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
+import { buildGeneratorStateFromMetadata } from "../../utils/reuseParameters";
 
 const FeedCard = memo(function FeedCard({
   item,
@@ -79,24 +80,13 @@ const FeedCard = memo(function FeedCard({
       }
     }
 
-    // Update global store directly
-    useGeneratorStore.getState().setAll({
-      prompt: meta.prompt,
-      negativePrompt: meta.negativePrompt,
-      seed: meta.seed,
-      steps: meta.steps,
-      cfg: meta.cfg,
-      sampler: meta.sampler,
-      scheduler: meta.scheduler,
-      width: meta.width,
-      height: meta.height,
-      selectedCheckpoint: meta.checkpoint,
-      selectedLoras: meta.loras || [],
-      hiresFix: meta.hiresFix,
-      hiresUpscaler: meta.hiresUpscaler,
-      adetailer: meta.adetailer,
-      adetailerModel: meta.adetailerModel,
-    });
+    const reuseState = buildGeneratorStateFromMetadata(meta);
+    if (Object.keys(reuseState).length === 0) {
+      toast.error("Could not parse reusable parameters from this image.");
+      return;
+    }
+
+    useGeneratorStore.getState().setAll(reuseState);
 
     // Disable auto-randomize seed to allow reproduction of the same image
     useSettingsStore

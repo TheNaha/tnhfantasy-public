@@ -33,6 +33,7 @@ import StatsPanel from '../components/stats/StatsPanel';
 import EmptyState from '../components/EmptyState';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
+import { buildGeneratorStateFromMetadata } from '../utils/reuseParameters';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -290,23 +291,16 @@ export default function Dashboard() {
     const useParameters = useCallback(() => {
         if (!metadata) return;
 
-        useGeneratorStore.getState().setAll({
-            prompt: metadata.prompt,
-            negativePrompt: metadata.negativePrompt,
-            seed: metadata.seed,
-            steps: metadata.steps,
-            cfg: metadata.cfg,
-            sampler: metadata.sampler,
-            scheduler: metadata.scheduler,
-            width: metadata.width,
-            height: metadata.height,
-            selectedCheckpoint: metadata.checkpoint,
-            selectedLoras: metadata.loras || [],
-            hiresFix: metadata.hiresFix,
-            hiresUpscaler: metadata.hiresUpscaler,
-            adetailer: metadata.adetailer,
-            adetailerModel: metadata.adetailerModel
-        });
+        const reuseState = buildGeneratorStateFromMetadata(metadata);
+        if (Object.keys(reuseState).length === 0) {
+            toast.error('Could not parse reusable parameters from this image.', {
+                icon: '⚠️',
+                duration: toastErrorDuration,
+            });
+            return;
+        }
+
+        useGeneratorStore.getState().setAll(reuseState);
 
         useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
 
@@ -315,7 +309,7 @@ export default function Dashboard() {
             duration: toastSuccessDuration
         });
         navigate('/generate');
-    }, [metadata, navigate, toastSuccessDuration]);
+    }, [metadata, navigate, toastErrorDuration, toastSuccessDuration]);
 
     const handlePullToRefresh = useCallback(async () => {
         await refetch();

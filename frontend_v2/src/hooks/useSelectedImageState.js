@@ -10,13 +10,11 @@ export function useSelectedImageState() {
     const selectImage = useCallback((image) => {
         setSelectedImage(image);
 
-        if (image?.metadata && Object.keys(image.metadata).length > 0) {
-            setMetadata(image.metadata);
-            setLoadingMeta(false);
-            return;
-        }
+        const embeddedMetadata = image?.metadata && Object.keys(image.metadata).length > 0
+            ? image.metadata
+            : null;
 
-        setMetadata(null);
+        setMetadata(embeddedMetadata);
         setLoadingMeta(Boolean(image));
     }, []);
 
@@ -31,9 +29,9 @@ export function useSelectedImageState() {
             return;
         }
 
-        if (selectedImage.metadata && Object.keys(selectedImage.metadata).length > 0) {
-            return;
-        }
+        const embeddedMetadata = selectedImage.metadata && Object.keys(selectedImage.metadata).length > 0
+            ? selectedImage.metadata
+            : null;
 
         let isCancelled = false;
 
@@ -42,16 +40,25 @@ export function useSelectedImageState() {
                 if (isCancelled) {
                     return;
                 }
-                setMetadata(data);
+
+                const mergedMetadata = (data && typeof data === 'object')
+                    ? { ...(embeddedMetadata || {}), ...data }
+                    : embeddedMetadata;
+
+                setMetadata(mergedMetadata);
                 setLoadingMeta(false);
             })
             .catch((error) => {
                 if (isCancelled) {
                     return;
                 }
+
                 if (error instanceof ApiError && error.status === 404) {
-                    setMetadata(null);
+                    setMetadata(embeddedMetadata);
+                } else {
+                    setMetadata(embeddedMetadata);
                 }
+
                 setLoadingMeta(false);
             });
 
