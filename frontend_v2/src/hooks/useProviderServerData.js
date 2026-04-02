@@ -35,6 +35,83 @@ export function normalizeProvidersPayload(payload) {
     return [];
 }
 
+export function normalizeStatusCard(card = {}) {
+    const providerId = card.provider_id ?? card.providerId ?? null;
+    const legacySync = normalizeObject(card.sync);
+    const modelSync = normalizeObject(card.model_sync);
+    const normalizedModelSync = {
+        provider_id: providerId,
+        total_models: Number(
+            modelSync.total_models
+            ?? legacySync.total_models
+            ?? 0
+        ),
+        stats: normalizeObject(modelSync.stats ?? legacySync.stats),
+        updated_at: modelSync.updated_at ?? legacySync.updated_at ?? null,
+    };
+
+    const storage = normalizeObject(card.storage);
+    const diagnostics = normalizeObject(card.diagnostics);
+    const runtime = normalizeObject(card.runtime);
+    const reconciliation = normalizeObject(card.reconciliation);
+    const deploy = normalizeObject(card.deploy);
+
+    return {
+        ...card,
+        provider_id: providerId,
+        runtime: {
+            ...runtime,
+            capabilities: normalizeObject(runtime.capabilities),
+        },
+        model_sync: normalizedModelSync,
+        sync: normalizedModelSync,
+        storage: {
+            provider_id: providerId,
+            total: Number(
+                storage.total
+                ?? storage.total_models
+                ?? 0
+            ),
+            by_directory: normalizeObject(storage.by_directory),
+            ...(storage.error !== undefined ? { error: storage.error } : {}),
+        },
+        reconciliation: {
+            provider_id: providerId,
+            status: normalizeReconciliationStatus(reconciliation.status),
+            phase: reconciliation.phase ?? null,
+            message: reconciliation.message ?? '',
+            stats: normalizeObject(reconciliation.stats),
+            current_download: reconciliation.current_download ?? null,
+            active_downloads: Array.isArray(reconciliation.active_downloads) ? reconciliation.active_downloads : [],
+            errors: Array.isArray(reconciliation.errors) ? reconciliation.errors : [],
+            updated_at: reconciliation.updated_at ?? null,
+            last_contact_at: reconciliation.last_contact_at ?? null,
+            warning: reconciliation.warning ?? null,
+        },
+        deploy: {
+            status: deploy.status ?? 'idle',
+            message: deploy.message ?? '',
+            steps: Array.isArray(deploy.steps) ? deploy.steps : [],
+            completed_steps: Array.isArray(deploy.completed_steps) ? deploy.completed_steps : [],
+            failed_steps: Array.isArray(deploy.failed_steps) ? deploy.failed_steps : [],
+            updated_at: deploy.updated_at ?? null,
+            started_at: deploy.started_at ?? null,
+            finished_at: deploy.finished_at ?? null,
+            provider_id: deploy.provider_id ?? providerId,
+            provider_type: deploy.provider_type ?? card.provider_type ?? null,
+        },
+        diagnostics: {
+            provider_id: providerId,
+            warnings: Array.isArray(diagnostics.warnings) ? diagnostics.warnings : [],
+            errors: Array.isArray(diagnostics.errors) ? diagnostics.errors : [],
+            worker: normalizeObject(diagnostics.worker),
+            affected_provider_ids: Array.isArray(diagnostics.affected_provider_ids) ? diagnostics.affected_provider_ids : [],
+            updated_at: diagnostics.updated_at ?? null,
+            provider_enabled: diagnostics.provider_enabled ?? runtime.enabled ?? true,
+        },
+    };
+}
+
 export function mergeContainerStatus(currentStatuses, eventData) {
     const payload = unwrapEventData(eventData);
     const current = normalizeObject(currentStatuses);
@@ -92,7 +169,7 @@ export function mergeStatusCardReconciliation(currentCards, eventData) {
         return current;
     }
 
-    const card = normalizeObject(current[providerId]);
+    const card = normalizeStatusCard(current[providerId]);
     const previousReconciliation = normalizeObject(card.reconciliation);
     const nextStatus = normalizeReconciliationStatus(payload.status ?? previousReconciliation.status);
 
@@ -122,16 +199,19 @@ export function mergeStatusCardReconciliation(currentCards, eventData) {
             : Array.isArray(previousReconciliation.errors)
                 ? previousReconciliation.errors
                 : [],
+        updated_at: payload.updated_at ?? previousReconciliation.updated_at ?? null,
+        last_contact_at: payload.last_contact_at ?? previousReconciliation.last_contact_at ?? null,
+        warning: payload.warning ?? previousReconciliation.warning ?? null,
     };
 
-    return {
+    return normalizeObject({
         ...current,
-        [providerId]: {
+        [providerId]: normalizeStatusCard({
             ...card,
             provider_id: providerId,
             reconciliation: nextReconciliation,
-        },
-    };
+        }),
+    });
 }
 
 export function mergeStatusCardStorage(currentCards, eventData) {
@@ -156,7 +236,7 @@ export function mergeStatusCardStorage(currentCards, eventData) {
         return current;
     }
 
-    const card = normalizeObject(current[providerId]);
+    const card = normalizeStatusCard(current[providerId]);
     const previousStorage = normalizeObject(card.storage);
     const previousDirectory = normalizeObject(previousStorage.by_directory);
     const nextStorage = {
@@ -180,14 +260,14 @@ export function mergeStatusCardStorage(currentCards, eventData) {
         nextStorage.error = storagePayload.error;
     }
 
-    return {
+    return normalizeObject({
         ...current,
-        [providerId]: {
+        [providerId]: normalizeStatusCard({
             ...card,
             provider_id: providerId,
             storage: nextStorage,
-        },
-    };
+        }),
+    });
 }
 
 export function useProviderServerData(options = {}) {
@@ -225,7 +305,12 @@ export function useProviderServerData(options = {}) {
         queryKey: PROVIDER_QUERY_KEYS.statusCards,
         queryFn: async () => {
             const data = await providersApi.getStatusCards();
-            return data.status_cards || {};
+            return Object.fromEntries(
+                Object.entries(data.status_cards || {}).map(([providerId, card]) => [
+                    providerId,
+                    normalizeStatusCard(card),
+                ])
+            );
         },
         staleTime: 15 * 1000,
         refetchOnWindowFocus: true,

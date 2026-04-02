@@ -80,7 +80,7 @@ function buildServerData(overrides = {}) {
             'modal-primary': {
                 provider_id: 'modal-primary',
                 provider_type: 'modal',
-                sync: {
+                model_sync: {
                     total_models: 4,
                     stats: {
                         installed: 3,
@@ -111,6 +111,26 @@ function buildServerData(overrides = {}) {
                 runtime: {
                     mode: 'container_http',
                     connected: true,
+                    enabled: true,
+                    capabilities: {
+                        container: true,
+                        start_container: true,
+                        stop_container: true,
+                        restart_container: true,
+                        view_logs: true,
+                        deploy: true,
+                        setup: true,
+                        reconcile: true,
+                        reset_status: true,
+                    },
+                },
+                diagnostics: {
+                    warnings: [],
+                    errors: [],
+                    worker: {
+                        backend_url: 'http://backend_v2:8002',
+                        worker_url: 'http://comfy-provider-modal-primary:8000',
+                    },
                 },
             },
         },
@@ -148,8 +168,9 @@ describe('Providers page', () => {
         render(<Providers />);
 
         expect(screen.getByText('modal-primary')).toBeInTheDocument();
+        expect(screen.getByText('DB Sync')).toBeInTheDocument();
         expect(screen.getByText('Provider Storage')).toBeInTheDocument();
-        expect(screen.getByText('4 models')).toBeInTheDocument();
+        expect(screen.getAllByText('4 models').length).toBeGreaterThan(0);
         expect(screen.getByText('Checkpoints: 2')).toBeInTheDocument();
     });
 
@@ -162,6 +183,7 @@ describe('Providers page', () => {
 
         render(<Providers />);
 
-        expect(screen.getByText('No models synced')).toBeInTheDocument();
+        expect(screen.getByText('DB Sync')).toBeInTheDocument();
+        expect(screen.getByText('No storage stats yet')).toBeInTheDocument();
     });
 });

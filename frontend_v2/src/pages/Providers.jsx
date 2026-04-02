@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Download } from 'lucide-react';
+import { Plus, RefreshCw, Download, Wrench } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import ProviderCard from '../components/providers/ProviderCard';
@@ -7,6 +7,7 @@ import ProviderModal from '../components/providers/ProviderModal';
 import AddModelToProviderModal from '../components/providers/AddModelToProviderModal';
 import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
+import { providersApi } from '../api';
 import useReconciliationStore from '../store/reconciliationStore';
 import { useProviderStore } from '../store/providerStore';
 import useProviderServerData from '../hooks/useProviderServerData';
@@ -193,6 +194,19 @@ export default function Providers() {
         }
     };
 
+    const handleCleanupState = async () => {
+        try {
+            const result = await providersApi.cleanupState();
+            await refreshAll();
+            toast.success(
+                `Cleanup complete: ${result.orphaned_statuses_removed || 0} orphaned rows removed, ${result.stale_downloading_reset || 0} stale downloads reset.`
+            );
+        } catch (error) {
+            console.error('Failed to cleanup provider state:', error);
+            toast.error(`Failed to cleanup provider state: ${error.message}`);
+        }
+    };
+
 
     return (
         <motion.div
@@ -227,6 +241,14 @@ export default function Providers() {
                     >
                         <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
                         Refresh
+                    </button>
+
+                    <button
+                        onClick={handleCleanupState}
+                        className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 transition-colors"
+                    >
+                        <Wrench size={16} />
+                        Cleanup State
                     </button>
 
                     <button

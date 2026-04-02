@@ -5,6 +5,7 @@ import {
     mergeProviderStats,
     mergeStatusCardReconciliation,
     mergeStatusCardStorage,
+    normalizeStatusCard,
     normalizeReconciliationStatus,
     normalizeProvidersPayload,
     unwrapEventData,
@@ -81,6 +82,30 @@ describe('useProviderServerData helpers', () => {
         expect(normalizeReconciliationStatus('running')).toBe('reconciling');
         expect(normalizeReconciliationStatus('completed')).toBe('completed');
         expect(normalizeReconciliationStatus(undefined)).toBe('idle');
+    });
+
+    it('normalizes legacy and canonical status-card fields into one shape', () => {
+        const normalized = normalizeStatusCard({
+            provider_id: 'provider-a',
+            sync: {
+                total_models: 2,
+                stats: { installed: 1, pending: 1 },
+            },
+            storage: {
+                total: 3,
+                by_directory: { checkpoints: 3 },
+            },
+            runtime: {
+                enabled: true,
+            },
+        });
+
+        expect(normalized.model_sync.total_models).toBe(2);
+        expect(normalized.sync.total_models).toBe(2);
+        expect(normalized.storage.total).toBe(3);
+        expect(normalized.reconciliation.status).toBe('idle');
+        expect(normalized.deploy.status).toBe('idle');
+        expect(normalized.diagnostics.warnings).toEqual([]);
     });
 
     it('merges reconciliation events into provider status cards', () => {

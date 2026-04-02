@@ -279,7 +279,10 @@ class TestProviderServiceDeploy:
         assert failed_state.get("status") == "failed"
         assert failed_state.get("completed_steps") == ["comfy_gpu"]
 
-        resumed_container = _DummyContainer([_DummyExecResult(0, "storage deployed")])
+        resumed_container = _DummyContainer([
+            _DummyExecResult(0, "storage deployed"),
+            _DummyExecResult(0, "download deployed"),
+        ])
         resumed_manager = _DummyContainerManager("beam-provider", resumed_container)
 
         result = await service.deploy_provider_app("beam-provider", resumed_manager)
@@ -287,6 +290,7 @@ class TestProviderServiceDeploy:
         deployments = result.get("deployments", [])
         skipped = [step for step in deployments if step.get("name") == "comfy_gpu" and step.get("skipped")]
         assert skipped
+        assert {step["name"] for step in deployments} == {"comfy_gpu", "comfy_storage", "comfy_download"}
 
     async def test_deploy_returns_already_running_when_in_flight(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)
@@ -305,7 +309,7 @@ class TestProviderServiceReconciliationState:
 
         result = await service.start_reconciliation_session("test-provider")
         assert result["accepted"] is True
-        assert result["state"]["status"] == "started"
+        assert result["state"]["status"] == "queued"
 
     async def test_start_reconciliation_session_rejects_if_in_progress(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)
@@ -314,7 +318,7 @@ class TestProviderServiceReconciliationState:
 
         second = await service.start_reconciliation_session("test-provider")
         assert second["accepted"] is False
-        assert second["state"]["status"] == "started"
+        assert second["state"]["status"] == "queued"
 
     async def test_upsert_reconciliation_state_sets_finished_at_for_terminal_status(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)

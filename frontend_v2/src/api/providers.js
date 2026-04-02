@@ -105,13 +105,16 @@ export const providersApi = {
     /** Clear persisted provider model sync status to force a clean reconciliation pass. */
     resetModelStatus: (providerId) => api.delete(`/api/v2/models/providers/${providerId}/reset-status`),
 
+    /** Clean orphaned provider state and stale downloading entries. */
+    cleanupState: () => api.post('/api/providers/state/cleanup'),
+
     // -------------------------------------------------------------------------
     // Modal-specific operations
     // -------------------------------------------------------------------------
 
     /**
-     * Deploy the latest worker image to Modal.
-     * This runs `modal deploy` internally and may take several minutes.
+     * Deploy the latest provider app from the backend orchestrator.
+     * Beam runs three deploy steps: comfy_gpu, comfy_storage, and comfy_download.
      */
     deploy: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
 

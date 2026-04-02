@@ -20,7 +20,7 @@ DEPLOY_STATE_KEY = "deploy_state"
 DEPLOY_IN_PROGRESS_TTL = timedelta(minutes=30)
 RECONCILIATION_STATE_KEY = "reconciliation_state"
 RECONCILIATION_IN_PROGRESS_TTL = timedelta(minutes=180)
-RECONCILIATION_IN_PROGRESS_STATUSES = {"started", "reconciling", "progress", "running"}
+RECONCILIATION_IN_PROGRESS_STATUSES = {"queued", "reconciling"}
 RECONCILIATION_TERMINAL_STATUSES = {"completed", "failed", "idle"}
 
 
@@ -62,6 +62,7 @@ class ProviderService:
         message: Optional[str] = None,
         completed_steps: Optional[List[str]] = None,
         failed_steps: Optional[List[str]] = None,
+        steps: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         state: Dict[str, Any] = {
             "provider_id": provider_id,
@@ -80,7 +81,19 @@ class ProviderService:
             state["completed_steps"] = completed_steps
         if failed_steps:
             state["failed_steps"] = failed_steps
+        if steps is not None:
+            state["steps"] = steps
         return state
+
+    @staticmethod
+    def normalize_reconciliation_status(status: Optional[str]) -> str:
+        if status in {"started", "queued"}:
+            return "queued"
+        if status in {"progress", "running", "reconciling"}:
+            return "reconciling"
+        if status in {"completed", "failed", "idle"}:
+            return status
+        return "idle"
 
     def _read_deploy_state(self, provider: Provider) -> Dict[str, Any]:
         config = provider.config if isinstance(provider.config, dict) else {}
@@ -120,7 +133,7 @@ class ProviderService:
 
     @staticmethod
     def _is_reconciliation_in_progress(state: Dict[str, Any]) -> bool:
-        return state.get("status") in RECONCILIATION_IN_PROGRESS_STATUSES
+        return ProviderService.normalize_reconciliation_status(state.get("status")) in RECONCILIATION_IN_PROGRESS_STATUSES
 
     def _is_reconciliation_state_fresh(self, state: Dict[str, Any]) -> bool:
         if not self._is_reconciliation_in_progress(state):
@@ -189,6 +202,7 @@ class ProviderService:
     async def get_provider_reconciliation_state(self, provider_id: str) -> Dict[str, Any]:
         provider = await self.get_provider(provider_id)
         state = self._read_reconciliation_state(provider)
+        state["status"] = self.normalize_reconciliation_status(state.get("status"))
         if self._is_reconciliation_state_fresh(state):
             return state
 
@@ -202,6 +216,8 @@ class ProviderService:
             "phase": state.get("phase"),
             "stats": state.get("stats") or {},
             "errors": state.get("errors") or [],
+            "last_contact_at": state.get("last_contact_at"),
+            "warning": "Reconciliation state became stale before the worker reported completion",
         }
         self._persist_reconciliation_state(provider, stale_state)
         return stale_state
@@ -218,7 +234,7 @@ class ProviderService:
 
         next_state = {
             "provider_id": provider.id,
-            "status": "started",
+            "status": "queued",
             "phase": "queued",
             "message": "Reconciliation trigger requested",
             "stats": {},
@@ -236,6 +252,7 @@ class ProviderService:
         merged = dict(current_state)
         merged.update({k: v for k, v in updates.items() if v is not None})
         merged["provider_id"] = provider.id
+        merged["status"] = self.normalize_reconciliation_status(merged.get("status"))
         merged["updated_at"] = self._utcnow_iso()
 
         status = merged.get("status", "idle")
@@ -243,6 +260,8 @@ class ProviderService:
             merged["started_at"] = self._utcnow_iso()
         if status in RECONCILIATION_TERMINAL_STATUSES:
             merged["finished_at"] = self._utcnow_iso()
+        if updates.get("last_contact_at"):
+            merged["last_contact_at"] = updates["last_contact_at"]
 
         self._persist_reconciliation_state(provider, merged)
         return merged
@@ -290,7 +309,7 @@ class ProviderService:
             resumed_steps = [
                 step
                 for step in (previous_state.get("completed_steps") or [])
-                if step in {"comfy_gpu", "comfy_storage"}
+                if step in {"comfy_gpu", "comfy_storage", "comfy_download"}
             ]
 
         deploying_state = self._build_deploy_state(
@@ -301,6 +320,7 @@ class ProviderService:
             started_at=started_at,
             message="Deployment started",
             completed_steps=resumed_steps,
+            steps=[],
         )
         self._persist_deploy_state(provider, deploying_state)
 
@@ -336,6 +356,12 @@ class ProviderService:
                     started_at=started_at,
                     finished_at=self._utcnow_iso(),
                     message="Modal deploy completed",
+                    steps=[{
+                        "name": "modal_app",
+                        "success": True,
+                        "exit_code": 0,
+                        "output": output,
+                    }],
                 )
                 self._persist_deploy_state(provider, success_state)
                 return {
@@ -351,6 +377,7 @@ class ProviderService:
                 deployments = [
                     ("comfy_gpu", ["beam", "deploy", "/app/beam_app.py:comfy_gpu"]),
                     ("comfy_storage", ["beam", "deploy", "/app/beam_app.py:comfy_storage"]),
+                    ("comfy_download", ["beam", "deploy", "/app/beam_app.py:comfy_download"]),
                 ]
                 completed_steps = set(resumed_steps)
                 results: List[Dict[str, Any]] = []
@@ -390,6 +417,22 @@ class ProviderService:
                             "output": output,
                         }
                     )
+                    self._persist_deploy_state(
+                        provider,
+                        self._build_deploy_state(
+                            provider_id=provider.id,
+                            provider_type=provider.type,
+                            status="deploying",
+                            attempt_id=attempt_id,
+                            started_at=started_at,
+                            message=f"Deployment running: {name}",
+                            completed_steps=sorted(completed_steps),
+                            failed_steps=[entry["name"] for entry in results if not entry["success"]],
+                            steps=list(results),
+                        ),
+                    )
+                    if not success:
+                        break
 
                 failed_steps = [entry["name"] for entry in results if not entry["success"]]
                 if failed_steps:
@@ -403,6 +446,7 @@ class ProviderService:
                         message=f"Beam deploy failed for: {', '.join(failed_steps)}",
                         completed_steps=sorted(completed_steps),
                         failed_steps=failed_steps,
+                        steps=results,
                     )
                     self._persist_deploy_state(provider, failed_state)
                     raise ProviderError(
@@ -419,6 +463,7 @@ class ProviderService:
                     finished_at=self._utcnow_iso(),
                     message="Beam deploy completed",
                     completed_steps=sorted(completed_steps),
+                    steps=results,
                 )
                 self._persist_deploy_state(provider, success_state)
                 return {
@@ -590,7 +635,7 @@ class ProviderService:
                 "stop_container": provider.container_config is not None,
                 "restart_container": provider.container_config is not None,
                 "view_logs": provider.container_config is not None,
-                "deploy": provider.type in {"modal", "beam"},
+                "deploy": runtime.mode == "container_http" and provider.type in {"modal", "beam"},
                 "setup": runtime.supports_setup,
                 "reconcile": runtime.supports_reconciliation,
                 "reset_status": True,

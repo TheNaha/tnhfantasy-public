@@ -12,6 +12,7 @@
 #   GET/POST /api/providers/{id}/container/* – Container lifecycle management
 from typing import Dict, Any, Optional, List
 import asyncio
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ from core.exceptions import NotFoundError, ValidationError
 from api.provider_runtime import resolve_provider_runtime
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import api_logger
+from config import get_worker_backend_url
 
 logger = api_logger()
 
@@ -294,15 +296,24 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
 _modal_stats_cache = TTLCache(maxsize=10, ttl=30)
 
 
+def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> None:
+    """Clear cached runtime snapshots after provider lifecycle changes."""
+    _container_status_cache.clear()
+    if provider_id:
+        _modal_stats_cache.pop(f"modal_stats_{provider_id}", None)
+        return
+    _modal_stats_cache.clear()
+
+
 def _normalize_reconciliation_for_card(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize reconciliation status values for card display consistency."""
     normalized = dict(state or {})
-    status = normalized.get("status") or "idle"
-    if status in {"started", "progress", "running"}:
-        status = "reconciling"
+    status = ProviderService.normalize_reconciliation_status(normalized.get("status"))
     normalized["status"] = status
     if status in {"completed", "failed"} and not normalized.get("phase"):
         normalized["phase"] = status
+    if status == "queued" and not normalized.get("phase"):
+        normalized["phase"] = "queued"
     return normalized
 
 
@@ -373,6 +384,106 @@ async def _fetch_provider_storage_stats(provider_id: str, provider: Any) -> Dict
         return _empty_storage_payload(provider_id, str(e))
 
 
+async def _fetch_live_reconciliation_state(
+    provider_id: str,
+    provider: Any,
+    service: ProviderService,
+) -> Dict[str, Any]:
+    """Refresh reconciliation state from the worker when possible."""
+    persisted_state = await service.get_provider_reconciliation_state(provider_id)
+    runtime = resolve_provider_runtime(provider)
+
+    if runtime.mode != "container_http":
+        return _normalize_reconciliation_for_card(persisted_state)
+
+    try:
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.get(
+                f"{runtime.worker_url}/reconciliation-status",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status != 200:
+                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                        return _normalize_reconciliation_for_card(persisted_state)
+                    return _normalize_reconciliation_for_card({
+                        "provider_id": provider_id,
+                        "status": "idle",
+                        "warning": f"Worker returned HTTP {response.status} for reconciliation status",
+                    })
+
+                worker_state = await response.json()
+                merged_state = await service.upsert_reconciliation_state(
+                    provider_id,
+                    {
+                        **worker_state,
+                        "last_contact_at": ProviderService._utcnow_iso(),
+                    },
+                )
+                return _normalize_reconciliation_for_card(merged_state)
+    except aiohttp.ClientError as exc:
+        if persisted_state.get("status") and persisted_state.get("status") != "idle":
+            merged_state = await service.upsert_reconciliation_state(
+                provider_id,
+                {"warning": f"Worker unreachable: {str(exc)}"},
+            )
+            return _normalize_reconciliation_for_card(merged_state)
+        return _normalize_reconciliation_for_card({
+            "provider_id": provider_id,
+            "status": "idle",
+            "warning": f"Worker unreachable: {str(exc)}",
+        })
+
+
+def _build_provider_diagnostics(
+    *,
+    provider_id: str,
+    provider_info: Dict[str, Any],
+    runtime: Any,
+    storage_stats: Dict[str, Any],
+    reconciliation_state: Dict[str, Any],
+    deploy_state: Dict[str, Any],
+    model_sync: Dict[str, Any],
+) -> Dict[str, Any]:
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    if storage_stats.get("error"):
+        warnings.append(f"Storage stats unavailable: {storage_stats['error']}")
+    if reconciliation_state.get("warning"):
+        warnings.append(reconciliation_state["warning"])
+    if reconciliation_state.get("error"):
+        errors.append(reconciliation_state["error"])
+    if reconciliation_state.get("status") == "failed" and reconciliation_state.get("message"):
+        errors.append(reconciliation_state["message"])
+    if deploy_state.get("status") == "failed" and deploy_state.get("message"):
+        errors.append(deploy_state["message"])
+    if model_sync.get("stats", {}).get("downloading", 0) > 0 and reconciliation_state.get("status") == "idle":
+        warnings.append("Database download state is active while reconciliation is idle")
+
+    updated_candidates = [
+        reconciliation_state.get("updated_at"),
+        reconciliation_state.get("last_contact_at"),
+        deploy_state.get("updated_at"),
+    ]
+
+    return {
+        "provider_id": provider_id,
+        "warnings": warnings,
+        "errors": errors,
+        "worker": {
+            "backend_url": get_worker_backend_url(),
+            "worker_url": runtime.worker_url,
+            "mode": runtime.mode,
+            "connected": runtime.connected,
+            "supports_setup": runtime.supports_setup,
+            "supports_reconciliation": runtime.supports_reconciliation,
+        },
+        "affected_provider_ids": [provider_id],
+        "updated_at": max((value for value in updated_candidates if value), default=None),
+        "provider_enabled": provider_info.get("enabled", True),
+    }
+
+
 async def _build_provider_status_card(
     provider_id: str,
     session: Session,
@@ -383,23 +494,44 @@ async def _build_provider_status_card(
     provider_service = service or get_provider_service(session)
     provider = await provider_service.get_provider(provider_id)
     provider_info = provider_payload or provider_service._provider_to_dict(provider)
+    runtime = resolve_provider_runtime(provider)
 
     sync_status = await get_provider_sync_status(provider_id, session)
+    model_sync = {
+        "provider_id": provider_id,
+        "total_models": sync_status.get("total_models", 0),
+        "stats": sync_status.get("stats") or {},
+        "updated_at": ProviderService._utcnow_iso(),
+    }
     storage_stats = await _fetch_provider_storage_stats(provider_id, provider)
-    reconciliation_state = await provider_service.get_provider_reconciliation_state(provider_id)
+    reconciliation_state = await _fetch_live_reconciliation_state(provider_id, provider, provider_service)
     deploy_state = await provider_service.get_provider_deploy_state(provider_id)
+    diagnostics = _build_provider_diagnostics(
+        provider_id=provider_id,
+        provider_info=provider_info,
+        runtime=runtime,
+        storage_stats=storage_stats,
+        reconciliation_state=reconciliation_state,
+        deploy_state=deploy_state,
+        model_sync=model_sync,
+    )
 
     return {
         "provider_id": provider_id,
         "provider_type": provider_info.get("type"),
-        "sync": {
-            "total_models": sync_status.get("total_models", 0),
-            "stats": sync_status.get("stats") or {},
+        "runtime": {
+            **(provider_info.get("runtime") or {}),
+            "enabled": provider_info.get("enabled", True),
+            "backend_url": get_worker_backend_url(),
+            "worker_url": runtime.worker_url,
+            "capabilities": provider_info.get("capabilities") or {},
         },
+        "model_sync": model_sync,
+        "sync": model_sync,
         "storage": storage_stats,
-        "reconciliation": _normalize_reconciliation_for_card(reconciliation_state),
+        "reconciliation": reconciliation_state,
         "deploy": deploy_state,
-        "runtime": provider_info.get("runtime") or {},
+        "diagnostics": diagnostics,
     }
 
 
@@ -426,11 +558,26 @@ async def get_provider_status_cards(session: Session = Depends(get_session)):
             cards[provider_id] = {
                 "provider_id": provider_id,
                 "provider_type": provider.get("type"),
-                "sync": {"total_models": 0, "stats": {}},
+                "runtime": provider.get("runtime") or {},
+                "model_sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
+                "sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
                 "storage": _empty_storage_payload(provider_id, "Failed to load storage stats"),
                 "reconciliation": _normalize_reconciliation_for_card(provider.get("reconciliation_state") or {}),
                 "deploy": provider.get("deploy_state") or {"status": "idle"},
-                "runtime": provider.get("runtime") or {},
+                "diagnostics": {
+                    "provider_id": provider_id,
+                    "warnings": ["Failed to build provider status card"],
+                    "errors": [],
+                    "worker": {
+                        "backend_url": get_worker_backend_url(),
+                        "worker_url": None,
+                        "mode": provider.get("runtime", {}).get("mode"),
+                        "connected": provider.get("runtime", {}).get("connected", False),
+                    },
+                    "affected_provider_ids": [provider_id],
+                    "updated_at": None,
+                    "provider_enabled": provider.get("enabled", True),
+                },
                 "error": "Failed to build provider status card",
             }
 
@@ -709,6 +856,7 @@ async def delete_provider(
     """Delete a provider."""
     service = get_provider_service(session)
     await service.delete_provider(provider_id)
+    _invalidate_provider_runtime_caches(provider_id)
     return {"status": "success"}
 
 
@@ -1063,18 +1211,21 @@ async def reconcile_provider(
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as response:
                 if response.status == 200:
-                    await service.upsert_reconciliation_state(
+                    persisted_state = await service.upsert_reconciliation_state(
                         provider_id,
                         {
                             "status": "reconciling",
                             "phase": "starting",
                             "message": "Reconciliation started in worker",
+                            "last_contact_at": ProviderService._utcnow_iso(),
                         },
                     )
+                    _invalidate_provider_runtime_caches(provider_id)
                     return {
                         "status": "triggered",
                         "provider_id": provider_id,
-                        "message": "Reconciliation started in worker"
+                        "message": "Reconciliation started in worker",
+                        "reconciliation": _normalize_reconciliation_for_card(persisted_state),
                     }
                 elif response.status == 409:
                     await service.upsert_reconciliation_state(
@@ -1083,6 +1234,7 @@ async def reconcile_provider(
                             "status": "reconciling",
                             "phase": "running",
                             "message": "Worker reported reconciliation already in progress",
+                            "last_contact_at": ProviderService._utcnow_iso(),
                         },
                     )
                     raise HTTPException(
@@ -1110,6 +1262,7 @@ async def reconcile_provider(
                 "message": f"Failed to reach worker: {str(e)}",
             },
         )
+        _invalidate_provider_runtime_caches(provider_id)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reach worker: {str(e)}"
@@ -1144,7 +1297,13 @@ async def get_reconciliation_status(
             ) as response:
                 if response.status == 200:
                     worker_state = await response.json()
-                    return await service.upsert_reconciliation_state(provider_id, worker_state)
+                    return await service.upsert_reconciliation_state(
+                        provider_id,
+                        {
+                            **worker_state,
+                            "last_contact_at": ProviderService._utcnow_iso(),
+                        },
+                    )
                 elif response.status == 404:
                     if persisted_state.get("status") and persisted_state.get("status") != "idle":
                         return persisted_state
@@ -1168,8 +1327,8 @@ async def get_reconciliation_status(
             return merged_state
         return {
             "provider_id": provider_id,
-            "status": "error",
-            "error": f"Cannot reach worker: {str(e)}"
+            "status": "idle",
+            "warning": f"Cannot reach worker: {str(e)}",
         }
 
 
@@ -1200,6 +1359,7 @@ async def push_reconciliation_event(
     # Map status to event type
     status_to_event = {
         "started": EventType.RECONCILIATION_STARTED,
+        "queued": EventType.RECONCILIATION_STARTED,
         "reconciling": EventType.RECONCILIATION_PROGRESS,
         "progress": EventType.RECONCILIATION_PROGRESS,
         "completed": EventType.RECONCILIATION_COMPLETED,
@@ -1211,17 +1371,19 @@ async def push_reconciliation_event(
     # Build event data
     event_data = {
         "provider_id": provider_id,
-        "status": request.status,
+        "status": ProviderService.normalize_reconciliation_status(request.status),
         "phase": request.phase,
         "stats": request.stats or {},
         "current_download": request.current_download,
         "active_downloads": request.active_downloads or [],
         "errors": request.errors or [],
-        "message": request.message
+        "message": request.message,
+        "last_contact_at": ProviderService._utcnow_iso(),
     }
 
     service = get_provider_service(session)
     persisted_state = await service.upsert_reconciliation_state(provider_id, event_data)
+    _invalidate_provider_runtime_caches(provider_id)
     
     # Emit event via EventBus (will be broadcast to WebSocket clients)
     await event_bus.publish(Event(type=event_type, data=event_data))
@@ -1262,6 +1424,9 @@ async def deploy_provider_app(
     result = await service.deploy_provider_app(provider_id, container_manager)
     if result.get("status") == "already_running":
         raise HTTPException(status_code=409, detail=result.get("message", "Deployment already running"))
+    _invalidate_provider_runtime_caches(provider_id)
+    if "deploy_state" in result and "deploy" not in result:
+        result["deploy"] = result["deploy_state"]
     return result
 
 
@@ -1288,11 +1453,25 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
     # Clean up orphaned statuses
     model_repo = ModelRepositoryV2(session)
     result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
-    
+    stale_reset_count = model_repo.reset_stale_downloading_statuses(
+        stale_before=datetime.utcnow() - timedelta(minutes=120),
+        provider_names=active_provider_ids,
+    )
+    _invalidate_provider_runtime_caches()
+
     return {
         "status": "success",
-        "message": f"Cleaned up {result['deleted_count']} orphaned status entries",
+        "message": f"Cleaned up {result['deleted_count']} orphaned status entries and reset {stale_reset_count} stale downloads",
         "deleted_count": result["deleted_count"],
         "orphaned_providers": result["orphaned_providers"],
-        "active_providers": active_provider_ids
+        "active_providers": active_provider_ids,
+        "orphaned_statuses_removed": result["deleted_count"],
+        "stale_downloading_reset": stale_reset_count,
+        "affected_provider_ids": sorted(set(active_provider_ids + result["orphaned_providers"])),
     }
+
+
+@router.post("/state/cleanup")
+async def cleanup_provider_state(session: Session = Depends(get_session)):
+    """Explicit maintenance action for provider state hygiene."""
+    return await cleanup_orphaned_provider_statuses(session)

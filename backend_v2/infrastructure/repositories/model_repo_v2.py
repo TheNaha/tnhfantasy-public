@@ -669,12 +669,16 @@ class ModelRepositoryV2:
             if not existing.provider_name:
                 existing.provider_name = provider_name
             existing.status = status
+            if status == "downloading":
+                existing.queued_at = datetime.utcnow()
             if storage_path:
                 existing.storage_path = storage_path
             if size_bytes:
                 existing.size_bytes = size_bytes
-            if error_message:
+            if error_message is not None:
                 existing.error_message = error_message
+            elif status != "failed":
+                existing.error_message = None
             if status == "ready":
                 existing.downloaded_at = datetime.utcnow()
             elif status == "failed":

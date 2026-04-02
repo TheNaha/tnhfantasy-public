@@ -153,6 +153,10 @@ class TestProvidersRouteCleanup:
         response = client.post("/api/providers/cleanup-orphaned-statuses")
         assert response.status_code in (200, 422)
 
+    def test_cleanup_provider_state_alias(self, client):
+        response = client.post("/api/providers/state/cleanup")
+        assert response.status_code in (200, 422)
+
 
 class TestProvidersRouteReconcile:
     def test_reconcile_provider_not_found(self, client):
@@ -283,8 +287,10 @@ class TestProvidersRouteReconcile:
         data = response.json()
         assert data["provider_id"] == "status-card-provider"
         assert data["sync"]["total_models"] == 3
+        assert data["model_sync"]["total_models"] == 3
         assert data["storage"]["total"] == 2
         assert data["reconciliation"]["status"] in {"idle", "reconciling", "completed", "failed"}
+        assert "diagnostics" in data
 
     def test_get_provider_status_cards_batch_route(self, client):
         provider_ids = ["status-cards-a", "status-cards-b"]
@@ -329,7 +335,9 @@ class TestProvidersRouteReconcile:
             card = data["status_cards"][provider_id]
             assert card["provider_id"] == provider_id
             assert "sync" in card
+            assert "model_sync" in card
             assert "storage" in card
+            assert "diagnostics" in card
 
     def test_setup_provider_not_found(self, client):
         response = client.post(
