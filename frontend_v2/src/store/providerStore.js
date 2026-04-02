@@ -30,6 +30,7 @@ export const useProviderStore = create((set, get) => ({
     // Connection state
     isConnected: false,
     _wsInitialized: false,
+    _connectPromise: null,
     _unsubscribers: [],
     
     // Loading states
@@ -70,44 +71,57 @@ export const useProviderStore = create((set, get) => ({
 
     // Initialize WebSocket connection (call at app startup)
     connect: async () => {
-        const { _wsInitialized } = get();
+        const { _wsInitialized, _connectPromise } = get();
         if (_wsInitialized) return;
+        if (_connectPromise) return _connectPromise;
 
-        try {
-            await ws.connect();
-            await ws.subscribe('provider');
+        let connectPromise;
+        connectPromise = (async () => {
+            try {
+                await ws.connect();
+                await ws.subscribe('provider');
 
-            // Subscribe to provider events
-            const unsubContainerStatus = ws.on(
-                ws.EventTypes.PROVIDER_CONTAINER_STATUS,
-                get()._processContainerStatus
-            );
-            const unsubStats = ws.on(
-                ws.EventTypes.PROVIDER_STATS_UPDATE,
-                get()._processProviderStats
-            );
+                // Subscribe to provider events
+                const unsubContainerStatus = ws.on(
+                    ws.EventTypes.PROVIDER_CONTAINER_STATUS,
+                    get()._processContainerStatus
+                );
+                const unsubStats = ws.on(
+                    ws.EventTypes.PROVIDER_STATS_UPDATE,
+                    get()._processProviderStats
+                );
 
-            set({
-                _wsInitialized: true,
-                _unsubscribers: [unsubContainerStatus, unsubStats]
-            });
+                set({
+                    _wsInitialized: true,
+                    _unsubscribers: [unsubContainerStatus, unsubStats]
+                });
 
-            // Initial fetch
-            get().fetchProviders();
-            get().fetchContainerStatuses();
-            get().fetchLoadBalancerInfo();
+                // Initial fetch
+                get().fetchProviders();
+                get().fetchContainerStatuses();
+                get().fetchLoadBalancerInfo();
 
-            console.log('[ProviderStore] WebSocket connected');
-        } catch (error) {
-            console.error('[ProviderStore] WebSocket connection failed:', error);
-        }
+                console.log('[ProviderStore] WebSocket connected');
+            } catch (error) {
+                console.error('[ProviderStore] WebSocket connection failed:', error);
+            } finally {
+                set((state) => (
+                    state._connectPromise === connectPromise
+                        ? { _connectPromise: null }
+                        : {}
+                ));
+            }
+        })();
+
+        set({ _connectPromise: connectPromise });
+        return connectPromise;
     },
 
     disconnect: () => {
         const { _unsubscribers } = get();
         _unsubscribers.forEach(unsub => unsub && unsub());
         ws.unsubscribe('provider');
-        set({ _wsInitialized: false, _unsubscribers: [] });
+        set({ _wsInitialized: false, _connectPromise: null, _unsubscribers: [] });
     },
 
     // API methods

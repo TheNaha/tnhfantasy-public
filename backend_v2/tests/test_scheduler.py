@@ -1,6 +1,7 @@
 """Tests for infrastructure/scheduler.py"""
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
+from datetime import datetime, timedelta
 import infrastructure.scheduler as sched_module
 from infrastructure.scheduler import (
     get_scheduler,
@@ -104,6 +105,32 @@ class TestAddIntervalJob:
         scheduler = get_scheduler()
         assert scheduler.get_job("job-1") is not None
         assert scheduler.get_job("job-2") is not None
+
+    async def test_start_immediately_false_delays_first_run(self):
+        start_scheduler()
+
+        async def dummy():
+            pass
+
+        add_interval_job(dummy, interval_seconds=60, job_id="delayed-job", start_immediately=False)
+        job = get_scheduler().get_job("delayed-job")
+
+        assert job is not None
+        now = datetime.now(job.next_run_time.tzinfo)
+        assert job.next_run_time >= now + timedelta(seconds=55)
+
+    async def test_start_immediately_true_runs_now(self):
+        start_scheduler()
+
+        async def dummy():
+            pass
+
+        add_interval_job(dummy, interval_seconds=60, job_id="immediate-job", start_immediately=True)
+        job = get_scheduler().get_job("immediate-job")
+
+        assert job is not None
+        now = datetime.now(job.next_run_time.tzinfo)
+        assert job.next_run_time <= now + timedelta(seconds=5)
 
 
 class TestAddCronJob:

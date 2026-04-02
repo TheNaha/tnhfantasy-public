@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Loader2, Download, Globe } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
@@ -14,6 +14,7 @@ export default function DiscoverTab() {
     const [importing, setImporting] = useState(false);
     const [importedModel, setImportedModel] = useState(null);
     const [source, setSource] = useState("civitai");
+    const [installedInfoByModelId, setInstalledInfoByModelId] = useState({});
 
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -21,6 +22,7 @@ export default function DiscoverTab() {
 
         setLoading(true);
         setImportedModel(null);
+        setInstalledInfoByModelId({});
         try {
             const endpoint = source === 'civitai' ? '/api/v2/models/external/civitai' : '/api/v2/models/external/huggingface';
             const data = await api.get(`${endpoint}?query=${encodeURIComponent(query)}&limit=20`);
@@ -51,6 +53,42 @@ export default function DiscoverTab() {
         setImportedModel(model);
         setResults([]);
     };
+
+    useEffect(() => {
+        if (source !== 'civitai') {
+            setInstalledInfoByModelId({});
+            return;
+        }
+
+        const civitaiModelIds = results
+            .map((model) => model.id)
+            .filter((id) => Number.isInteger(id));
+
+        if (civitaiModelIds.length === 0) {
+            setInstalledInfoByModelId({});
+            return;
+        }
+
+        let cancelled = false;
+
+        api.post('/api/v2/models/check-installed/batch', {
+            civitai_model_ids: civitaiModelIds,
+        })
+            .then((data) => {
+                if (!cancelled) {
+                    setInstalledInfoByModelId(data.models || {});
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setInstalledInfoByModelId({});
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [results, source]);
 
     return (
         <div className="space-y-6">
@@ -118,7 +156,13 @@ export default function DiscoverTab() {
             ) : results.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {results.map(model => (
-                        <ModelCard key={model.id} model={model} onSelect={handleModelSelect} source={source} />
+                        <ModelCard
+                            key={model.id}
+                            model={model}
+                            onSelect={handleModelSelect}
+                            source={source}
+                            installedInfo={installedInfoByModelId[String(model.id)] || null}
+                        />
                     ))}
                 </div>
             ) : (

@@ -86,14 +86,9 @@ const queryClient = new QueryClient({
     },
 });
 
+let hasRequestedProviderWake = false;
+
 function App() {
-    const connectJobs = useJobStore((state) => state.connect);
-    const disconnectJobs = useJobStore((state) => state.disconnect);
-    const fetchJobs = useJobStore((state) => state.fetchJobs);
-    const setupBrowserLifecycle = useJobStore((state) => state.setupBrowserLifecycle);
-    const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
-    const connectReconciliation = useReconciliationStore((state) => state.connect);
-    const connectProviders = useProviderStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
 
     // Initialize dynamic viewport height for iOS Safari
@@ -103,33 +98,24 @@ function App() {
     // Initialize global job notifications (toasts for completion, failures, etc.)
     useJobNotifications();
 
-    // Initialize all WebSocket connections on app startup
-    // This ensures real-time updates work regardless of which page the user lands on
+    // Initialize all global stores on app startup.
+    // No cleanup on unmount to avoid StrictMode connect/disconnect churn in development.
     useEffect(() => {
-        // Connect all global stores
-        connectJobs();
-        setupBrowserLifecycle();
-        connectReconciliation();
-        connectProviders();
-        
-        // Fetch initial data
-        fetchJobs();
+        const jobStore = useJobStore.getState();
+        jobStore.connect();
+        jobStore.setupBrowserLifecycle();
+        jobStore.fetchJobs();
 
-        return () => {
-            teardownBrowserLifecycle();
-            disconnectJobs();
-        };
-    }, [
-        connectJobs,
-        connectReconciliation,
-        connectProviders,
-        disconnectJobs,
-        fetchJobs,
-        setupBrowserLifecycle,
-        teardownBrowserLifecycle,
-    ]);
+        useReconciliationStore.getState().connect();
+        useProviderStore.getState().connect();
+    }, []);
 
     useEffect(() => {
+        if (hasRequestedProviderWake) {
+            return;
+        }
+        hasRequestedProviderWake = true;
+
         api.post('/api/providers/wake').catch((error) => {
             console.warn('Failed to warm providers:', error);
         });

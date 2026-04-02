@@ -38,6 +38,7 @@ export const useJobStore = create((set, get) => ({
     isConnected: false,
     connectionError: null,
     _wsInitialized: false,
+    _connectPromise: null,
     _unsubscribers: [],
     _browserLifecycleInitialized: false,
 
@@ -135,69 +136,85 @@ export const useJobStore = create((set, get) => ({
 
     // Initialize WebSocket connection
     connect: async () => {
-        const { _wsInitialized, _unsubscribers } = get();
+        const { _wsInitialized, _connectPromise } = get();
 
         // Only initialize once
         if (_wsInitialized) {
             return;
         }
 
-        try {
-            // Connect to WebSocket server
-            await ws.connect();
+        if (_connectPromise) {
+            return _connectPromise;
+        }
 
-            // Subscribe to job events
-            await ws.subscribe('job');
+        let connectPromise;
+        connectPromise = (async () => {
+            try {
+                // Connect to WebSocket server
+                await ws.connect();
 
-            // Listen for connection status changes
-            const unsubConnection = ws.on('connection', (data) => {
-                set({
-                    isConnected: data.connected,
-                    connectionError: data.error || null
+                // Subscribe to job events
+                await ws.subscribe('job');
+
+                // Listen for connection status changes
+                const unsubConnection = ws.on('connection', (data) => {
+                    set({
+                        isConnected: data.connected,
+                        connectionError: data.error || null
+                    });
+
+                    if (data.connected) {
+                        console.log('[JobStore] WebSocket connected');
+                    } else {
+                        console.log('[JobStore] WebSocket disconnected:', data.reason || data.error);
+                    }
                 });
 
-                if (data.connected) {
-                    console.log('[JobStore] WebSocket connected');
-                } else {
-                    console.log('[JobStore] WebSocket disconnected:', data.reason || data.error);
-                }
-            });
+                // Listen for job events
+                const eventTypes = [
+                    ws.EventTypes.JOB_CREATED,
+                    ws.EventTypes.JOB_UPDATED,
+                    ws.EventTypes.JOB_PROGRESS,
+                    ws.EventTypes.JOB_POST_PROCESSING,
+                    ws.EventTypes.JOB_COMPLETED,
+                    ws.EventTypes.JOB_FAILED,
+                    ws.EventTypes.JOB_CANCELLED,
+                ];
 
-            // Listen for job events
-            const eventTypes = [
-                ws.EventTypes.JOB_CREATED,
-                ws.EventTypes.JOB_UPDATED,
-                ws.EventTypes.JOB_PROGRESS,
-                ws.EventTypes.JOB_POST_PROCESSING,
-                ws.EventTypes.JOB_COMPLETED,
-                ws.EventTypes.JOB_FAILED,
-                ws.EventTypes.JOB_CANCELLED,
-            ];
+                const unsubscribers = eventTypes.map(eventType =>
+                    ws.on(eventType, (data) => {
+                        get()._processMessage(data);
+                    })
+                );
 
-            const unsubscribers = eventTypes.map(eventType =>
-                ws.on(eventType, (data) => {
-                    get()._processMessage(data);
-                })
-            );
+                // Track all unsubscribers for cleanup
+                set({
+                    _wsInitialized: true,
+                    isConnected: ws.getConnectionStatus(),
+                    _unsubscribers: [unsubConnection, ...unsubscribers]
+                });
 
-            // Track all unsubscribers for cleanup
-            set({
-                _wsInitialized: true,
-                isConnected: ws.getConnectionStatus(),
-                _unsubscribers: [unsubConnection, ...unsubscribers]
-            });
+            } catch (error) {
+                console.error('[JobStore] WebSocket connection failed:', error);
+                set({ connectionError: error.message });
+            } finally {
+                set((state) => (
+                    state._connectPromise === connectPromise
+                        ? { _connectPromise: null }
+                        : {}
+                ));
+            }
+        })();
 
-        } catch (error) {
-            console.error('[JobStore] WebSocket connection failed:', error);
-            set({ connectionError: error.message });
-        }
+        set({ _connectPromise: connectPromise });
+        return connectPromise;
     },
 
     // Force reconnect WebSocket (useful after page visibility change)
     reconnect: async () => {
         console.log('[JobStore] Force reconnecting WebSocket...');
         ws.disconnect();
-        set({ isConnected: false, _wsInitialized: false });
+        set({ isConnected: false, _wsInitialized: false, _connectPromise: null });
 
         // Small delay to ensure clean disconnect
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -213,7 +230,7 @@ export const useJobStore = create((set, get) => ({
 
         ws.unsubscribe('job');
         ws.disconnect();
-        set({ isConnected: false, _wsInitialized: false, _unsubscribers: [] });
+        set({ isConnected: false, _wsInitialized: false, _connectPromise: null, _unsubscribers: [] });
     },
 
     setupBrowserLifecycle: () => {

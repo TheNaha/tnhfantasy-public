@@ -51,6 +51,11 @@ class SetDefaultVersionRequest(BaseModel):
     version_id: int
 
 
+class CheckInstalledBatchRequest(BaseModel):
+    """Batch request for checking installed CivitAI models."""
+    civitai_model_ids: List[int]
+
+
 # ============================================================================
 # HELPERS
 # ============================================================================
@@ -146,6 +151,94 @@ async def check_installed_versions(
         "model_id": model.id,
         "model_name": model.name
     }
+
+
+@router.post("/check-installed/batch")
+async def check_installed_versions_batch(
+    request: CheckInstalledBatchRequest,
+    session: Session = Depends(get_session),
+):
+    """
+    Batch variant of check-installed to avoid one request per model card.
+
+    Returns:
+    {
+      "models": {
+        "<civitai_model_id>": {
+          "model_installed": bool,
+          "installed_versions": [int],
+          "model_id": int | null,
+          "model_name": str | null
+        }
+      }
+    }
+    """
+    from sqlmodel import select
+    from core.entities_v2 import ModelV2, ModelVersion
+
+    requested_ids = [mid for mid in request.civitai_model_ids if isinstance(mid, int)]
+    if not requested_ids:
+        return {"models": {}}
+
+    unique_ids = sorted(set(requested_ids))
+    models = session.exec(
+        select(ModelV2).where(ModelV2.civitai_model_id.in_(unique_ids))
+    ).all()
+
+    if not models:
+        return {
+            "models": {
+                str(model_id): {
+                    "model_installed": False,
+                    "installed_versions": [],
+                    "model_id": None,
+                    "model_name": None,
+                }
+                for model_id in unique_ids
+            }
+        }
+
+    model_ids = [model.id for model in models if model.id is not None]
+    versions = session.exec(
+        select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
+    ).all()
+
+    versions_by_model_id = {}
+    for version in versions:
+        versions_by_model_id.setdefault(version.model_id, []).append(version)
+
+    response = {}
+    models_by_civitai_id = {
+        model.civitai_model_id: model
+        for model in models
+        if model.civitai_model_id is not None
+    }
+
+    for civitai_model_id in unique_ids:
+        model = models_by_civitai_id.get(civitai_model_id)
+        if not model:
+            response[str(civitai_model_id)] = {
+                "model_installed": False,
+                "installed_versions": [],
+                "model_id": None,
+                "model_name": None,
+            }
+            continue
+
+        installed_version_ids = [
+            version.civitai_version_id
+            for version in versions_by_model_id.get(model.id, [])
+            if version.civitai_version_id is not None
+        ]
+
+        response[str(civitai_model_id)] = {
+            "model_installed": True,
+            "installed_versions": installed_version_ids,
+            "model_id": model.id,
+            "model_name": model.name,
+        }
+
+    return {"models": response}
 
 @router.post("")
 async def add_model(

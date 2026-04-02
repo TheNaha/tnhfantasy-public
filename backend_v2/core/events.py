@@ -168,19 +168,47 @@ class EventBus:
             topics: List of topics to subscribe to
             max_queue_size: Maximum events to buffer per topic
         """
-        queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
-        
+        topic_queues: Dict[str, asyncio.Queue] = {}
+
         async with self._lock:
             for topic in topics:
+                queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
+                topic_queues[topic] = queue
                 self._subscribers.setdefault(topic, []).append(queue)
+
+        pending_gets = {
+            asyncio.create_task(queue.get()): topic
+            for topic, queue in topic_queues.items()
+        }
         
         try:
             while True:
-                event = await queue.get()
-                yield event
+                done, _ = await asyncio.wait(
+                    pending_gets.keys(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for task in done:
+                    topic = pending_gets.pop(task, None)
+                    if topic is None:
+                        continue
+
+                    try:
+                        event = task.result()
+                    except asyncio.CancelledError:
+                        continue
+
+                    # Re-arm the queue read for the same topic before yielding.
+                    pending_gets[asyncio.create_task(topic_queues[topic].get())] = topic
+                    yield event
         finally:
+            for task in pending_gets:
+                task.cancel()
+            if pending_gets:
+                await asyncio.gather(*pending_gets.keys(), return_exceptions=True)
+
             async with self._lock:
-                for topic in topics:
+                for topic, queue in topic_queues.items():
                     if queue in self._subscribers.get(topic, []):
                         self._subscribers[topic].remove(queue)
     

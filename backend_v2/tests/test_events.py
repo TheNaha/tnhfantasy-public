@@ -201,6 +201,31 @@ class TestEventBus:
         assert EventType.JOB_CREATED in types
         assert EventType.DOWNLOAD_STARTED in types
 
+    @pytest.mark.asyncio
+    async def test_subscribe_multiple_prevents_cross_topic_starvation(self, bus):
+        """Heavy traffic on one topic should not block another topic in subscribe_multiple."""
+        received = []
+
+        async def multi_sub():
+            async for event in bus.subscribe_multiple(["job", "download"], max_queue_size=1):
+                received.append(event)
+                if len(received) >= 2:
+                    break
+                # Intentionally slow consumer to create backpressure.
+                await asyncio.sleep(0.05)
+
+        task = asyncio.create_task(multi_sub())
+        await asyncio.sleep(0.01)
+
+        for i in range(5):
+            await bus.publish(Event(type=EventType.JOB_CREATED, data={"job": {"id": f"job-{i}"}}))
+        await bus.publish(Event(type=EventType.DOWNLOAD_STARTED, data={"download": {"id": "dl-1"}}))
+
+        await asyncio.wait_for(task, timeout=1.0)
+
+        types = {event.type for event in received}
+        assert EventType.DOWNLOAD_STARTED in types
+
 
 class TestEmitConvenienceFunctions:
     """Tests for module-level emit convenience functions."""

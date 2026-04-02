@@ -323,6 +323,7 @@ export const EventTypes = {
     JOB_CREATED: 'job.created',
     JOB_UPDATED: 'job.updated',
     JOB_PROGRESS: 'job.progress',
+    JOB_POST_PROCESSING: 'job.post_processing',
     JOB_COMPLETED: 'job.completed',
     JOB_FAILED: 'job.failed',
     JOB_CANCELLED: 'job.cancelled',

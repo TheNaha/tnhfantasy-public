@@ -46,6 +46,10 @@ vi.mock('socket.io-client', () => ({
     }),
 }));
 
+vi.mock('./config', () => ({
+    getApiUrl: () => 'http://localhost:8002',
+}));
+
 
 describe('websocket listener registration', () => {
     beforeEach(async () => {
@@ -81,5 +85,10 @@ describe('websocket listener registration', () => {
         fakeSocket.trigger('connect');
 
         expect(fakeSocket.listeners(ws.EventTypes.JOB_COMPLETED)).toHaveLength(1);
+    });
+
+    it('defines a post-processing job event type constant', async () => {
+        const ws = await import('./websocket.js');
+        expect(ws.EventTypes.JOB_POST_PROCESSING).toBe('job.post_processing');
     });
 });
