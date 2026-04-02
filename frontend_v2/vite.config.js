@@ -1,6 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+function configureProxyErrorLogging(proxy, routeName) {
+  proxy.on('error', (err) => {
+    if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') {
+      return;
+    }
+    console.error(`[vite-proxy:${routeName}]`, err);
+  });
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -36,12 +45,14 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
+        configure: (proxy) => configureProxyErrorLogging(proxy, '/api'),
       },
       '/socket.io': {
         target: process.env.VITE_PROXY_TARGET || process.env.VITE_API_URL || 'http://localhost:8002',
         changeOrigin: true,
         secure: false,
         ws: true,
+        configure: (proxy) => configureProxyErrorLogging(proxy, '/socket.io'),
       }
     }
   },

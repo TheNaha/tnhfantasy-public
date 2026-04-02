@@ -85,6 +85,8 @@ const queryClient = new QueryClient({
     },
 });
 
+let hasRequestedProviderWake = false;
+
 function App() {
     const connectJobs = useJobStore((state) => state.connect);
     const disconnectJobs = useJobStore((state) => state.disconnect);
@@ -101,8 +103,8 @@ function App() {
     // Initialize global job notifications (toasts for completion, failures, etc.)
     useJobNotifications();
 
-    // Initialize all WebSocket connections on app startup
-    // This ensures real-time updates work regardless of which page the user lands on
+    // Initialize all global stores on app startup.
+    // No cleanup on unmount to avoid StrictMode connect/disconnect churn in development.
     useEffect(() => {
         // Connect all global stores
         connectJobs();
@@ -126,6 +128,11 @@ function App() {
     ]);
 
     useEffect(() => {
+        if (hasRequestedProviderWake) {
+            return;
+        }
+        hasRequestedProviderWake = true;
+
         api.post('/api/providers/wake').catch((error) => {
             console.warn('Failed to warm providers:', error);
         });

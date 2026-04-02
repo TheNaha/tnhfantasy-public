@@ -94,15 +94,15 @@ async def startup_application(process_job, ws_manager):
     await recover_pending_jobs()
     await recover_post_processing_jobs()
 
-    logger.info("startup_init", phase="scheduler")
-    start_scheduler()
-    schedule_vacuum(vacuum_database, interval_seconds=86400)
-
     logger.info("startup_init", phase="provider_images")
     build_provider_worker_images()
 
     logger.info("startup_init", phase="containers")
     autostart_provider_containers()
+
+    logger.info("startup_init", phase="scheduler")
+    start_scheduler()
+    schedule_vacuum(vacuum_database, interval_seconds=86400)
 
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(

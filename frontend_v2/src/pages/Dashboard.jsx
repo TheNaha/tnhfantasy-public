@@ -44,7 +44,11 @@ export default function Dashboard() {
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
     const updateSetting = useSettingsStore((state) => state.updateSetting);
     // Global State - now uses WebSocket for real-time updates
-    const { connect, jobs: activeJobs, clearJobs, deleteJob: storeDeleteJob, retryJob, cancelJob } = useJobStore();
+    const activeJobs = useJobStore((state) => state.jobs);
+    const clearJobs = useJobStore((state) => state.clearJobs);
+    const storeDeleteJob = useJobStore((state) => state.deleteJob);
+    const retryJob = useJobStore((state) => state.retryJob);
+    const cancelJob = useJobStore((state) => state.cancelJob);
     const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
 
     // Local State
@@ -175,20 +179,15 @@ export default function Dashboard() {
         rootMargin: '600px' // Load 2 screens ahead
     });
 
-    // Connect to WebSocket on mount and refetch gallery
-    // Note: We don't disconnect on unmount because WebSocket is a global singleton
-    // and React StrictMode double-renders would cause connection issues
+    // Refetch gallery on mount to ensure fresh data.
     const hasInitializedRef = useRef(false);
     useEffect(() => {
         if (hasInitializedRef.current) {
             return;
         }
         hasInitializedRef.current = true;
-        connect();
-        // Refetch gallery on mount to ensure fresh data
         void refetch();
-        // No cleanup - WebSocket connection persists across component lifecycle
-    }, [connect, refetch]);
+    }, [refetch]);
 
     // Auto-refresh gallery when any job completes
     // Use lastCompletedJob from store which gets set when job.completed WebSocket event fires

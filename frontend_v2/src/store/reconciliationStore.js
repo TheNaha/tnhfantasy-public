@@ -10,6 +10,7 @@ const useReconciliationStore = create((set, get) => ({
     // Track active reconciliations by provider ID
     activeReconciliations: {}, // { providerId: { status, phase, stats, etc } }
     _wsInitialized: false,
+    _connectPromise: null,
     _unsubscribers: [],
 
     // Start tracking a reconciliation
@@ -97,34 +98,47 @@ const useReconciliationStore = create((set, get) => ({
 
     // Initialize WebSocket connection (call at app startup)
     connect: async () => {
-        const { _wsInitialized } = get();
+        const { _wsInitialized, _connectPromise } = get();
         if (_wsInitialized) return;
+        if (_connectPromise) return _connectPromise;
 
-        try {
-            await ws.connect();
-            await ws.subscribe('reconciliation');
+        let connectPromise;
+        connectPromise = (async () => {
+            try {
+                await ws.connect();
+                await ws.subscribe('reconciliation');
 
-            // Subscribe to all reconciliation events
-            const unsubStarted = ws.on(ws.EventTypes.RECONCILIATION_STARTED, get()._processEvent);
-            const unsubProgress = ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, get()._processEvent);
-            const unsubCompleted = ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, get()._processEvent);
+                // Subscribe to all reconciliation events
+                const unsubStarted = ws.on(ws.EventTypes.RECONCILIATION_STARTED, get()._processEvent);
+                const unsubProgress = ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, get()._processEvent);
+                const unsubCompleted = ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, get()._processEvent);
 
-            set({
-                _wsInitialized: true,
-                _unsubscribers: [unsubStarted, unsubProgress, unsubCompleted]
-            });
+                set({
+                    _wsInitialized: true,
+                    _unsubscribers: [unsubStarted, unsubProgress, unsubCompleted]
+                });
 
-            console.log('[ReconciliationStore] WebSocket connected');
-        } catch (error) {
-            console.error('[ReconciliationStore] WebSocket connection failed:', error);
-        }
+                console.log('[ReconciliationStore] WebSocket connected');
+            } catch (error) {
+                console.error('[ReconciliationStore] WebSocket connection failed:', error);
+            } finally {
+                set((state) => (
+                    state._connectPromise === connectPromise
+                        ? { _connectPromise: null }
+                        : {}
+                ));
+            }
+        })();
+
+        set({ _connectPromise: connectPromise });
+        return connectPromise;
     },
 
     disconnect: () => {
         const { _unsubscribers } = get();
         _unsubscribers.forEach(unsub => unsub && unsub());
         ws.unsubscribe('reconciliation');
-        set({ _wsInitialized: false, _unsubscribers: [] });
+        set({ _wsInitialized: false, _connectPromise: null, _unsubscribers: [] });
     },
 
     // Get active count

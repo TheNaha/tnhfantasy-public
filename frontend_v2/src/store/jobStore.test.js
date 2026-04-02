@@ -31,6 +31,7 @@ vi.mock('../api', () => ({
 describe('useJobStore', () => {
     let useJobStore;
     let jobsApi;
+    let wsApi;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -68,6 +69,7 @@ describe('useJobStore', () => {
         useJobStore = mod.useJobStore;
         const apiMod = await import('../api');
         jobsApi = apiMod.jobsApi;
+        wsApi = await import('../api/websocket');
     });
 
     describe('initial state', () => {
@@ -406,6 +408,17 @@ describe('useJobStore', () => {
             await expect(createJobOptimistic({}, {}, generateFn)).rejects.toThrow();
             const { jobs } = useJobStore.getState();
             expect(jobs.some(j => j.isOptimistic)).toBe(false);
+        });
+    });
+
+    describe('connect', () => {
+        it('deduplicates concurrent connect calls', async () => {
+            const { connect } = useJobStore.getState();
+
+            await Promise.all([connect(), connect(), connect()]);
+
+            expect(wsApi.connect).toHaveBeenCalledTimes(1);
+            expect(wsApi.subscribe).toHaveBeenCalledTimes(1);
         });
     });
 });

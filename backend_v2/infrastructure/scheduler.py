@@ -2,7 +2,7 @@
 # Consolidates all periodic tasks (reconciliation, cleanup, etc.)
 
 from typing import Callable, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -75,7 +75,7 @@ def add_interval_job(
     
     trigger = IntervalTrigger(seconds=interval_seconds)
     
-    next_run = None if start_immediately else datetime.now()
+    next_run = datetime.now() if start_immediately else datetime.now() + timedelta(seconds=interval_seconds)
     
     scheduler.add_job(
         func,
@@ -227,6 +227,6 @@ def schedule_vacuum(func: Callable, interval_seconds: int = 86400):
         interval_seconds=interval_seconds,
         job_id="database_vacuum",
         start_immediately=False,
-        misfire_grace_time=300,
+        misfire_grace_time=3600,
     )
 

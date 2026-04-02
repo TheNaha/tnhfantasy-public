@@ -30,6 +30,7 @@ export const useDownloadStore = create((set, get) => ({
     downloads: [],
     isConnected: false,
     _wsInitialized: false,
+    _connectPromise: null,
     _unsubscribers: [],
 
     setDownloads: (downloads) => {
@@ -80,51 +81,64 @@ export const useDownloadStore = create((set, get) => ({
 
     // Initialize WebSocket connection
     connect: async () => {
-        const { _wsInitialized } = get();
+        const { _wsInitialized, _connectPromise } = get();
         if (_wsInitialized) return;
+        if (_connectPromise) return _connectPromise;
 
-        try {
-            await ws.connect();
-            await ws.subscribe('download');
+        let connectPromise;
+        connectPromise = (async () => {
+            try {
+                await ws.connect();
+                await ws.subscribe('download');
 
-            const unsubConnection = ws.on('connection', (data) => {
-                set({ isConnected: data.connected });
-                if (data.connected) {
-                    // Fetch fresh list on connect
-                    get().fetchDownloads();
-                }
-            });
+                const unsubConnection = ws.on('connection', (data) => {
+                    set({ isConnected: data.connected });
+                    if (data.connected) {
+                        // Fetch fresh list on connect
+                        get().fetchDownloads();
+                    }
+                });
 
-            const eventTypes = [
-                ws.EventTypes.DOWNLOAD_STARTED,
-                ws.EventTypes.DOWNLOAD_PROGRESS,
-                ws.EventTypes.DOWNLOAD_COMPLETED,
-                ws.EventTypes.DOWNLOAD_FAILED,
-            ];
+                const eventTypes = [
+                    ws.EventTypes.DOWNLOAD_STARTED,
+                    ws.EventTypes.DOWNLOAD_PROGRESS,
+                    ws.EventTypes.DOWNLOAD_COMPLETED,
+                    ws.EventTypes.DOWNLOAD_FAILED,
+                ];
 
-            const unsubscribers = eventTypes.map(type =>
-                ws.on(type, (data) => get()._processMessage(data))
-            );
+                const unsubscribers = eventTypes.map(type =>
+                    ws.on(type, (data) => get()._processMessage(data))
+                );
 
-            set({
-                _wsInitialized: true,
-                _unsubscribers: [unsubConnection, ...unsubscribers],
-                isConnected: ws.getConnectionStatus()
-            });
+                set({
+                    _wsInitialized: true,
+                    _unsubscribers: [unsubConnection, ...unsubscribers],
+                    isConnected: ws.getConnectionStatus()
+                });
 
-            // Initial fetch
-            get().fetchDownloads();
+                // Initial fetch
+                get().fetchDownloads();
 
-        } catch (error) {
-            console.error('[DownloadStore] WebSocket connection failed:', error);
-        }
+            } catch (error) {
+                console.error('[DownloadStore] WebSocket connection failed:', error);
+            } finally {
+                set((state) => (
+                    state._connectPromise === connectPromise
+                        ? { _connectPromise: null }
+                        : {}
+                ));
+            }
+        })();
+
+        set({ _connectPromise: connectPromise });
+        return connectPromise;
     },
 
     disconnect: () => {
         const { _unsubscribers } = get();
         _unsubscribers.forEach(u => u && u());
         ws.unsubscribe('download');
-        set({ isConnected: false, _wsInitialized: false, _unsubscribers: [] });
+        set({ isConnected: false, _wsInitialized: false, _connectPromise: null, _unsubscribers: [] });
     },
 
     fetchDownloads: async () => {

@@ -1,18 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Download, Image as ImageIcon, Check } from 'lucide-react';
-import { api } from '../../api';
 
-export default function ModelCard({ model, onSelect, source }) {
-    const [installedInfo, setInstalledInfo] = useState(null);
-
-    useEffect(() => {
-        // Check if model is already installed (CivitAI only)
-        if (source === 'civitai' && model.id) {
-            api.get(`/api/v2/models/check-installed/${model.id}`)
-                .then(data => setInstalledInfo(data))
-                .catch(() => setInstalledInfo(null));
-        }
-    }, [model.id, source]);
+export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
 
     const getPreviewImage = () => {
         if (source === 'civitai' && model.id) {
