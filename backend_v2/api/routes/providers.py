@@ -13,16 +13,19 @@
 from typing import Dict, Any, Optional, List
 import asyncio
 from datetime import datetime, timedelta
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session
 from pydantic import BaseModel
-import aiohttp
 
 from api.deps import get_session, get_provider_service, get_container_manager
+from core.events import Event, EventType, event_bus
 from services.provider_service import ProviderService
-from core.exceptions import NotFoundError, ValidationError
-from api.provider_runtime import resolve_provider_runtime
+from services.provider_lifecycle_service import ProviderLifecycleService
+from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
+from core.exceptions import NotFoundError, ProviderError, ValidationError
 from infrastructure.background_tasks import start_background_task
+from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from config import get_worker_backend_url
 
@@ -41,14 +44,21 @@ class ProviderRequest(BaseModel):
     enabled: bool = True
     priority: int = 1
     credentials: Dict[str, Any] = {}
+    runtime_config: Optional[Dict[str, Any]] = None
+    deploy_config: Optional[Dict[str, Any]] = None
+    # Legacy compatibility fields accepted on write only.
     config: Dict[str, Any] = {}
     container_config: Optional[Dict[str, Any]] = None
 
 
 class ProviderUpdateRequest(BaseModel):
+    type: Optional[str] = None
     enabled: Optional[bool] = None
     priority: Optional[int] = None
     credentials: Optional[Dict[str, Any]] = None
+    runtime_config: Optional[Dict[str, Any]] = None
+    deploy_config: Optional[Dict[str, Any]] = None
+    # Legacy compatibility fields accepted on write only.
     config: Optional[Dict[str, Any]] = None
     container_config: Optional[Dict[str, Any]] = None
 
@@ -229,6 +239,22 @@ from cachetools import TTLCache
 _container_status_cache = TTLCache(maxsize=1, ttl=10)
 
 
+def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> None:
+    """Clear route-level and provider-status caches after runtime changes."""
+    _container_status_cache.clear()
+    invalidate_provider_status_caches(provider_id)
+
+
+def _get_provider_lifecycle_service(session: Session) -> ProviderLifecycleService:
+    provider_service = get_provider_service(session)
+    return ProviderLifecycleService(
+        session,
+        provider_service=provider_service,
+        container_manager=get_container_manager(),
+        invalidate_caches=_invalidate_provider_runtime_caches,
+    )
+
+
 @router.get("/containers/status")
 async def get_all_container_statuses(session: Session = Depends(get_session)):
     """
@@ -292,294 +318,13 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
     return result
 
 
-# Cache for modal stats (30 second TTL to reduce Modal load)
-_modal_stats_cache = TTLCache(maxsize=10, ttl=30)
-
-
-def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> None:
-    """Clear cached runtime snapshots after provider lifecycle changes."""
-    _container_status_cache.clear()
-    if provider_id:
-        _modal_stats_cache.pop(f"modal_stats_{provider_id}", None)
-        return
-    _modal_stats_cache.clear()
-
-
-def _normalize_reconciliation_for_card(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Normalize reconciliation status values for card display consistency."""
-    normalized = dict(state or {})
-    status = ProviderService.normalize_reconciliation_status(normalized.get("status"))
-    normalized["status"] = status
-    if status in {"completed", "failed"} and not normalized.get("phase"):
-        normalized["phase"] = status
-    if status == "queued" and not normalized.get("phase"):
-        normalized["phase"] = "queued"
-    return normalized
-
-
-def _empty_storage_payload(provider_id: str, error: Optional[str] = None) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "provider_id": provider_id,
-        "total": 0,
-        "by_directory": {},
-    }
-    if error:
-        payload["error"] = error
-    return payload
-
-
-async def _fetch_provider_storage_stats(provider_id: str, provider: Any) -> Dict[str, Any]:
-    """Fetch provider storage stats from worker runtime with cache and safe fallbacks."""
-    cache_key = f"modal_stats_{provider_id}"
-    if cache_key in _modal_stats_cache:
-        return _modal_stats_cache[cache_key]
-
-    runtime = resolve_provider_runtime(provider)
-    if runtime.mode != "container_http":
-        return _empty_storage_payload(provider_id, "Stats are only available for container-backed providers")
-
-    container_manager = get_container_manager()
-    if not container_manager:
-        return _empty_storage_payload(provider_id, "Container manager not initialized")
-
-    try:
-        container = container_manager.client.containers.get(runtime.container_name or f"comfy-provider-{provider_id}")
-        if container.status != "running":
-            return _empty_storage_payload(provider_id, "Container not running")
-    except Exception:
-        return _empty_storage_payload(provider_id, "Container not found")
-
-    provider_type = provider.type if hasattr(provider, "type") else "modal"
-    if provider_type == "beam":
-        stats_endpoint = "/beam-stats"
-    elif provider_type == "modal":
-        stats_endpoint = "/modal-stats"
-    else:
-        stats_endpoint = "/provider-stats"
-
-    worker_url = f"{runtime.worker_url}{stats_endpoint}"
-
-    try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(
-                worker_url,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status != 200:
-                    return _empty_storage_payload(provider_id, f"HTTP {response.status}")
-
-                payload = await response.json()
-                result = {
-                    "provider_id": payload.get("provider_id") or provider_id,
-                    "total": payload.get("total", 0),
-                    "by_directory": payload.get("by_directory") or {},
-                }
-                if payload.get("error"):
-                    result["error"] = payload["error"]
-
-                _modal_stats_cache[cache_key] = result
-                return result
-    except Exception as e:
-        logger.error("modal_stats_fetch_failed", provider_id=provider_id, error=str(e))
-        return _empty_storage_payload(provider_id, str(e))
-
-
-async def _fetch_live_reconciliation_state(
-    provider_id: str,
-    provider: Any,
-    service: ProviderService,
-) -> Dict[str, Any]:
-    """Refresh reconciliation state from the worker when possible."""
-    persisted_state = await service.get_provider_reconciliation_state(provider_id)
-    runtime = resolve_provider_runtime(provider)
-
-    if runtime.mode != "container_http":
-        return _normalize_reconciliation_for_card(persisted_state)
-
-    try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(
-                f"{runtime.worker_url}/reconciliation-status",
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-                if response.status != 200:
-                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
-                        return _normalize_reconciliation_for_card(persisted_state)
-                    return _normalize_reconciliation_for_card({
-                        "provider_id": provider_id,
-                        "status": "idle",
-                        "warning": f"Worker returned HTTP {response.status} for reconciliation status",
-                    })
-
-                worker_state = await response.json()
-                merged_state = await service.upsert_reconciliation_state(
-                    provider_id,
-                    {
-                        **worker_state,
-                        "last_contact_at": ProviderService._utcnow_iso(),
-                    },
-                )
-                return _normalize_reconciliation_for_card(merged_state)
-    except aiohttp.ClientError as exc:
-        if persisted_state.get("status") and persisted_state.get("status") != "idle":
-            merged_state = await service.upsert_reconciliation_state(
-                provider_id,
-                {"warning": f"Worker unreachable: {str(exc)}"},
-            )
-            return _normalize_reconciliation_for_card(merged_state)
-        return _normalize_reconciliation_for_card({
-            "provider_id": provider_id,
-            "status": "idle",
-            "warning": f"Worker unreachable: {str(exc)}",
-        })
-
-
-def _build_provider_diagnostics(
-    *,
-    provider_id: str,
-    provider_info: Dict[str, Any],
-    runtime: Any,
-    storage_stats: Dict[str, Any],
-    reconciliation_state: Dict[str, Any],
-    deploy_state: Dict[str, Any],
-    model_sync: Dict[str, Any],
-) -> Dict[str, Any]:
-    warnings: List[str] = []
-    errors: List[str] = []
-
-    if storage_stats.get("error"):
-        warnings.append(f"Storage stats unavailable: {storage_stats['error']}")
-    if reconciliation_state.get("warning"):
-        warnings.append(reconciliation_state["warning"])
-    if reconciliation_state.get("error"):
-        errors.append(reconciliation_state["error"])
-    if reconciliation_state.get("status") == "failed" and reconciliation_state.get("message"):
-        errors.append(reconciliation_state["message"])
-    if deploy_state.get("status") == "failed" and deploy_state.get("message"):
-        errors.append(deploy_state["message"])
-    if model_sync.get("stats", {}).get("downloading", 0) > 0 and reconciliation_state.get("status") == "idle":
-        warnings.append("Database download state is active while reconciliation is idle")
-
-    updated_candidates = [
-        reconciliation_state.get("updated_at"),
-        reconciliation_state.get("last_contact_at"),
-        deploy_state.get("updated_at"),
-    ]
-
-    return {
-        "provider_id": provider_id,
-        "warnings": warnings,
-        "errors": errors,
-        "worker": {
-            "backend_url": get_worker_backend_url(),
-            "worker_url": runtime.worker_url,
-            "mode": runtime.mode,
-            "connected": runtime.connected,
-            "supports_setup": runtime.supports_setup,
-            "supports_reconciliation": runtime.supports_reconciliation,
-        },
-        "affected_provider_ids": [provider_id],
-        "updated_at": max((value for value in updated_candidates if value), default=None),
-        "provider_enabled": provider_info.get("enabled", True),
-    }
-
-
-async def _build_provider_status_card(
-    provider_id: str,
-    session: Session,
-    service: Optional[ProviderService] = None,
-    provider_payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Build canonical provider status payload used by provider cards."""
-    provider_service = service or get_provider_service(session)
-    provider = await provider_service.get_provider(provider_id)
-    provider_info = provider_payload or provider_service._provider_to_dict(provider)
-    runtime = resolve_provider_runtime(provider)
-
-    sync_status = await get_provider_sync_status(provider_id, session)
-    model_sync = {
-        "provider_id": provider_id,
-        "total_models": sync_status.get("total_models", 0),
-        "stats": sync_status.get("stats") or {},
-        "updated_at": ProviderService._utcnow_iso(),
-    }
-    storage_stats = await _fetch_provider_storage_stats(provider_id, provider)
-    reconciliation_state = await _fetch_live_reconciliation_state(provider_id, provider, provider_service)
-    deploy_state = await provider_service.get_provider_deploy_state(provider_id)
-    diagnostics = _build_provider_diagnostics(
-        provider_id=provider_id,
-        provider_info=provider_info,
-        runtime=runtime,
-        storage_stats=storage_stats,
-        reconciliation_state=reconciliation_state,
-        deploy_state=deploy_state,
-        model_sync=model_sync,
-    )
-
-    return {
-        "provider_id": provider_id,
-        "provider_type": provider_info.get("type"),
-        "runtime": {
-            **(provider_info.get("runtime") or {}),
-            "enabled": provider_info.get("enabled", True),
-            "backend_url": get_worker_backend_url(),
-            "worker_url": runtime.worker_url,
-            "capabilities": provider_info.get("capabilities") or {},
-        },
-        "model_sync": model_sync,
-        "sync": model_sync,
-        "storage": storage_stats,
-        "reconciliation": reconciliation_state,
-        "deploy": deploy_state,
-        "diagnostics": diagnostics,
-    }
-
-
 @router.get("/status-cards")
 async def get_provider_status_cards(session: Session = Depends(get_session)):
     """Return canonical provider status payloads for all configured providers."""
     service = get_provider_service(session)
     providers = await service.list_providers()
-    cards: Dict[str, Dict[str, Any]] = {}
-
-    for provider in providers:
-        provider_id = provider.get("id")
-        if not provider_id:
-            continue
-        try:
-            cards[provider_id] = await _build_provider_status_card(
-                provider_id,
-                session,
-                service=service,
-                provider_payload=provider,
-            )
-        except Exception as exc:
-            logger.warning("provider_status_card_failed", provider_id=provider_id, error=str(exc))
-            cards[provider_id] = {
-                "provider_id": provider_id,
-                "provider_type": provider.get("type"),
-                "runtime": provider.get("runtime") or {},
-                "model_sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
-                "sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
-                "storage": _empty_storage_payload(provider_id, "Failed to load storage stats"),
-                "reconciliation": _normalize_reconciliation_for_card(provider.get("reconciliation_state") or {}),
-                "deploy": provider.get("deploy_state") or {"status": "idle"},
-                "diagnostics": {
-                    "provider_id": provider_id,
-                    "warnings": ["Failed to build provider status card"],
-                    "errors": [],
-                    "worker": {
-                        "backend_url": get_worker_backend_url(),
-                        "worker_url": None,
-                        "mode": provider.get("runtime", {}).get("mode"),
-                        "connected": provider.get("runtime", {}).get("connected", False),
-                    },
-                    "affected_provider_ids": [provider_id],
-                    "updated_at": None,
-                    "provider_enabled": provider.get("enabled", True),
-                },
-                "error": "Failed to build provider status card",
-            }
+    status_service = ProviderStatusService(session, provider_service=service)
+    cards = await status_service.build_provider_status_cards(providers)
 
     return {
         "status_cards": cards,
@@ -591,7 +336,8 @@ async def get_provider_status_cards(session: Session = Depends(get_session)):
 async def get_provider_status_card(provider_id: str, session: Session = Depends(get_session)):
     """Return canonical provider status payload for a single provider."""
     service = get_provider_service(session)
-    return await _build_provider_status_card(provider_id, session, service=service)
+    status_service = ProviderStatusService(session, provider_service=service)
+    return await status_service.build_provider_status_card(provider_id)
 
 
 @router.get("/{provider_id}/modal-stats")
@@ -604,63 +350,15 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
     # Get provider to verify it exists
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    return await _fetch_provider_storage_stats(provider_id, provider)
+    status_service = ProviderStatusService(session, provider_service=service)
+    return await status_service.get_provider_storage_stats(provider_id, provider)
 
 
 @router.get("/{provider_id}/sync-status")
 async def get_provider_sync_status(provider_id: str, session: Session = Depends(get_session)):
     """Return V2-backed sync counts for a provider."""
-    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
-    from services.model_service_v2 import ModelServiceV2
-
-    service = ModelServiceV2(session)
-    stmt = select(ModelFile, ModelVersion, ModelV2).join(
-        ModelVersion, ModelFile.version_id == ModelVersion.id
-    ).join(
-        ModelV2, ModelVersion.model_id == ModelV2.id
-    ).where(
-        ModelVersion.is_enabled == True
-    )
-
-    rows = session.exec(stmt).all()
-    status_map = service.repo.get_provider_statuses_for_files(
-        [file.id for file, _version, _model in rows],
-        provider_id,
-    )
-
-    stats = {
-        "installed": 0,
-        "pending": 0,
-        "downloading": 0,
-        "failed": 0,
-    }
-    models = []
-
-    for file, _version, model in rows:
-        provider_status = status_map.get(file.id)
-        status = provider_status.status if provider_status else "pending"
-        normalized_status = "installed" if status == "ready" else status
-        stats[normalized_status] = stats.get(normalized_status, 0) + 1
-        models.append({
-            "file_id": file.id,
-            "model_id": model.id,
-            "name": file.storage_filename,
-            "directory": f"models/{model.directory}",
-            "provider_status": {
-                "status": normalized_status,
-                "storage_path": provider_status.storage_path if provider_status else None,
-                "size_bytes": provider_status.size_bytes if provider_status else None,
-                "error_message": provider_status.error_message if provider_status else None,
-            },
-            "size": (file.size_kb or 0) * 1024,
-        })
-
-    return {
-        "provider": provider_id,
-        "total_models": len(models),
-        "stats": stats,
-        "models": models,
-    }
+    status_service = ProviderStatusService(session)
+    return await status_service.get_provider_sync_status(provider_id)
 
 
 @router.get("/{provider_id}/models")
@@ -768,27 +466,29 @@ async def add_custom_model_to_providers(
 async def wake_providers(session: Session = Depends(get_session)):
     """Ping enabled provider containers to wake them up from cold start."""
     service = get_provider_service(session)
-    providers = await service.list_providers()
-    
-    active_providers = [p for p in providers if p.get("enabled", True) and p.get("container_config")]
+    providers = service.get_enabled_providers()
+    active_providers = [provider for provider in providers if provider.container_config]
     
     if not active_providers:
         return {"status": "success", "message": "No active containerized providers to wake"}
 
     async def ping_containers():
-        import asyncio
-        import aiohttp
-        async with aiohttp.ClientSession() as http:
-            tasks = []
-            for p in active_providers:
-                p_id = p.get("id")
-                # ping the root or health endpoint
-                worker_url = f"http://comfy-provider-{p_id}:8000/health"
-                tasks.append(
-                    http.get(worker_url, timeout=aiohttp.ClientTimeout(total=5))
+        http_client = get_http_client()
+
+        async def ping_worker(provider_id: str):
+            try:
+                await http_client.get(
+                    f"http://comfy-provider-{provider_id}:8000/health",
+                    timeout=5.0,
                 )
-            # Fire and forget; we don't care if they timeout during cold start
-            await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception:
+                return None
+            return None
+
+        await asyncio.gather(
+            *(ping_worker(provider.id) for provider in active_providers),
+            return_exceptions=True,
+        )
 
     start_background_task(ping_containers(), task_name="wake_provider_containers")
     
@@ -799,7 +499,10 @@ async def wake_providers(session: Session = Depends(get_session)):
 async def list_providers(session: Session = Depends(get_session)):
     """List all providers."""
     service = get_provider_service(session)
-    return await service.list_providers()
+    providers = await service.list_providers()
+    status_service = ProviderStatusService(session, provider_service=service)
+    records = await status_service.build_provider_records(providers)
+    return {"providers": records, "count": len(records)}
 
 
 @router.post("")
@@ -810,7 +513,8 @@ async def create_provider(
     """Create a new provider."""
     service = get_provider_service(session)
     provider = await service.create_provider(request.model_dump())
-    return service._provider_to_dict(provider)
+    status_service = ProviderStatusService(session, provider_service=service)
+    return await status_service.build_provider_record(provider.id, provider=provider)
 
 
 @router.get("/{provider_id}")
@@ -820,8 +524,8 @@ async def get_provider(
 ):
     """Get a provider by ID."""
     service = get_provider_service(session)
-    provider = await service.get_provider(provider_id)
-    return service._provider_to_dict(provider)
+    status_service = ProviderStatusService(session, provider_service=service)
+    return await status_service.build_provider_record(provider_id)
 
 
 @router.put("/{provider_id}")
@@ -834,7 +538,8 @@ async def update_provider(
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     provider = await service.update_provider(provider_id, updates)
-    return service._provider_to_dict(provider)
+    status_service = ProviderStatusService(session, provider_service=service)
+    return await status_service.build_provider_record(provider.id, provider=provider)
 
 
 # PATCH alias for frontend compatibility
@@ -856,7 +561,8 @@ async def delete_provider(
     """Delete a provider."""
     service = get_provider_service(session)
     await service.delete_provider(provider_id)
-    _invalidate_provider_runtime_caches(provider_id)
+    _container_status_cache.clear()
+    invalidate_provider_status_caches(provider_id)
     return {"status": "success"}
 
 
@@ -870,193 +576,23 @@ async def start_provider_container(
     session: Session = Depends(get_session)
 ):
     """Start a provider's container."""
-    container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
-    service = get_provider_service(session)
-    providers = await service.list_providers()
-    provider_config = next((p for p in providers if p["id"] == provider_id), None)
-    
-    if not provider_config:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
-    
-    container_config = provider_config.get("container_config")
-    if not container_config:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Provider '{provider_id}' is not configured for containerized mode"
-        )
-    
-    # Prepare environment variables from credentials
-    credentials = provider_config.get("credentials", {})
-    config = provider_config.get("config", {})
-    provider_type = provider_config.get("type", "modal")
-    
-    env_vars = {}
-    
-    # =========================================================
-    # Worker Settings (applies to both Modal and Beam)
-    # =========================================================
-    worker_cfg = config.get("worker", {})
-    if "max_concurrent_downloads" in worker_cfg:
-        env_vars["MAX_CONCURRENT_DOWNLOADS"] = str(worker_cfg["max_concurrent_downloads"])
-    if "reconciliation_interval_hours" in worker_cfg:
-        env_vars["RECONCILIATION_INTERVAL_SECONDS"] = str(int(worker_cfg["reconciliation_interval_hours"]) * 3600)
-    if "validation_timeout_seconds" in worker_cfg:
-        env_vars["VALIDATION_TIMEOUT_SECONDS"] = str(worker_cfg["validation_timeout_seconds"])
-    
-    # API tokens for model downloads
-    if "hf_token" in credentials:
-        env_vars["HF_TOKEN"] = credentials["hf_token"]
-    if "civitai_token" in credentials:
-        env_vars["CIVITAI_TOKEN"] = credentials["civitai_token"]
-    
-    # Per-function settings
-    funcs = config.get("functions", {})
-    
-    if provider_type == "modal":
-        # Modal credentials
-        if "token_id" in credentials:
-            env_vars["MODAL_TOKEN_ID"] = credentials["token_id"]
-        if "token_secret" in credentials:
-            env_vars["MODAL_TOKEN_SECRET"] = credentials["token_secret"]
-        if "username" in credentials:
-            env_vars["MODAL_USERNAME"] = credentials["username"]
-        if "app_name" in config:
-            env_vars["MODAL_APP_NAME"] = config["app_name"]
-        # Note: enable_memory_snapshot is passed per-request via job payload,
-        # so no env var needed - setting takes effect immediately
-        
-        # ComfyUI GPU function settings (for modal deploy)
-        comfyui = funcs.get("comfyui", {})
-        if "gpu_type" in comfyui:
-            env_vars["MODAL_GPU_TYPE"] = comfyui["gpu_type"]
-        if "cpu" in comfyui:
-            env_vars["MODAL_GPU_CPU"] = str(comfyui["cpu"])
-        if "timeout_seconds" in comfyui:
-            env_vars["MODAL_GPU_TIMEOUT"] = str(comfyui["timeout_seconds"])
-        if "max_containers" in comfyui:
-            env_vars["MODAL_GPU_MAX_CONTAINERS"] = str(comfyui["max_containers"])
-        if "scaledown_window_seconds" in comfyui:
-            env_vars["MODAL_GPU_SCALEDOWN"] = str(comfyui["scaledown_window_seconds"])
-        
-        # Download function settings
-        download = funcs.get("download", {})
-        if "timeout_seconds" in download:
-            env_vars["MODAL_DOWNLOAD_TIMEOUT"] = str(download["timeout_seconds"])
-        if "max_containers" in download:
-            env_vars["MODAL_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
-        
-        # Storage function settings
-        storage = funcs.get("storage", {})
-        if "timeout_seconds" in storage:
-            env_vars["MODAL_STORAGE_TIMEOUT"] = str(storage["timeout_seconds"])
-        if "max_containers" in storage:
-            env_vars["MODAL_STORAGE_MAX_CONTAINERS"] = str(storage["max_containers"])
-        
-    elif provider_type == "beam":
-        # Beam credentials
-        if "api_key" in credentials:
-            env_vars["BEAM_API_KEY"] = credentials["api_key"]
-        if "workspace_id" in credentials:
-            env_vars["BEAM_WORKSPACE_ID"] = credentials["workspace_id"]
-        # Beam endpoint URLs from config
-        if "gpu_url" in config:
-            env_vars["BEAM_GPU_URL"] = config["gpu_url"]
-        if "storage_url" in config:
-            env_vars["BEAM_STORAGE_URL"] = config["storage_url"]
-        if "download_url" in config:
-            env_vars["BEAM_DOWNLOAD_URL"] = config["download_url"]
-        if "gpu_type" in config:
-            env_vars["BEAM_GPU_TYPE"] = config["gpu_type"]
-        
-        # GPU function settings (for beam deploy)
-        gpu_func = funcs.get("comfyui", {})
-        if "gpu_type" in gpu_func:
-            env_vars["BEAM_GPU_TYPE"] = gpu_func["gpu_type"]
-        if "cpu" in gpu_func:
-            env_vars["BEAM_GPU_CPU"] = str(gpu_func["cpu"])
-        if "memory" in gpu_func:
-            env_vars["BEAM_GPU_MEMORY"] = gpu_func["memory"]
-        if "timeout_seconds" in gpu_func:
-            env_vars["BEAM_GPU_TIMEOUT"] = str(gpu_func["timeout_seconds"])
-        if "keep_warm_seconds" in gpu_func:
-            env_vars["BEAM_GPU_KEEP_WARM"] = str(gpu_func["keep_warm_seconds"])
-        if "concurrent_requests" in gpu_func:
-            env_vars["BEAM_GPU_CONCURRENT"] = str(gpu_func["concurrent_requests"])
-        
-        # Download function settings (separate deployment)
-        download = funcs.get("download", {})
-        if "cpu" in download:
-            env_vars["BEAM_DOWNLOAD_CPU"] = str(download["cpu"])
-        if "memory" in download:
-            env_vars["BEAM_DOWNLOAD_MEMORY"] = download["memory"]
-        if "timeout_seconds" in download:
-            env_vars["BEAM_DOWNLOAD_TIMEOUT"] = str(download["timeout_seconds"])
-        if "max_containers" in download:
-            env_vars["BEAM_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
-        
-        # Storage function settings
-        storage = funcs.get("storage", {})
-        if "cpu" in storage:
-            env_vars["BEAM_STORAGE_CPU"] = str(storage["cpu"])
-        if "memory" in storage:
-            env_vars["BEAM_STORAGE_MEMORY"] = storage["memory"]
-        if "timeout_seconds" in storage:
-            env_vars["BEAM_STORAGE_TIMEOUT"] = str(storage["timeout_seconds"])
-        if "concurrent_requests" in storage:
-            env_vars["BEAM_STORAGE_CONCURRENT"] = str(storage["concurrent_requests"])
-
-    
-    # Start container
-    container = container_manager.start_container(
-        provider_id=provider_id,
-        provider_type=provider_type,
-        port=container_config["port"],
-        env_vars=env_vars
-    )
-
-    # Emit status event
-    from core.events import event_bus, Event, EventType
-    await event_bus.publish(Event(
-        type=EventType.PROVIDER_CONTAINER_STATUS,
-        data={
-            "provider_id": provider_id,
-            "status": "running"
-        }
-    ))
-    
-    return {
-        "status": "success",
-        "message": f"Container for provider '{provider_id}' started",
-        "container_id": container.short_id
-    }
+    lifecycle = _get_provider_lifecycle_service(session)
+    try:
+        return await lifecycle.start_container(provider_id)
+    except ProviderError as exc:
+        detail = str(exc)
+        status_code = 400 if "not configured for containerized mode" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/{provider_id}/container/stop")
-async def stop_provider_container(provider_id: str):
+async def stop_provider_container(provider_id: str, session: Session = Depends(get_session)):
     """Stop a provider's container."""
-    container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
-    container_manager.stop_container(provider_id)
-
-    # Emit status event
-    from core.events import event_bus, Event, EventType
-    await event_bus.publish(Event(
-        type=EventType.PROVIDER_CONTAINER_STATUS,
-        data={
-            "provider_id": provider_id,
-            "status": "stopped"
-        }
-    ))
-
-    return {
-        "status": "success",
-        "message": f"Container for provider '{provider_id}' stopped"
-    }
+    lifecycle = _get_provider_lifecycle_service(session)
+    try:
+        return await lifecycle.stop_container(provider_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{provider_id}/container/restart")
@@ -1065,87 +601,33 @@ async def restart_provider_container(
     session: Session = Depends(get_session)
 ):
     """Restart a provider's container."""
-    await stop_provider_container(provider_id)
-    result = await start_provider_container(provider_id, session)
-
-    # Emit status event (already emitted by start, but good to be explicit if needed)
-    # The start call above will emit 'running'.
-    
-    return {
-        "status": "success",
-        "message": f"Container for provider '{provider_id}' restarted"
-    }
+    lifecycle = _get_provider_lifecycle_service(session)
+    try:
+        return await lifecycle.restart_container(provider_id)
+    except ProviderError as exc:
+        detail = str(exc)
+        status_code = 400 if "not configured for containerized mode" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/{provider_id}/container/logs")
-async def get_provider_container_logs(provider_id: str, tail: int = 100):
+async def get_provider_container_logs(provider_id: str, tail: int = 100, session: Session = Depends(get_session)):
     """Get logs from a provider's container."""
-    container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
-    logs = container_manager.get_container_logs(provider_id, tail=tail)
-    return {
-        "provider_id": provider_id,
-        "logs": logs
-    }
+    lifecycle = _get_provider_lifecycle_service(session)
+    try:
+        return lifecycle.get_container_logs(provider_id, tail=tail)
+    except ProviderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{provider_id}/container/status")
-async def get_provider_container_status(provider_id: str):
+async def get_provider_container_status(provider_id: str, session: Session = Depends(get_session)):
     """Get status of a provider's container."""
-    container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
-    container_name = f"comfy-provider-{provider_id}"
-    
-    # Query Docker/Podman directly instead of relying on in-memory dict
+    lifecycle = _get_provider_lifecycle_service(session)
     try:
-        container = container_manager.client.containers.get(container_name)
-    except Exception:
-        # Container doesn't exist
-        return {
-            "provider_id": provider_id,
-            "status": "stopped",
-            "running": False
-        }
-    
-    # Reload container info
-    container.reload()
-    
-    # Check health via container's health status or HTTP probe
-    healthy = False
-    try:
-        # First check container's own health status if available
-        health_status = container.attrs.get('State', {}).get('Health', {}).get('Status')
-        if health_status:
-            healthy = health_status == 'healthy'
-        else:
-            # Fallback to HTTP health check
-            import requests
-            port = container.ports.get('8000/tcp')
-            if port:
-                host_port = port[0]['HostPort']
-                response = requests.get(f"http://localhost:{host_port}/health", timeout=2)
-                healthy = response.status_code == 200
-    except:
-        pass
-    
-    # Also update the in-memory dict so future calls are faster
-    if container.status == "running":
-        container_manager.running_containers[provider_id] = container
-    elif provider_id in container_manager.running_containers:
-        del container_manager.running_containers[provider_id]
-    
-    return {
-        "provider_id": provider_id,
-        "status": container.status,
-        "running": container.status == "running",
-        "healthy": healthy,
-        "container_id": container.short_id,
-        "ports": container.ports
-    }
+        return lifecycle.get_container_status(provider_id)
+    except ProviderError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ============================================================================
@@ -1158,26 +640,15 @@ async def setup_provider(
     session: Session = Depends(get_session)
 ):
     """Run Modal's setup_models function to initialize directories."""
-    service = get_provider_service(session)
-    provider = await service.get_provider(provider_id)
-
-    runtime = resolve_provider_runtime(provider)
-    if not runtime.supports_setup or runtime.mode != "container_http":
-        raise HTTPException(
-            status_code=400,
-            detail="Setup requires a Modal provider with container-backed worker runtime"
-        )
-
-    async with aiohttp.ClientSession() as http_session:
-        async with http_session.post(f"{runtime.worker_url}/setup") as response:
-            response.raise_for_status()
-            result = await response.json()
-
-    return {
-        "status": "success",
-        "message": f"Provider '{provider_id}' setup complete (via worker)",
-        "result": result
-    }
+    try:
+        lifecycle = _get_provider_lifecycle_service(session)
+        return await lifecycle.setup_provider(provider_id)
+    except ProviderError as exc:
+        detail = str(exc)
+        status_code = 400 if "Setup requires" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to run provider setup: {str(exc)}") from exc
 
 
 # ============================================================================
@@ -1190,83 +661,23 @@ async def reconcile_provider(
     session: Session = Depends(get_session)
 ):
     """Trigger model reconciliation for a provider."""
-    service = get_provider_service(session)
-    provider = await service.get_provider(provider_id)
-
-    runtime = resolve_provider_runtime(provider)
-    if not runtime.supports_reconciliation or runtime.mode != "container_http":
-        raise HTTPException(
-            status_code=400,
-            detail="Reconciliation is only available for container-backed providers"
-        )
-
-    session_state = await service.start_reconciliation_session(provider_id)
-    if not session_state.get("accepted"):
-        raise HTTPException(status_code=409, detail=session_state.get("message", "Reconciliation already in progress"))
-    
     try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.post(
-                f"{runtime.worker_url}/reconcile",
-                timeout=aiohttp.ClientTimeout(total=5)
-            ) as response:
-                if response.status == 200:
-                    persisted_state = await service.upsert_reconciliation_state(
-                        provider_id,
-                        {
-                            "status": "reconciling",
-                            "phase": "starting",
-                            "message": "Reconciliation started in worker",
-                            "last_contact_at": ProviderService._utcnow_iso(),
-                        },
-                    )
-                    _invalidate_provider_runtime_caches(provider_id)
-                    return {
-                        "status": "triggered",
-                        "provider_id": provider_id,
-                        "message": "Reconciliation started in worker",
-                        "reconciliation": _normalize_reconciliation_for_card(persisted_state),
-                    }
-                elif response.status == 409:
-                    await service.upsert_reconciliation_state(
-                        provider_id,
-                        {
-                            "status": "reconciling",
-                            "phase": "running",
-                            "message": "Worker reported reconciliation already in progress",
-                            "last_contact_at": ProviderService._utcnow_iso(),
-                        },
-                    )
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Reconciliation already running in worker",
-                    )
-                else:
-                    body = await response.text()
-                    await service.upsert_reconciliation_state(
-                        provider_id,
-                        {
-                            "status": "failed",
-                            "message": f"Failed to trigger reconciliation: {body}",
-                        },
-                    )
-                    raise HTTPException(
-                        status_code=response.status,
-                        detail=f"Failed to trigger reconciliation: {body}"
-                    )
-    except aiohttp.ClientError as e:
-        await service.upsert_reconciliation_state(
-            provider_id,
-            {
-                "status": "failed",
-                "message": f"Failed to reach worker: {str(e)}",
-            },
-        )
-        _invalidate_provider_runtime_caches(provider_id)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to reach worker: {str(e)}"
-        )
+        lifecycle = _get_provider_lifecycle_service(session)
+        result = await lifecycle.trigger_reconciliation(provider_id)
+    except ProviderError as exc:
+        detail = str(exc)
+        status_code = 400 if "Reconciliation is only available" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            raise HTTPException(status_code=409, detail="Reconciliation already running in worker") from exc
+        raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to reach worker: {str(exc)}") from exc
+
+    if result.get("status") == "already_running":
+        raise HTTPException(status_code=409, detail=result.get("message", "Reconciliation already in progress"))
+    return result
 
 
 @router.get("/{provider_id}/reconciliation-status")
@@ -1275,61 +686,11 @@ async def get_reconciliation_status(
     session: Session = Depends(get_session)
 ):
     """Get current reconciliation status for a provider."""
-    service = get_provider_service(session)
-    provider = await service.get_provider(provider_id)
-    persisted_state = await service.get_provider_reconciliation_state(provider_id)
-
-    runtime = resolve_provider_runtime(provider)
-    if runtime.mode != "container_http":
-        if persisted_state.get("status") and persisted_state.get("status") != "idle":
-            return persisted_state
-        return {
-            "provider_id": provider_id,
-            "status": "idle",
-            "message": "Status tracking is only available for container-backed providers"
-        }
-    
     try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(
-                f"{runtime.worker_url}/reconciliation-status",
-                timeout=aiohttp.ClientTimeout(total=30)  # Increased for slow Modal SDK calls
-            ) as response:
-                if response.status == 200:
-                    worker_state = await response.json()
-                    return await service.upsert_reconciliation_state(
-                        provider_id,
-                        {
-                            **worker_state,
-                            "last_contact_at": ProviderService._utcnow_iso(),
-                        },
-                    )
-                elif response.status == 404:
-                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
-                        return persisted_state
-                    return {
-                        "provider_id": provider_id,
-                        "status": "idle",
-                        "message": "Status tracking not available"
-                    }
-                else:
-                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
-                        return persisted_state
-                    raise HTTPException(
-                        status_code=response.status,
-                        detail="Failed to get reconciliation status"
-                    )
-    except aiohttp.ClientError as e:
-        if persisted_state.get("status") and persisted_state.get("status") != "idle":
-            merged_state = dict(persisted_state)
-            merged_state["message"] = merged_state.get("message") or "Worker unreachable; showing last persisted reconciliation state"
-            merged_state["warning"] = f"Cannot reach worker: {str(e)}"
-            return merged_state
-        return {
-            "provider_id": provider_id,
-            "status": "idle",
-            "warning": f"Cannot reach worker: {str(e)}",
-        }
+        lifecycle = _get_provider_lifecycle_service(session)
+        return await lifecycle.get_reconciliation_status(provider_id)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail="Failed to get reconciliation status") from exc
 
 
 class ReconciliationEventRequest(BaseModel):

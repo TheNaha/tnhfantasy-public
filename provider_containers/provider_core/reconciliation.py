@@ -1,17 +1,15 @@
 """
 V2 Reconciliation helpers for provider workers.
-Contains shared functions for reporting file status, batch updates, 
-and pushing reconciliation events to the backend.
+Contains shared functions for reporting file status, batch updates,
+event pushes, and the shared reconciliation orchestration used by workers.
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any, Set
+from typing import Awaitable, Callable, Dict, List, Optional, Any, Set
 from datetime import datetime
 import httpx
 
 from .state import ReconciliationState
-from .models import MODEL_DIRECTORIES
-
 
 EVENT_PUSH_MAX_ATTEMPTS = 3
 EVENT_PUSH_INITIAL_BACKOFF_SECONDS = 0.5
@@ -302,3 +300,215 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
         print(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
         return max_deletions
     return orphaned_count
+
+
+async def run_reconciliation_v2(
+    *,
+    provider_id: str,
+    backend_url: str,
+    reconciliation_state: ReconciliationState,
+    max_concurrent_downloads: int,
+    hf_token: str,
+    civitai_token: str,
+    storage_label: str,
+    validate_existing: Callable[[bool], Awaitable[Dict[str, Any]]],
+    list_existing_files: Callable[[], Awaitable[Set[str]]],
+    download_file: Callable[[str, str, Optional[str]], Awaitable[Any]],
+    delete_file: Callable[[str], Awaitable[Any]],
+) -> None:
+    """Run the shared V2 reconciliation flow with provider-specific callbacks."""
+    reconciliation_state.start_reconciliation()
+    print(f"[V2 Reconciliation] Starting version-aware reconciliation for {provider_id}")
+
+    async def push_state(phase: str, message: str = None, active_downloads: list = None):
+        reconciliation_state.set_phase(phase)
+        reconciliation_state.set_message(message)
+        reconciliation_state.set_active_downloads(active_downloads or [])
+        await push_reconciliation_event(
+            backend_url=backend_url,
+            provider_id=provider_id,
+            status=reconciliation_state.get_status(),
+            phase=phase,
+            stats=reconciliation_state.get_stats(),
+            current_download=reconciliation_state.get_current_download(),
+            active_downloads=active_downloads,
+            errors=reconciliation_state.get_errors(),
+            message=message,
+        )
+
+    print("[V2 Reconciliation] Step 0: Validating existing models...")
+    await push_state("validating", "Checking for invalid or partial downloads...")
+
+    try:
+        validation_result = await validate_existing(True)
+        invalid_count = validation_result.get("total_invalid", 0)
+        partial_count = validation_result.get("total_partial", 0)
+        reconciliation_state.set_invalid_cleaned(invalid_count + partial_count)
+
+        if invalid_count > 0 or partial_count > 0:
+            print(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
+        else:
+            print("[V2 Reconciliation] ✓ All existing models are valid")
+    except Exception as exc:
+        print(f"[V2 Reconciliation] ⚠ Validation step failed: {exc}")
+
+    try:
+        print("[V2 Reconciliation] Step 1: Querying pending downloads...")
+        await push_state("fetching", "Querying pending downloads from backend...")
+
+        pending_downloads = await get_pending_downloads(backend_url, provider_id)
+        print(f"[V2 Reconciliation] Found {len(pending_downloads)} files pending download")
+
+        print("[V2 Reconciliation] Step 2: Getting all expected storage paths...")
+        all_expected_paths = await get_all_expected_paths(backend_url)
+        print(f"[V2 Reconciliation] {len(all_expected_paths)} total expected paths in database")
+
+        print(f"[V2 Reconciliation] Step 3: Checking existing files on {storage_label}...")
+        await push_state("fetching", f"Checking existing files on {storage_label} storage...")
+
+        existing_files = set(await list_existing_files())
+        reconciliation_state.set_total_models(len(existing_files))
+        print(f"[V2 Reconciliation] Found {len(existing_files)} existing files on {storage_label}")
+
+        missing_files = all_expected_paths - existing_files
+        if missing_files:
+            print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from {storage_label}")
+            missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
+            await batch_update_file_status_v2(backend_url, provider_id, missing_updates)
+            pending_downloads = await get_pending_downloads(backend_url, provider_id)
+            print(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
+
+        downloads_needed = []
+        already_ready = []
+        for file_info in pending_downloads:
+            storage_path = file_info.get("storage_path", "")
+            if storage_path in existing_files:
+                already_ready.append({
+                    "file_id": file_info["file_id"],
+                    "status": "ready",
+                    "storage_path": storage_path,
+                })
+            else:
+                downloads_needed.append(file_info)
+
+        if already_ready:
+            print(f"[V2 Reconciliation] Updating {len(already_ready)} already-existing files as ready...")
+            await batch_update_file_status_v2(backend_url, provider_id, already_ready)
+
+        reconciliation_state.set_download_queue(downloads_needed)
+        reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)
+        print(f"[V2 Reconciliation] {len(downloads_needed)} files need downloading, {len(already_ready)} already ready")
+
+        print(f"[V2 Reconciliation] Step 4: Processing downloads ({max_concurrent_downloads} concurrent)...")
+        semaphore = asyncio.Semaphore(max_concurrent_downloads)
+        total_downloads = len(downloads_needed)
+        active_downloads_list = []
+        active_downloads_lock = asyncio.Lock()
+
+        async def download_single(file_info: dict, index: int):
+            file_id = file_info["file_id"]
+            model_name = file_info.get("model_name", "Unknown")
+            version_name = file_info.get("version_name", "v1")
+            storage_path = file_info["storage_path"]
+            download_url = file_info["download_url"]
+            display_name = f"{model_name} ({version_name})"
+
+            download_info = {
+                "name": display_name,
+                "file_id": file_id,
+                "progress": 0.0,
+                "index": index + 1,
+                "total": total_downloads,
+            }
+
+            async with semaphore:
+                async with active_downloads_lock:
+                    active_downloads_list.append(download_info)
+
+                reconciliation_state.set_current_download(download_info)
+                await push_state("downloading", f"Downloading {display_name}...", active_downloads_list.copy())
+
+                print(f"[V2 Reconciliation] [{index + 1}/{total_downloads}] ⬇ Starting: {display_name}")
+                await report_file_status_v2(backend_url, provider_id, file_id, "downloading")
+
+                try:
+                    token = determine_download_token(download_url, hf_token, civitai_token)
+                    await download_file(download_url, storage_path, token)
+
+                    reconciliation_state.increment_downloads_completed()
+                    stats = reconciliation_state.get_stats()
+                    print(f"[V2 Reconciliation] [{stats['downloads_completed']}/{total_downloads}] ✓ Completed: {display_name}")
+
+                    await report_file_status_v2(
+                        backend_url,
+                        provider_id,
+                        file_id,
+                        "ready",
+                        storage_path=storage_path,
+                        size_bytes=int(file_info.get("size_kb", 0) * 1024),
+                    )
+                except Exception as exc:
+                    reconciliation_state.increment_downloads_failed()
+                    reconciliation_state.add_error(f"{display_name}: {str(exc)}")
+                    print(f"[V2 Reconciliation] ✗ Failed: {display_name}: {exc}")
+                    await report_file_status_v2(
+                        backend_url,
+                        provider_id,
+                        file_id,
+                        "failed",
+                        error_message=str(exc),
+                    )
+                finally:
+                    async with active_downloads_lock:
+                        active_downloads_list[:] = [
+                            download for download in active_downloads_list if download["file_id"] != file_id
+                        ]
+                    await push_state("downloading", None, active_downloads_list.copy())
+
+        if downloads_needed:
+            await push_state("downloading", f"Downloading {total_downloads} files ({max_concurrent_downloads} concurrent)...")
+            tasks = [download_single(file_info, index) for index, file_info in enumerate(downloads_needed)]
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        reconciliation_state.set_current_download(None)
+
+        print("[V2 Reconciliation] Step 5: Checking for orphaned files...")
+        await push_state("deleting", "Checking for orphaned files...")
+
+        if not all_expected_paths:
+            print("[V2 Reconciliation] ⚠️ SAFETY: No expected paths - skipping deletion!")
+        else:
+            orphaned_files = [path for path in existing_files if path not in all_expected_paths]
+            max_deletions = calculate_safe_deletion_limit(len(existing_files), len(orphaned_files))
+            orphaned_files = orphaned_files[:max_deletions]
+
+            if orphaned_files:
+                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files to delete")
+                for orphan_path in orphaned_files:
+                    try:
+                        deleted = await delete_file(orphan_path)
+                        if deleted is False:
+                            print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
+                            continue
+                        reconciliation_state.increment_deletions_completed()
+                        print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
+                    except Exception as exc:
+                        print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+            else:
+                print("[V2 Reconciliation] No orphaned files to delete")
+
+        reconciliation_state.complete_reconciliation(success=True)
+        stats = reconciliation_state.get_stats()
+        print(
+            f"[V2 Reconciliation] Complete! {stats['downloads_completed']} downloads, "
+            f"{stats['downloads_failed']} failed, {stats['deletions_completed']} deleted"
+        )
+        await push_state("completed", "Reconciliation complete!")
+
+    except Exception as exc:
+        print(f"[V2 Reconciliation] Fatal error: {exc}")
+        import traceback
+        traceback.print_exc()
+        reconciliation_state.add_error(f"Fatal error: {str(exc)}")
+        reconciliation_state.complete_reconciliation(success=False)
+        await push_state("failed", f"Reconciliation failed: {str(exc)}")

@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import { useBrandingStore } from '../store/brandingStore';
-import useProviderServerData from '../hooks/useProviderServerData';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 
 const NavItem = ({ to, icon: Icon, label }) => {
     const location = useLocation();
@@ -31,10 +31,11 @@ export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const branding = useBrandingStore(state => state.branding);
-    const { providers, containerStatuses } = useProviderServerData();
-    const runningProviders = providers.filter(provider =>
-        ['running', 'starting'].includes(containerStatuses[provider.id]?.status)
-    );
+    const { providers } = useProvidersPageData();
+    const runningProviders = providers.filter((provider) => {
+        const runtimeState = provider.runtime_state || {};
+        return provider.enabled && ['running', 'starting', 'active', 'connected'].includes(runtimeState.status);
+    });
     const statusLabel = runningProviders.length > 0
         ? `${runningProviders.length} provider${runningProviders.length === 1 ? '' : 's'} online`
         : 'No providers online';

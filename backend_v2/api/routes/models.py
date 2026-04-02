@@ -178,7 +178,6 @@ async def backfill_provider_statuses(
     Backfill provider_statuses for all models by querying each provider.
     Useful for migrating existing models or after worker issues.
     """
-    import aiohttp
     from api.deps import get_provider_service
     
     model_service = get_model_service(session)
@@ -196,14 +195,21 @@ async def backfill_provider_statuses(
         "errors": []
     }
     
+    http_client = get_http_client()
+
     for provider in providers:
-        container_config = provider.container_config or {}
+        container_config = (
+            provider.get("runtime_config")
+            if isinstance(provider, dict)
+            else getattr(provider, "container_config", None)
+        ) or {}
         if not container_config:
             continue
             
         # Use internal port (workers always run on 8000)
         internal_port = 8000
-        container_name = container_config.get("container_name", f"comfy-provider-{provider.id}")
+        provider_id = provider.get("id") if isinstance(provider, dict) else provider.id
+        container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
         worker_url = f"http://{container_name}:{internal_port}"
         
         results["providers_checked"] += 1
@@ -211,43 +217,41 @@ async def backfill_provider_statuses(
         # Query each directory from the worker
         directories = ["checkpoints", "loras", "controlnet", "embeddings", "vae", "upscale_models"]
         
-        async with aiohttp.ClientSession() as http_session:
-            for directory in directories:
-                try:
-                    async with http_session.get(
-                        f"{worker_url}/list-models?directory=models/{directory}",
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as response:
-                        if response.status != 200:
-                            continue
-                        
-                        data = await response.json()
-                        provider_models = {m.get("name"): m for m in data.get("models", [])}
-                        
-                        # Update status for matching models in DB
-                        for model in models:
-                            model_name = model.name if hasattr(model, 'name') else model.get('name')
-                            model_dir = model.directory if hasattr(model, 'directory') else model.get('directory')
+        for directory in directories:
+            try:
+                response = await http_client.post(
+                    f"{worker_url}/list-models",
+                    json={"directory": f"models/{directory}"},
+                    timeout=10.0,
+                )
+                if response.status_code != 200:
+                    continue
+                
+                data = response.json()
+                provider_models = {m.get("name"): m for m in data.get("models", [])}
+                
+                for model in models:
+                    model_name = model.name if hasattr(model, 'name') else model.get('name')
+                    model_dir = model.directory if hasattr(model, 'directory') else model.get('directory')
+                    
+                    if model_dir != directory:
+                        continue
+                    
+                    if model_name in provider_models:
+                        try:
+                            await model_service.update_provider_status(
+                                name=model_name,
+                                directory=model_dir,
+                                provider_id=provider_id,
+                                status=ModelStatus.INSTALLED,
+                                extra_data={"size_bytes": provider_models[model_name].get("size")}
+                            )
+                            results["models_updated"] += 1
+                        except Exception as e:
+                            results["errors"].append(f"{model_name}: {str(e)}")
                             
-                            if model_dir != directory:
-                                continue
-                            
-                            if model_name in provider_models:
-                                # Model exists on this provider - mark as installed
-                                try:
-                                    await model_service.update_provider_status(
-                                        name=model_name,
-                                        directory=model_dir,
-                                        provider_id=provider.id,
-                                        status=ModelStatus.INSTALLED,
-                                        extra_data={"size_bytes": provider_models[model_name].get("size")}
-                                    )
-                                    results["models_updated"] += 1
-                                except Exception as e:
-                                    results["errors"].append(f"{model_name}: {str(e)}")
-                                    
-                except Exception as e:
-                    results["errors"].append(f"{provider.id}/{directory}: {str(e)}")
+            except Exception as e:
+                results["errors"].append(f"{provider_id}/{directory}: {str(e)}")
     
     return results
 

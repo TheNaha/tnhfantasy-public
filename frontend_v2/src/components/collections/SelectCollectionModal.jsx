@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
     const collectionList = Object.values(collections);
+    const getImageCount = (collection) => collection.imageCount ?? collection.images?.length ?? 0;
 
     if (collectionList.length === 0) {
         return null;
@@ -81,8 +82,8 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
                                                     {collection.name}
                                                 </div>
                                                 <div className="text-xs text-gray-500">
-                                                    {collection.images.length} image
-                                                    {collection.images.length !== 1 ? 's' : ''}
+                                                    {getImageCount(collection)} image
+                                                    {getImageCount(collection) !== 1 ? 's' : ''}
                                                 </div>
                                             </div>
 

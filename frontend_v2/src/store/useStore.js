@@ -3,7 +3,7 @@
  *
  * Combines several related concerns into one persisted store:
  *
- *   Gallery UI state   – viewMode, selectionMode, selectedFiles (ephemeral)
+ *   Gallery UI state   – viewMode
  *   Favorites          – local-only list of favorited image filenames
  *   Collections        – server-side albums with local cache and lazy image loading
  *
@@ -41,21 +41,6 @@ const useStore = create(
             // UI state
             viewMode: 'grid', // 'grid' | 'list' | 'feed' | 'timeline'
             setViewMode: (mode) => set({ viewMode: mode }),
-
-            selectionMode: false,
-            setSelectionMode: (mode) => set({ selectionMode: mode }),
-
-            selectedFiles: new Set(),
-            toggleFileSelection: (filename) => set((state) => {
-                const newSet = new Set(state.selectedFiles);
-                if (newSet.has(filename)) {
-                    newSet.delete(filename);
-                } else {
-                    newSet.add(filename);
-                }
-                return { selectedFiles: newSet };
-            }),
-            clearSelection: () => set({ selectedFiles: new Set() }),
 
             // Favorites state (still local - simple and fast)
             favorites: [],
@@ -314,7 +299,6 @@ const useStore = create(
                 favorites: state.favorites,
                 activeCollection: state.activeCollection,
                 // Collections no longer persisted locally - server-side now
-                // selectedFiles excluded - ephemeral
             }),
         }
     )

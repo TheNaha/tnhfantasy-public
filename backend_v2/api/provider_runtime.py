@@ -22,6 +22,8 @@ class ProviderRuntimeTarget:
     supports_setup: bool = False
     supports_reconciliation: bool = False
     connected: bool = False
+    status: Optional[str] = None
+    healthy: Optional[bool] = None
 
 
 def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
@@ -34,6 +36,32 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
 
     if container_config:
         container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
+        connected = True
+        healthy = None
+        status = "configured"
+        try:
+            from services.container_manager import get_container_manager
+
+            container_manager = get_container_manager()
+            if container_manager:
+                container = container_manager.running_containers.get(provider_id)
+                if container is None:
+                    try:
+                        container = container_manager.client.containers.get(container_name)
+                    except Exception:
+                        container = None
+
+                if container is not None:
+                    try:
+                        container.reload()
+                    except Exception:
+                        pass
+                    status = getattr(container, "status", "unknown")
+                    health_status = getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
+                    healthy = health_status == "healthy" if health_status else None
+        except Exception as exc:
+            logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
+
         return ProviderRuntimeTarget(
             provider_id=provider_id,
             mode="container_http",
@@ -41,7 +69,9 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             container_name=container_name,
             supports_setup=provider_type == "modal",
             supports_reconciliation=True,
-            connected=True,
+            connected=connected,
+            status=status,
+            healthy=healthy,
         )
 
     if is_worker_connected(provider_id):
@@ -51,6 +81,8 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             supports_setup=False,
             supports_reconciliation=False,
             connected=True,
+            status="connected",
+            healthy=True,
         )
 
     return ProviderRuntimeTarget(
@@ -59,6 +91,8 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         supports_setup=False,
         supports_reconciliation=False,
         connected=False,
+        status="unavailable",
+        healthy=False,
     )
 
 

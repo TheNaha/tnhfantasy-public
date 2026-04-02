@@ -21,6 +21,7 @@ from core.entities_v2 import (
 )
 from core.entities import Provider
 from core.exceptions import NotFoundError
+from infrastructure.http_client import get_http_client
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.logging import model_logger
 
@@ -139,7 +140,6 @@ class ModelServiceV2:
         Returns:
             Dict identifying what was triggered
         """
-        import aiohttp
         import os
         from core.entities_v2 import FLUX_DEFAULT_COMPONENTS, AURAFLOW_DEFAULT_COMPONENTS, is_unet_only_model
         
@@ -274,7 +274,6 @@ class ModelServiceV2:
             version_ids: Optional list of specific version IDs to download.
                          If None, downloads all enabled versions.
         """
-        import aiohttp
         import os
         
         model = self.repo.get_model(model_id)
@@ -295,68 +294,62 @@ class ModelServiceV2:
         
         # Get versions to download
         versions = self.repo.get_versions_for_model(model_id)
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as http_session:
-            for version in versions:
-                # Skip if version_ids specified and this version not in list
-                if version_ids is not None and version.id not in version_ids:
-                    continue
-                if not version.is_enabled:
-                    continue
-                    
-                file = self.repo.get_primary_file_for_version(version.id)
-                if not file or not file.download_url:
-                    continue
+        http_client = get_http_client()
+        for version in versions:
+            if version_ids is not None and version.id not in version_ids:
+                continue
+            if not version.is_enabled:
+                continue
                 
-                storage_path = f"models/{model.directory}/{file.storage_filename}"
+            file = self.repo.get_primary_file_for_version(version.id)
+            if not file or not file.download_url:
+                continue
+            
+            storage_path = f"models/{model.directory}/{file.storage_filename}"
+            
+            token = None
+            if file.download_url:
+                if "huggingface.co" in file.download_url:
+                    token = os.getenv("HF_TOKEN", "")
+                elif "civitai.com" in file.download_url:
+                    token = os.getenv("CIVITAI_TOKEN", "")
+            
+            for provider in providers:
+                container_name = f"comfy-provider-{provider.id}"
+                worker_url = f"http://{container_name}:8000"
                 
-                # Determine token based on URL
-                token = None
-                if file.download_url:
-                    if "huggingface.co" in file.download_url:
-                        token = os.getenv("HF_TOKEN", "")
-                    elif "civitai.com" in file.download_url:
-                        token = os.getenv("CIVITAI_TOKEN", "")
-                
-                # Send download request to each enabled provider
-                for provider in providers:
-                    # Container name is comfy-provider-{id}, internal port is always 8000
-                    container_name = f"comfy-provider-{provider.id}"
-                    worker_url = f"http://{container_name}:8000"
-                    
-                    try:
-                        payload = {
-                            "url": file.download_url,
-                            "path": storage_path,
-                            "token": token
-                        }
-                        async with http_session.post(
-                            f"{worker_url}/download-model",
-                            json=payload,
-                        ) as resp:
-                            if resp.status == 200:
-                                results["triggered"] += 1
-                                results["providers"].append({
-                                    "provider_id": provider.id,
-                                    "file_id": file.id,
-                                    "status": "queued"
-                                })
-                                
-                                # Update provider status to downloading
-                                self.repo.update_provider_status(
-                                    file_id=file.id,
-                                    provider_name=provider.id,
-                                    status="downloading",
-                                    storage_path=storage_path
-                                )
-                    except Exception as e:
-                        logger.warning("provider_download_trigger_failed", provider_id=provider.id, error=str(e))
+                try:
+                    payload = {
+                        "url": file.download_url,
+                        "path": storage_path,
+                        "token": token
+                    }
+                    response = await http_client.post(
+                        f"{worker_url}/download-model",
+                        json=payload,
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        results["triggered"] += 1
                         results["providers"].append({
                             "provider_id": provider.id,
                             "file_id": file.id,
-                            "status": "error",
-                            "error": str(e)
+                            "status": "queued"
                         })
+                        self.repo.update_provider_status(
+                            file_id=file.id,
+                            provider_name=provider.id,
+                            status="downloading",
+                            storage_path=storage_path
+                        )
+                except Exception as e:
+                    logger.warning("provider_download_trigger_failed", provider_id=provider.id, error=str(e))
+                    results["providers"].append({
+                        "provider_id": provider.id,
+                        "file_id": file.id,
+                        "status": "error",
+                        "error": str(e)
+                    })
         
         return results
 
@@ -433,8 +426,6 @@ class ModelServiceV2:
         Trigger immediate deletion of model files from all providers.
         Called BEFORE deleting model from database.
         """
-        import aiohttp
-        
         model = self.repo.get_model(model_id)
         if not model:
             return {"status": "error", "message": f"Model {model_id} not found"}
@@ -448,52 +439,48 @@ class ModelServiceV2:
         
         # Get all files for this model's versions
         versions = self.repo.get_versions_for_model(model_id)
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as http_session:
-            for version in versions:
-                file = self.repo.get_primary_file_for_version(version.id)
-                if not file:
-                    continue
+        http_client = get_http_client()
+        for version in versions:
+            file = self.repo.get_primary_file_for_version(version.id)
+            if not file:
+                continue
+            
+            storage_path = f"models/{model.directory}/{file.storage_filename}"
+            
+            for provider in providers:
+                container_name = f"comfy-provider-{provider.id}"
+                worker_url = f"http://{container_name}:8000"
                 
-                storage_path = f"models/{model.directory}/{file.storage_filename}"
-                
-                # Send delete request to each provider
-                for provider in providers:
-                    # Container name is comfy-provider-{id}, internal port is always 8000
-                    container_name = f"comfy-provider-{provider.id}"
-                    worker_url = f"http://{container_name}:8000"
-                    
-                    try:
-                        # URL-encode the path for the route param
-                        import urllib.parse
-                        encoded_path = urllib.parse.quote(storage_path, safe='')
-                        async with http_session.delete(
-                            f"{worker_url}/delete-file/{encoded_path}",
-                        ) as resp:
-                            if resp.status == 200:
-                                results["deleted"] += 1
-                                results["providers"].append({
-                                    "provider_id": provider.id,
-                                    "file_id": file.id,
-                                    "path": storage_path,
-                                    "status": "deleted"
-                                })
-                            else:
-                                results["providers"].append({
-                                    "provider_id": provider.id,
-                                    "file_id": file.id,
-                                    "path": storage_path,
-                                    "status": "not_found"
-                                })
-                    except Exception as e:
-                        logger.warning("provider_delete_failed", provider_id=provider.id, error=str(e))
-                        # Don't fail the whole operation - provider might be offline
+                try:
+                    import urllib.parse
+                    encoded_path = urllib.parse.quote(storage_path, safe='')
+                    response = await http_client.delete(
+                        f"{worker_url}/delete-file/{encoded_path}",
+                        timeout=10.0,
+                    )
+                    if response.status_code == 200:
+                        results["deleted"] += 1
                         results["providers"].append({
                             "provider_id": provider.id,
                             "file_id": file.id,
-                            "status": "error",
-                            "error": str(e)
+                            "path": storage_path,
+                            "status": "deleted"
                         })
+                    else:
+                        results["providers"].append({
+                            "provider_id": provider.id,
+                            "file_id": file.id,
+                            "path": storage_path,
+                            "status": "not_found"
+                        })
+                except Exception as e:
+                    logger.warning("provider_delete_failed", provider_id=provider.id, error=str(e))
+                    results["providers"].append({
+                        "provider_id": provider.id,
+                        "file_id": file.id,
+                        "status": "error",
+                        "error": str(e)
+                    })
         
         return results
     

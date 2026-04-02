@@ -13,25 +13,8 @@ function emitWsEvent(eventType, payload) {
 
 const providersApiMock = vi.hoisted(() => ({
     list: vi.fn(),
-    getAllContainerStatuses: vi.fn(),
     getLoadBalancerConfig: vi.fn(),
-    getStatusCards: vi.fn(),
     getContainerLogs: vi.fn(),
-}));
-
-const providerStoreState = vi.hoisted(() => ({
-    containerLoading: {},
-    startContainer: vi.fn(),
-    stopContainer: vi.fn(),
-    restartContainer: vi.fn(),
-    deployProvider: vi.fn(),
-    reconcileProvider: vi.fn(),
-    setupProvider: vi.fn(),
-    resetProviderModelStatus: vi.fn(),
-    toggleProviderEnabled: vi.fn(),
-    deleteProvider: vi.fn(),
-    updateLoadBalancerStrategy: vi.fn(),
-    saveProvider: vi.fn(),
 }));
 
 const reconciliationStoreState = vi.hoisted(() => ({
@@ -50,13 +33,9 @@ vi.mock('../api/websocket', () => ({
         const callbacks = wsListeners.get(event) || [];
         callbacks.push(callback);
         wsListeners.set(event, callbacks);
-
         return () => {
             const current = wsListeners.get(event) || [];
-            wsListeners.set(
-                event,
-                current.filter((fn) => fn !== callback)
-            );
+            wsListeners.set(event, current.filter((fn) => fn !== callback));
         };
     }),
     EventTypes: {
@@ -70,16 +49,8 @@ vi.mock('../api/websocket', () => ({
     },
 }));
 
-vi.mock('../store/providerStore', () => ({
-    useProviderStore: (selector) => selector(providerStoreState),
-}));
-
 vi.mock('../store/reconciliationStore', () => ({
-    default: (selector) => (
-        typeof selector === 'function'
-            ? selector(reconciliationStoreState)
-            : reconciliationStoreState
-    ),
+    default: () => reconciliationStoreState,
 }));
 
 vi.mock('../components/providers/ProviderModal', () => ({
@@ -101,9 +72,7 @@ vi.mock('../components/ConfirmationModal', () => ({
 function createWrapper() {
     const queryClient = new QueryClient({
         defaultOptions: {
-            queries: {
-                retry: false,
-            },
+            queries: { retry: false },
         },
     });
 
@@ -114,10 +83,33 @@ function createWrapper() {
     );
 }
 
-function createStatusCard() {
+function createProviderRecord() {
     return {
-        provider_id: 'modal-primary',
-        provider_type: 'modal',
+        id: 'modal-primary',
+        type: 'modal',
+        enabled: true,
+        priority: 1,
+        runtime_config: { port: 8000 },
+        deploy_config: { deploy_mode: 'managed', app_name: 'comfy-modal-stack' },
+        runtime_state: {
+            mode: 'container_http',
+            connected: true,
+            status: 'running',
+            worker_url: 'http://comfy-provider-modal-primary:8000',
+        },
+        deploy_state: {
+            status: 'idle',
+            message: '',
+            steps: [],
+        },
+        reconciliation_state: {
+            status: 'idle',
+            phase: null,
+            stats: {},
+            active_downloads: [],
+            errors: [],
+            message: '',
+        },
         model_sync: {
             total_models: 4,
             stats: {
@@ -128,47 +120,37 @@ function createStatusCard() {
             },
         },
         storage: {
-            provider_id: 'modal-primary',
             total: 4,
             by_directory: {
                 checkpoints: 2,
                 loras: 2,
             },
         },
-        reconciliation: {
-            provider_id: 'modal-primary',
-            status: 'idle',
-            phase: null,
-            stats: {},
-            active_downloads: [],
-            errors: [],
+        capabilities: {
+            managed_deploy: true,
+            deploy: true,
+            start_container: true,
+            stop_container: true,
+            restart_container: true,
+            view_logs: true,
+            setup: true,
+            reconcile: true,
+            reset_status: true,
         },
-        deploy: {
-            status: 'idle',
-        },
-        runtime: {
-            mode: 'container_http',
-            connected: true,
-            enabled: true,
-            capabilities: {
-                container: true,
-                start_container: true,
-                stop_container: true,
-                restart_container: true,
-                view_logs: true,
-                deploy: true,
-                setup: true,
-                reconcile: true,
-                reset_status: true,
-            },
-        },
+        capability_reasons: {},
         diagnostics: {
             warnings: [],
             errors: [],
             worker: {
                 backend_url: 'http://backend_v2:8002',
                 worker_url: 'http://comfy-provider-modal-primary:8000',
+                mode: 'container_http',
             },
+        },
+        credential_summary: {
+            configured_fields: ['token_id', 'token_secret', 'username'],
+            account_label: 'modal-user',
+            ready: true,
         },
     };
 }
@@ -178,26 +160,8 @@ describe('Providers realtime integration', () => {
         vi.clearAllMocks();
         wsListeners.clear();
 
-        providersApiMock.list.mockResolvedValue([
-            {
-                id: 'modal-primary',
-                type: 'modal',
-                enabled: true,
-                priority: 1,
-                credentials: {},
-                config: {},
-                container_config: { port: 8000 },
-            },
-        ]);
-
-        providersApiMock.getAllContainerStatuses.mockResolvedValue({
-            statuses: {
-                'modal-primary': {
-                    status: 'running',
-                    running: true,
-                    healthy: true,
-                },
-            },
+        providersApiMock.list.mockResolvedValue({
+            providers: [createProviderRecord()],
         });
 
         providersApiMock.getLoadBalancerConfig.mockResolvedValue({
@@ -207,24 +171,12 @@ describe('Providers realtime integration', () => {
             },
             stats: {
                 total_providers: 1,
-                provider_stats: [
-                    {
-                        id: 'modal-primary',
-                        failures: 0,
-                        jobs_assigned: 0,
-                    },
-                ],
-            },
-        });
-
-        providersApiMock.getStatusCards.mockResolvedValue({
-            status_cards: {
-                'modal-primary': createStatusCard(),
+                provider_stats: [{ id: 'modal-primary', failures: 0, jobs_assigned: 0 }],
             },
         });
     });
 
-    it('updates provider card UI from websocket reconciliation and stats events', async () => {
+    it('updates provider card UI from websocket reconciliation and storage events', async () => {
         render(<Providers />, { wrapper: createWrapper() });
 
         await waitFor(() => {
@@ -242,7 +194,6 @@ describe('Providers realtime integration', () => {
                     stats: {
                         downloads_queued: 5,
                         downloads_completed: 1,
-                        downloads_failed: 0,
                     },
                     active_downloads: [
                         { name: 'model-a.safetensors', index: 1, total: 5 },
@@ -252,8 +203,7 @@ describe('Providers realtime integration', () => {
         });
 
         await waitFor(() => {
-            expect(screen.getByText('Downloading')).toBeInTheDocument();
-            expect(screen.getAllByText('1/5').length).toBeGreaterThan(0);
+            expect(screen.getByText('Queued')).toBeInTheDocument();
         });
 
         act(() => {
@@ -261,10 +211,10 @@ describe('Providers realtime integration', () => {
                 data: {
                     provider_id: 'modal-primary',
                     stats: {
-                        total: 7,
+                        total: 6,
                         by_directory: {
-                            checkpoints: 3,
-                            loras: 4,
+                            checkpoints: 4,
+                            loras: 2,
                         },
                     },
                 },
@@ -272,8 +222,8 @@ describe('Providers realtime integration', () => {
         });
 
         await waitFor(() => {
-            expect(screen.getAllByText('7 models').length).toBeGreaterThan(0);
-            expect(screen.getByText('LoRAs: 4')).toBeInTheDocument();
+            expect(screen.getAllByText('6 models').length).toBeGreaterThan(0);
+            expect(screen.getByText(/Checkpoints: 4/)).toBeInTheDocument();
         });
     });
 });

@@ -27,14 +27,16 @@ class TestProvidersRouteCreate:
     def test_list_providers_empty(self, client):
         response = client.get("/api/providers")
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert isinstance(data, dict)
+        assert data["providers"] == []
 
     def test_list_providers_after_create(self, client, sample_provider_payload):
         client.post("/api/providers", json=sample_provider_payload)
         response = client.get("/api/providers")
         assert response.status_code == 200
-        providers = response.json()
-        assert len(providers) >= 1
+        payload = response.json()
+        assert len(payload["providers"]) >= 1
 
     def test_get_provider_by_id(self, client, sample_provider_payload):
         client.post("/api/providers", json=sample_provider_payload)
@@ -175,25 +177,16 @@ class TestProvidersRouteReconcile:
         assert response.status_code in (404, 200, 422)
 
     def test_reconcile_provider_conflict_when_already_running(self, client):
-        mock_service = MagicMock()
-        mock_service.get_provider = AsyncMock(
-            return_value=SimpleNamespace(id="test-provider", type="modal", container_config={"port": 8000})
-        )
-        mock_service.start_reconciliation_session = AsyncMock(
+        lifecycle = MagicMock()
+        lifecycle.trigger_reconciliation = AsyncMock(
             return_value={
-                "accepted": False,
+                "status": "already_running",
+                "provider_id": "test-provider",
                 "message": "Reconciliation already in progress for this provider",
             }
         )
 
-        runtime = SimpleNamespace(
-            supports_reconciliation=True,
-            mode="container_http",
-            worker_url="http://worker",
-        )
-
-        with patch("api.routes.providers.get_provider_service", return_value=mock_service), \
-             patch("api.routes.providers.resolve_provider_runtime", return_value=runtime):
+        with patch("api.routes.providers._get_provider_lifecycle_service", return_value=lifecycle):
             response = client.post("/api/providers/test-provider/reconcile")
 
         assert response.status_code == 409
@@ -279,8 +272,14 @@ class TestProvidersRouteReconcile:
             "by_directory": {"checkpoints": 1, "loras": 1},
         }
 
-        with patch("api.routes.providers.get_provider_sync_status", new=AsyncMock(return_value=sync_payload)), \
-             patch("api.routes.providers._fetch_provider_storage_stats", new=AsyncMock(return_value=storage_payload)):
+        with patch(
+            "services.provider_status_service.ProviderStatusService.get_provider_sync_status",
+            new=AsyncMock(return_value=sync_payload),
+        ), \
+             patch(
+                 "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
+                 new=AsyncMock(return_value=storage_payload),
+             ):
             response = client.get("/api/providers/status-card-provider/status-card")
 
         assert response.status_code == 200
@@ -323,8 +322,14 @@ class TestProvidersRouteReconcile:
             "by_directory": {"checkpoints": 1},
         }
 
-        with patch("api.routes.providers.get_provider_sync_status", new=AsyncMock(return_value=sync_payload)), \
-             patch("api.routes.providers._fetch_provider_storage_stats", new=AsyncMock(return_value=storage_payload)):
+        with patch(
+            "services.provider_status_service.ProviderStatusService.get_provider_sync_status",
+            new=AsyncMock(return_value=sync_payload),
+        ), \
+             patch(
+                 "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
+                 new=AsyncMock(return_value=storage_payload),
+             ):
             response = client.get("/api/providers/status-cards")
 
         assert response.status_code == 200

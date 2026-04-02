@@ -22,6 +22,7 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
     const [editName, setEditName] = useState('');
 
     const collectionList = Object.values(collections);
+    const getImageCount = (collection) => collection.imageCount ?? collection.images?.length ?? 0;
 
     const handleCreate = (name, color) => {
         createCollection(name, color);
@@ -183,8 +184,8 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                                                                 {collection.name}
                                                             </div>
                                                             <div className="text-xs text-gray-500">
-                                                                {collection.images.length} image
-                                                                {collection.images.length !== 1 ? 's' : ''}
+                                                                {getImageCount(collection)} image
+                                                                {getImageCount(collection) !== 1 ? 's' : ''}
                                                             </div>
                                                         </>
                                                     )}

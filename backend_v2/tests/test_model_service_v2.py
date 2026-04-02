@@ -209,45 +209,28 @@ class TestModelServiceV2Search:
         assert results == []
 
 
-class _FakeRequestCtx:
-    def __init__(self, status=200):
-        self.status = status
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-
-class _FakeClientSession:
+class _FakeHttpClient:
     created = 0
     post_calls = []
     delete_calls = []
 
     def __init__(self, *args, **kwargs):
-        _FakeClientSession.created += 1
+        _FakeHttpClient.created += 1
 
-    async def __aenter__(self):
-        return self
+    async def post(self, url, **kwargs):
+        _FakeHttpClient.post_calls.append((url, kwargs))
+        return SimpleNamespace(status_code=200)
 
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def post(self, url, **kwargs):
-        _FakeClientSession.post_calls.append((url, kwargs))
-        return _FakeRequestCtx(status=200)
-
-    def delete(self, url, **kwargs):
-        _FakeClientSession.delete_calls.append((url, kwargs))
-        return _FakeRequestCtx(status=200)
+    async def delete(self, url, **kwargs):
+        _FakeHttpClient.delete_calls.append((url, kwargs))
+        return SimpleNamespace(status_code=200)
 
 
 class TestModelServiceV2NetworkEfficiency:
     @pytest.mark.asyncio
     async def test_trigger_download_reuses_single_http_session(self, service):
-        _FakeClientSession.created = 0
-        _FakeClientSession.post_calls = []
+        _FakeHttpClient.created = 0
+        _FakeHttpClient.post_calls = []
 
         providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
         model = SimpleNamespace(directory="checkpoints")
@@ -260,17 +243,18 @@ class TestModelServiceV2NetworkEfficiency:
         service.repo.update_provider_status = lambda **kwargs: None
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
-        with patch("aiohttp.ClientSession", _FakeClientSession):
+        fake_http_client = _FakeHttpClient()
+        with patch("services.model_service_v2.get_http_client", return_value=fake_http_client):
             result = await service.trigger_download_to_providers(model_id=1)
 
-        assert _FakeClientSession.created == 1
+        assert _FakeHttpClient.created == 1
         assert result["triggered"] == 2
-        assert len(_FakeClientSession.post_calls) == 2
+        assert len(_FakeHttpClient.post_calls) == 2
 
     @pytest.mark.asyncio
     async def test_trigger_delete_reuses_single_http_session(self, service):
-        _FakeClientSession.created = 0
-        _FakeClientSession.delete_calls = []
+        _FakeHttpClient.created = 0
+        _FakeHttpClient.delete_calls = []
 
         providers = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
         model = SimpleNamespace(directory="loras")
@@ -282,9 +266,10 @@ class TestModelServiceV2NetworkEfficiency:
         service.repo.get_primary_file_for_version = lambda version_id: file_obj
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
-        with patch("aiohttp.ClientSession", _FakeClientSession):
+        fake_http_client = _FakeHttpClient()
+        with patch("services.model_service_v2.get_http_client", return_value=fake_http_client):
             result = await service.trigger_delete_from_providers(model_id=1)
 
-        assert _FakeClientSession.created == 1
+        assert _FakeHttpClient.created == 1
         assert result["deleted"] == 2
-        assert len(_FakeClientSession.delete_calls) == 2
+        assert len(_FakeHttpClient.delete_calls) == 2

@@ -11,9 +11,9 @@
  *   _unsubscribers – Cleanup functions returned by `ws.on()`.
  *
  * LIFECYCLE:
- *   Call `connect()` once at app startup (done in App.jsx via providerStore or
- *   a dedicated model-manager hook).  The store will stay in sync via WebSocket
- *   events and a one-time initial HTTP fetch.
+ *   Call `connect()` once at app startup (done in App.jsx or a dedicated
+ *   model-manager hook). The store will stay in sync via WebSocket events and
+ *   a one-time initial HTTP fetch.
  */
 
 import { create } from 'zustand';

@@ -40,6 +40,7 @@ from provider_core import (
     get_all_expected_paths,
     determine_download_token,
     calculate_safe_deletion_limit,
+    run_reconciliation_v2,
     # Background
     reconciliation_loop,
     log_startup_info,
@@ -496,219 +497,47 @@ async def get_reconciliation_status():
 
 
 async def perform_reconciliation_v2():
-    """
-    V2 Reconciliation: Query pending downloads, download with version-aware paths.
-    Uses concurrent downloads (5 parallel) for efficiency.
-    Pushes phase updates to backend for real-time UI feedback.
-    """
-    reconciliation_state.start_reconciliation()
-    print(f"[V2 Reconciliation] Starting version-aware reconciliation for {PROVIDER_ID}")
-    
-    # Helper to push current state
-    async def push_state(phase: str, message: str = None, active_downloads: list = None):
-        reconciliation_state.set_phase(phase)
-        reconciliation_state.set_message(message)
-        reconciliation_state.set_active_downloads(active_downloads or [])
-        await push_reconciliation_event(
-            backend_url=BACKEND_URL,
-            provider_id=PROVIDER_ID,
-            status=reconciliation_state.get_status(),
-            phase=phase,
-            stats=reconciliation_state.get_stats(),
-            current_download=reconciliation_state.get_current_download(),
-            active_downloads=active_downloads,
-            errors=reconciliation_state.get_errors(),
-            message=message,
-        )
-    
-    # Step 0: Validate existing models
-    print("[V2 Reconciliation] Step 0: Validating existing models...")
-    await push_state("validating", "Checking for invalid or partial downloads...")
-    
-    try:
+    async def validate_existing(delete_invalid: bool):
         validate_fn = get_modal_function("validate_models")
-        validation_result = await asyncio.wait_for(
-            validate_fn.remote.aio(MODEL_DIRECTORIES, True),
+        return await asyncio.wait_for(
+            validate_fn.remote.aio(MODEL_DIRECTORIES, delete_invalid),
             timeout=300.0,
         )
-        invalid_count = validation_result.get("total_invalid", 0)
-        partial_count = validation_result.get("total_partial", 0)
-        reconciliation_state.set_invalid_cleaned(invalid_count + partial_count)
-        
-        if invalid_count > 0 or partial_count > 0:
-            print(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
-        else:
-            print("[V2 Reconciliation] ✓ All existing models are valid")
-    except Exception as e:
-        print(f"[V2 Reconciliation] ⚠ Validation step failed: {e}")
-    
-    try:
-        # Step 1: Query pending downloads
-        print("[V2 Reconciliation] Step 1: Querying pending downloads...")
-        await push_state("fetching", "Querying pending downloads from backend...")
-        
-        pending_downloads = await get_pending_downloads(BACKEND_URL, PROVIDER_ID)
-        print(f"[V2 Reconciliation] Found {len(pending_downloads)} files pending download")
-        
-        # Step 2: Get all expected storage paths
-        print("[V2 Reconciliation] Step 2: Getting all expected storage paths...")
-        all_expected_paths = await get_all_expected_paths(BACKEND_URL)
-        print(f"[V2 Reconciliation] {len(all_expected_paths)} total expected paths in database")
-        
-        # Step 3: List existing files on Modal
-        print("[V2 Reconciliation] Step 3: Checking existing files on Modal...")
-        await push_state("fetching", "Checking existing files on Modal storage...")
-        
-        modal_files = set()
+
+    async def list_existing_files():
+        paths = set()
         list_models_func = get_modal_function("list_models_with_metadata")
-        
         for directory in MODEL_DIRECTORIES:
             try:
                 files = await list_models_func.remote.aio(directory)
-                for f in files:
-                    modal_files.add(f"{directory}/{f['name']}")
-            except Exception as e:
-                print(f"[V2 Reconciliation] Warning: Error listing {directory}: {e}")
-        
-        reconciliation_state.set_total_models(len(modal_files))
-        print(f"[V2 Reconciliation] Found {len(modal_files)} existing files on Modal")
-        
-        # Step 3a: Check for missing files
-        missing_files = all_expected_paths - modal_files
-        if missing_files:
-            print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from Modal")
-            missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
-            await batch_update_file_status_v2(BACKEND_URL, PROVIDER_ID, missing_updates)
-            
-            # Re-fetch pending downloads
-            pending_downloads = await get_pending_downloads(BACKEND_URL, PROVIDER_ID)
-            print(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
-        
-        # Step 3b: Filter downloads
-        downloads_needed = []
-        already_ready = []
-        
-        for file_info in pending_downloads:
-            storage_path = file_info.get("storage_path", "")
-            if storage_path in modal_files:
-                already_ready.append({"file_id": file_info["file_id"], "status": "ready", "storage_path": storage_path})
-            else:
-                downloads_needed.append(file_info)
-        
-        if already_ready:
-            print(f"[V2 Reconciliation] Updating {len(already_ready)} already-existing files as ready...")
-            await batch_update_file_status_v2(BACKEND_URL, PROVIDER_ID, already_ready)
-        
-        reconciliation_state.set_download_queue(downloads_needed)
-        reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)
-        print(f"[V2 Reconciliation] {len(downloads_needed)} files need downloading, {len(already_ready)} already ready")
-        
-        # Step 4: Process downloads concurrently (5 parallel)
-        print("[V2 Reconciliation] Step 4: Processing downloads (5 concurrent)...")
+                for file_info in files:
+                    paths.add(f"{directory}/{file_info['name']}")
+            except Exception as exc:
+                print(f"[V2 Reconciliation] Warning: Error listing {directory}: {exc}")
+        return paths
+
+    async def download_file(download_url: str, storage_path: str, token: str = None):
         download_model_func = get_modal_function("download_model")
-        
-        MAX_CONCURRENT = runtime_config["max_concurrent_downloads"]
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-        total_downloads = len(downloads_needed)
-        
-        # Track active downloads for UI
-        active_downloads_list = []
-        active_downloads_lock = asyncio.Lock()
-        
-        async def download_single(file_info: dict, index: int):
-            file_id = file_info["file_id"]
-            model_name = file_info.get("model_name", "Unknown")
-            version_name = file_info.get("version_name", "v1")
-            storage_path = file_info["storage_path"]
-            download_url = file_info["download_url"]
-            display_name = f"{model_name} ({version_name})"
-            
-            download_info = {
-                "name": display_name,
-                "file_id": file_id,
-                "progress": 0.0,
-                "index": index + 1,
-                "total": total_downloads,
-            }
-            
-            async with semaphore:
-                # Add to active downloads
-                async with active_downloads_lock:
-                    active_downloads_list.append(download_info)
-                
-                reconciliation_state.set_current_download(download_info)
-                await push_state("downloading", f"Downloading {display_name}...", active_downloads_list.copy())
-                
-                print(f"[V2 Reconciliation] [{index+1}/{total_downloads}] ⬇ Starting: {display_name}")
-                await report_file_status_v2(BACKEND_URL, PROVIDER_ID, file_id, "downloading")
-                
-                try:
-                    token = determine_download_token(download_url, HF_TOKEN, CIVITAI_TOKEN)
-                    await download_model_func.remote.aio(url=download_url, path=storage_path, token=token)
-                    
-                    reconciliation_state.increment_downloads_completed()
-                    stats = reconciliation_state.get_stats()
-                    print(f"[V2 Reconciliation] [{stats['downloads_completed']}/{total_downloads}] ✓ Completed: {display_name}")
-                    
-                    await report_file_status_v2(
-                        BACKEND_URL, PROVIDER_ID, file_id, "ready",
-                        storage_path=storage_path,
-                        size_bytes=int(file_info.get("size_kb", 0) * 1024),
-                    )
-                except Exception as e:
-                    reconciliation_state.increment_downloads_failed()
-                    reconciliation_state.add_error(f"{display_name}: {str(e)}")
-                    print(f"[V2 Reconciliation] ✗ Failed: {display_name}: {e}")
-                    await report_file_status_v2(BACKEND_URL, PROVIDER_ID, file_id, "failed", error_message=str(e))
-                finally:
-                    # Remove from active downloads
-                    async with active_downloads_lock:
-                        active_downloads_list[:] = [d for d in active_downloads_list if d["file_id"] != file_id]
-                    await push_state("downloading", None, active_downloads_list.copy())
-        
-        if downloads_needed:
-            await push_state("downloading", f"Downloading {total_downloads} files (5 concurrent)...")
-            tasks = [download_single(f, i) for i, f in enumerate(downloads_needed)]
-            await asyncio.gather(*tasks, return_exceptions=True)
-        
-        reconciliation_state.set_current_download(None)
-        
-        # Step 5: Delete orphaned files
-        print("[V2 Reconciliation] Step 5: Checking for orphaned files...")
-        await push_state("deleting", "Checking for orphaned files...")
-        
-        if not all_expected_paths:
-            print("[V2 Reconciliation] ⚠️ SAFETY: No expected paths - skipping deletion!")
-        else:
-            orphaned_files = [p for p in modal_files if p not in all_expected_paths]
-            max_deletions = calculate_safe_deletion_limit(len(modal_files), len(orphaned_files))
-            orphaned_files = orphaned_files[:max_deletions]
-            
-            if orphaned_files:
-                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files to delete")
-                delete_file_func = get_modal_function("storage_delete_file")
-                for orphan_path in orphaned_files:
-                    try:
-                        await delete_file_func.remote.aio(orphan_path)
-                        reconciliation_state.increment_deletions_completed()
-                        print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
-                    except Exception as e:
-                        print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {e}")
-            else:
-                print("[V2 Reconciliation] No orphaned files to delete")
-        
-        reconciliation_state.complete_reconciliation(success=True)
-        stats = reconciliation_state.get_stats()
-        print(f"[V2 Reconciliation] Complete! {stats['downloads_completed']} downloads, {stats['downloads_failed']} failed, {stats['deletions_completed']} deleted")
-        await push_state("completed", "Reconciliation complete!")
-        
-    except Exception as e:
-        print(f"[V2 Reconciliation] Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        reconciliation_state.add_error(f"Fatal error: {str(e)}")
-        reconciliation_state.complete_reconciliation(success=False)
-        await push_state("failed", f"Reconciliation failed: {str(e)}")
+        await download_model_func.remote.aio(url=download_url, path=storage_path, token=token)
+
+    async def delete_file(storage_path: str):
+        delete_file_func = get_modal_function("storage_delete_file")
+        await delete_file_func.remote.aio(storage_path)
+        return True
+
+    await run_reconciliation_v2(
+        provider_id=PROVIDER_ID,
+        backend_url=BACKEND_URL,
+        reconciliation_state=reconciliation_state,
+        max_concurrent_downloads=runtime_config["max_concurrent_downloads"],
+        hf_token=HF_TOKEN,
+        civitai_token=CIVITAI_TOKEN,
+        storage_label="Modal",
+        validate_existing=validate_existing,
+        list_existing_files=list_existing_files,
+        download_file=download_file,
+        delete_file=delete_file,
+    )
 
 
 # ============================================

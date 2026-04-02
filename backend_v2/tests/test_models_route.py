@@ -213,12 +213,12 @@ class TestModelsV1Extended:
         mock_service.list_providers.return_value = [mock_provider]
         mock_get_provider_service.return_value = mock_service
 
-        # Mock aiohttp
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_resp = AsyncMock()
-            mock_resp.status = 200
-            mock_resp.json.return_value = {"models": [{"name": "test.safetensors", "size": 1024}]}
-            mock_get.return_value.__aenter__.return_value = mock_resp
+        mock_http_client = AsyncMock()
+        mock_http_client.post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"models": [{"name": "test.safetensors", "size": 1024}]},
+        )
+        with patch("api.routes.models.get_http_client", return_value=mock_http_client):
 
             # Add a model to match
             models_v1_client.post("/api/models", json={

@@ -13,38 +13,26 @@ import {
     Rocket,
     RotateCcw,
     Server,
-    Settings,
     Square,
     Trash2,
     Wrench,
 } from 'lucide-react';
-import SyncStatusBadge from './SyncStatusBadge';
-import ReconciliationStatus from './ReconciliationStatus';
 import { providersApi } from '../../api';
+import ReconciliationStatus from './ReconciliationStatus';
 
-const STATUS_COLORS = {
-    active: 'text-green-400',
-    running: 'text-green-400',
-    stopped: 'text-gray-400',
-    restarting: 'text-yellow-400',
-    deploying: 'text-purple-400',
-    reconciling: 'text-blue-400',
-    error: 'text-red-400',
-};
+const EMPTY_OBJECT = Object.freeze({});
 
-const DEPLOY_LABELS = {
-    idle: 'Deploy idle',
-    deploying: 'Deploying',
-    succeeded: 'Deploy ready',
-    failed: 'Deploy failed',
-};
-
-const RECON_LABELS = {
-    idle: 'Reconcile idle',
-    queued: 'Queued',
-    reconciling: 'Reconciling',
-    completed: 'Reconciled',
-    failed: 'Reconcile failed',
+const STATUS_TONE = {
+    running: 'green',
+    active: 'green',
+    connected: 'green',
+    stopped: 'gray',
+    idle: 'gray',
+    queued: 'blue',
+    reconciling: 'blue',
+    completed: 'green',
+    deploying: 'purple',
+    failed: 'red',
 };
 
 export default function ProviderCard({
@@ -57,57 +45,43 @@ export default function ProviderCard({
     onReconcile,
     onResetStatus,
     onSetup,
-    onConfigure,
     onEdit,
     onDelete,
     onToggleEnabled,
-    providerFailures,
+    providerFailures = 0,
     jobsAssigned = 0,
 }) {
-    const statusCard = provider.status_card || {};
-    const modelSync = statusCard.model_sync || statusCard.sync || {};
-    const storage = statusCard.storage || {};
-    const reconciliation = statusCard.reconciliation || {};
-    const deploy = statusCard.deploy || {};
-    const diagnostics = statusCard.diagnostics || {};
-    const runtime = statusCard.runtime || {};
+    const runtime = provider.runtime_state ?? EMPTY_OBJECT;
+    const deploy = provider.deploy_state ?? EMPTY_OBJECT;
+    const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
+    const modelSync = provider.model_sync ?? EMPTY_OBJECT;
+    const storage = provider.storage ?? EMPTY_OBJECT;
+    const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
+    const capabilities = provider.capabilities ?? EMPTY_OBJECT;
+    const capabilityReasons = provider.capability_reasons ?? EMPTY_OBJECT;
+    const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
 
     const [showLogs, setShowLogs] = useState(false);
-    const [showReconciliation, setShowReconciliation] = useState(false);
     const [showDeployDetails, setShowDeployDetails] = useState(false);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
+    const [showReconciliation, setShowReconciliation] = useState(false);
     const [logs, setLogs] = useState('');
     const [loadingLogs, setLoadingLogs] = useState(false);
 
-    const capabilities = getProviderCapabilities(provider, runtime);
-    const isDirect = !capabilities.canManageContainer;
-    const runtimeStatus = isDirect ? 'active' : (provider.container_status || 'stopped');
-    const statusColor = STATUS_COLORS[runtimeStatus] || 'text-gray-400';
-    const isLoading = Boolean(loading);
-    const warningCount = diagnostics.warnings?.length || 0;
-    const errorCount = diagnostics.errors?.length || 0;
-
-    const activitySummary = useMemo(() => {
-        if (isLoading && loading) {
-            return loading;
+    const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
+    const loadingLabel = loading ? loading.charAt(0).toUpperCase() + loading.slice(1) : null;
+    const deployBadge = useMemo(() => {
+        if (capabilities.managed_deploy) {
+            return 'Managed Deploy';
         }
-        if (deploy.status === 'deploying') {
-            return DEPLOY_LABELS.deploying;
+        if (capabilities.manual_deploy) {
+            return 'Manual Deploy';
         }
-        if (reconciliation.status === 'queued' || reconciliation.status === 'reconciling') {
-            return RECON_LABELS[reconciliation.status];
+        if (capabilities.runtime_only) {
+            return 'Runtime Only';
         }
-        if (deploy.status === 'failed') {
-            return DEPLOY_LABELS.failed;
-        }
-        if (reconciliation.status === 'failed') {
-            return RECON_LABELS.failed;
-        }
-        if (runtimeStatus === 'running' || runtimeStatus === 'active') {
-            return isDirect ? 'Direct runtime' : 'Runtime healthy';
-        }
-        return isDirect ? 'Direct runtime' : runtimeStatus.charAt(0).toUpperCase() + runtimeStatus.slice(1);
-    }, [deploy.status, isDirect, isLoading, loading, reconciliation.status, runtimeStatus]);
+        return 'Provider';
+    }, [capabilities]);
 
     const fetchLogs = async () => {
         setLoadingLogs(true);
@@ -125,50 +99,25 @@ export default function ProviderCard({
     };
 
     return (
-        <div className={`bg-gray-800/50 backdrop-blur-sm border rounded-xl p-6 transition-all card-elevated hover:border-gray-500 ${provider.enabled ? 'border-gray-700' : 'border-gray-800 opacity-60'}`}>
-            <div className="flex items-start justify-between gap-4 mb-5">
-                <div className="flex items-start gap-3 flex-1">
-                    <div className="p-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
+        <div className={`rounded-2xl border p-6 backdrop-blur-sm transition-colors ${provider.enabled ? 'border-gray-700 bg-gray-900/70' : 'border-gray-800 bg-gray-900/40 opacity-75'}`}>
+            <div className="mb-6 flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                    <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3">
                         <Server className="text-blue-400" size={20} />
                     </div>
-                    <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                            <h3 className="text-lg font-semibold text-white flex items-center gap-2 min-w-0">
+                    <div className="min-w-0">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <h3 className="flex items-center gap-2 text-lg font-semibold text-white">
                                 <span className="truncate">{provider.id}</span>
-                                <Circle className={`${statusColor} fill-current`} size={8} />
+                                <Circle className={`fill-current ${statusDot(runtimeStatus)}`} size={8} />
                             </h3>
-                            {provider.priority !== undefined && provider.priority !== null && (
-                                <span className="text-xs px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded font-mono">
-                                    P{provider.priority}
-                                </span>
-                            )}
-                            <span className="text-xs px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded font-mono">
-                                {jobsAssigned} jobs
-                            </span>
-                            {!provider.enabled && (
-                                <span className="text-xs px-2 py-0.5 bg-gray-500/20 text-gray-400 border border-gray-500/30 rounded">
-                                    Disabled
-                                </span>
-                            )}
+                            <Badge tone="blue">P{provider.priority}</Badge>
+                            <Badge tone="purple">{deployBadge}</Badge>
+                            {!provider.enabled && <Badge tone="gray">Disabled</Badge>}
                         </div>
                         <div className="text-sm text-gray-400">
-                            Type: {provider.type || 'Unknown'}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-3">
-                            <StatusPill tone={runtimeStatus === 'running' || runtimeStatus === 'active' ? 'green' : 'gray'}>
-                                {activitySummary}
-                            </StatusPill>
-                            <StatusPill tone={deploy.status === 'failed' ? 'red' : deploy.status === 'deploying' ? 'purple' : 'gray'}>
-                                {DEPLOY_LABELS[deploy.status] || 'Deploy idle'}
-                            </StatusPill>
-                            <StatusPill tone={reconciliation.status === 'failed' ? 'red' : reconciliation.status === 'completed' ? 'green' : reconciliation.status === 'idle' ? 'gray' : 'blue'}>
-                                {RECON_LABELS[reconciliation.status] || 'Reconcile idle'}
-                            </StatusPill>
-                            {diagnostics.updated_at && (
-                                <span className="text-xs text-gray-500">
-                                    Updated {formatRelativeTime(diagnostics.updated_at)}
-                                </span>
-                            )}
+                            {provider.type} provider
+                            {credentialSummary.account_label ? ` · ${credentialSummary.account_label}` : ''}
                         </div>
                     </div>
                 </div>
@@ -176,16 +125,15 @@ export default function ProviderCard({
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => onToggleEnabled?.(provider.id, provider.enabled)}
-                        className="p-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-lg text-gray-300 hover:text-white transition-colors"
+                        className="rounded-lg border border-gray-700 bg-gray-800/70 p-2 text-gray-300 transition-colors hover:bg-gray-700 hover:text-white"
                         title={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
                         aria-label={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
-                        aria-pressed={provider.enabled}
                     >
                         {provider.enabled ? <Power size={14} /> : <PowerOff size={14} />}
                     </button>
                     <button
                         onClick={() => onEdit?.(provider)}
-                        className="p-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600 rounded-lg text-gray-300 hover:text-white transition-colors"
+                        className="rounded-lg border border-gray-700 bg-gray-800/70 p-2 text-gray-300 transition-colors hover:bg-gray-700 hover:text-white"
                         title="Edit Provider"
                         aria-label="Edit Provider"
                     >
@@ -193,318 +141,216 @@ export default function ProviderCard({
                     </button>
                     <button
                         onClick={() => onDelete?.(provider.id)}
-                        className="p-2 bg-gray-700/50 hover:bg-red-500/20 border border-gray-600 hover:border-red-500/50 rounded-lg text-gray-300 hover:text-red-400 transition-colors"
+                        className="rounded-lg border border-gray-700 bg-gray-800/70 p-2 text-gray-300 transition-colors hover:border-red-500/40 hover:bg-red-500/15 hover:text-red-300"
                         title="Delete Provider"
                         aria-label="Delete Provider"
                     >
                         <Trash2 size={14} />
                     </button>
-                    {isLoading && (
-                        <Loader2 className="animate-spin text-blue-400" size={16} />
-                    )}
+                    {loadingLabel && <Loader2 className="animate-spin text-blue-400" size={16} />}
                 </div>
             </div>
 
-            {provider.container_config && (
-                <div className="mb-5 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                    {provider.container_config.port && (
-                        <InfoField label="Port" value={provider.container_config.port} />
+            <div className="grid gap-4 xl:grid-cols-2">
+                <Section title="Overview">
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <InfoField label="Provider Type" value={provider.type} />
+                        <InfoField label="Jobs Assigned" value={String(jobsAssigned)} />
+                        <InfoField label="Configured Secrets" value={String(credentialSummary.configured_fields?.length || 0)} />
+                        <InfoField label="Provider Failures" value={String(providerFailures)} />
+                    </div>
+                    {(diagnostics.warnings?.length || diagnostics.errors?.length || providerFailures > 0) ? (
+                        <div className="mt-4 space-y-2">
+                            {providerFailures > 0 && (
+                                <Notice tone="yellow" message={`${providerFailures} consecutive failures recorded for this provider.`} />
+                            )}
+                            {diagnostics.errors?.slice(0, 2).map((message) => (
+                                <Notice key={`error-${message}`} tone="red" message={message} />
+                            ))}
+                            {diagnostics.warnings?.slice(0, 2).map((message) => (
+                                <Notice key={`warning-${message}`} tone="yellow" message={message} />
+                            ))}
+                        </div>
+                    ) : (
+                        <Notice tone="green" message="No active diagnostics issues." />
                     )}
-                    {provider.credentials?.username && (
-                        <InfoField label="User" value={provider.credentials.username} />
-                    )}
-                    {provider.config?.app_name && (
-                        <InfoField label="App" value={provider.config.app_name} />
-                    )}
-                </div>
-            )}
+                </Section>
 
-            <div className="mb-4">
-                <SyncStatusBadge
-                    providerId={provider.id}
-                    modelSync={modelSync}
-                    storage={storage}
-                    reconciliation={reconciliation}
-                    diagnostics={diagnostics}
-                    onReconciliationClick={() => setShowReconciliation(true)}
-                />
-            </div>
+                <Section title="Runtime">
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <StatusField label="Runtime Status" value={humanizeStatus(runtimeStatus)} tone={STATUS_TONE[runtimeStatus]} />
+                        <StatusField label="Connectivity" value={runtime.connected ? 'Connected' : 'Unavailable'} tone={runtime.connected ? 'green' : 'gray'} />
+                        <InfoField label="Worker URL" value={runtime.worker_url || 'Unavailable'} />
+                        <InfoField label="Container Port" value={String(provider.runtime_config?.port || 'n/a')} />
+                    </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                <ActionStateCard
-                    label="Deploy"
-                    value={DEPLOY_LABELS[deploy.status] || 'Deploy idle'}
-                    tone={deploy.status === 'failed' ? 'red' : deploy.status === 'deploying' ? 'purple' : deploy.status === 'succeeded' ? 'green' : 'gray'}
-                    detail={deploy.message || 'Backend orchestrated deploy state'}
-                    onClick={deploy.status !== 'idle' || deploy.steps?.length ? () => setShowDeployDetails(true) : null}
-                />
-                <ActionStateCard
-                    label="Reconcile"
-                    value={RECON_LABELS[reconciliation.status] || 'Reconcile idle'}
-                    tone={reconciliation.status === 'failed' ? 'red' : reconciliation.status === 'completed' ? 'green' : reconciliation.status === 'idle' ? 'gray' : 'blue'}
-                    detail={reconciliation.message || 'Canonical reconciliation session'}
-                    onClick={() => setShowReconciliation(true)}
-                />
-                <ActionStateCard
-                    label="Diagnostics"
-                    value={`${warningCount} warning${warningCount === 1 ? '' : 's'} · ${errorCount} error${errorCount === 1 ? '' : 's'}`}
-                    tone={errorCount > 0 ? 'red' : warningCount > 0 ? 'yellow' : 'green'}
-                    detail={errorCount > 0 ? diagnostics.errors[0] : diagnostics.warnings?.[0] || 'Runtime diagnostics look healthy'}
-                    onClick={() => setShowDiagnostics(true)}
-                />
-            </div>
-
-            {providerFailures && providerFailures > 0 && (
-                <div className="mt-4 px-4 py-3 bg-orange-500/15 border-l-4 border-orange-500 rounded-lg flex items-center gap-2 text-orange-400 text-sm font-medium">
-                    <AlertTriangle size={16} />
-                    {providerFailures} consecutive failures
-                </div>
-            )}
-
-            {(warningCount > 0 || errorCount > 0) && (
-                <div className="mt-4 space-y-2">
-                    {diagnostics.errors?.slice(0, 2).map((message) => (
-                        <Notice key={`error-${message}`} tone="red" message={message} />
-                    ))}
-                    {diagnostics.warnings?.slice(0, 2).map((message) => (
-                        <Notice key={`warning-${message}`} tone="yellow" message={message} />
-                    ))}
-                </div>
-            )}
-
-            <div className="flex items-center gap-2 mt-5 pt-4 border-t border-gray-700 flex-wrap">
-                {capabilities.canDeploy && (
-                    <button
-                        onClick={onDeploy}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg border border-purple-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <Rocket size={14} />
-                        Deploy
-                    </button>
-                )}
-
-                {capabilities.canManageContainer && (
-                    <>
-                        {runtimeStatus === 'running' ? (
-                            <>
-                                {capabilities.canStop && (
-                                    <button
-                                        onClick={onStop}
-                                        disabled={isLoading}
-                                        className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <Square size={14} />
-                                        Stop
-                                    </button>
-                                )}
-                                {capabilities.canRestart && (
-                                    <button
-                                        onClick={onRestart}
-                                        disabled={isLoading}
-                                        className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <RefreshCw size={14} />
-                                        Restart
-                                    </button>
-                                )}
-                            </>
-                        ) : capabilities.canStart ? (
-                            <button
-                                onClick={onStart}
-                                disabled={isLoading}
-                                className="flex items-center gap-2 px-3 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded-lg border border-green-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                <Play size={14} />
-                                Start
-                            </button>
-                        ) : null}
-
-                        {capabilities.canLogs && (
-                            <button
-                                onClick={fetchLogs}
-                                disabled={loadingLogs}
-                                className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                <FileText size={14} />
-                                Logs
-                            </button>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {capabilities.start_container && runtimeStatus !== 'running' && (
+                            <ActionButton onClick={onStart} disabled={Boolean(loading)} tone="green" icon={Play} label="Start" />
                         )}
-                    </>
-                )}
+                        {capabilities.stop_container && runtimeStatus === 'running' && (
+                            <ActionButton onClick={onStop} disabled={Boolean(loading)} tone="red" icon={Square} label="Stop" />
+                        )}
+                        {capabilities.restart_container && runtimeStatus === 'running' && (
+                            <ActionButton onClick={onRestart} disabled={Boolean(loading)} tone="blue" icon={RefreshCw} label="Restart" />
+                        )}
+                        {capabilities.view_logs && (
+                            <ActionButton onClick={fetchLogs} disabled={loadingLogs} tone="blue" icon={FileText} label="Logs" />
+                        )}
+                        {capabilities.setup && (
+                            <ActionButton onClick={onSetup} disabled={Boolean(loading)} tone="blue" icon={Wrench} label="Setup" />
+                        )}
+                    </div>
+                </Section>
 
-                {capabilities.canResetStatus && (
-                    <button
-                        onClick={onResetStatus}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg border border-red-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <RotateCcw size={14} />
-                        Reset DB Sync
-                    </button>
-                )}
+                <Section title="Deployment">
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <StatusField label="Deploy Status" value={humanizeStatus(deploy.status || 'idle')} tone={STATUS_TONE[deploy.status || 'idle']} />
+                        <InfoField label="Deploy Mode" value={deployBadge} />
+                        <InfoField label="Deploy Message" value={deploy.message || capabilityReasons.deploy || 'No deploy activity recorded'} />
+                        <InfoField label="Completed Steps" value={String(deploy.completed_steps?.length || deploy.steps?.filter((step) => step.success)?.length || 0)} />
+                    </div>
 
-                {capabilities.canReconcile && (
-                    <button
-                        onClick={onReconcile}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg border border-orange-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <RefreshCw size={14} />
-                        Reconcile
-                    </button>
-                )}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {capabilities.deploy && (
+                            <ActionButton onClick={onDeploy} disabled={Boolean(loading)} tone="purple" icon={Rocket} label="Deploy" />
+                        )}
+                        {!capabilities.deploy && capabilityReasons.deploy && (
+                            <Notice tone="yellow" message={capabilityReasons.deploy} compact />
+                        )}
+                        {(deploy.steps?.length || deploy.status !== 'idle') ? (
+                            <ActionButton onClick={() => setShowDeployDetails(true)} tone="gray" icon={Eye} label="Details" />
+                        ) : null}
+                    </div>
+                </Section>
 
-                {capabilities.canSetup && (
-                    <button
-                        onClick={onSetup}
-                        disabled={isLoading}
-                        className="flex items-center gap-2 px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg border border-blue-500/30 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <Wrench size={14} />
-                        Setup
-                    </button>
-                )}
+                <Section title="Model Sync">
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <InfoField label="DB Sync" value={`${modelSync.total_models || 0} models`} />
+                        <InfoField label="Provider Storage" value={`${storage.total || 0} models`} />
+                        <StatusField label="Reconciliation" value={humanizeStatus(reconciliation.status || 'idle')} tone={STATUS_TONE[reconciliation.status || 'idle']} />
+                        <InfoField
+                            label="Directory Breakdown"
+                            value={formatDirectoryBreakdown(storage.by_directory)}
+                        />
+                    </div>
 
-                <button
-                    onClick={() => setShowDiagnostics(true)}
-                    className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors text-sm"
-                >
-                    <Eye size={14} />
-                    Diagnostics
-                </button>
-
-                <button
-                    onClick={onConfigure}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors text-sm ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    <Settings size={14} />
-                    Configure
-                </button>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {capabilities.reconcile && (
+                            <ActionButton onClick={onReconcile} disabled={Boolean(loading)} tone="orange" icon={RefreshCw} label="Reconcile" />
+                        )}
+                        {capabilities.reset_status && (
+                            <ActionButton onClick={onResetStatus} disabled={Boolean(loading)} tone="red" icon={RotateCcw} label="Reset DB Sync" />
+                        )}
+                        <ActionButton onClick={() => setShowReconciliation(true)} tone="gray" icon={Eye} label="Progress" />
+                        <ActionButton onClick={() => setShowDiagnostics(true)} tone="gray" icon={AlertTriangle} label="Diagnostics" />
+                    </div>
+                </Section>
             </div>
 
             {showLogs && (
                 <ModalShell title={`Container Logs - ${provider.id}`} onClose={() => setShowLogs(false)} maxWidth="max-w-4xl">
-                    <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
-                        <pre className="text-xs text-gray-300 font-mono bg-gray-900 p-4 rounded border border-gray-700 whitespace-pre-wrap break-words">
+                    <div className="flex-1 overflow-y-auto p-4">
+                        <pre className="whitespace-pre-wrap break-words rounded-lg border border-gray-700 bg-gray-950 p-4 text-xs text-gray-300">
                             {logs}
                         </pre>
-                    </div>
-                    <div className="border-t border-gray-700 px-6 py-3 flex items-center justify-end gap-3">
-                        <button
-                            onClick={fetchLogs}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
-                        >
-                            Refresh
-                        </button>
-                        <button
-                            onClick={() => setShowLogs(false)}
-                            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors"
-                        >
-                            Close
-                        </button>
                     </div>
                 </ModalShell>
             )}
 
             {showDeployDetails && (
                 <ModalShell title={`Deploy Details - ${provider.id}`} onClose={() => setShowDeployDetails(false)}>
-                    <div className="p-6 space-y-4">
-                        <div className="space-y-1">
-                            <div className="text-sm text-gray-400">Status</div>
-                            <div className="text-white font-medium">{DEPLOY_LABELS[deploy.status] || deploy.status || 'Deploy idle'}</div>
-                            {deploy.message && <div className="text-sm text-gray-400">{deploy.message}</div>}
-                        </div>
-                        <div className="space-y-2">
-                            {(deploy.steps?.length ? deploy.steps : [{ name: 'No deploy steps recorded yet', success: true, output: '' }]).map((step) => (
-                                <div key={step.name} className="rounded-lg border border-gray-700 bg-gray-900/60 p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div className="text-sm font-medium text-white">{step.name}</div>
-                                        <StatusPill tone={step.success ? 'green' : step.skipped ? 'gray' : 'red'}>
-                                            {step.skipped ? 'Skipped' : step.success ? 'Success' : 'Failed'}
-                                        </StatusPill>
-                                    </div>
-                                    {step.output && (
-                                        <pre className="mt-2 text-xs text-gray-400 whitespace-pre-wrap break-words">{step.output}</pre>
-                                    )}
+                    <div className="space-y-3 p-6">
+                        {(deploy.steps?.length ? deploy.steps : [{ name: 'No deploy steps recorded', success: true, output: '' }]).map((step) => (
+                            <div key={step.name} className="rounded-xl border border-gray-700 bg-gray-950/70 p-4">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="font-medium text-white">{step.name}</div>
+                                    <Badge tone={step.skipped ? 'gray' : step.success ? 'green' : 'red'}>
+                                        {step.skipped ? 'Skipped' : step.success ? 'Success' : 'Failed'}
+                                    </Badge>
                                 </div>
-                            ))}
-                        </div>
+                                {step.entrypoint && (
+                                    <div className="mb-2 text-xs text-gray-500">{step.entrypoint}</div>
+                                )}
+                                <pre className="whitespace-pre-wrap break-words text-xs text-gray-400">
+                                    {step.output || 'No output'}
+                                </pre>
+                            </div>
+                        ))}
                     </div>
                 </ModalShell>
             )}
 
             {showDiagnostics && (
                 <ModalShell title={`Diagnostics - ${provider.id}`} onClose={() => setShowDiagnostics(false)}>
-                    <div className="p-6 space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-4 p-6">
+                        <div className="grid gap-3 md:grid-cols-2">
                             <InfoField label="Backend URL" value={diagnostics.worker?.backend_url || 'Unavailable'} />
                             <InfoField label="Worker URL" value={diagnostics.worker?.worker_url || 'Unavailable'} />
-                            <InfoField label="Runtime Mode" value={diagnostics.worker?.mode || 'Unknown'} />
-                            <InfoField label="Connected" value={diagnostics.worker?.connected ? 'Yes' : 'No'} />
+                            <InfoField label="Runtime Mode" value={diagnostics.worker?.mode || runtime.mode || 'Unknown'} />
+                            <InfoField label="Credential Readiness" value={credentialSummary.ready ? 'Ready' : 'Missing requirements'} />
                         </div>
-                        <div>
-                            <div className="text-sm font-medium text-white mb-2">Warnings</div>
-                            <div className="space-y-2">
-                                {(diagnostics.warnings?.length ? diagnostics.warnings : ['No active warnings']).map((message) => (
-                                    <Notice key={`diag-warning-${message}`} tone="yellow" message={message} compact />
-                                ))}
-                            </div>
-                        </div>
-                        <div>
-                            <div className="text-sm font-medium text-white mb-2">Errors</div>
-                            <div className="space-y-2">
-                                {(diagnostics.errors?.length ? diagnostics.errors : ['No active errors']).map((message) => (
-                                    <Notice key={`diag-error-${message}`} tone={diagnostics.errors?.length ? 'red' : 'green'} message={message} compact />
-                                ))}
-                            </div>
+                        <div className="space-y-2">
+                            {(diagnostics.warnings?.length ? diagnostics.warnings : ['No active warnings']).map((message) => (
+                                <Notice key={`warn-${message}`} tone={diagnostics.warnings?.length ? 'yellow' : 'green'} message={message} compact />
+                            ))}
+                            {(diagnostics.errors?.length ? diagnostics.errors : ['No active errors']).map((message) => (
+                                <Notice key={`err-${message}`} tone={diagnostics.errors?.length ? 'red' : 'green'} message={message} compact />
+                            ))}
                         </div>
                     </div>
                 </ModalShell>
             )}
 
             {showReconciliation && (
-                <ReconciliationStatus
-                    providerId={provider.id}
-                    onClose={() => setShowReconciliation(false)}
-                />
+                <ReconciliationStatus providerId={provider.id} onClose={() => setShowReconciliation(false)} />
             )}
         </div>
     );
 }
 
-function getProviderCapabilities(provider, runtime) {
-    const runtimeCapabilities = runtime?.capabilities;
-    const explicitCapabilities = runtimeCapabilities || provider.capabilities || provider.features || {};
-    const boolOr = (...values) => values.find((value) => value !== undefined);
-    const containerSupport = Boolean(provider.container_config);
-
-    return {
-        canManageContainer: boolOr(explicitCapabilities.container, containerSupport) ?? false,
-        canStart: boolOr(explicitCapabilities.start_container, explicitCapabilities.start, containerSupport) ?? false,
-        canStop: boolOr(explicitCapabilities.stop_container, explicitCapabilities.stop, containerSupport) ?? false,
-        canRestart: boolOr(explicitCapabilities.restart_container, explicitCapabilities.restart, containerSupport) ?? false,
-        canLogs: boolOr(explicitCapabilities.view_logs, explicitCapabilities.logs, containerSupport) ?? false,
-        canDeploy: boolOr(explicitCapabilities.deploy, false) ?? false,
-        canSetup: boolOr(explicitCapabilities.setup, false) ?? false,
-        canResetStatus: boolOr(explicitCapabilities.reset_status, explicitCapabilities.reset_model_status, true) ?? true,
-        canReconcile: boolOr(explicitCapabilities.reconcile, true) ?? true,
-    };
+function Section({ title, children }) {
+    return (
+        <section className="rounded-2xl border border-gray-800 bg-gray-950/60 p-5">
+            <div className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">{title}</div>
+            {children}
+        </section>
+    );
 }
 
-function StatusPill({ children, tone = 'gray' }) {
-    const classes = {
-        gray: 'bg-gray-500/15 text-gray-300 border border-gray-500/25',
-        green: 'bg-green-500/15 text-green-400 border border-green-500/25',
-        blue: 'bg-blue-500/15 text-blue-400 border border-blue-500/25',
-        purple: 'bg-purple-500/15 text-purple-400 border border-purple-500/25',
-        yellow: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/25',
-        red: 'bg-red-500/15 text-red-400 border border-red-500/25',
+function ActionButton({ onClick, disabled = false, tone = 'gray', icon: Icon, label }) {
+    const tones = {
+        gray: 'border-gray-700 bg-gray-800/70 text-gray-200 hover:bg-gray-700',
+        blue: 'border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/15',
+        green: 'border-green-500/30 bg-green-500/10 text-green-300 hover:bg-green-500/15',
+        purple: 'border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/15',
+        orange: 'border-orange-500/30 bg-orange-500/10 text-orange-300 hover:bg-orange-500/15',
+        red: 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/15',
     };
 
     return (
-        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${classes[tone] || classes.gray}`}>
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${tones[tone] || tones.gray}`}
+        >
+            <Icon size={14} />
+            {label}
+        </button>
+    );
+}
+
+function Badge({ children, tone = 'gray' }) {
+    const tones = {
+        gray: 'border-gray-600 bg-gray-700/40 text-gray-200',
+        blue: 'border-blue-500/25 bg-blue-500/10 text-blue-300',
+        purple: 'border-purple-500/25 bg-purple-500/10 text-purple-300',
+        green: 'border-green-500/25 bg-green-500/10 text-green-300',
+        red: 'border-red-500/25 bg-red-500/10 text-red-300',
+    };
+    return (
+        <span className={`inline-flex items-center rounded-full border px-2 py-1 text-xs font-medium ${tones[tone] || tones.gray}`}>
             {children}
         </span>
     );
@@ -512,38 +358,33 @@ function StatusPill({ children, tone = 'gray' }) {
 
 function InfoField({ label, value }) {
     return (
-        <div className="rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2">
-            <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
-            <div className="text-sm text-gray-200 break-all">{value}</div>
+        <div className="rounded-xl border border-gray-800 bg-gray-900/80 px-4 py-3">
+            <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">{label}</div>
+            <div className="break-all text-sm text-gray-200">{value || 'n/a'}</div>
         </div>
     );
 }
 
-function ActionStateCard({ label, value, detail, tone, onClick }) {
+function StatusField({ label, value, tone = 'gray' }) {
     return (
-        <button
-            type="button"
-            onClick={onClick || undefined}
-            className={`text-left rounded-xl border p-3 transition-colors ${onClick ? 'hover:border-gray-500 cursor-pointer' : 'cursor-default'} ${cardTone(tone)}`}
-        >
-            <div className="flex items-center justify-between gap-2">
-                <span className="text-xs uppercase tracking-wide text-gray-500">{label}</span>
-                {onClick && <Eye size={14} className="text-gray-500" />}
+        <div className="rounded-xl border border-gray-800 bg-gray-900/80 px-4 py-3">
+            <div className="mb-1 text-xs uppercase tracking-wide text-gray-500">{label}</div>
+            <div className="flex items-center gap-2">
+                <Circle className={`fill-current ${statusDot(tone)}`} size={8} />
+                <span className="text-sm text-gray-100">{value}</span>
             </div>
-            <div className="mt-2 text-sm font-medium text-white">{value}</div>
-            <div className="mt-1 text-xs text-gray-400 line-clamp-2">{detail}</div>
-        </button>
+        </div>
     );
 }
 
 function Notice({ tone, message, compact = false }) {
-    const classes = {
-        red: 'bg-red-500/12 border-red-500/35 text-red-300',
-        yellow: 'bg-yellow-500/12 border-yellow-500/35 text-yellow-300',
-        green: 'bg-green-500/12 border-green-500/35 text-green-300',
+    const tones = {
+        red: 'border-red-500/30 bg-red-500/10 text-red-200',
+        yellow: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+        green: 'border-green-500/30 bg-green-500/10 text-green-200',
     };
     return (
-        <div className={`rounded-lg border px-3 ${compact ? 'py-2' : 'py-3'} text-sm ${classes[tone] || classes.yellow}`}>
+        <div className={`rounded-xl border px-4 ${compact ? 'py-2 text-sm' : 'py-3 text-sm'} ${tones[tone] || tones.yellow}`}>
             {message}
         </div>
     );
@@ -551,49 +392,60 @@ function Notice({ tone, message, compact = false }) {
 
 function ModalShell({ title, onClose, children, maxWidth = 'max-w-3xl' }) {
     return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className={`bg-gray-800 rounded-xl border border-gray-700 w-full ${maxWidth} max-h-[80vh] flex flex-col`} onClick={(event) => event.stopPropagation()}>
-                <div className="border-b border-gray-700 px-6 py-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className={`flex max-h-[85vh] w-full ${maxWidth} flex-col rounded-2xl border border-gray-700 bg-gray-900`} onClick={(event) => event.stopPropagation()}>
+                <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
                     <h3 className="text-lg font-semibold text-white">{title}</h3>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+                    <button onClick={onClose} className="text-gray-400 transition-colors hover:text-white">
                         ×
                     </button>
                 </div>
-                <div className="overflow-y-auto custom-scrollbar flex-1">{children}</div>
+                {children}
             </div>
         </div>
     );
 }
 
-function cardTone(tone) {
-    const classes = {
-        gray: 'border-gray-700 bg-gray-900/40',
-        green: 'border-green-500/20 bg-green-500/5',
-        blue: 'border-blue-500/20 bg-blue-500/5',
-        purple: 'border-purple-500/20 bg-purple-500/5',
-        yellow: 'border-yellow-500/20 bg-yellow-500/5',
-        red: 'border-red-500/20 bg-red-500/5',
+function statusDot(status) {
+    const tones = {
+        green: 'text-green-400',
+        running: 'text-green-400',
+        active: 'text-green-400',
+        blue: 'text-blue-400',
+        queued: 'text-blue-400',
+        reconciling: 'text-blue-400',
+        purple: 'text-purple-400',
+        deploying: 'text-purple-400',
+        red: 'text-red-400',
+        failed: 'text-red-400',
+        yellow: 'text-yellow-400',
+        orange: 'text-orange-400',
+        gray: 'text-gray-500',
+        stopped: 'text-gray-500',
+        idle: 'text-gray-500',
     };
-    return classes[tone] || classes.gray;
+    return tones[status] || tones.gray;
 }
 
-function formatRelativeTime(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-        return 'recently';
+function humanizeStatus(status) {
+    if (!status) {
+        return 'Unknown';
     }
+    return status
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
-    const diffMs = Date.now() - date.getTime();
-    const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
-    if (diffMinutes < 1) {
-        return 'just now';
+function formatDirectoryBreakdown(byDirectory = {}) {
+    const entries = Object.entries(byDirectory || {});
+    if (entries.length === 0) {
+        return 'No storage stats yet';
     }
-    if (diffMinutes < 60) {
-        return `${diffMinutes}m ago`;
-    }
-    const diffHours = Math.round(diffMinutes / 60);
-    if (diffHours < 24) {
-        return `${diffHours}h ago`;
-    }
-    return `${Math.round(diffHours / 24)}d ago`;
+    return entries
+        .map(([directory, count]) => `${capitalize(directory)}: ${count}`)
+        .join(' · ');
+}
+
+function capitalize(value) {
+    return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }

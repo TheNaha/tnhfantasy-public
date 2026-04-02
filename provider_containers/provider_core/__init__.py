@@ -29,6 +29,7 @@ from .reconciliation import (
     get_all_expected_paths,
     determine_download_token,
     calculate_safe_deletion_limit,
+    run_reconciliation_v2,
 )
 from .background import (
     reconciliation_loop,
@@ -69,6 +70,7 @@ __all__ = [
     "get_all_expected_paths",
     "determine_download_token",
     "calculate_safe_deletion_limit",
+    "run_reconciliation_v2",
     # Background
     "reconciliation_loop",
     "log_startup_info",

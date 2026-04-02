@@ -7,8 +7,8 @@ def test_list_providers_empty(client):
     response = client.get("/api/providers")
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
-    assert len(data) == 0
+    assert isinstance(data, dict)
+    assert data["providers"] == []
 
 
 def test_create_provider(client, sample_provider_data):
@@ -19,6 +19,8 @@ def test_create_provider(client, sample_provider_data):
     assert data["id"] == "test-provider"
     assert data["type"] == "modal"
     assert data["enabled"] == True
+    assert "credentials" not in data
+    assert data["credential_summary"]["configured_fields"] == ["username"]
 
 
 def test_get_provider(client, sample_provider_data):

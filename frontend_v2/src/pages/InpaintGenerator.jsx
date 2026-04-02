@@ -22,6 +22,8 @@ import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 
+const EMPTY_MODELS = [];
+
 export default function InpaintGenerator() {
     const navigate = useNavigate();
     const location = useLocation();
@@ -47,8 +49,8 @@ export default function InpaintGenerator() {
         { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
     ]), []);
     const { modelsByKey } = useModelDirectories(modelRequests);
-    const checkpoints = modelsByKey.checkpoints || [];
-    const vaeModels = modelsByKey.vaeModels || [];
+    const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
+    const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {

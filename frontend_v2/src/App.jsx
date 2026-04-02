@@ -15,7 +15,7 @@
  *     top-right with a dark theme matching the overall UI.
  */
 
-import { Suspense, lazy, useEffect, useMemo } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -28,6 +28,7 @@ import useSettingsStore from './store/settingsStore';
 import { useBrandingStore } from './store/brandingStore';
 import { useJobStore } from './store/jobStore';
 import useReconciliationStore from './store/reconciliationStore';
+import useStore from './store/useStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobNotifications } from './hooks/useJobNotifications.jsx';
 import { api } from './api';
@@ -74,20 +75,14 @@ function App() {
     const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
     const connectReconciliation = useReconciliationStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
+    const initCollections = useStore((state) => state.initCollections);
 
-    const queryClient = useMemo(() => {
-        const staleTime = Number.isFinite(queryUiSettings?.queryStaleTime)
-            ? queryUiSettings.queryStaleTime
-            : 1000 * 60 * 5;
-        const gcTime = Number.isFinite(queryUiSettings?.queryCacheTime)
-            ? queryUiSettings.queryCacheTime
-            : 1000 * 60 * 30;
-
-        return new QueryClient({
+    const [queryClient] = useState(() => (
+        new QueryClient({
             defaultOptions: {
                 queries: {
-                    staleTime,
-                    gcTime,
+                    staleTime: 1000 * 60 * 5,
+                    gcTime: 1000 * 60 * 30,
                     retry: 1,
                     refetchOnWindowFocus: false,
                     refetchOnReconnect: true,
@@ -98,8 +93,32 @@ function App() {
                     networkMode: 'online',
                 },
             },
+        })
+    ));
+
+    useEffect(() => {
+        const staleTime = Number.isFinite(queryUiSettings?.queryStaleTime)
+            ? queryUiSettings.queryStaleTime
+            : 1000 * 60 * 5;
+        const gcTime = Number.isFinite(queryUiSettings?.queryCacheTime)
+            ? queryUiSettings.queryCacheTime
+            : 1000 * 60 * 30;
+
+        queryClient.setDefaultOptions({
+            queries: {
+                staleTime,
+                gcTime,
+                retry: 1,
+                refetchOnWindowFocus: false,
+                refetchOnReconnect: true,
+                networkMode: 'online',
+            },
+            mutations: {
+                retry: 1,
+                networkMode: 'online',
+            },
         });
-    }, [queryUiSettings?.queryCacheTime, queryUiSettings?.queryStaleTime]);
+    }, [queryClient, queryUiSettings]);
 
     // Initialize dynamic viewport height for iOS Safari
     // This sets --vh CSS variable that works correctly with address bar
@@ -145,7 +164,8 @@ function App() {
 
     useEffect(() => {
         loadBranding();
-    }, [loadBranding]);
+        initCollections();
+    }, [initCollections, loadBranding]);
 
     return (
         <ErrorBoundary>

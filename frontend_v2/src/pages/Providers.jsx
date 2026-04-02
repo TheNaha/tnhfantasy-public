@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Download, Wrench } from 'lucide-react';
+import { Download, Plus, RefreshCw, Search, Wrench } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import ProviderCard from '../components/providers/ProviderCard';
@@ -9,76 +9,93 @@ import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { providersApi } from '../api';
 import useReconciliationStore from '../store/reconciliationStore';
-import { useProviderStore } from '../store/providerStore';
-import useProviderServerData from '../hooks/useProviderServerData';
+import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
+
+const FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'managed', label: 'Managed Deploy' },
+    { id: 'manual', label: 'Manual Deploy' },
+    { id: 'issues', label: 'Needs Attention' },
+];
 
 export default function Providers() {
     const [showAddModal, setShowAddModal] = useState(false);
     const [showAddModelModal, setShowAddModelModal] = useState(false);
-    const [reconcilingProviderId, setReconcilingProviderId] = useState(null); // Track which provider is reconciling
-    const [editingProvider, setEditingProvider] = useState(null); // Track provider being edited
+    const [editingProvider, setEditingProvider] = useState(null);
+    const [reconcilingProviderId, setReconcilingProviderId] = useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    
+    const [search, setSearch] = useState('');
+    const [filter, setFilter] = useState('all');
+    const [resetConfirm, setResetConfirm] = useState({ isOpen: false, providerId: null });
+
     const { startReconciliation } = useReconciliationStore();
     const {
         providers,
-        isLoading,
-        containerStatuses,
-        providerStatusCards,
         lbConfig,
         lbStats,
-        refreshAll: refreshProviderServerData,
-    } = useProviderServerData();
-    const containerLoading = useProviderStore(state => state.containerLoading);
-    const startContainer = useProviderStore(state => state.startContainer);
-    const stopContainer = useProviderStore(state => state.stopContainer);
-    const restartContainer = useProviderStore(state => state.restartContainer);
-    const deployProvider = useProviderStore(state => state.deployProvider);
-    const reconcileProvider = useProviderStore(state => state.reconcileProvider);
-    const setupProvider = useProviderStore(state => state.setupProvider);
-    const resetProviderModelStatus = useProviderStore(state => state.resetProviderModelStatus);
-    const toggleProviderEnabled = useProviderStore(state => state.toggleProviderEnabled);
-    const deleteProvider = useProviderStore(state => state.deleteProvider);
-    const updateLoadBalancerStrategy = useProviderStore(state => state.updateLoadBalancerStrategy);
-    const saveProvider = useProviderStore(state => state.saveProvider);
-    const [resetConfirm, setResetConfirm] = useState({ isOpen: false, providerId: null });
+        isLoading,
+        refreshAll: refreshProviderData,
+    } = useProvidersPageData();
+    const {
+        actionLoading,
+        startContainer,
+        stopContainer,
+        restartContainer,
+        deployProvider,
+        reconcileProvider,
+        setupProvider,
+        resetProviderModelStatus,
+        toggleProviderEnabled,
+        deleteProvider,
+        updateLoadBalancerStrategy,
+        saveProvider,
+    } = useProviderMutations();
 
     const refreshAll = useCallback(async () => {
         setIsRefreshing(true);
         try {
-            await refreshProviderServerData();
+            await refreshProviderData();
         } finally {
             setIsRefreshing(false);
         }
-    }, [refreshProviderServerData]);
+    }, [refreshProviderData]);
 
-    // Enrich providers with container status and default enabled to true
-    const enrichedProviders = useMemo(() => providers.map(provider => ({
-        ...provider,
-        container_status: containerStatuses[provider.id]?.status || 'stopped',
-        status_card: providerStatusCards[provider.id] || null,
-        enabled: provider.enabled !== undefined ? provider.enabled : true // Default to enabled if not set
-    })), [providers, containerStatuses, providerStatusCards]);
-
-    // ⚡ Bolt: Create an O(1) Hash Map for provider stats to avoid O(N²) lookups during render
     const providerStatsMap = useMemo(() => {
         const map = new Map();
         if (lbStats?.provider_stats) {
-            lbStats.provider_stats.forEach(stat => map.set(stat.id, stat));
+            lbStats.provider_stats.forEach((stat) => map.set(stat.id, stat));
         }
         return map;
     }, [lbStats]);
 
-    const pageVariants = {
-        initial: { opacity: 0, y: 20 },
-        animate: { opacity: 1, y: 0 },
-        exit: { opacity: 0, y: -20 }
-    };
+    const filteredProviders = useMemo(() => {
+        return providers.filter((provider) => {
+            const query = search.trim().toLowerCase();
+            const matchesSearch = !query || [
+                provider.id,
+                provider.type,
+                provider.credential_summary?.account_label,
+            ].filter(Boolean).some((value) => value.toLowerCase().includes(query));
+
+            const hasIssues = (provider.diagnostics?.warnings?.length || 0) > 0
+                || (provider.diagnostics?.errors?.length || 0) > 0
+                || (provider.deploy_state?.status === 'failed')
+                || (provider.reconciliation_state?.status === 'failed');
+
+            const matchesFilter = (
+                filter === 'all'
+                || (filter === 'managed' && provider.capabilities?.managed_deploy)
+                || (filter === 'manual' && provider.capabilities?.manual_deploy)
+                || (filter === 'issues' && hasIssues)
+            );
+
+            return matchesSearch && matchesFilter;
+        });
+    }, [filter, providers, search]);
 
     const handleStart = async (providerId) => {
         try {
             await startContainer(providerId);
-            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to start container:', error);
             toast.error(`Failed to start container: ${error.message}`);
@@ -88,21 +105,28 @@ export default function Providers() {
     const handleStop = async (providerId) => {
         try {
             await stopContainer(providerId);
-            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to stop container:', error);
             toast.error(`Failed to stop container: ${error.message}`);
         }
     };
 
+    const handleRestart = async (providerId) => {
+        try {
+            await restartContainer(providerId);
+        } catch (error) {
+            console.error('Failed to restart container:', error);
+            toast.error(`Failed to restart container: ${error.message}`);
+        }
+    };
+
     const handleDeploy = async (providerId) => {
         try {
             const result = await deployProvider(providerId);
-            await refreshProviderServerData();
-            const providerType = result.provider_type || 'Provider';
-            toast.success(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} app deployed successfully!`);
+            const providerType = result.provider_type || 'provider';
+            toast.success(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} deploy completed`);
         } catch (error) {
-            console.error('Failed to deploy app:', error);
+            console.error('Failed to deploy provider:', error);
             toast.error(`Failed to deploy: ${error.message}`);
         }
     };
@@ -121,52 +145,16 @@ export default function Providers() {
     const handleSetup = async (providerId) => {
         try {
             const result = await setupProvider(providerId);
-            await refreshProviderServerData();
-            toast.success(`Setup complete! ${result.message}`);
+            toast.success(result.message || 'Provider setup completed');
         } catch (error) {
             console.error('Failed to setup provider:', error);
             toast.error(`Failed to setup provider: ${error.message}`);
         }
     };
 
-    const handleResetStatus = async (providerId) => {
-        // Show confirmation modal
-        setResetConfirm({ isOpen: true, providerId });
-    };
-
-    const executeResetStatus = async () => {
-        const providerId = resetConfirm.providerId;
-        setResetConfirm({ isOpen: false, providerId: null });
-
-        try {
-            const result = await resetProviderModelStatus(providerId);
-            await refreshProviderServerData();
-            toast.success(`Reset complete! ${result.deleted_count} entries cleared. Click Reconcile to re-download.`);
-        } catch (error) {
-            console.error('Failed to reset status:', error);
-            toast.error(`Failed to reset: ${error.message}`);
-        }
-    };
-
-    const handleRestart = async (providerId) => {
-        try {
-            await restartContainer(providerId);
-            await refreshProviderServerData();
-        } catch (error) {
-            console.error('Failed to restart container:', error);
-            toast.error(`Failed to restart container: ${error.message}`);
-        }
-    };
-
-    const handleEdit = (provider) => {
-        setEditingProvider(provider);
-    };
-
     const handleDelete = async (providerId) => {
-        // Note: Browser confirm() is blocked, proceeding directly
         try {
             await deleteProvider(providerId);
-            await refreshProviderServerData();
             toast.success('Provider deleted');
         } catch (error) {
             console.error('Failed to delete provider:', error);
@@ -177,21 +165,14 @@ export default function Providers() {
     const handleToggleEnabled = async (providerId, currentlyEnabled) => {
         try {
             await toggleProviderEnabled(providerId, currentlyEnabled);
-            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to toggle provider:', error);
             toast.error(`Failed to toggle provider: ${error.message}`);
         }
     };
 
-    const handleUpdateLBStrategy = async (strategy) => {
-        try {
-            await updateLoadBalancerStrategy(strategy, lbConfig);
-            await refreshProviderServerData();
-        } catch (error) {
-            console.error('Failed to update load balancer:', error);
-            toast.error(`Failed to update load balancer: ${error.message}`);
-        }
+    const handleSaveProvider = async (provider, payload) => {
+        await saveProvider(provider, payload);
     };
 
     const handleCleanupState = async () => {
@@ -199,7 +180,7 @@ export default function Providers() {
             const result = await providersApi.cleanupState();
             await refreshAll();
             toast.success(
-                `Cleanup complete: ${result.orphaned_statuses_removed || 0} orphaned rows removed, ${result.stale_downloading_reset || 0} stale downloads reset.`
+                `Cleanup complete: ${result.orphaned_statuses_removed || 0} orphaned rows removed, ${result.stale_downloading_reset || 0} stale downloads reset.`,
             );
         } catch (error) {
             console.error('Failed to cleanup provider state:', error);
@@ -207,53 +188,71 @@ export default function Providers() {
         }
     };
 
+    const executeResetStatus = async () => {
+        const providerId = resetConfirm.providerId;
+        setResetConfirm({ isOpen: false, providerId: null });
+
+        try {
+            const result = await resetProviderModelStatus(providerId);
+            toast.success(`Reset complete! ${result.deleted_count || 0} entries cleared.`);
+        } catch (error) {
+            console.error('Failed to reset provider state:', error);
+            toast.error(`Failed to reset: ${error.message}`);
+        }
+    };
+
+    const handleUpdateLBStrategy = async (strategy) => {
+        try {
+            await updateLoadBalancerStrategy(strategy, lbConfig);
+        } catch (error) {
+            console.error('Failed to update load balancer:', error);
+            toast.error(`Failed to update load balancer: ${error.message}`);
+        }
+    };
 
     return (
         <motion.div
-            className="p-6 max-w-7xl mx-auto"
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            variants={pageVariants}
+            className="mx-auto max-w-7xl p-6"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.3 }}
         >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-8">
+            <div className="mb-8 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-white mb-2">Providers</h1>
-                    <p className="text-gray-400">Manage computational providers and model synchronization</p>
+                    <h1 className="mb-2 text-3xl font-bold text-white">Providers</h1>
+                    <p className="max-w-2xl text-gray-400">
+                        Manage runtime containers, deploy targets, and model sync from one canonical provider record.
+                    </p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap gap-3">
                     <button
                         onClick={() => setShowAddModelModal(true)}
                         disabled={providers.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <Download size={16} />
                         Add Model
                     </button>
-
                     <button
                         onClick={refreshAll}
                         disabled={isRefreshing}
-                        className="flex items-center gap-2 px-4 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-600 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800/70 px-4 py-2 text-gray-200 transition-colors hover:bg-gray-700 disabled:opacity-50"
                     >
                         <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
                         Refresh
                     </button>
-
                     <button
                         onClick={handleCleanupState}
-                        className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 rounded-lg border border-amber-500/30 transition-colors"
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-amber-200 transition-colors hover:bg-amber-500/15"
                     >
                         <Wrench size={16} />
                         Cleanup State
                     </button>
-
                     <button
                         onClick={() => setShowAddModal(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition-colors hover:bg-blue-700"
                     >
                         <Plus size={16} />
                         Add Provider
@@ -261,82 +260,96 @@ export default function Providers() {
                 </div>
             </div>
 
-            {/* Load Balancer Config */}
             {lbConfig && (
-                <div className="bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-xl p-6 mb-8">
-                    <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-700">
+                <div className="mb-8 rounded-2xl border border-gray-700 bg-gray-900/70 p-6">
+                    <div className="mb-5 flex flex-col gap-4 border-b border-gray-800 pb-4 md:flex-row md:items-center md:justify-between">
                         <div>
-                            <h2 className="text-xl font-semibold text-white mb-1">Load Balancer</h2>
-                            <p className="text-sm text-gray-400">Distribute requests across providers</p>
+                            <h2 className="text-xl font-semibold text-white">Load Balancer</h2>
+                            <p className="text-sm text-gray-400">Distribute jobs across enabled providers using one shared strategy.</p>
                         </div>
-                        {lbStats && (
-                            <div className="flex gap-2">
-                                <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm font-semibold border border-green-500/30">
-                                    {lbStats.total_providers} active
-                                </span>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Strategy Selector */}
-                    <div className="space-y-3">
-                        <label className="text-sm font-medium text-gray-400">Strategy:</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {[
-                                { id: 'round-robin', label: 'Round Robin', desc: 'Cycle through all' },
-                                { id: 'random', label: 'Random', desc: 'Random selection' },
-                                { id: 'priority', label: 'Priority', desc: 'Best priority only' },
-                                { id: 'least-connections', label: 'Least Connections', desc: 'Fewest active jobs' },
-                                { id: 'priority-round-robin', label: 'Priority + RR', desc: 'Round-robin in best tier' },
-                                { id: 'priority-least-connections', label: 'Priority + LC', desc: 'Least conn. in best tier' },
-                            ].map((strategy) => (
-                                <button
-                                    key={strategy.id}
-                                    onClick={() => handleUpdateLBStrategy(strategy.id)}
-                                    className={`px-3 py-2 rounded-lg text-sm transition-all text-left ${lbConfig.strategy === strategy.id
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-gray-700/50 text-gray-300 border border-gray-600 hover:bg-gray-700'
-                                        }`}
-                                >
-                                    <div className="font-medium">{strategy.label}</div>
-                                    <div className={`text-xs ${lbConfig.strategy === strategy.id ? 'text-blue-200' : 'text-gray-500'}`}>
-                                        {strategy.desc}
-                                    </div>
-                                </button>
-                            ))}
+                        <div className="flex gap-2">
+                            <span className="rounded-full border border-green-500/25 bg-green-500/10 px-3 py-1 text-sm font-medium text-green-300">
+                                {lbStats?.total_providers || 0} active
+                            </span>
+                            <span className="rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-sm text-gray-300">
+                                {lbConfig.fallback_enabled ? 'Fallback enabled' : 'Fallback disabled'}
+                            </span>
                         </div>
                     </div>
 
-                    {/* Fallback Notice */}
-                    {lbConfig.fallback_enabled && (
-                        <div className="mt-4 px-4 py-2 bg-green-500/15 border-l-4 border-green-500 rounded-lg text-green-400 text-sm font-medium">
-                            ✓ Automatic fallback enabled
-                        </div>
-                    )}
+                    <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+                        {[
+                            { id: 'round-robin', label: 'Round Robin' },
+                            { id: 'random', label: 'Random' },
+                            { id: 'priority', label: 'Priority' },
+                            { id: 'least-connections', label: 'Least Connections' },
+                            { id: 'priority-round-robin', label: 'Priority + RR' },
+                            { id: 'priority-least-connections', label: 'Priority + LC' },
+                        ].map((strategy) => (
+                            <button
+                                key={strategy.id}
+                                onClick={() => handleUpdateLBStrategy(strategy.id)}
+                                className={`rounded-xl border px-3 py-3 text-left text-sm transition-colors ${
+                                    lbConfig.strategy === strategy.id
+                                        ? 'border-blue-500/40 bg-blue-600 text-white'
+                                        : 'border-gray-700 bg-gray-800/70 text-gray-300 hover:bg-gray-700'
+                                }`}
+                            >
+                                {strategy.label}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             )}
 
-            {/* Provider Grid */}
+            <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <label className="relative block max-w-md flex-1">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="Search by provider ID, type, or account label"
+                        className="w-full rounded-xl border border-gray-700 bg-gray-900/80 py-3 pl-10 pr-4 text-white outline-none transition-colors focus:border-blue-500"
+                    />
+                </label>
+
+                <div className="flex flex-wrap gap-2">
+                    {FILTERS.map((option) => (
+                        <button
+                            key={option.id}
+                            onClick={() => setFilter(option.id)}
+                            className={`rounded-full border px-3 py-2 text-sm transition-colors ${
+                                filter === option.id
+                                    ? 'border-blue-500/40 bg-blue-600 text-white'
+                                    : 'border-gray-700 bg-gray-900/70 text-gray-300 hover:bg-gray-800'
+                            }`}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {isLoading ? (
-                <div className="flex items-center justify-center h-64">
+                <div className="flex h-64 items-center justify-center rounded-2xl border border-gray-800 bg-gray-900/40">
                     <div className="text-gray-400">Loading providers...</div>
                 </div>
-            ) : enrichedProviders && enrichedProviders.length > 0 ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {enrichedProviders.map((provider) => (
+            ) : filteredProviders.length > 0 ? (
+                <div className="grid gap-6 xl:grid-cols-2">
+                    {filteredProviders.map((provider) => (
                         <ProviderCard
                             key={provider.id}
                             provider={provider}
-                            loading={containerLoading[provider.id]}
+                            loading={actionLoading[provider.id]}
                             onStart={() => handleStart(provider.id)}
                             onStop={() => handleStop(provider.id)}
                             onRestart={() => handleRestart(provider.id)}
                             onDeploy={() => handleDeploy(provider.id)}
                             onReconcile={() => handleReconcile(provider.id)}
-                            onResetStatus={() => handleResetStatus(provider.id)}
+                            onResetStatus={() => setResetConfirm({ isOpen: true, providerId: provider.id })}
                             onSetup={() => handleSetup(provider.id)}
-                            onConfigure={() => handleEdit(provider)}
-                            onEdit={() => handleEdit(provider)}
+                            onEdit={() => setEditingProvider(provider)}
                             onDelete={() => handleDelete(provider.id)}
                             onToggleEnabled={handleToggleEnabled}
                             providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
@@ -345,19 +358,25 @@ export default function Providers() {
                     ))}
                 </div>
             ) : (
-                <div className="flex flex-col items-center justify-center h-64 bg-gray-800/30 rounded-xl border border-gray-700">
-                    <p className="text-gray-400 mb-4">No providers configured</p>
+                <div className="flex h-64 flex-col items-center justify-center rounded-2xl border border-gray-800 bg-gray-900/40 text-center">
+                    <p className="mb-2 text-lg font-medium text-white">
+                        {providers.length === 0 ? 'No providers configured' : 'No providers match this view'}
+                    </p>
+                    <p className="mb-4 max-w-md text-sm text-gray-400">
+                        {providers.length === 0
+                            ? 'Create a provider to configure runtime, deployment, and sync in one place.'
+                            : 'Adjust the search query or filter to see more providers.'}
+                    </p>
                     <button
                         onClick={() => setShowAddModal(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-white transition-colors hover:bg-blue-700"
                     >
                         <Plus size={16} />
-                        Add Your First Provider
+                        Add Provider
                     </button>
                 </div>
             )}
 
-            {/* Add/Edit Provider Modal */}
             {(showAddModal || editingProvider) && (
                 <ProviderModal
                     provider={editingProvider}
@@ -370,19 +389,17 @@ export default function Providers() {
                         setEditingProvider(null);
                         await refreshAll();
                     }}
-                    saveProvider={saveProvider}
+                    saveProvider={handleSaveProvider}
                 />
             )}
 
-            {/* Add Model to Provider Modal */}
             {showAddModelModal && (
                 <AddModelToProviderModal
-                    providers={enrichedProviders}
+                    providers={providers}
                     onClose={() => setShowAddModelModal(false)}
                 />
             )}
 
-            {/* Reconciliation Status Modal */}
             {reconcilingProviderId && (
                 <ReconciliationStatus
                     providerId={reconcilingProviderId}
@@ -393,15 +410,14 @@ export default function Providers() {
                 />
             )}
 
-            {/* Reset Status Confirmation Modal */}
             <ConfirmationModal
                 isOpen={resetConfirm.isOpen}
                 onClose={() => setResetConfirm({ isOpen: false, providerId: null })}
                 onConfirm={executeResetStatus}
                 title="Reset Provider Status"
-                message={`This will mark ALL files as pending and force a complete re-download on next reconcile. Orphaned files in Modal will be deleted.`}
-                isDangerous={true}
-                confirmText="Reset All"
+                message="This clears persisted provider sync rows and forces the next reconciliation to rebuild model state."
+                isDangerous
+                confirmText="Reset Provider"
             />
         </motion.div>
     );

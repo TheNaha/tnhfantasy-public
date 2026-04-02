@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+from typing import Any, Callable, Dict, Optional
+
+import httpx
+import requests
+from sqlmodel import Session
+
+from api.provider_runtime import resolve_provider_runtime
+from core.events import EventType, emit_provider_event
+from core.exceptions import ProviderError
+from infrastructure.http_client import get_http_client
+from services.provider_service import ProviderService
+from services.provider_status_service import ProviderStatusService
+
+
+class ProviderLifecycleService:
+    """Orchestrate provider runtime/container lifecycle operations."""
+
+    def __init__(
+        self,
+        session: Session,
+        *,
+        provider_service: Optional[ProviderService] = None,
+        container_manager: Any = None,
+        invalidate_caches: Optional[Callable[[Optional[str]], None]] = None,
+    ) -> None:
+        self.session = session
+        self.provider_service = provider_service or ProviderService(session)
+        self.status_service = ProviderStatusService(session, provider_service=self.provider_service)
+        self.container_manager = container_manager
+        self.invalidate_caches = invalidate_caches or (lambda _provider_id=None: None)
+
+    def _require_container_manager(self):
+        if not self.container_manager:
+            raise ProviderError("provider-runtime", "Container manager not initialized")
+        return self.container_manager
+
+    async def start_container(self, provider_id: str) -> Dict[str, Any]:
+        container_manager = self._require_container_manager()
+        provider = await self.provider_service.get_provider(provider_id)
+        container_config = provider.container_config
+        if not container_config:
+            raise ProviderError(
+                provider_id,
+                f"Provider '{provider_id}' is not configured for containerized mode",
+            )
+
+        container = container_manager.start_container(
+            provider_id=provider_id,
+            provider_type=provider.type,
+            port=container_config["port"],
+            env_vars=self.provider_service.build_provider_environment(provider),
+        )
+        self.invalidate_caches(provider_id)
+        await emit_provider_event(
+            EventType.PROVIDER_CONTAINER_STATUS,
+            provider_id,
+            {"status": "running"},
+        )
+        return {
+            "status": "success",
+            "message": f"Container for provider '{provider_id}' started",
+            "container_id": container.short_id,
+        }
+
+    async def stop_container(self, provider_id: str) -> Dict[str, Any]:
+        container_manager = self._require_container_manager()
+        container_manager.stop_container(provider_id)
+        self.invalidate_caches(provider_id)
+        await emit_provider_event(
+            EventType.PROVIDER_CONTAINER_STATUS,
+            provider_id,
+            {"status": "stopped"},
+        )
+        return {
+            "status": "success",
+            "message": f"Container for provider '{provider_id}' stopped",
+        }
+
+    async def restart_container(self, provider_id: str) -> Dict[str, Any]:
+        await self.stop_container(provider_id)
+        await self.start_container(provider_id)
+        return {
+            "status": "success",
+            "message": f"Container for provider '{provider_id}' restarted",
+        }
+
+    def get_container_logs(self, provider_id: str, tail: int = 100) -> Dict[str, Any]:
+        container_manager = self._require_container_manager()
+        logs = container_manager.get_container_logs(provider_id, tail=tail)
+        return {
+            "provider_id": provider_id,
+            "logs": logs,
+        }
+
+    def get_container_status(self, provider_id: str) -> Dict[str, Any]:
+        container_manager = self._require_container_manager()
+        container_name = f"comfy-provider-{provider_id}"
+
+        try:
+            container = container_manager.client.containers.get(container_name)
+        except Exception:
+            return {
+                "provider_id": provider_id,
+                "status": "stopped",
+                "running": False,
+            }
+
+        container.reload()
+
+        healthy = False
+        try:
+            health_status = container.attrs.get("State", {}).get("Health", {}).get("Status")
+            if health_status:
+                healthy = health_status == "healthy"
+            else:
+                port = container.ports.get("8000/tcp")
+                if port:
+                    host_port = port[0]["HostPort"]
+                    response = requests.get(f"http://localhost:{host_port}/health", timeout=2)
+                    healthy = response.status_code == 200
+        except Exception:
+            pass
+
+        if container.status == "running":
+            container_manager.running_containers[provider_id] = container
+        elif provider_id in container_manager.running_containers:
+            del container_manager.running_containers[provider_id]
+
+        return {
+            "provider_id": provider_id,
+            "status": container.status,
+            "running": container.status == "running",
+            "healthy": healthy,
+            "container_id": container.short_id,
+            "ports": container.ports,
+        }
+
+    async def setup_provider(self, provider_id: str) -> Dict[str, Any]:
+        provider = await self.provider_service.get_provider(provider_id)
+        runtime = resolve_provider_runtime(provider)
+        if not runtime.supports_setup or runtime.mode != "container_http":
+            raise ProviderError(
+                provider_id,
+                "Setup requires a Modal provider with container-backed worker runtime",
+            )
+
+        http_client = get_http_client()
+        response = await http_client.post(f"{runtime.worker_url}/setup")
+        response.raise_for_status()
+        result = response.json()
+        return {
+            "status": "success",
+            "message": f"Provider '{provider_id}' setup complete (via worker)",
+            "result": result,
+        }
+
+    async def trigger_reconciliation(self, provider_id: str) -> Dict[str, Any]:
+        provider = await self.provider_service.get_provider(provider_id)
+        runtime = resolve_provider_runtime(provider)
+        if not runtime.supports_reconciliation or runtime.mode != "container_http":
+            raise ProviderError(
+                provider_id,
+                "Reconciliation is only available for container-backed providers",
+            )
+
+        session_state = await self.provider_service.start_reconciliation_session(provider_id)
+        if not session_state.get("accepted"):
+            return {
+                "status": "already_running",
+                "provider_id": provider_id,
+                "message": session_state.get("message", "Reconciliation already in progress"),
+                "reconciliation_state": session_state.get("state"),
+            }
+
+        http_client = get_http_client()
+        try:
+            response = await http_client.post(
+                f"{runtime.worker_url}/reconcile",
+                timeout=5.0,
+            )
+        except httpx.HTTPError as exc:
+            await self.provider_service.upsert_reconciliation_state(
+                provider_id,
+                {
+                    "status": "failed",
+                    "message": f"Failed to reach worker: {str(exc)}",
+                },
+            )
+            self.invalidate_caches(provider_id)
+            raise
+
+        if response.status_code == 200:
+            persisted_state = await self.provider_service.upsert_reconciliation_state(
+                provider_id,
+                {
+                    "status": "reconciling",
+                    "phase": "starting",
+                    "message": "Reconciliation started in worker",
+                    "last_contact_at": ProviderService._utcnow_iso(),
+                },
+            )
+            self.invalidate_caches(provider_id)
+            return {
+                "status": "triggered",
+                "provider_id": provider_id,
+                "message": "Reconciliation started in worker",
+                "reconciliation": self.status_service.normalize_reconciliation_for_card(persisted_state),
+            }
+
+        if response.status_code == 409:
+            await self.provider_service.upsert_reconciliation_state(
+                provider_id,
+                {
+                    "status": "reconciling",
+                    "phase": "running",
+                    "message": "Worker reported reconciliation already in progress",
+                    "last_contact_at": ProviderService._utcnow_iso(),
+                },
+            )
+            return {
+                "status": "already_running",
+                "provider_id": provider_id,
+                "message": "Reconciliation already running in worker",
+            }
+
+        body = response.text
+        await self.provider_service.upsert_reconciliation_state(
+            provider_id,
+            {
+                "status": "failed",
+                "message": f"Failed to trigger reconciliation: {body}",
+            },
+        )
+        raise httpx.HTTPStatusError(
+            f"Failed to trigger reconciliation: {body}",
+            request=response.request,
+            response=response,
+        )
+
+    async def get_reconciliation_status(self, provider_id: str) -> Dict[str, Any]:
+        provider = await self.provider_service.get_provider(provider_id)
+        persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
+        runtime = resolve_provider_runtime(provider)
+
+        if runtime.mode != "container_http":
+            if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                return persisted_state
+            return {
+                "provider_id": provider_id,
+                "status": "idle",
+                "message": "Status tracking is only available for container-backed providers",
+            }
+
+        http_client = get_http_client()
+        try:
+            response = await http_client.get(
+                f"{runtime.worker_url}/reconciliation-status",
+                timeout=30.0,
+            )
+        except httpx.HTTPError as exc:
+            if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                merged_state = dict(persisted_state)
+                merged_state["message"] = merged_state.get("message") or "Worker unreachable; showing last persisted reconciliation state"
+                merged_state["warning"] = f"Cannot reach worker: {str(exc)}"
+                return merged_state
+            return {
+                "provider_id": provider_id,
+                "status": "idle",
+                "warning": f"Cannot reach worker: {str(exc)}",
+            }
+
+        if response.status_code == 200:
+            worker_state = response.json()
+            return await self.provider_service.upsert_reconciliation_state(
+                provider_id,
+                {
+                    **worker_state,
+                    "last_contact_at": ProviderService._utcnow_iso(),
+                },
+            )
+
+        if response.status_code == 404:
+            if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                return persisted_state
+            return {
+                "provider_id": provider_id,
+                "status": "idle",
+                "message": "Status tracking not available",
+            }
+
+        if persisted_state.get("status") and persisted_state.get("status") != "idle":
+            return persisted_state
+        raise httpx.HTTPStatusError(
+            "Failed to get reconciliation status",
+            request=response.request,
+            response=response,
+        )

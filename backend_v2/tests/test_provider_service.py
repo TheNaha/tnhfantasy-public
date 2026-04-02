@@ -91,6 +91,15 @@ class TestProviderServiceGet:
         providers = await service.list_providers()
         assert len(providers) == 1
 
+    async def test_list_providers_does_not_persist_normalization_on_read(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+
+        with patch.object(service.repo, "update", wraps=service.repo.update) as mock_update:
+            providers = await service.list_providers()
+
+        assert len(providers) == 1
+        mock_update.assert_not_called()
+
     async def test_get_enabled_providers(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)
         enabled = service.get_enabled_providers()
@@ -202,8 +211,10 @@ class TestProviderToDict:
         assert "type" in d
         assert "enabled" in d
         assert "priority" in d
-        assert "credentials" in d
-        assert "config" in d
+        assert "credential_summary" in d
+        assert "runtime_config" in d
+        assert "deploy_config" in d
+        assert "credentials" not in d
 
 
 class _DummyExecResult:
@@ -214,6 +225,7 @@ class _DummyExecResult:
 
 class _DummyContainer:
     status = "running"
+    name = "deploy-container"
 
     def __init__(self, results):
         self._results = list(results)
@@ -223,6 +235,12 @@ class _DummyContainer:
             return _DummyExecResult(0, "no-op")
         return self._results.pop(0)
 
+    def stop(self, timeout=2):
+        return None
+
+    def remove(self, force=False):
+        return None
+
 
 class _DummyContainersClient:
     def __init__(self, container):
@@ -231,12 +249,16 @@ class _DummyContainersClient:
     def get(self, _name):
         return self._container
 
+    def run(self, **_kwargs):
+        return self._container
+
 
 class _DummyContainerManager:
     def __init__(self, provider_id: str, container):
         self.running_containers = {provider_id: container}
         self.client = MagicMock()
         self.client.containers = _DummyContainersClient(container)
+        self.build_worker_image = MagicMock(return_value=f"comfy-provider-{provider_id}:latest")
 
 
 class TestProviderServiceDeploy:

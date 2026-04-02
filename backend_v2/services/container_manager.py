@@ -33,11 +33,11 @@ class ContainerManager:
             containers_dir: Path to provider_containers directory
         """
         if containers_dir is None:
-            containers_dir = os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "provider_containers"
-            )
+            service_dir = Path(__file__).resolve().parent
+            project_root = service_dir.parent.parent
+            repo_containers_dir = project_root / "provider_containers"
+            backend_local_dir = service_dir.parent / "provider_containers"
+            containers_dir = repo_containers_dir if repo_containers_dir.exists() else backend_local_dir
         
         self.containers_dir = Path(containers_dir)
         

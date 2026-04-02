@@ -49,7 +49,17 @@ export default function Dashboard() {
     const storeDeleteJob = useJobStore((state) => state.deleteJob);
     const retryJob = useJobStore((state) => state.retryJob);
     const cancelJob = useJobStore((state) => state.cancelJob);
-    const { favorites, toggleFavorite, collections, activeCollection, addToCollection, removeFromCollection, setActiveCollection } = useStore();
+    const {
+        favorites,
+        toggleFavorite,
+        collections,
+        activeCollection,
+        addToCollection,
+        removeFromCollection,
+        setActiveCollection,
+        initCollections,
+        loadCollectionImages,
+    } = useStore();
 
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);
@@ -187,7 +197,24 @@ export default function Dashboard() {
         }
         hasInitializedRef.current = true;
         void refetch();
-    }, [refetch]);
+        void initCollections();
+    }, [initCollections, refetch]);
+
+    useEffect(() => {
+        if (!activeCollection) {
+            return;
+        }
+
+        const collection = collections[activeCollection];
+        if (!collection) {
+            return;
+        }
+
+        const imageCount = collection.imageCount ?? collection.images?.length ?? 0;
+        if ((collection.images?.length ?? 0) === 0 && imageCount > 0) {
+            void loadCollectionImages(activeCollection);
+        }
+    }, [activeCollection, collections, loadCollectionImages]);
 
     // Auto-refresh gallery when any job completes
     // Use lastCompletedJob from store which gets set when job.completed WebSocket event fires
@@ -729,4 +756,3 @@ export default function Dashboard() {
         </motion.div>
     );
 }
-
