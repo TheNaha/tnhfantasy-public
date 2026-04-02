@@ -1,6 +1,6 @@
 import pytest
 import os
-from provider_core.utils import get_safe_path
+from provider_core.utils import get_safe_path, build_deploy_compatibility_response
 
 def test_get_safe_path_valid():
     base_dir = "/mnt/data"
@@ -34,3 +34,29 @@ def test_get_safe_path_empty():
 
     with pytest.raises(ValueError, match="Invalid path: path cannot be empty"):
         get_safe_path(base_dir, "\\")
+
+
+def test_build_deploy_compatibility_response_with_absolute_backend_url():
+    payload = build_deploy_compatibility_response(
+        backend_url="http://backend_v2:8002/",
+        provider_id="modal-primary",
+        provider_type="modal",
+    )
+
+    assert payload["status"] == "deprecated"
+    assert payload["source_of_truth"] == "backend_orchestrator"
+    assert payload["backend_deploy_endpoint"] == "http://backend_v2:8002/api/providers/modal-primary/deploy"
+    assert payload["backend_deploy_status_endpoint"] == "http://backend_v2:8002/api/providers/modal-primary/deploy-status"
+
+
+def test_build_deploy_compatibility_response_with_relative_fallback():
+    payload = build_deploy_compatibility_response(
+        backend_url="",
+        provider_id="beam-primary",
+        provider_type="beam",
+    )
+
+    assert payload["accepted"] is False
+    assert payload["compatibility_mode"] is True
+    assert payload["backend_deploy_endpoint"] == "/api/providers/beam-primary/deploy"
+    assert payload["backend_deploy_status_endpoint"] == "/api/providers/beam-primary/deploy-status"

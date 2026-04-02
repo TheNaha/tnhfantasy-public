@@ -1,7 +1,8 @@
 """Additional tests for api/routes/providers.py"""
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import json
+from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -169,9 +170,81 @@ class TestProvidersRouteReconcile:
         )
         assert response.status_code in (404, 200, 422)
 
+    def test_reconcile_provider_conflict_when_already_running(self, client):
+        mock_service = MagicMock()
+        mock_service.get_provider = AsyncMock(
+            return_value=SimpleNamespace(id="test-provider", type="modal", container_config={"port": 8000})
+        )
+        mock_service.start_reconciliation_session = AsyncMock(
+            return_value={
+                "accepted": False,
+                "message": "Reconciliation already in progress for this provider",
+            }
+        )
+
+        runtime = SimpleNamespace(
+            supports_reconciliation=True,
+            mode="container_http",
+            worker_url="http://worker",
+        )
+
+        with patch("api.routes.providers.get_provider_service", return_value=mock_service), \
+             patch("api.routes.providers.resolve_provider_runtime", return_value=runtime):
+            response = client.post("/api/providers/test-provider/reconcile")
+
+        assert response.status_code == 409
+
+    def test_reconciliation_event_persists_backend_state(self, client):
+        mock_service = MagicMock()
+        mock_service.upsert_reconciliation_state = AsyncMock(
+            return_value={"provider_id": "test-provider", "status": "reconciling"}
+        )
+
+        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+            response = client.post(
+                "/api/providers/test-provider/reconciliation-event",
+                json={"status": "reconciling", "phase": "downloading", "stats": {}},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "reconciliation_state" in data
+        assert data["reconciliation_state"]["status"] == "reconciling"
+
     def test_deploy_provider_not_found(self, client):
         response = client.post("/api/providers/nonexistent/deploy")
         assert response.status_code in (404, 500, 200)
+
+    def test_deploy_returns_conflict_when_already_running(self, client):
+        mock_service = MagicMock()
+        mock_service.deploy_provider_app = AsyncMock(
+            return_value={
+                "status": "already_running",
+                "message": "Deployment already in progress for this provider",
+            }
+        )
+
+        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+            response = client.post("/api/providers/test-provider/deploy")
+
+        assert response.status_code == 409
+
+    def test_get_provider_deploy_status_route(self, client):
+        payload = {
+            "id": "deploy-status-provider",
+            "type": "modal",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {},
+            "config": {},
+        }
+        create_response = client.post("/api/providers", json=payload)
+        assert create_response.status_code == 200
+
+        response = client.get("/api/providers/deploy-status-provider/deploy-status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("status") in {"idle", "deploying", "failed", "succeeded"}
 
     def test_setup_provider_not_found(self, client):
         response = client.post(

@@ -45,6 +45,7 @@ from provider_core import (
     reconciliation_loop,
     log_startup_info,
     get_job_tracker,
+    build_deploy_compatibility_response,
 )
 from provider_core.models import MODEL_DIRECTORIES
 from provider_core.sync_progress import init_sync_reporter
@@ -540,13 +541,12 @@ async def upload_file(request: UploadFileRequest):
 
 @app.post("/deploy")
 async def deploy_info():
-    """Provide deploy instructions for Beam."""
-    return {
-        "message": "Deploy two endpoints via Beam CLI:",
-        "gpu": "beam deploy beam_app.py:comfy_gpu --name comfy-gpu --gpu RTX4090 --memory 16000",
-        "storage": "beam deploy beam_app.py:comfy_storage --name comfy-storage --memory 4000",
-        "note": "Set BEAM_GPU_URL and BEAM_STORAGE_URL after deployment.",
-    }
+    """Compatibility endpoint; backend orchestrator is the source of truth for deploys."""
+    return build_deploy_compatibility_response(
+        backend_url=BACKEND_URL,
+        provider_id=PROVIDER_ID,
+        provider_type="beam",
+    )
 
 
 # ============================================

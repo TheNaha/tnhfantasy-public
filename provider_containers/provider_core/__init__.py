@@ -37,7 +37,7 @@ from .background import (
     get_job_tracker,
 )
 
-from .utils import get_safe_path
+from .utils import get_safe_path, build_deploy_compatibility_response
 
 __all__ = [
     "get_safe_path",
@@ -74,4 +74,5 @@ __all__ = [
     "log_startup_info",
     "JobCancellationTracker",
     "get_job_tracker",
+    "build_deploy_compatibility_response",
 ]

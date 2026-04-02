@@ -44,6 +44,7 @@ from provider_core import (
     reconciliation_loop,
     log_startup_info,
     get_job_tracker,
+    build_deploy_compatibility_response,
 )
 from provider_core.models import MODEL_DIRECTORIES
 from provider_core.sync_progress import init_sync_reporter, report_sync_progress, flush_sync_progress
@@ -419,49 +420,12 @@ async def upload_file_to_modal(request: UploadFileRequest):
 
 @app.post("/deploy")
 async def deploy_modal_app():
-    """Deploy the Modal app using this container's credentials."""
-    import subprocess
-    from pathlib import Path
-    from concurrent.futures import ThreadPoolExecutor
-    
-    def run_deploy():
-        try:
-            backend_dir = Path("/backend")
-            modal_app_path = backend_dir / "modal_app.py"
-            
-            if not modal_app_path.exists():
-                return {"status": "error", "message": "modal_app.py not found"}
-            
-            app_name = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
-            print(f"[Deploy] Deploying Modal app '{app_name}' via CLI...")
-            
-            process = subprocess.Popen(
-                ["modal", "deploy", str(modal_app_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            
-            output_lines = []
-            for line in process.stdout:
-                print(f"[Deploy] {line.rstrip()}")
-                output_lines.append(line)
-            
-            process.wait(timeout=600)
-            
-            if process.returncode == 0:
-                return {"status": "success", "message": f"Modal app '{app_name}' deployed", "output": "".join(output_lines)}
-            else:
-                return {"status": "error", "message": f"Deployment failed with code {process.returncode}", "output": "".join(output_lines)}
-        except subprocess.TimeoutExpired:
-            return {"status": "error", "message": "Deployment timed out after 10 minutes"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-    
-    executor = ThreadPoolExecutor(max_workers=1)
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, run_deploy)
+    """Compatibility endpoint; backend orchestrator is the source of truth for deploys."""
+    return build_deploy_compatibility_response(
+        backend_url=BACKEND_URL,
+        provider_id=PROVIDER_ID,
+        provider_type="modal",
+    )
 
 
 # ============================================

@@ -952,6 +952,10 @@ async def reconcile_provider(
             status_code=400,
             detail="Reconciliation is only available for container-backed providers"
         )
+
+    session_state = await service.start_reconciliation_session(provider_id)
+    if not session_state.get("accepted"):
+        raise HTTPException(status_code=409, detail=session_state.get("message", "Reconciliation already in progress"))
     
     try:
         async with aiohttp.ClientSession() as http_session:
@@ -960,18 +964,53 @@ async def reconcile_provider(
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as response:
                 if response.status == 200:
+                    await service.upsert_reconciliation_state(
+                        provider_id,
+                        {
+                            "status": "reconciling",
+                            "phase": "starting",
+                            "message": "Reconciliation started in worker",
+                        },
+                    )
                     return {
                         "status": "triggered",
                         "provider_id": provider_id,
                         "message": "Reconciliation started in worker"
                     }
+                elif response.status == 409:
+                    await service.upsert_reconciliation_state(
+                        provider_id,
+                        {
+                            "status": "reconciling",
+                            "phase": "running",
+                            "message": "Worker reported reconciliation already in progress",
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Reconciliation already running in worker",
+                    )
                 else:
                     body = await response.text()
+                    await service.upsert_reconciliation_state(
+                        provider_id,
+                        {
+                            "status": "failed",
+                            "message": f"Failed to trigger reconciliation: {body}",
+                        },
+                    )
                     raise HTTPException(
                         status_code=response.status,
                         detail=f"Failed to trigger reconciliation: {body}"
                     )
     except aiohttp.ClientError as e:
+        await service.upsert_reconciliation_state(
+            provider_id,
+            {
+                "status": "failed",
+                "message": f"Failed to reach worker: {str(e)}",
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reach worker: {str(e)}"
@@ -986,9 +1025,12 @@ async def get_reconciliation_status(
     """Get current reconciliation status for a provider."""
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
+    persisted_state = await service.get_provider_reconciliation_state(provider_id)
 
     runtime = resolve_provider_runtime(provider)
     if runtime.mode != "container_http":
+        if persisted_state.get("status") and persisted_state.get("status") != "idle":
+            return persisted_state
         return {
             "provider_id": provider_id,
             "status": "idle",
@@ -1002,19 +1044,29 @@ async def get_reconciliation_status(
                 timeout=aiohttp.ClientTimeout(total=30)  # Increased for slow Modal SDK calls
             ) as response:
                 if response.status == 200:
-                    return await response.json()
+                    worker_state = await response.json()
+                    return await service.upsert_reconciliation_state(provider_id, worker_state)
                 elif response.status == 404:
+                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                        return persisted_state
                     return {
                         "provider_id": provider_id,
                         "status": "idle",
                         "message": "Status tracking not available"
                     }
                 else:
+                    if persisted_state.get("status") and persisted_state.get("status") != "idle":
+                        return persisted_state
                     raise HTTPException(
                         status_code=response.status,
                         detail="Failed to get reconciliation status"
                     )
     except aiohttp.ClientError as e:
+        if persisted_state.get("status") and persisted_state.get("status") != "idle":
+            merged_state = dict(persisted_state)
+            merged_state["message"] = merged_state.get("message") or "Worker unreachable; showing last persisted reconciliation state"
+            merged_state["warning"] = f"Cannot reach worker: {str(e)}"
+            return merged_state
         return {
             "provider_id": provider_id,
             "status": "error",
@@ -1068,16 +1120,28 @@ async def push_reconciliation_event(
         "errors": request.errors or [],
         "message": request.message
     }
+
+    service = get_provider_service(session)
+    persisted_state = await service.upsert_reconciliation_state(provider_id, event_data)
     
     # Emit event via EventBus (will be broadcast to WebSocket clients)
     await event_bus.publish(Event(type=event_type, data=event_data))
     
-    return {"status": "ok", "event_type": event_type.value}
+    return {"status": "ok", "event_type": event_type.value, "reconciliation_state": persisted_state}
 
 
 # ============================================================================
 # PROVIDER DEPLOYMENT ENDPOINT
 # ============================================================================
+
+@router.get("/{provider_id}/deploy-status")
+async def get_provider_deploy_status(
+    provider_id: str,
+    session: Session = Depends(get_session)
+):
+    """Get persisted backend deploy state for a provider."""
+    service = get_provider_service(session)
+    return await service.get_provider_deploy_state(provider_id)
 
 @router.post("/{provider_id}/deploy")
 async def deploy_provider_app(
@@ -1095,130 +1159,11 @@ async def deploy_provider_app(
     - Backend files mounted at /backend/ (via HOST_BACKEND_PATH volume)
     """
     container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-    
     service = get_provider_service(session)
-    provider = await service.get_provider(provider_id)
-    
-    # Get running container
-    container = container_manager.running_containers.get(provider_id)
-    if not container:
-        # Try to get from Docker/Podman directly
-        container_name = f"comfy-provider-{provider_id}"
-        try:
-            container = container_manager.client.containers.get(container_name)
-            if container.status != "running":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Container for provider '{provider_id}' is not running. Start the container first."
-                )
-        except Exception:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Container for provider '{provider_id}' not found. Start the container first."
-            )
-    
-    provider_type = provider.type
-    
-    if provider_type == "modal":
-        logger.info("deploy_modal_start", provider_id=provider_id)
-        
-        try:
-            # Run modal deploy in worker container
-            exec_result = container.exec_run(
-                cmd=["modal", "deploy", "/app/modal_app.py"],
-                stream=False,
-                demux=True
-            )
-            
-            stdout = exec_result.output[0].decode('utf-8') if exec_result.output[0] else ""
-            stderr = exec_result.output[1].decode('utf-8') if exec_result.output[1] else ""
-            output = stdout + stderr
-            
-            logger.info("deploy_modal_output", output=output)
-            
-            if exec_result.exit_code != 0:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Modal deploy failed (exit code {exec_result.exit_code}): {output}"
-                )
-            
-            return {
-                "status": "success",
-                "provider_type": "modal",
-                "message": f"Modal app deployed for {provider_id}",
-                "output": output
-            }
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Deployment error: {str(e)}")
-    
-    elif provider_type == "beam":
-        logger.info("deploy_beam_start", provider_id=provider_id)
-        
-        # Beam has two endpoints to deploy
-        deployments = [
-            ("comfy_gpu", ["beam", "deploy", "/app/beam_app.py:comfy_gpu"]),
-            ("comfy_storage", ["beam", "deploy", "/app/beam_app.py:comfy_storage"]),
-        ]
-        
-        results = []
-        for name, cmd in deployments:
-            logger.info("deploy_beam_running", command=" ".join(cmd))
-            
-            try:
-                exec_result = container.exec_run(
-                    cmd=cmd,
-                    stream=False,
-                    demux=True
-                )
-                
-                stdout = exec_result.output[0].decode('utf-8') if exec_result.output[0] else ""
-                stderr = exec_result.output[1].decode('utf-8') if exec_result.output[1] else ""
-                output = stdout + stderr
-                
-                logger.info("deploy_beam_output", name=name, output=output)
-                
-                results.append({
-                    "name": name,
-                    "success": exec_result.exit_code == 0,
-                    "exit_code": exec_result.exit_code,
-                    "output": output
-                })
-                
-            except Exception as e:
-                results.append({
-                    "name": name,
-                    "success": False,
-                    "exit_code": -1,
-                    "output": str(e)
-                })
-        
-        # Check if all deployments succeeded
-        all_success = all(r["success"] for r in results)
-        
-        if not all_success:
-            failed = [r for r in results if not r["success"]]
-            raise HTTPException(
-                status_code=500,
-                detail=f"Beam deploy failed for: {', '.join(r['name'] for r in failed)}. Check logs for details."
-            )
-        
-        return {
-            "status": "success",
-            "provider_type": "beam",
-            "message": f"Beam apps deployed for {provider_id}",
-            "deployments": results
-        }
-    
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Deployment not supported for provider type: {provider_type}"
-        )
+    result = await service.deploy_provider_app(provider_id, container_manager)
+    if result.get("status") == "already_running":
+        raise HTTPException(status_code=409, detail=result.get("message", "Deployment already running"))
+    return result
 
 
 # ============================================================================

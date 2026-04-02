@@ -99,3 +99,9 @@ def get_dedup_stats() -> dict:
         "cache_ttl": _result_cache.ttl,
         "in_flight_count": len(_in_flight),
     }
+
+
+def is_in_flight(key: str) -> bool:
+    """Return True when a dedup key currently has a running task."""
+    task = _in_flight.get(key)
+    return task is not None and not task.done()

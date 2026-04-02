@@ -280,6 +280,8 @@ Beam.cloud is now supported as an alternative to Modal.
 
 ### 2. Deploy Beam App
 
+Note: worker `/deploy` endpoints are compatibility-only. Trigger deploys through the backend orchestrator (`POST /api/providers/{provider_id}/deploy`) or the Providers UI.
+
 ```bash
 cd backend_v2
 beam deploy beam_app.py

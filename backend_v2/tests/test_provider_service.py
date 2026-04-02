@@ -1,11 +1,12 @@
 """Tests for services/provider_service.py"""
 import asyncio
 import pytest
+from unittest.mock import MagicMock, patch
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from services.provider_service import ProviderService
 from services.load_balancer import LoadBalancer
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ProviderError
 from core.entities import LoadBalancerState
 
 
@@ -203,3 +204,126 @@ class TestProviderToDict:
         assert "priority" in d
         assert "credentials" in d
         assert "config" in d
+
+
+class _DummyExecResult:
+    def __init__(self, exit_code: int, stdout: str = "", stderr: str = ""):
+        self.exit_code = exit_code
+        self.output = (stdout.encode("utf-8"), stderr.encode("utf-8"))
+
+
+class _DummyContainer:
+    status = "running"
+
+    def __init__(self, results):
+        self._results = list(results)
+
+    def exec_run(self, cmd, stream=False, demux=True):
+        if not self._results:
+            return _DummyExecResult(0, "no-op")
+        return self._results.pop(0)
+
+
+class _DummyContainersClient:
+    def __init__(self, container):
+        self._container = container
+
+    def get(self, _name):
+        return self._container
+
+
+class _DummyContainerManager:
+    def __init__(self, provider_id: str, container):
+        self.running_containers = {provider_id: container}
+        self.client = MagicMock()
+        self.client.containers = _DummyContainersClient(container)
+
+
+class TestProviderServiceDeploy:
+    async def test_modal_deploy_updates_state(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+
+        container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
+        container_manager = _DummyContainerManager("test-provider", container)
+
+        result = await service.deploy_provider_app("test-provider", container_manager)
+        assert result["status"] == "success"
+        assert result["provider_type"] == "modal"
+
+        provider = await service.get_provider("test-provider")
+        deploy_state = (provider.config or {}).get("deploy_state", {})
+        assert deploy_state.get("status") == "succeeded"
+
+    async def test_beam_deploy_resume_uses_completed_steps_checkpoint(self, service):
+        provider_data = {
+            "id": "beam-provider",
+            "type": "beam",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {},
+            "config": {},
+        }
+        await service.create_provider(provider_data)
+
+        failing_container = _DummyContainer([
+            _DummyExecResult(0, "gpu deployed"),
+            _DummyExecResult(1, "storage deploy failed"),
+        ])
+        failing_manager = _DummyContainerManager("beam-provider", failing_container)
+
+        with pytest.raises(ProviderError):
+            await service.deploy_provider_app("beam-provider", failing_manager)
+
+        provider = await service.get_provider("beam-provider")
+        failed_state = (provider.config or {}).get("deploy_state", {})
+        assert failed_state.get("status") == "failed"
+        assert failed_state.get("completed_steps") == ["comfy_gpu"]
+
+        resumed_container = _DummyContainer([_DummyExecResult(0, "storage deployed")])
+        resumed_manager = _DummyContainerManager("beam-provider", resumed_container)
+
+        result = await service.deploy_provider_app("beam-provider", resumed_manager)
+        assert result["status"] == "success"
+        deployments = result.get("deployments", [])
+        skipped = [step for step in deployments if step.get("name") == "comfy_gpu" and step.get("skipped")]
+        assert skipped
+
+    async def test_deploy_returns_already_running_when_in_flight(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
+        container_manager = _DummyContainerManager("test-provider", container)
+
+        with patch("services.provider_service.is_in_flight", return_value=True):
+            result = await service.deploy_provider_app("test-provider", container_manager)
+
+        assert result["status"] == "already_running"
+
+
+class TestProviderServiceReconciliationState:
+    async def test_start_reconciliation_session_sets_started_state(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+
+        result = await service.start_reconciliation_session("test-provider")
+        assert result["accepted"] is True
+        assert result["state"]["status"] == "started"
+
+    async def test_start_reconciliation_session_rejects_if_in_progress(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        first = await service.start_reconciliation_session("test-provider")
+        assert first["accepted"] is True
+
+        second = await service.start_reconciliation_session("test-provider")
+        assert second["accepted"] is False
+        assert second["state"]["status"] == "started"
+
+    async def test_upsert_reconciliation_state_sets_finished_at_for_terminal_status(self, service, sample_provider_data):
+        await service.create_provider(sample_provider_data)
+        await service.start_reconciliation_session("test-provider")
+
+        state = await service.upsert_reconciliation_state(
+            "test-provider",
+            {"status": "completed", "phase": "done", "message": "Sync complete"},
+        )
+
+        assert state["status"] == "completed"
+        assert state.get("finished_at") is not None
