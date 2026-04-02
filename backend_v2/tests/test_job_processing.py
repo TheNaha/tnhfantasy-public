@@ -240,3 +240,78 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
     assert updated_job.status == JobStatus.FAILED
 
     LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_process_job_timeout_signals_external_worker_cancel(session: Session, sample_workflow, monkeypatch):
+    LoadBalancer.reset_state()
+    _add_provider(session, "provider-1", 1, {"port": 8000})
+
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow=sample_workflow, metadata={})
+
+    async def fake_dispatch_job_to_worker(provider_id, job_data, timeout):
+        del provider_id, job_data, timeout
+        raise JobTimeoutError("timed out")
+
+    request_cancel = AsyncMock(return_value=True)
+
+    monkeypatch.setattr("api.main.get_session", _session_override(session))
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.routes.worker_ws.dispatch_job_to_worker", fake_dispatch_job_to_worker)
+    monkeypatch.setattr("api.routes.worker_ws.request_worker_job_cancel", request_cancel)
+    monkeypatch.setattr(
+        "api.job_runner.resolve_provider_runtime",
+        lambda provider: SimpleNamespace(mode="external_worker", connected=True, worker_url=None),
+    )
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+
+    await process_job(job.id)
+
+    request_cancel.assert_awaited_once_with("provider-1", job.id)
+    updated_job = await _get_job_from_fresh_session(session, job.id)
+    assert updated_job.status == JobStatus.FAILED
+
+    LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_process_job_fails_after_all_providers_exhausted(session: Session, sample_workflow, monkeypatch):
+    LoadBalancer.reset_state()
+    _add_provider(session, "provider-1", 1, {"port": 8000})
+    _add_provider(session, "provider-2", 2, {"port": 8000})
+
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow=sample_workflow, metadata={})
+    call_attempts = []
+
+    async def fake_call_provider(**kwargs):
+        provider_id = kwargs["provider_id"]
+        call_attempts.append(provider_id)
+        raise ProviderCallError(f"{provider_id} hard failure", provider_id=provider_id, is_retryable=False)
+
+    mock_http_client = AsyncMock()
+    mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
+
+    monkeypatch.setattr("api.main.get_session", _session_override(session))
+    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.job_runner.get_http_client", lambda: mock_http_client)
+    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+
+    await process_job(job.id)
+
+    assert call_attempts == ["provider-1", "provider-2"]
+    updated_job = await _get_job_from_fresh_session(session, job.id)
+    assert updated_job.status == JobStatus.FAILED
+    assert updated_job.error is not None
+    assert "All providers failed" in updated_job.error
+    assert "provider-1" in updated_job.error
+    assert "provider-2" in updated_job.error
+
+    stats = LoadBalancer(session, strategy="priority").get_stats()
+    provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+    assert provider_stats["provider-1"]["failures"] >= 1
+    assert provider_stats["provider-2"]["failures"] >= 1
+
+    LoadBalancer.reset_state()

@@ -3,7 +3,7 @@ import { Plus, RefreshCw, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import ProviderCard from '../components/providers/ProviderCard';
-import { ProviderModal } from '../components/ProviderManagement';
+import ProviderModal from '../components/providers/ProviderModal';
 import AddModelToProviderModal from '../components/providers/AddModelToProviderModal';
 import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -183,7 +183,7 @@ export default function Providers() {
 
     const handleUpdateLBStrategy = async (strategy) => {
         try {
-            await updateLoadBalancerStrategy(strategy);
+            await updateLoadBalancerStrategy(strategy, lbConfig);
             await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to update load balancer:', error);

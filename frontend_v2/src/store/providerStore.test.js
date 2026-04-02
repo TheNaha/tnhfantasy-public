@@ -1,22 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../api/websocket', () => ({
-    connect: vi.fn().mockResolvedValue(undefined),
-    subscribe: vi.fn().mockResolvedValue(undefined),
-    unsubscribe: vi.fn(),
-    on: vi.fn().mockReturnValue(() => {}),
-    EventTypes: {
-        PROVIDER_CONTAINER_STATUS: 'provider.container_status',
-        PROVIDER_STATS_UPDATE: 'provider.stats_update',
-    },
-}));
-
 vi.mock('../api', () => ({
     providersApi: {
-        list: vi.fn().mockResolvedValue([{ id: 'provider-1', enabled: true }]),
-        getAllContainerStatuses: vi.fn().mockResolvedValue({
-            statuses: { 'provider-1': { status: 'running', running: true, healthy: true } },
-        }),
         getLoadBalancerConfig: vi.fn().mockResolvedValue({
             config: { strategy: 'round-robin', fallback_enabled: true },
             stats: { total_providers: 1, provider_stats: [{ id: 'provider-1', failures: 0, jobs_assigned: 0 }] },
@@ -49,24 +34,11 @@ describe('useProviderStore', () => {
         providersApi = apiMod.providersApi;
 
         useProviderStore.setState({
-            providers: [],
-            containerStatuses: {},
-            lbConfig: null,
-            lbStats: null,
-            isLoading: false,
             containerLoading: {},
-            _wsInitialized: false,
-            _unsubscribers: [],
         });
     });
 
-    it('fetchProviders populates provider state', async () => {
-        await useProviderStore.getState().fetchProviders();
-
-        expect(useProviderStore.getState().providers).toEqual([{ id: 'provider-1', enabled: true }]);
-    });
-
-    it('startContainer updates loading state and refreshes statuses', async () => {
+    it('startContainer updates loading state around API call', async () => {
         const promise = useProviderStore.getState().startContainer('provider-1');
 
         expect(useProviderStore.getState().containerLoading['provider-1']).toBe('starting');
@@ -74,34 +46,7 @@ describe('useProviderStore', () => {
         await promise;
 
         expect(providersApi.startContainer).toHaveBeenCalledWith('provider-1');
-        expect(providersApi.getAllContainerStatuses).toHaveBeenCalled();
         expect(useProviderStore.getState().containerLoading['provider-1']).toBeNull();
-        expect(useProviderStore.getState().containerStatuses['provider-1'].healthy).toBe(true);
-    });
-
-    it('toggleProviderEnabled refreshes providers and load balancer info', async () => {
-        await useProviderStore.getState().toggleProviderEnabled('provider-1', true);
-
-        expect(providersApi.update).toHaveBeenCalledWith('provider-1', { enabled: false });
-        expect(providersApi.list).toHaveBeenCalled();
-        expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
-    });
-
-    it('saveProvider creates and refreshes state for new providers', async () => {
-        await useProviderStore.getState().saveProvider(null, { id: 'provider-2', type: 'modal' });
-
-        expect(providersApi.create).toHaveBeenCalledWith({ id: 'provider-2', type: 'modal' });
-        expect(providersApi.list).toHaveBeenCalled();
-        expect(providersApi.getAllContainerStatuses).toHaveBeenCalled();
-        expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
-    });
-
-    it('refreshAll fetches providers, statuses, and load balancer info together', async () => {
-        await useProviderStore.getState().refreshAll();
-
-        expect(providersApi.list).toHaveBeenCalled();
-        expect(providersApi.getAllContainerStatuses).toHaveBeenCalled();
-        expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
     });
 
     it('reconcileProvider tracks loading state', async () => {
@@ -115,7 +60,7 @@ describe('useProviderStore', () => {
         expect(useProviderStore.getState().containerLoading['provider-1']).toBeNull();
     });
 
-    it('setupProvider and resetProviderModelStatus use provider APIs', async () => {
+    it('setupProvider and resetProviderModelStatus call provider APIs', async () => {
         await useProviderStore.getState().setupProvider('provider-1');
         await useProviderStore.getState().resetProviderModelStatus('provider-1');
 
@@ -123,33 +68,40 @@ describe('useProviderStore', () => {
         expect(providersApi.resetModelStatus).toHaveBeenCalledWith('provider-1');
     });
 
-    it('normalizes provider.stats_update payloads before storing lbStats', () => {
-        useProviderStore.getState()._processProviderStats({
-            data: {
-                provider_id: 'provider-1',
-                provider_stats: {
-                    total_providers: 2,
-                    provider_stats: [],
-                },
-            },
-        });
+    it('toggleProviderEnabled updates enabled flag only', async () => {
+        await useProviderStore.getState().toggleProviderEnabled('provider-1', true);
 
-        expect(useProviderStore.getState().lbStats.total_providers).toBe(2);
+        expect(providersApi.update).toHaveBeenCalledWith('provider-1', { enabled: false });
     });
 
-    it('normalizes provider container status payloads with camelCase ids', () => {
-        useProviderStore.getState()._processContainerStatus({
-            data: {
-                providerId: 'provider-1',
-                status: 'running',
-                healthy: true,
-            },
+    it('updateLoadBalancerStrategy uses provided config when available', async () => {
+        await useProviderStore.getState().updateLoadBalancerStrategy('least-connections', {
+            strategy: 'round-robin',
+            fallback_enabled: true,
         });
 
-        expect(useProviderStore.getState().containerStatuses['provider-1']).toEqual({
-            status: 'running',
-            running: true,
-            healthy: true,
+        expect(providersApi.getLoadBalancerConfig).not.toHaveBeenCalled();
+        expect(providersApi.updateLoadBalancerConfig).toHaveBeenCalledWith({
+            strategy: 'least-connections',
+            fallback_enabled: true,
         });
     });
-}); 
+
+    it('updateLoadBalancerStrategy falls back to API config when missing', async () => {
+        await useProviderStore.getState().updateLoadBalancerStrategy('priority');
+
+        expect(providersApi.getLoadBalancerConfig).toHaveBeenCalled();
+        expect(providersApi.updateLoadBalancerConfig).toHaveBeenCalledWith({
+            strategy: 'priority',
+            fallback_enabled: true,
+        });
+    });
+
+    it('saveProvider creates or updates providers', async () => {
+        await useProviderStore.getState().saveProvider(null, { id: 'provider-2', type: 'modal' });
+        await useProviderStore.getState().saveProvider({ id: 'provider-1' }, { enabled: false });
+
+        expect(providersApi.create).toHaveBeenCalledWith({ id: 'provider-2', type: 'modal' });
+        expect(providersApi.update).toHaveBeenCalledWith('provider-1', { enabled: false });
+    });
+});
