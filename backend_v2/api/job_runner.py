@@ -30,18 +30,28 @@ async def _get_job_status(job_service, job_id: str):
         return None
 
 
-async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> None:
+async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
     """Best-effort cancellation request to the active provider runtime."""
     try:
         if runtime.mode == "container_http" and runtime.worker_url:
             http_client = get_http_client()
-            await http_client.post(
+            response = await http_client.post(
                 f"{runtime.worker_url}/cancel-job",
                 json={"job_id": job_id},
                 timeout=5.0,
             )
-            logger.info("provider_cancel_signaled", job_id=job_id, provider=provider_id, mode=runtime.mode)
-            return
+            if getattr(response, "status_code", None) == 200:
+                logger.info("provider_cancel_signaled", job_id=job_id, provider=provider_id, mode=runtime.mode)
+                return True
+
+            logger.warning(
+                "provider_cancel_unacknowledged",
+                job_id=job_id,
+                provider=provider_id,
+                mode=runtime.mode,
+                status=getattr(response, "status_code", None),
+            )
+            return False
 
         if runtime.mode == "external_worker":
             from api.routes.worker_ws import request_worker_job_cancel
@@ -49,8 +59,10 @@ async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: st
             cancelled = await request_worker_job_cancel(provider_id, job_id)
             if cancelled:
                 logger.info("provider_cancel_signaled", job_id=job_id, provider=provider_id, mode=runtime.mode)
+                return True
             else:
                 logger.warning("provider_cancel_not_connected", job_id=job_id, provider=provider_id, mode=runtime.mode)
+            return cancelled
     except Exception as exc:
         logger.warning(
             "provider_cancel_signal_failed",
@@ -59,6 +71,7 @@ async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: st
             mode=getattr(runtime, "mode", "unknown"),
             error=str(exc),
         )
+    return False
 
 
 async def execute_job(
@@ -236,11 +249,13 @@ async def execute_job(
 
             except JobTimeoutError:
                 logger.warning("job_timeout", job_id=job_id, provider=current_provider.id)
-                await _signal_provider_cancellation(
+                cancel_signal_delivered = await _signal_provider_cancellation(
                     runtime=runtime,
                     provider_id=current_provider.id,
                     job_id=job_id,
                 )
+                if not cancel_signal_delivered:
+                    logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=current_provider.id)
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status == JobStatus.CANCELLED:
                     logger.info("job_cancelled_after_timeout", job_id=job_id, provider=current_provider.id)
@@ -281,15 +296,15 @@ async def execute_job(
                     provider_error_id=error.provider_id,
                     error=str(error),
                 )
-                await _signal_provider_cancellation(
+                cancel_signal_delivered = await _signal_provider_cancellation(
                     runtime=runtime,
                     provider_id=current_provider.id,
                     job_id=job_id,
                 )
+                if not cancel_signal_delivered:
+                    logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=current_provider.id)
                 refreshed_job = await job_service.get_job(job_id)
                 if refreshed_job.status in {JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.COMPLETED}:
-                    if refreshed_job.status == JobStatus.FAILED:
-                        load_balancer.report_failure(current_provider.id)
                     load_balancer.release_job(current_provider.id)
                     return
                 load_balancer.report_failure(current_provider.id)
@@ -332,11 +347,13 @@ async def execute_job(
 
             except asyncio.TimeoutError:
                 logger.error("job_timeout_exceeded", job_id=job_id, timeout=timeout)
-                await _signal_provider_cancellation(
+                cancel_signal_delivered = await _signal_provider_cancellation(
                     runtime=runtime,
                     provider_id=current_provider.id,
                     job_id=job_id,
                 )
+                if not cancel_signal_delivered:
+                    logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=current_provider.id)
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status == JobStatus.CANCELLED:
                     logger.info("job_cancelled_after_timeout_exceeded", job_id=job_id, provider=current_provider.id)

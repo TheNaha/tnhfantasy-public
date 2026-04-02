@@ -15,7 +15,7 @@
  *     top-right with a dark theme matching the overall UI.
  */
 
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, lazy, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -63,31 +63,10 @@ function AnimatedRoutes() {
     );
 }
 
-// Create QueryClient once at module load - NOT inside component
-// This prevents cache loss on every re-render
-const persistedSettings = useSettingsStore.getState().settings;
-const querySettings = persistedSettings?.ui || { queryStaleTime: 1000 * 60 * 5, queryCacheTime: 1000 * 60 * 30 };
-
-const queryClient = new QueryClient({
-    defaultOptions: {
-        queries: {
-            staleTime: querySettings.queryStaleTime,
-            gcTime: querySettings.queryCacheTime,
-            retry: 1,
-            refetchOnWindowFocus: false,
-            refetchOnReconnect: true,
-            networkMode: 'online',
-        },
-        mutations: {
-            retry: 1,
-            networkMode: 'online',
-        },
-    },
-});
-
 let hasRequestedProviderWake = false;
 
 function App() {
+    const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
     const connectJobs = useJobStore((state) => state.connect);
     const disconnectJobs = useJobStore((state) => state.disconnect);
     const fetchJobs = useJobStore((state) => state.fetchJobs);
@@ -95,6 +74,32 @@ function App() {
     const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
     const connectReconciliation = useReconciliationStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
+
+    const queryClient = useMemo(() => {
+        const staleTime = Number.isFinite(queryUiSettings?.queryStaleTime)
+            ? queryUiSettings.queryStaleTime
+            : 1000 * 60 * 5;
+        const gcTime = Number.isFinite(queryUiSettings?.queryCacheTime)
+            ? queryUiSettings.queryCacheTime
+            : 1000 * 60 * 30;
+
+        return new QueryClient({
+            defaultOptions: {
+                queries: {
+                    staleTime,
+                    gcTime,
+                    retry: 1,
+                    refetchOnWindowFocus: false,
+                    refetchOnReconnect: true,
+                    networkMode: 'online',
+                },
+                mutations: {
+                    retry: 1,
+                    networkMode: 'online',
+                },
+            },
+        });
+    }, [queryUiSettings?.queryCacheTime, queryUiSettings?.queryStaleTime]);
 
     // Initialize dynamic viewport height for iOS Safari
     // This sets --vh CSS variable that works correctly with address bar

@@ -19,6 +19,7 @@ const browserLifecycleState = {
     initialized: false,
     mobilePollingInterval: null,
     lastEventTime: Date.now(),
+    lastPollingFetchStarted: 0,
     consecutiveFailures: 0,
     connectionToastId: null,
     unsubscribeStore: null,
@@ -295,7 +296,9 @@ export const useJobStore = create((set, get) => ({
 
                 console.log('[JobStore] Mobile polling: fetching jobs...');
                 try {
-                    await store.fetchJobs();
+                    const fetchStartedAt = Date.now();
+                    browserLifecycleState.lastPollingFetchStarted = fetchStartedAt;
+                    await store.fetchJobs({ skipIfEventAfter: fetchStartedAt });
                     browserLifecycleState.consecutiveFailures = 0;
                 } catch (e) {
                     console.error('[JobStore] Mobile polling fetch failed:', e);
@@ -338,7 +341,8 @@ export const useJobStore = create((set, get) => ({
                     store.connect();
                 }
 
-                store.fetchJobs().catch(console.error);
+                const fetchStartedAt = Date.now();
+                store.fetchJobs({ skipIfEventAfter: fetchStartedAt }).catch(console.error);
             } else {
                 stopMobilePolling();
             }
@@ -349,7 +353,8 @@ export const useJobStore = create((set, get) => ({
             const store = useJobStore.getState();
             dismissConnectionToast();
             store.reconnect();
-            store.fetchJobs().catch(console.error);
+            const fetchStartedAt = Date.now();
+            store.fetchJobs({ skipIfEventAfter: fetchStartedAt }).catch(console.error);
 
             if (isMobile() && store.activeJobs.length > 0) {
                 startMobilePolling();
@@ -416,9 +421,18 @@ export const useJobStore = create((set, get) => ({
     },
 
     // API methods
-    fetchJobs: async () => {
+    fetchJobs: async ({ skipIfEventAfter } = {}) => {
         try {
             const data = await jobsApi.list();
+
+            if (
+                typeof skipIfEventAfter === 'number'
+                && browserLifecycleState.lastEventTime > skipIfEventAfter
+            ) {
+                console.log('[JobStore] Skipping stale fetch result; newer WebSocket event already applied');
+                return data;
+            }
+
             get().setJobs(filterActiveJobs(data.jobs || []));
             return data;
         } catch (error) {

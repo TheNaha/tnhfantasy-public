@@ -54,11 +54,27 @@ export function connect() {
         return connectionPromise;
     }
 
-    connectionPromise = new Promise((resolve) => {
+    connectionPromise = new Promise((resolve, reject) => {
         if (socket && isConnected) {
             resolve(socket);
             return;
         }
+
+        let settled = false;
+        const resolveConnection = (value) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            resolve(value);
+        };
+        const rejectConnection = (error) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            reject(error);
+        };
 
         // Create Socket.IO connection
         socket = io(getSocketBaseUrl(), {
@@ -94,12 +110,13 @@ export function connect() {
 
             // Notify connection listeners
             emitLocal('connection', { connected: true, id: socket.id });
-            resolve(socket);
+            resolveConnection(socket);
         });
 
         socket.on('disconnect', (reason) => {
             console.log('[WebSocket] Disconnected:', reason);
             isConnected = false;
+            connectionPromise = null;
             emitLocal('connection', { connected: false, reason });
         });
 
@@ -108,6 +125,17 @@ export function connect() {
             // Clear connectionPromise so future connect() calls can retry
             connectionPromise = null;
             emitLocal('connection', { connected: false, error: error.message });
+
+            // Reject initial connection attempts so callers don't hang forever.
+            if (!isConnected) {
+                try {
+                    socket?.disconnect();
+                } catch {
+                    // Ignore cleanup failures for best-effort socket teardown.
+                }
+                socket = null;
+                rejectConnection(error instanceof Error ? error : new Error(error?.message || 'WebSocket connection error'));
+            }
         });
 
         socket.on('connected', ({ message }) => {
@@ -369,11 +397,15 @@ export function useWebSocket(topics = []) {
 
     useEffect(() => {
         // Connect on mount
-        connect();
+        connect().catch((error) => {
+            console.warn('[WebSocket] Initial connect failed:', error?.message || error);
+        });
 
         // Subscribe to topics
         if (topicArray.length > 0) {
-            subscribe(topicArray);
+            subscribe(topicArray).catch((error) => {
+                console.warn('[WebSocket] Initial subscribe failed:', error?.message || error);
+            });
         }
 
         // Track connection status

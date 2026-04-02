@@ -30,8 +30,14 @@ class JobCancelledError(Exception):
 def extract_worker_error_message(update: dict) -> str:
     """Normalize worker error payloads from different providers."""
     detail = update.get("detail")
+    if detail is None:
+        detail = update.get("details")
+
     if isinstance(detail, dict):
         return detail.get("message") or detail.get("error") or json.dumps(detail)
+
+    if isinstance(detail, list):
+        return json.dumps(detail)
 
     return (
         update.get("message")
@@ -164,7 +170,9 @@ async def call_provider(
                                 raise ProviderCallError(
                                     f"Invalid success payload: {error}",
                                     provider_id=provider_id,
-                                    is_retryable=False,
+                                    # Treat success payload validation as retryable to allow
+                                    # fallback across transient provider/schema mismatches.
+                                    is_retryable=True,
                                 ) from error
                             final_result = update
                         elif status == "error":

@@ -87,6 +87,20 @@ describe('websocket listener registration', () => {
         expect(fakeSocket.listeners(ws.EventTypes.JOB_COMPLETED)).toHaveLength(1);
     });
 
+    it('rejects failed initial connection and supports retry', async () => {
+        const ws = await import('./websocket.js');
+
+        const failedConnect = ws.connect();
+        fakeSocket.trigger('connect_error', { message: 'connection failed' });
+
+        await expect(failedConnect).rejects.toThrow('connection failed');
+
+        const retryConnect = ws.connect();
+        fakeSocket.trigger('connect');
+
+        await expect(retryConnect).resolves.toBeDefined();
+    });
+
     it('defines a post-processing job event type constant', async () => {
         const ws = await import('./websocket.js');
         expect(ws.EventTypes.JOB_POST_PROCESSING).toBe('job.post_processing');

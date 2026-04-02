@@ -81,6 +81,34 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_provider_uses_details_message_field(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"error","details":{"message":"nested worker message"},"retryable":true}\n',
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    with pytest.raises(ProviderCallError) as exc_info:
+        await call_provider(
+            worker_url="http://worker",
+            workflow={"nodes": {}},
+            job_id="job-details",
+            job_service=job_service,
+            total_nodes=1,
+            timeout=5.0,
+            provider_id="provider-details",
+        )
+
+    assert str(exc_info.value) == "nested worker message"
+    assert exc_info.value.provider_id == "provider-details"
+    assert exc_info.value.is_retryable is True
+    job_service.update_job.assert_awaited_once_with("job-details", message="Queued in ComfyUI...")
+
+
+@pytest.mark.asyncio
 async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monkeypatch):
     response = FakeResponse(
         chunks=[
@@ -155,6 +183,34 @@ async def test_call_provider_formats_http_error_payload(monkeypatch):
     assert exc_info.value.provider_id == "provider-3"
     assert exc_info.value.is_retryable is True
     job_service.update_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_provider_invalid_success_payload_is_retryable(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"success","images":[{"data":"YWJj","_base64_encoded":true}]}\n',
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    with pytest.raises(ProviderCallError) as exc_info:
+        await call_provider(
+            worker_url="http://worker",
+            workflow={"nodes": {}},
+            job_id="job-invalid-success",
+            job_service=job_service,
+            total_nodes=1,
+            timeout=5.0,
+            provider_id="provider-invalid-success",
+        )
+
+    assert "Invalid success payload" in str(exc_info.value)
+    assert exc_info.value.provider_id == "provider-invalid-success"
+    assert exc_info.value.is_retryable is True
+    job_service.update_job.assert_awaited_once_with("job-invalid-success", message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
