@@ -202,14 +202,15 @@ def migrate_models_to_v2():
                         
                         conn.execute(text("""
                             INSERT INTO provider_version_status (
-                                file_id, provider_name, status, storage_path, size_bytes,
+                                file_id, provider_id, provider_name, status, storage_path, size_bytes,
                                 downloaded_at, queued_at, retry_count
                             ) VALUES (
-                                :file_id, :provider_name, :status, :storage_path, :size_bytes,
+                                :file_id, :provider_id, :provider_name, :status, :storage_path, :size_bytes,
                                 :downloaded_at, datetime('now'), 0
                             )
                         """), {
                             "file_id": file_id,
+                            "provider_id": provider_name,
                             "provider_name": provider_name,
                             "status": new_status,
                             "storage_path": f"{row[2]}/{row[1]}",

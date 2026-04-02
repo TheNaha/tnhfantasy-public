@@ -46,6 +46,25 @@ class ModelRepositoryV2:
     
     def __init__(self, session: Session):
         self.session = session
+
+    @staticmethod
+    def _status_provider_key(status: ProviderVersionStatus) -> Optional[str]:
+        """Return provider ID using legacy provider_name as fallback."""
+        return status.provider_id or status.provider_name
+
+    def _provider_match_clause(self, provider_key: str):
+        """Build a provider filter that matches both canonical and legacy columns."""
+        return or_(
+            ProviderVersionStatus.provider_id == provider_key,
+            ProviderVersionStatus.provider_name == provider_key,
+        )
+
+    def _provider_match_clause_many(self, provider_keys: List[str]):
+        """Build a provider filter for multiple providers with legacy fallback."""
+        return or_(
+            ProviderVersionStatus.provider_id.in_(provider_keys),
+            ProviderVersionStatus.provider_name.in_(provider_keys),
+        )
     
     # =========================================================================
     # MODEL CRUD
@@ -578,7 +597,7 @@ class ModelRepositoryV2:
             status_stmt = select(ProviderVersionStatus).where(
                 and_(
                     ProviderVersionStatus.file_id == file.id,
-                    ProviderVersionStatus.provider_name == provider_name,
+                    self._provider_match_clause(provider_name),
                     ProviderVersionStatus.status == "ready"
                 )
             )
@@ -609,7 +628,7 @@ class ModelRepositoryV2:
         stmt = select(ProviderVersionStatus).where(
             and_(
                 ProviderVersionStatus.file_id == file_id,
-                ProviderVersionStatus.provider_name == provider_name
+                self._provider_match_clause(provider_name)
             )
         )
         return self.session.exec(stmt).first()
@@ -626,7 +645,7 @@ class ModelRepositoryV2:
         stmt = select(ProviderVersionStatus).where(
             and_(
                 ProviderVersionStatus.file_id.in_(file_ids),
-                ProviderVersionStatus.provider_name == provider_name,
+                self._provider_match_clause(provider_name),
             )
         )
         statuses = self.session.exec(stmt).all()
@@ -645,6 +664,10 @@ class ModelRepositoryV2:
         existing = self.get_provider_status(file_id, provider_name)
         
         if existing:
+            if not existing.provider_id:
+                existing.provider_id = provider_name
+            if not existing.provider_name:
+                existing.provider_name = provider_name
             existing.status = status
             if storage_path:
                 existing.storage_path = storage_path
@@ -662,6 +685,7 @@ class ModelRepositoryV2:
         else:
             new_status = ProviderVersionStatus(
                 file_id=file_id,
+                provider_id=provider_name,
                 provider_name=provider_name,
                 status=status,
                 storage_path=storage_path,
@@ -682,7 +706,7 @@ class ModelRepositoryV2:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Get all provider statuses for a model's files.
-        Returns dict keyed by provider_name with aggregated status.
+        Returns dict keyed by provider_id with legacy provider_name fallback.
         """
         # Get all files for this model's versions
         stmt = select(ProviderVersionStatus, ModelFile, ModelVersion).join(
@@ -693,20 +717,24 @@ class ModelRepositoryV2:
         
         result: Dict[str, Dict[str, Any]] = {}
         for status, file, version in self.session.exec(stmt).all():
-            if status.provider_name not in result:
-                result[status.provider_name] = {
+            provider_key = self._status_provider_key(status)
+            if not provider_key:
+                continue
+
+            if provider_key not in result:
+                result[provider_key] = {
                     "status": status.status,
                     "files": [],
                     "total_size": 0
                 }
-            result[status.provider_name]["files"].append({
+            result[provider_key]["files"].append({
                 "file_id": file.id,
                 "filename": file.storage_filename,
                 "status": status.status,
                 "size_bytes": status.size_bytes
             })
             if status.size_bytes:
-                result[status.provider_name]["total_size"] += status.size_bytes
+                result[provider_key]["total_size"] += status.size_bytes
         
         return result
     
@@ -719,7 +747,7 @@ class ModelRepositoryV2:
             Number of records deleted
         """
         stmt = select(ProviderVersionStatus).where(
-            ProviderVersionStatus.provider_name == provider_name
+            self._provider_match_clause(provider_name)
         )
         statuses = list(self.session.exec(stmt).all())
         count = len(statuses)
@@ -744,9 +772,13 @@ class ModelRepositoryV2:
         """
         from sqlalchemy import distinct
         
-        # Get all unique provider names in ProviderVersionStatus
-        stmt = select(distinct(ProviderVersionStatus.provider_name))
-        all_provider_names = set(self.session.exec(stmt).all())
+        # Get all unique provider identifiers in ProviderVersionStatus.
+        stmt = select(distinct(func.coalesce(ProviderVersionStatus.provider_id, ProviderVersionStatus.provider_name)))
+        all_provider_names = {
+            provider_key
+            for provider_key in self.session.exec(stmt).all()
+            if provider_key
+        }
         
         # Find orphaned provider names (in status table but not in active providers)
         active_set = set(active_provider_names)
@@ -761,6 +793,43 @@ class ModelRepositoryV2:
             "deleted_count": total_deleted,
             "orphaned_providers": orphaned_providers
         }
+
+    def reset_stale_downloading_statuses(
+        self,
+        *,
+        stale_before: datetime,
+        provider_names: Optional[List[str]] = None,
+    ) -> int:
+        """
+        Reset stale downloading statuses back to pending.
+
+        A status is considered stale when it is still marked as downloading
+        and its queued_at timestamp is older than ``stale_before``.
+        """
+        if provider_names is not None and len(provider_names) == 0:
+            return 0
+
+        stmt = select(ProviderVersionStatus).where(
+            ProviderVersionStatus.status == "downloading",
+            ProviderVersionStatus.queued_at < stale_before,
+        )
+
+        if provider_names is not None:
+            stmt = stmt.where(self._provider_match_clause_many(provider_names))
+
+        stale_statuses = list(self.session.exec(stmt).all())
+        if not stale_statuses:
+            return 0
+
+        reset_at = datetime.utcnow()
+        for status in stale_statuses:
+            status.status = "pending"
+            status.queued_at = reset_at
+            status.error_message = "Reset stale downloading status during startup cleanup"
+            self.session.add(status)
+
+        self.session.commit()
+        return len(stale_statuses)
     
     # =========================================================================
     # IMAGE OPERATIONS

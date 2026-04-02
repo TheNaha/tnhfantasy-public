@@ -5,6 +5,7 @@ from api.provider_runtime import monitor_provider_changes
 from api.startup_helpers import (
     autostart_provider_containers,
     build_provider_worker_images,
+    cleanup_provider_state_artifacts,
     configure_worker_pool,
     recover_pending_jobs,
 )
@@ -93,6 +94,9 @@ async def startup_application(process_job, ws_manager):
     """Run application startup side effects and return tracked background tasks."""
     logger.info("startup_init", phase="database")
     create_db_and_tables()
+
+    logger.info("startup_init", phase="provider_state_cleanup")
+    cleanup_provider_state_artifacts()
 
     logger.info("startup_init", phase="job_processor")
     job_queue.set_processor(process_job)

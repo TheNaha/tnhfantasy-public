@@ -574,9 +574,11 @@ class ModelServiceV2:
             size_bytes=size_bytes,
             error_message=error_message
         )
+        provider_key = status_obj.provider_id or status_obj.provider_name or provider_name
         return {
             "file_id": status_obj.file_id,
-            "provider_name": status_obj.provider_name,
+            "provider_id": provider_key,
+            "provider_name": provider_key,
             "status": status_obj.status,
             "storage_path": status_obj.storage_path,
             "size_bytes": status_obj.size_bytes,

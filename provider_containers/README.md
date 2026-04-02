@@ -301,7 +301,8 @@ BEAM_API_KEY=your-beam-api-key
 BEAM_APP_NAME=comfy-beam
 PROVIDER_ID=beam-primary
 BEAM_GPU_TYPE=RTX4090
-BACKEND_URL=http://comfy-backend-v2:8002
+BACKEND_URL=http://backend_v2:8002
+
 ```
 
 ### 4. Build and Run Container

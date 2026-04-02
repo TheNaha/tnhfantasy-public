@@ -222,13 +222,15 @@ class ProviderVersionStatus(SQLModel, table=True):
     """
     __tablename__ = "provider_version_status"
     __table_args__ = (
-        UniqueConstraint('file_id', 'provider_name', name='uq_file_provider'),
-        Index('idx_provider_status', 'provider_name', 'status'),
+        Index('idx_file_provider_id_unique', 'file_id', 'provider_id', unique=True),
+        Index('idx_provider_status_provider_id', 'provider_id', 'status'),
+        Index('idx_provider_status_legacy', 'provider_name', 'status'),
     )
     
     id: Optional[int] = Field(default=None, primary_key=True)
     file_id: int = Field(foreign_key="model_files.id", index=True)
-    provider_name: str = Field(index=True)  # "modal-step", "modal-zetsuke", etc.
+    provider_id: Optional[str] = Field(default=None, foreign_key="providers.id", index=True)
+    provider_name: Optional[str] = Field(default=None, index=True)
     
     # Status tracking
     status: str = Field(default="pending")  # pending, downloading, ready, failed
@@ -246,6 +248,11 @@ class ProviderVersionStatus(SQLModel, table=True):
     
     # Relationships
     # file: Optional["ModelFile"] = Relationship(back_populates="provider_statuses")
+
+    @property
+    def provider_key(self) -> Optional[str]:
+        """Return canonical provider identifier with fallback for legacy rows."""
+        return self.provider_id or self.provider_name
 
 
 # ============================================================================

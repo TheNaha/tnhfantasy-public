@@ -239,7 +239,33 @@ class TestModelRepositoryV2ProviderStatus:
             status="ready"
         )
         assert result is not None
+        assert result.provider_id == "modal-primary"
+        assert result.provider_name == "modal-primary"
         assert result.status == "ready"
+
+    def test_update_provider_status_backfills_legacy_provider_name_rows(self, repo, civitai_data):
+        model = repo.create_model_with_versions(civitai_data, [67890])
+        versions = repo.get_versions_for_model(model.id)
+        files = repo.get_files_for_version(versions[0].id)
+        file_obj = files[0]
+
+        legacy_status = ProviderVersionStatus(
+            file_id=file_obj.id,
+            provider_name="modal-primary",
+            status="downloading",
+        )
+        repo.session.add(legacy_status)
+        repo.session.commit()
+
+        updated = repo.update_provider_status(
+            file_id=file_obj.id,
+            provider_name="modal-primary",
+            status="ready",
+        )
+
+        assert updated.provider_id == "modal-primary"
+        assert updated.provider_name == "modal-primary"
+        assert updated.status == "ready"
 
     def test_get_pending_downloads(self, repo, civitai_data):
         repo.create_model_with_versions(civitai_data, [67890])
@@ -262,6 +288,38 @@ class TestModelRepositoryV2ProviderStatus:
         )
         count = repo.delete_all_statuses_for_provider("modal-primary")
         assert count >= 0
+
+    def test_reset_stale_downloading_statuses_resets_only_target_providers(self, repo, civitai_data):
+        model = repo.create_model_with_versions(civitai_data, [67890])
+        versions = repo.get_versions_for_model(model.id)
+        files = repo.get_files_for_version(versions[0].id)
+        file_obj = files[0]
+
+        modal_status = repo.update_provider_status(
+            file_id=file_obj.id,
+            provider_name="modal-primary",
+            status="downloading"
+        )
+        beam_status = repo.update_provider_status(
+            file_id=file_obj.id,
+            provider_name="beam-main",
+            status="downloading"
+        )
+
+        modal_status.queued_at = datetime(2020, 1, 1)
+        beam_status.queued_at = datetime(2020, 1, 1)
+        repo.session.add(modal_status)
+        repo.session.add(beam_status)
+        repo.session.commit()
+
+        reset_count = repo.reset_stale_downloading_statuses(
+            stale_before=datetime(2021, 1, 1),
+            provider_names=["modal-primary"],
+        )
+
+        assert reset_count == 1
+        assert repo.get_provider_status(file_obj.id, "modal-primary").status == "pending"
+        assert repo.get_provider_status(file_obj.id, "beam-main").status == "downloading"
 
 
 class TestModelRepositoryV2ModelToDict:

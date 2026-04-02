@@ -100,6 +100,7 @@ class ProviderService:
     async def delete_provider(self, provider_id: str) -> bool:
         """Delete a provider and cascade delete its status entries."""
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+        from services.load_balancer import LoadBalancer
         
         # First, cascade delete all ProviderVersionStatus entries for this provider
         model_repo = ModelRepositoryV2(self.session)
@@ -112,6 +113,13 @@ class ProviderService:
         if not success:
             logger.warning("provider_delete_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
+
+        # Remove stale load balancer runtime references for deleted providers.
+        lb_runtime = LoadBalancer.default_runtime_state()
+        with lb_runtime.lock:
+            lb_runtime.provider_failures.pop(provider_id, None)
+            lb_runtime.provider_job_counts.pop(provider_id, None)
+        LoadBalancer.save_state_to_db(self.session, runtime_state=lb_runtime)
         
         logger.info("provider_deleted", provider_id=provider_id, statuses_cleaned=deleted_count)
         

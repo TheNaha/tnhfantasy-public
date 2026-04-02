@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from provider_core.reconciliation import batch_update_file_status_v2
+from provider_core.reconciliation import batch_update_file_status_v2, push_reconciliation_event
 from provider_core.state import ReconciliationState
 
 
@@ -53,3 +53,55 @@ async def test_batch_update_file_status_v2_chunks_large_payloads():
     second_payload = http_client.post.await_args_list[1].kwargs["json"]
     assert len(first_payload["updates"]) == 500
     assert len(second_payload["updates"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_reconciliation_event_retries_until_success(monkeypatch):
+    response = MagicMock()
+    response.status_code = 200
+
+    http_client = AsyncMock()
+    http_client.post = AsyncMock(side_effect=[RuntimeError("dns lookup failed"), response])
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("provider_core.reconciliation.asyncio.sleep", sleep_mock)
+
+    delivered = await push_reconciliation_event(
+        backend_url="http://backend",
+        provider_id="modal-step",
+        status="reconciling",
+        phase="fetching",
+        http_client=http_client,
+        retry_attempts=2,
+        retry_backoff_seconds=0.01,
+    )
+
+    assert delivered is True
+    assert http_client.post.await_count == 2
+    sleep_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_push_reconciliation_event_returns_false_after_exhausting_retries(monkeypatch):
+    response = MagicMock()
+    response.status_code = 503
+
+    http_client = AsyncMock()
+    http_client.post = AsyncMock(return_value=response)
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("provider_core.reconciliation.asyncio.sleep", sleep_mock)
+
+    delivered = await push_reconciliation_event(
+        backend_url="http://backend",
+        provider_id="modal-step",
+        status="reconciling",
+        phase="fetching",
+        http_client=http_client,
+        retry_attempts=3,
+        retry_backoff_seconds=0.01,
+    )
+
+    assert delivered is False
+    assert http_client.post.await_count == 3
+    assert sleep_mock.await_count == 2

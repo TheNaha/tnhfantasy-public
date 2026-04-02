@@ -153,6 +153,56 @@ def _migration_setup_prompts_fts(conn) -> bool:
     return True
 
 
+def _migration_add_provider_status_provider_id(conn) -> bool:
+    """Add provider_id column and indexes to provider_version_status."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "provider_version_status" not in inspector.get_table_names():
+        return False
+
+    columns = {col['name'] for col in inspector.get_columns('provider_version_status')}
+
+    if 'provider_id' not in columns:
+        conn.execute(text('ALTER TABLE provider_version_status ADD COLUMN provider_id TEXT'))
+        conn.commit()
+        logger.info("migration_column_added", table="provider_version_status", column="provider_id")
+
+    if 'provider_name' in columns:
+        conn.execute(
+            text(
+                """
+                UPDATE provider_version_status
+                SET provider_id = provider_name
+                WHERE (provider_id IS NULL OR provider_id = '')
+                  AND provider_name IS NOT NULL
+                """
+            )
+        )
+        conn.commit()
+
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_provider_status_provider_id ON provider_version_status (provider_id, status)"
+        )
+    )
+    if 'provider_name' in columns:
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_provider_status_legacy ON provider_version_status (provider_name, status)"
+            )
+        )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_provider_id_unique ON provider_version_status (file_id, provider_id)"
+        )
+    )
+    conn.commit()
+
+    _verify_required_columns(conn, 'provider_version_status', {'provider_id'})
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -165,6 +215,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="002_prompts_fts",
             description="Create prompts FTS table and synchronization triggers",
             apply_fn=_migration_setup_prompts_fts,
+        ),
+        MigrationStep(
+            version="003_provider_status_provider_id",
+            description="Add provider_id column and indexes to provider_version_status",
+            apply_fn=_migration_add_provider_status_provider_id,
         ),
     ]
 
@@ -540,14 +595,15 @@ def _migrate_models_to_v2() -> None:
                         
                         conn.execute(text("""
                             INSERT INTO provider_version_status (
-                                file_id, provider_name, status, storage_path, size_bytes,
+                                file_id, provider_id, provider_name, status, storage_path, size_bytes,
                                 downloaded_at
                             ) VALUES (
-                                :file_id, :provider_name, :status, :storage_path, :size_bytes,
+                                :file_id, :provider_id, :provider_name, :status, :storage_path, :size_bytes,
                                 :downloaded_at
                             )
                         """), {
                             "file_id": file_id,
+                            "provider_id": provider_name,
                             "provider_name": provider_name,
                             "status": new_status,
                             "storage_path": f"{row[2]}/{row[1]}",  # directory/filename

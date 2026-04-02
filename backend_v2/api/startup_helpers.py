@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from api.deps import get_session_sync
 from infrastructure.logging import get_logger
 from services.job_service import JobService
@@ -85,3 +87,34 @@ def autostart_provider_containers() -> None:
             session.close()
     except Exception as exc:
         logger.warning("container_autostart_failed", error=str(exc))
+
+
+def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120) -> None:
+    """Remove orphaned provider statuses and reset stale downloading entries."""
+    try:
+        from infrastructure.repositories import ProviderRepository
+        from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+
+        session = get_session_sync()
+        try:
+            provider_repo = ProviderRepository(session)
+            active_provider_ids = [provider.id for provider in provider_repo.get_all()]
+
+            model_repo = ModelRepositoryV2(session)
+            orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
+            stale_before = datetime.utcnow() - timedelta(minutes=stale_downloading_after_minutes)
+            stale_resets = model_repo.reset_stale_downloading_statuses(
+                stale_before=stale_before,
+                provider_names=active_provider_ids,
+            )
+
+            logger.info(
+                "provider_state_cleanup_complete",
+                active_providers=len(active_provider_ids),
+                orphaned_statuses_deleted=orphaned_result.get("deleted_count", 0),
+                stale_downloading_reset=stale_resets,
+            )
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("provider_state_cleanup_failed", error=str(exc))

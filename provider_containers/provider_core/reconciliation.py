@@ -13,6 +13,11 @@ from .state import ReconciliationState
 from .models import MODEL_DIRECTORIES
 
 
+EVENT_PUSH_MAX_ATTEMPTS = 3
+EVENT_PUSH_INITIAL_BACKOFF_SECONDS = 0.5
+EVENT_PUSH_TIMEOUT_SECONDS = 5.0
+
+
 def _chunked(items: List[Dict], chunk_size: int):
     """Yield item batches for large reconciliation updates."""
     for start in range(0, len(items), chunk_size):
@@ -132,6 +137,8 @@ async def push_reconciliation_event(
     errors: list = None,
     message: str = None,
     http_client=None,
+    retry_attempts: int = EVENT_PUSH_MAX_ATTEMPTS,
+    retry_backoff_seconds: float = EVENT_PUSH_INITIAL_BACKOFF_SECONDS,
 ):
     """
     Push reconciliation event to backend for WebSocket broadcast.
@@ -160,15 +167,38 @@ async def push_reconciliation_event(
         "message": message,
     }
     
-    try:
-        if http_client:
-            await http_client.post(url, json=payload, timeout=5.0)
-        else:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(url, json=payload)
-    except Exception as e:
-        # Don't fail reconciliation if event push fails
-        print(f"[Reconciliation] Warning: Failed to push event: {e}")
+    attempts = max(1, int(retry_attempts))
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if http_client:
+                response = await http_client.post(url, json=payload, timeout=EVENT_PUSH_TIMEOUT_SECONDS)
+            else:
+                async with httpx.AsyncClient(timeout=EVENT_PUSH_TIMEOUT_SECONDS) as client:
+                    response = await client.post(url, json=payload)
+
+            status_code = getattr(response, "status_code", None)
+            if status_code is not None and status_code >= 400:
+                raise RuntimeError(f"HTTP {status_code}")
+
+            return True
+        except Exception as e:
+            if attempt >= attempts:
+                # Don't fail reconciliation if event push fails.
+                print(
+                    f"[Reconciliation] Warning: Failed to push event "
+                    f"for provider {provider_id} after {attempts} attempts: {e}"
+                )
+                return False
+
+            delay = max(0.0, retry_backoff_seconds) * (2 ** (attempt - 1))
+            print(
+                f"[Reconciliation] Warning: Event push attempt {attempt}/{attempts} "
+                f"failed for provider {provider_id}: {e}. Retrying in {delay:.2f}s"
+            )
+            await asyncio.sleep(delay)
+
+    return False
 
 
 async def get_pending_downloads(

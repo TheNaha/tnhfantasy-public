@@ -178,6 +178,42 @@ class TestRunMigrations:
         assert "completed_at" in columns
         assert applied == {"001_jobs_started_completed"}
 
+    def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
+        db_path = tmp_path / "provider_status_migration.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+            conn.execute(text("""
+                CREATE TABLE provider_version_status (
+                    id INTEGER PRIMARY KEY,
+                    file_id INTEGER NOT NULL,
+                    provider_name TEXT,
+                    status TEXT,
+                    queued_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO provider_version_status (file_id, provider_name, status)
+                VALUES (1, 'modal-primary', 'ready')
+            """))
+
+        with patch.object(db_module, "engine", engine):
+            db_module._run_migrations()
+
+        with engine.connect() as conn:
+            columns = db_module._get_table_columns(conn, "provider_version_status")
+            migrated = conn.execute(
+                text("SELECT provider_id, provider_name FROM provider_version_status WHERE file_id = 1")
+            ).first()
+            applied = db_module._get_applied_migrations(conn)
+
+        assert "provider_id" in columns
+        assert migrated is not None
+        assert migrated[0] == "modal-primary"
+        assert migrated[1] == "modal-primary"
+        assert "003_provider_status_provider_id" in applied
+
     def test_run_migrations_records_applied_versions(self, tmp_path):
         db_path = tmp_path / "migration_versions.db"
         engine = create_engine(f"sqlite:///{db_path}")

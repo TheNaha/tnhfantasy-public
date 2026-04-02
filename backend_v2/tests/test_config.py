@@ -237,7 +237,7 @@ class TestLoadConfig:
 
 class TestWorkerBackendUrl:
     def test_prefers_file_config_when_settings_value_is_default(self, monkeypatch):
-        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://comfy-backend-v2:8002")
+        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://backend_v2:8002")
         cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://custom-backend:9002"}})
 
         assert get_worker_backend_url() == "http://custom-backend:9002"
@@ -248,6 +248,20 @@ class TestWorkerBackendUrl:
         cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://config-backend:9002"}})
 
         assert get_worker_backend_url() == "http://env-backend:9100"
+
+    def test_normalizes_legacy_hostname_from_config(self, monkeypatch):
+        monkeypatch.delenv("COMFY_WORKER_BACKEND_URL", raising=False)
+        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://backend_v2:8002")
+        cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://comfy-backend-v2:8002"}})
+
+        assert get_worker_backend_url() == "http://backend_v2:8002"
+
+    def test_normalizes_legacy_hostname_from_env_override(self, monkeypatch):
+        monkeypatch.setenv("COMFY_WORKER_BACKEND_URL", "http://comfy-backend-v2:8002")
+        monkeypatch.setattr(cfg.settings, "worker_backend_url", "http://comfy-backend-v2:8002")
+        cfg._config = _deep_merge(DEFAULT_CONFIG.copy(), {"api": {"worker_backend_url": "http://config-backend:9002"}})
+
+        assert get_worker_backend_url() == "http://backend_v2:8002"
 
 
 class TestGetConfig:

@@ -114,6 +114,14 @@ class TestModelsV2Extended:
         response = client.post("/api/v2/models/providers/batch-status-update", json=payload)
         assert response.status_code in (200, 422)
 
+    def test_batch_status_update_accepts_provider_id(self, client):
+        payload = {
+            "provider_id": "modal-primary",
+            "updates": []
+        }
+        response = client.post("/api/v2/models/providers/batch-status-update", json=payload)
+        assert response.status_code in (200, 422)
+
     def test_reset_provider_status(self, client):
         response = client.delete("/api/v2/models/providers/modal-primary/reset-status")
         assert response.status_code == 200

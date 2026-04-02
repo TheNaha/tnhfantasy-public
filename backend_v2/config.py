@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     "api": {
         "cors_origins": ["http://localhost:5173", "http://localhost:5174", "http://localhost:8000"],
         "gzip_minimum_size": 1000,
-        "worker_backend_url": "http://comfy-backend-v2:8002"
+        "worker_backend_url": "http://backend_v2:8002"
     },
     "jobs_cleanup": {
         "max_age_hours": 24,
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # Override via COMFY_CORS_ORIGINS environment variable for production
     cors_origins: List[str] = ["*"]
     gzip_minimum_size: int = 1000
-    worker_backend_url: str = "http://comfy-backend-v2:8002"
+    worker_backend_url: str = "http://backend_v2:8002"
     
     # Model Sync
     model_sync_interval: int = 300
@@ -418,6 +418,26 @@ def _env_var_is_set(env_name: str) -> bool:
     return os.environ.get(f"COMFY_{env_name}") is not None
 
 
+def _normalize_worker_backend_url(url: Optional[str]) -> str:
+    """Normalize legacy or empty worker backend URL values."""
+    default_url = "http://backend_v2:8002"
+    candidate = (url or "").strip()
+
+    if not candidate:
+        return default_url
+
+    if "comfy-backend-v2" in candidate:
+        normalized = candidate.replace("comfy-backend-v2", "backend_v2")
+        _cfg_logger.warning(
+            "worker_backend_url_normalized_legacy_host",
+            original=candidate,
+            normalized=normalized,
+        )
+        return normalized
+
+    return candidate
+
+
 def get_job_timeout() -> int:
     """Get job timeout in seconds. Prefers env var (settings), falls back to file config."""
     # Use Pydantic settings if explicitly set via env var, else use file config for runtime updates
@@ -457,8 +477,13 @@ def get_reconciliation_interval() -> int:
 
 def get_worker_backend_url() -> str:
     """Get backend URL exposed to provider containers. Prefers env var, falls back to file config."""
-    default_url = "http://comfy-backend-v2:8002"
-    return settings.worker_backend_url if _env_var_is_set("WORKER_BACKEND_URL") else get_config()["api"].get("worker_backend_url", default_url)
+    default_url = "http://backend_v2:8002"
+    configured_url = (
+        settings.worker_backend_url
+        if _env_var_is_set("WORKER_BACKEND_URL")
+        else get_config()["api"].get("worker_backend_url", default_url)
+    )
+    return _normalize_worker_backend_url(configured_url)
 
 
 

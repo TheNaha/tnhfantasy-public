@@ -4,7 +4,9 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from services.provider_service import ProviderService
+from services.load_balancer import LoadBalancer
 from core.exceptions import NotFoundError
+from core.entities import LoadBalancerState
 
 
 @pytest.fixture(name="engine")
@@ -138,6 +140,25 @@ class TestProviderServiceDelete:
         await service.delete_provider("test-provider")
         providers = await service.list_providers()
         assert len(providers) == 0
+
+    async def test_delete_provider_cleans_load_balancer_runtime_state(self, service, session, sample_provider_data):
+        runtime_state = LoadBalancer.default_runtime_state()
+
+        with runtime_state.lock:
+            runtime_state.provider_failures["test-provider"] = 4
+            runtime_state.provider_job_counts["test-provider"] = 2
+
+        await service.create_provider(sample_provider_data)
+        await service.delete_provider("test-provider")
+
+        with runtime_state.lock:
+            assert "test-provider" not in runtime_state.provider_failures
+            assert "test-provider" not in runtime_state.provider_job_counts
+
+        state_row = session.get(LoadBalancerState, 1)
+        assert state_row is not None
+        assert "test-provider" not in (state_row.provider_failures or {})
+        assert "test-provider" not in (state_row.provider_job_counts or {})
 
 
 class TestProviderServiceLoadBalancing:

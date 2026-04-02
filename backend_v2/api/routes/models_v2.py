@@ -505,7 +505,8 @@ class BatchStatusUpdate(BaseModel):
 
 class BatchUpdateRequest(BaseModel):
     """Batch status update from worker."""
-    provider_name: str
+    provider_name: Optional[str] = None
+    provider_id: Optional[str] = None
     updates: List[BatchStatusUpdate]
 
 
@@ -526,6 +527,9 @@ async def batch_update_status(
     from core.entities_v2 import ModelFile, ModelVersion, ModelV2
     
     service = get_model_service(session)
+    provider_key = request.provider_id or request.provider_name
+    if not provider_key:
+        raise HTTPException(status_code=422, detail="provider_id or provider_name is required")
     
     # Build storage_path -> file_id lookup if needed
     path_to_file_id = None
@@ -558,7 +562,7 @@ async def batch_update_status(
             
             await service.update_provider_file_status(
                 file_id=file_id,
-                provider_name=request.provider_name,
+                provider_name=provider_key,
                 status=update.status,
                 storage_path=update.storage_path,
                 size_bytes=update.size_bytes
@@ -580,21 +584,10 @@ async def reset_provider_status(
     This will force re-download of ALL files on next reconciliation.
     Use with caution!
     """
-    from sqlmodel import select, delete
-    from core.entities_v2 import ProviderVersionStatus
-    
-    # Count before deleting
-    count_stmt = select(ProviderVersionStatus).where(
-        ProviderVersionStatus.provider_name == provider_name
-    )
-    count = len(list(session.exec(count_stmt).all()))
-    
-    # Delete all statuses for this provider
-    stmt = delete(ProviderVersionStatus).where(
-        ProviderVersionStatus.provider_name == provider_name
-    )
-    session.exec(stmt)
-    session.commit()
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+
+    model_repo = ModelRepositoryV2(session)
+    count = model_repo.delete_all_statuses_for_provider(provider_name)
     
     return {
         "status": "success",

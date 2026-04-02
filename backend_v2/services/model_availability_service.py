@@ -193,7 +193,9 @@ class ModelAvailabilityService:
             file_key = file_id_to_key.get(status.file_id)
             if file_key:
                 result.setdefault(file_key, {})
-                result[file_key][status.provider_name] = status.status
+                provider_key = status.provider_id or status.provider_name
+                if provider_key:
+                    result[file_key][provider_key] = status.status
         
         return result
     
