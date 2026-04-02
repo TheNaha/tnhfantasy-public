@@ -90,6 +90,86 @@ class GalleryIndexer:
         self._initialized = True
         self.is_ready = False
 
+    @staticmethod
+    def _compact_checkpoint_metadata(value: Any) -> Any:
+        """Reduce checkpoint metadata to UI/statistics-relevant fields."""
+        if not isinstance(value, dict):
+            return value
+
+        compact: Dict[str, Any] = {}
+        for key in ["name", "display_name", "filename", "type", "size", "id"]:
+            if key in value:
+                compact[key] = value.get(key)
+
+        if not compact:
+            fallback_name = value.get("name") or value.get("filename") or value.get("display_name")
+            if fallback_name:
+                compact["name"] = fallback_name
+        return compact
+
+    @staticmethod
+    def _compact_lora_entry(value: Any) -> Any:
+        """Reduce a LoRA entry to display and reuse parameters."""
+        if isinstance(value, str):
+            return {"name": value, "strength": 1.0}
+        if not isinstance(value, dict):
+            return value
+
+        compact: Dict[str, Any] = {}
+        for key in ["name", "display_name", "filename", "strength", "weight", "id"]:
+            if key in value:
+                compact[key] = value.get(key)
+
+        if "strength" not in compact and "weight" in compact:
+            compact["strength"] = compact.get("weight")
+        if "weight" not in compact and "strength" in compact:
+            compact["weight"] = compact.get("strength")
+
+        if not compact:
+            fallback_name = value.get("name") or value.get("filename")
+            if fallback_name:
+                compact["name"] = fallback_name
+        return compact
+
+    @classmethod
+    def _compact_metadata(cls, metadata: Any) -> Dict[str, Any]:
+        """
+        Keep scalar metadata and compact known heavy nested structures.
+
+        This prevents large model payloads from ballooning RSS while preserving
+        fields used by gallery UI and statistics endpoints.
+        """
+        if not isinstance(metadata, dict):
+            return {}
+
+        compact: Dict[str, Any] = {}
+        passthrough_dict_keys = {"job", "dimensions", "thumbnails"}
+        passthrough_list_keys = {"embeddings", "tags"}
+
+        for key, value in metadata.items():
+            if key == "checkpoint":
+                compact[key] = cls._compact_checkpoint_metadata(value)
+                continue
+
+            if key == "loras":
+                if isinstance(value, list):
+                    compact[key] = [cls._compact_lora_entry(item) for item in value]
+                continue
+
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                compact[key] = value
+                continue
+
+            if isinstance(value, dict) and key in passthrough_dict_keys:
+                compact[key] = value
+                continue
+
+            if isinstance(value, list) and key in passthrough_list_keys:
+                compact[key] = value
+                continue
+
+        return compact
+
     def start(self):
         """Start the background indexer."""
         if self.observer:
@@ -157,7 +237,7 @@ class GalleryIndexer:
             blurhash = None
             try:
                 from infrastructure.image_processor import read_image_metadata
-                metadata = read_image_metadata(filepath)
+                metadata = self._compact_metadata(read_image_metadata(filepath))
                 blurhash = metadata.get('blurhash')
             except Exception:
                 pass

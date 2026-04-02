@@ -1,7 +1,13 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { buildDashboardItems } from '../utils/dashboardItems';
 import { getItemTimelineDate, getLocalDateKey } from '../utils/dateTime';
+
+const MAX_JOB_TIMELINE_ANCHORS = 1000;
+
+function getJobTimelineAnchor(job) {
+    return job?.created_at || job?.updated_at || 0;
+}
 
 export function useDashboardItems({
     data,
@@ -12,9 +18,36 @@ export function useDashboardItems({
     showFavorites,
     favorites,
 }) {
+    const jobTimelineAnchorsRef = useRef(new Map());
+
+    const jobTimelineOverrides = useMemo(() => {
+        const nextAnchors = new Map(jobTimelineAnchorsRef.current);
+
+        activeJobs.forEach((job) => {
+            if (!job?.id || nextAnchors.has(job.id)) {
+                return;
+            }
+
+            nextAnchors.set(job.id, getJobTimelineAnchor(job));
+        });
+
+        if (nextAnchors.size > MAX_JOB_TIMELINE_ANCHORS) {
+            const toTrim = nextAnchors.size - MAX_JOB_TIMELINE_ANCHORS;
+            const iterator = nextAnchors.keys();
+            for (let i = 0; i < toTrim; i += 1) {
+                const nextKey = iterator.next();
+                if (nextKey.done) break;
+                nextAnchors.delete(nextKey.value);
+            }
+        }
+
+        jobTimelineAnchorsRef.current = nextAnchors;
+        return nextAnchors;
+    }, [activeJobs]);
+
     const { items: allItems, jobsById } = useMemo(() => {
-        return buildDashboardItems(data, activeJobs);
-    }, [data, activeJobs]);
+        return buildDashboardItems(data, activeJobs, jobTimelineOverrides);
+    }, [data, activeJobs, jobTimelineOverrides]);
 
     const selectedJob = useMemo(() => {
         return selectedJobId ? jobsById.get(selectedJobId) || null : null;

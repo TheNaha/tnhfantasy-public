@@ -1,5 +1,22 @@
 import { getLatestDate, getItemTimelineDate } from './dateTime';
 
+function resolveTimelineDate(jobId, fallbackValues = [], jobTimelineOverrides = null) {
+    if (jobId && jobTimelineOverrides && typeof jobTimelineOverrides.get === 'function') {
+        const anchored = jobTimelineOverrides.get(jobId);
+        if (anchored !== undefined && anchored !== null && anchored !== '') {
+            return anchored;
+        }
+    }
+
+    for (const value of fallbackValues) {
+        if (value !== undefined && value !== null && value !== '') {
+            return value;
+        }
+    }
+
+    return 0;
+}
+
 function toImageItem(file) {
     return {
         ...file,
@@ -18,7 +35,7 @@ function toJobItem(job) {
     };
 }
 
-export function buildDashboardItems(data, activeJobs) {
+export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = null) {
     const historicalFiles = data ? data.pages.flatMap((page) => page.files.map(toImageItem)) : [];
     const historicalJobs = data ? data.pages.flatMap((page) => (page.jobs || []).map(toJobItem)) : [];
 
@@ -52,6 +69,11 @@ export function buildDashboardItems(data, activeJobs) {
     Array.from(mergedJobs.values()).forEach((job) => {
         if (job.status === 'completed' && job.outputs && job.outputs.length > 0) {
             const groupedImages = imagesByJobId.get(job.id);
+            const anchoredTimelineDate = resolveTimelineDate(
+                job.id,
+                [job.created_at, groupedImages?.[0]?.date, groupedImages?.[0]?.mtime, 0],
+                jobTimelineOverrides
+            );
 
             if (groupedImages && groupedImages.length > 1) {
                 combined.push({
@@ -59,7 +81,7 @@ export function buildDashboardItems(data, activeJobs) {
                     images: groupedImages,
                     job,
                     date: getLatestDate([job.created_at, ...groupedImages.map((image) => image.date)]).toISOString(),
-                    timelineDate: job.created_at || job.updated_at || groupedImages[0]?.date || 0,
+                    timelineDate: anchoredTimelineDate,
                     id: `group-${job.id}`,
                 });
                 groupedImages.forEach((image) => usedImages.add(image.name));
@@ -73,7 +95,7 @@ export function buildDashboardItems(data, activeJobs) {
                     ...image,
                     type: 'image',
                     date: getLatestDate([job.created_at, image.date]).toISOString(),
-                    timelineDate: job.created_at || job.updated_at || image.date || image.mtime || 0,
+                    timelineDate: anchoredTimelineDate,
                     _replacedJobId: job.id,
                     _job: job,
                 });
@@ -90,7 +112,7 @@ export function buildDashboardItems(data, activeJobs) {
                     ...matchingImage,
                     type: 'image',
                     date: getLatestDate([job.created_at, matchingImage.date]).toISOString(),
-                    timelineDate: job.created_at || job.updated_at || matchingImage.date || matchingImage.mtime || 0,
+                    timelineDate: anchoredTimelineDate,
                     _replacedJobId: job.id,
                     _job: job,
                 });
@@ -111,6 +133,12 @@ export function buildDashboardItems(data, activeJobs) {
 
         const jobId = image.metadata?.job_id;
         if (jobId && !usedJobIds.has(jobId)) {
+            const anchoredTimelineDate = resolveTimelineDate(
+                jobId,
+                [image.date, image.mtime, 0],
+                jobTimelineOverrides
+            );
+
             // ⚡ Bolt: Removed O(N) `combined.find` for `existingGroup` here.
             // Since `usedJobIds` tracks all processed job IDs, if `!usedJobIds.has(jobId)` is true,
             // we are guaranteed that `group-${jobId}` does not exist in `combined`.
@@ -121,13 +149,17 @@ export function buildDashboardItems(data, activeJobs) {
                     images: groupedImages,
                     job: null,
                     date: getLatestDate(groupedImages.map((groupedImage) => groupedImage.date)).toISOString(),
-                    timelineDate: groupedImages[0]?.date || groupedImages[0]?.mtime || 0,
+                    timelineDate: anchoredTimelineDate,
                     id: `group-${jobId}`,
                 });
                 groupedImages.forEach((groupedImage) => usedImages.add(groupedImage.name));
                 usedJobIds.add(jobId);
             } else {
-                combined.push(image);
+                combined.push({
+                    ...image,
+                    timelineDate: anchoredTimelineDate,
+                    _replacedJobId: jobId,
+                });
                 usedImages.add(image.name);
             }
             return;

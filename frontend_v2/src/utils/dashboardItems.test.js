@@ -44,4 +44,42 @@ describe('buildDashboardItems', () => {
         expect(items.some((item) => item.type === 'image' && item.name === 'result.png')).toBe(true);
         expect(items.some((item) => item.type === 'job' && item.id === 'job-complete')).toBe(false);
     });
+
+    it('keeps completed output at anchored job timeline position when job card is gone', () => {
+        const data = {
+            pages: [
+                {
+                    files: [
+                        {
+                            name: 'top.png',
+                            date: '2024-01-05T00:00:00Z',
+                            metadata: {},
+                        },
+                        {
+                            name: 'result.png',
+                            date: '2024-01-06T00:00:00Z',
+                            metadata: { job_id: 'job-replaced' },
+                        },
+                        {
+                            name: 'bottom.png',
+                            date: '2024-01-01T00:00:00Z',
+                            metadata: {},
+                        },
+                    ],
+                    jobs: [],
+                },
+            ],
+        };
+
+        const jobTimelineOverrides = new Map([
+            ['job-replaced', '2024-01-03T00:00:00Z'],
+        ]);
+
+        const { items } = buildDashboardItems(data, [], jobTimelineOverrides);
+        const namesInOrder = items.map((item) => item.name || item.id);
+        const replacedImage = items.find((item) => item.name === 'result.png');
+
+        expect(namesInOrder).toEqual(['top.png', 'result.png', 'bottom.png']);
+        expect(replacedImage.timelineDate).toBe('2024-01-03T00:00:00Z');
+    });
 });
