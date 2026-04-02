@@ -333,10 +333,10 @@ async def get_modal_stats():
         async def _count_directory(directory: str):
             short_name = directory.replace("models/", "")
             try:
-                files = await asyncio.wait_for(list_func.remote.aio(directory), timeout=10.0)
+                files = await asyncio.wait_for(list_func.remote.aio(directory), timeout=45.0)
                 return short_name, len(files) if files else 0
             except Exception as e:
-                print(f"[{PROVIDER_ID}] Error listing {directory}: {e}")
+                print(f"[{PROVIDER_ID}] Error listing {directory}: {type(e).__name__}: {e}")
                 return short_name, 0
 
         counts = await asyncio.gather(*(_count_directory(directory) for directory in directories))
