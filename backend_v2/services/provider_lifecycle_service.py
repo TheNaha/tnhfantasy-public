@@ -147,12 +147,36 @@ class ProviderLifecycleService:
             )
 
         http_client = get_http_client()
-        response = await http_client.post(f"{runtime.worker_url}/setup")
-        response.raise_for_status()
-        result = response.json()
+        try:
+            response = await http_client.post(
+                f"{runtime.worker_url}/setup",
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                provider_id,
+                f"Setup request to worker timed out: {type(exc).__name__}",
+            ) from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            error_message = str(exc).strip() or type(exc).__name__
+            raise ProviderError(
+                provider_id,
+                f"Failed to run provider setup via worker: {error_message}",
+            ) from exc
+
+        worker_status = result.get("status") if isinstance(result, dict) else None
+        worker_message = result.get("message") if isinstance(result, dict) else None
+        accepted = worker_status in {"queued", "started"}
+
         return {
-            "status": "success",
-            "message": f"Provider '{provider_id}' setup complete (via worker)",
+            "status": "accepted" if accepted else "success",
+            "message": worker_message or (
+                f"Provider '{provider_id}' setup queued (via worker)"
+                if accepted
+                else f"Provider '{provider_id}' setup complete (via worker)"
+            ),
             "result": result,
         }
 

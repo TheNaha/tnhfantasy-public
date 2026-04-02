@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from core.events import EventType
+from core.exceptions import ProviderError
 from services.provider_lifecycle_service import ProviderLifecycleService
 
 
@@ -101,3 +102,62 @@ async def test_get_reconciliation_status_returns_warning_when_worker_unreachable
 
     assert result["status"] == "idle"
     assert "Cannot reach worker" in result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_setup_provider_returns_accepted_for_queued_worker_response():
+    provider_service = MagicMock()
+    provider_service.get_provider = AsyncMock(
+        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
+    )
+
+    http_client = MagicMock()
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "status": "queued",
+        "message": "Setup queued",
+        "provider": "provider-1",
+    }
+    http_client.post = AsyncMock(return_value=response)
+
+    service = ProviderLifecycleService(
+        session=MagicMock(),
+        provider_service=provider_service,
+        container_manager=MagicMock(),
+    )
+
+    with patch(
+        "services.provider_lifecycle_service.resolve_provider_runtime",
+        return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
+    ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
+        result = await service.setup_provider("provider-1")
+
+    assert result["status"] == "accepted"
+    assert result["message"] == "Setup queued"
+    assert result["result"]["status"] == "queued"
+    http_client.post.assert_awaited_once_with("http://worker/setup", timeout=30.0)
+
+
+@pytest.mark.asyncio
+async def test_setup_provider_wraps_timeout_with_provider_error():
+    provider_service = MagicMock()
+    provider_service.get_provider = AsyncMock(
+        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
+    )
+
+    http_client = MagicMock()
+    http_client.post = AsyncMock(side_effect=httpx.ReadTimeout("", request=MagicMock()))
+
+    service = ProviderLifecycleService(
+        session=MagicMock(),
+        provider_service=provider_service,
+        container_manager=MagicMock(),
+    )
+
+    with patch(
+        "services.provider_lifecycle_service.resolve_provider_runtime",
+        return_value=SimpleNamespace(supports_setup=True, mode="container_http", worker_url="http://worker"),
+    ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
+        with pytest.raises(ProviderError, match="Setup request to worker timed out"):
+            await service.setup_provider("provider-1")

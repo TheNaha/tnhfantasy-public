@@ -276,12 +276,13 @@ async def run_inference(request: InferenceRequest):
 
 @app.post("/setup")
 async def setup_models_endpoint():
-    """Initialize Modal directories and download default models."""
+    """Queue setup_models to initialize Modal directories and default assets."""
     print(f"[{PROVIDER_ID}] Running setup_models...")
     try:
         setup_func = get_modal_function("setup_models")
-        result = setup_func.remote()
-        return build_status_response("success", "Setup complete", result=result)
+        # Setup may include long-running downloads; queue work and return quickly.
+        await setup_func.spawn.aio()
+        return build_status_response("queued", "Setup queued", provider=PROVIDER_ID)
     except Exception as e:
         print(f"[{PROVIDER_ID}] Setup error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -329,16 +330,19 @@ async def get_modal_stats():
     
     try:
         list_func = get_modal_function("list_models_with_metadata")
-        for directory in directories:
+        async def _count_directory(directory: str):
+            short_name = directory.replace("models/", "")
             try:
-                files = await list_func.remote.aio(directory)
-                count = len(files) if files else 0
-                short_name = directory.replace("models/", "")
-                stats[short_name] = count
-                total += count
+                files = await asyncio.wait_for(list_func.remote.aio(directory), timeout=10.0)
+                return short_name, len(files) if files else 0
             except Exception as e:
                 print(f"[{PROVIDER_ID}] Error listing {directory}: {e}")
-                stats[directory.replace("models/", "")] = 0
+                return short_name, 0
+
+        counts = await asyncio.gather(*(_count_directory(directory) for directory in directories))
+        for short_name, count in counts:
+            stats[short_name] = count
+            total += count
         
         return {"provider_id": PROVIDER_ID, "total": total, "by_directory": stats}
     except Exception as e:

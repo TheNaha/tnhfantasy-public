@@ -156,7 +156,7 @@ class ProviderStatusService:
         worker_url = f"{runtime.worker_url}{stats_endpoint}"
 
         try:
-            response = await http_client.get(worker_url, timeout=30.0)
+            response = await http_client.get(worker_url, timeout=45.0)
             if response.status_code != 200:
                 return self.empty_storage_payload(provider_id, f"HTTP {response.status_code}")
 
@@ -172,8 +172,15 @@ class ProviderStatusService:
             _modal_stats_cache[cache_key] = result
             return result
         except (httpx.HTTPError, ValueError) as exc:
-            logger.error("provider_storage_stats_fetch_failed", provider_id=provider_id, error=str(exc))
-            return self.empty_storage_payload(provider_id, str(exc))
+            error_message = str(exc).strip() or type(exc).__name__
+            logger.error(
+                "provider_storage_stats_fetch_failed",
+                provider_id=provider_id,
+                worker_url=worker_url,
+                error_type=type(exc).__name__,
+                error=error_message,
+            )
+            return self.empty_storage_payload(provider_id, error_message)
 
     async def get_live_reconciliation_state(
         self,

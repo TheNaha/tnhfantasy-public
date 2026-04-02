@@ -3,12 +3,34 @@ import subprocess
 import time
 import asyncio
 import logging
-from provider_core.utils import get_safe_path
 
 import os
 import json
 from typing import Dict, Any
 from pathlib import Path
+
+try:
+    from provider_core.utils import get_safe_path as _shared_get_safe_path
+except Exception:
+    _shared_get_safe_path = None
+
+
+def get_safe_path(base_dir: str, requested_path: str) -> str:
+    """Resolve and validate a path to prevent directory traversal."""
+    if _shared_get_safe_path is not None:
+        return _shared_get_safe_path(base_dir, requested_path)
+
+    clean_path = (requested_path or "").lstrip("/\\")
+    if not clean_path:
+        raise ValueError("Invalid path: path cannot be empty")
+
+    full_path = os.path.abspath(os.path.join(base_dir, clean_path))
+    base_path = os.path.abspath(base_dir)
+
+    if os.path.commonpath([base_path, full_path]) != base_path:
+        raise ValueError("Access denied: Path outside allowed directory")
+
+    return full_path
 
 # Configure logging for Modal functions
 logging.basicConfig(
@@ -547,7 +569,6 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
     import requests
     import time
     import math
-    from provider_core.utils import get_safe_path
     
     logger.info(f"[Download] Starting: {path}")
     logger.info(f"[Download] URL: {url[:80]}...")
@@ -714,7 +735,6 @@ def list_models_with_metadata(directory: str):
     import json
     
     base_path = "/mnt/data"
-    from provider_core.utils import get_safe_path
 
     try:
         target_dir = get_safe_path(base_path, directory)
@@ -811,7 +831,6 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
     
     def validate_single_file_in_dir(directory, name):
         """Helper to validate a single file, returns (directory, result)."""
-        from provider_core.utils import get_safe_path
         try:
             target_dir = get_safe_path("/mnt/data", directory)
         except Exception:
@@ -933,7 +952,6 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
         
         return {"directory": directory, "type": "valid", "data": model_info}
 
-    from provider_core.utils import get_safe_path
     # Collect all file tasks
     all_file_tasks = []
     
