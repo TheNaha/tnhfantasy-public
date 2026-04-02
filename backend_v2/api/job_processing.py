@@ -2,14 +2,32 @@ import base64
 import asyncio
 import io
 import os
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from core.entities import JobStatus
 from core.events import EventType, emit_job_event
+from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 
 logger = get_logger("job_processing")
+
+
+_finalizing_jobs: Set[str] = set()
+_finalizing_jobs_lock = asyncio.Lock()
+
+
+async def _reserve_finalization(job_id: str) -> bool:
+    async with _finalizing_jobs_lock:
+        if job_id in _finalizing_jobs:
+            return False
+        _finalizing_jobs.add(job_id)
+        return True
+
+
+async def _release_finalization(job_id: str) -> None:
+    async with _finalizing_jobs_lock:
+        _finalizing_jobs.discard(job_id)
 
 
 def normalize_persisted_output(output: Dict[str, Any]) -> Dict[str, Any]:
@@ -223,21 +241,48 @@ async def finalize_persisted_job_outputs(
     load_balancer=None,
     process_image_background_fn: Optional[Callable[[str, str], Awaitable[Any]]] = None,
 ) -> None:
-    await mark_job_post_processing(
-        job_service=job_service,
-        job_id=job_id,
-        outputs=outputs,
-        provider_id=provider_id,
-    )
-    await emit_job_event(
-        EventType.JOB_POST_PROCESSING,
-        {
-            "id": job_id,
-            "provider_id": provider_id,
-            "status": JobStatus.POST_PROCESSING.value,
-            "outputs": outputs,
-        },
-    )
+    try:
+        job = await job_service.get_job(job_id)
+    except NotFoundError:
+        logger.warning("job_finalize_not_found", job_id=job_id)
+        return
+
+    if job.status == JobStatus.COMPLETED:
+        logger.debug("job_finalize_skipped_completed", job_id=job_id)
+        return
+
+    if job.status in {JobStatus.CANCELLED, JobStatus.FAILED}:
+        logger.info(
+            "job_finalize_skipped_terminal",
+            job_id=job_id,
+            status=job.status.value,
+        )
+        return
+
+    if not await _reserve_finalization(job_id):
+        logger.info("job_finalize_already_running", job_id=job_id)
+        return
+
+    try:
+        if job.status != JobStatus.POST_PROCESSING:
+            await mark_job_post_processing(
+                job_service=job_service,
+                job_id=job_id,
+                outputs=outputs,
+                provider_id=provider_id,
+            )
+            await emit_job_event(
+                EventType.JOB_POST_PROCESSING,
+                {
+                    "id": job_id,
+                    "provider_id": provider_id,
+                    "status": JobStatus.POST_PROCESSING.value,
+                    "outputs": outputs,
+                },
+            )
+    except Exception:
+        await _release_finalization(job_id)
+        raise
 
     async def complete_when_ready():
         from services.gallery_indexer import gallery_indexer
@@ -276,6 +321,8 @@ async def finalize_persisted_job_outputs(
             )
             if load_balancer and provider_id:
                 load_balancer.release_job(provider_id)
+        finally:
+            await _release_finalization(job_id)
 
     start_background_task(
         complete_when_ready(),

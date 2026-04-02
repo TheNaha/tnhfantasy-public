@@ -56,6 +56,37 @@ def format_worker_http_error(status_code: int, error_text: str) -> str:
     return f"Worker returned {status_code}: {payload}"
 
 
+def validate_success_payload(update: dict) -> None:
+    """Validate terminal success payloads before backend-side finalization."""
+    if not isinstance(update, dict):
+        raise ValueError("success payload must be an object")
+
+    if update.get("status") != "success":
+        return
+
+    images = update.get("images")
+    if images is None:
+        return
+
+    if not isinstance(images, list):
+        raise ValueError("success payload images must be a list")
+
+    for index, image in enumerate(images):
+        if not isinstance(image, dict):
+            raise ValueError(f"success payload images[{index}] must be an object")
+
+        filename = image.get("filename")
+        if not filename:
+            raise ValueError(f"success payload images[{index}] missing filename")
+
+        if image.get("_base64_encoded"):
+            encoded_data = image.get("data")
+            if not isinstance(encoded_data, str) or not encoded_data:
+                raise ValueError(
+                    f"success payload images[{index}] missing base64 data for encoded image"
+                )
+
+
 async def call_provider(
     worker_url: str,
     workflow: dict,
@@ -127,6 +158,14 @@ async def call_provider(
                         elif status == "queued":
                             await job_service.update_job(job_id, message="Queued in ComfyUI...")
                         elif status == "success":
+                            try:
+                                validate_success_payload(update)
+                            except ValueError as error:
+                                raise ProviderCallError(
+                                    f"Invalid success payload: {error}",
+                                    provider_id=provider_id,
+                                    is_retryable=False,
+                                ) from error
                             final_result = update
                         elif status == "error":
                             error_message = extract_worker_error_message(update)

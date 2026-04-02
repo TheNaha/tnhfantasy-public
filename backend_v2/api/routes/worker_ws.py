@@ -55,21 +55,56 @@ class ConnectedWorker:
 # Global registry of connected workers
 connected_workers: Dict[str, ConnectedWorker] = {}  # provider_id -> worker
 pending_job_futures: Dict[str, asyncio.Future] = {}
+WORKER_HEARTBEAT_TIMEOUT_SECONDS = 90
+
+
+def _is_socket_connected(worker: ConnectedWorker) -> bool:
+    state = getattr(worker.ws, "client_state", None)
+    if state is None:
+        return True
+    return getattr(state, "name", "").upper() == "CONNECTED"
+
+
+def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
+    worker = connected_workers.get(provider_id)
+    if not worker:
+        return None
+
+    if not _is_socket_connected(worker):
+        connected_workers.pop(provider_id, None)
+        return None
+
+    heartbeat_age = (datetime.utcnow() - worker.last_heartbeat).total_seconds()
+    if heartbeat_age > WORKER_HEARTBEAT_TIMEOUT_SECONDS:
+        logger.warning(
+            "[Worker WS] Worker heartbeat stale: %s age=%.1fs",
+            provider_id,
+            heartbeat_age,
+        )
+        connected_workers.pop(provider_id, None)
+        return None
+
+    return worker
 
 
 def get_connected_workers() -> Dict[str, dict]:
     """Get info about all connected workers."""
-    return {pid: w.to_dict() for pid, w in connected_workers.items()}
+    workers: Dict[str, dict] = {}
+    for provider_id in list(connected_workers.keys()):
+        worker = _get_live_worker(provider_id)
+        if worker:
+            workers[provider_id] = worker.to_dict()
+    return workers
 
 
 def is_worker_connected(provider_id: str) -> bool:
     """Check if a worker is connected for this provider."""
-    return provider_id in connected_workers
+    return _get_live_worker(provider_id) is not None
 
 
 async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
     """Push a job to a connected worker. Returns True if successful."""
-    worker = connected_workers.get(provider_id)
+    worker = _get_live_worker(provider_id)
     if not worker:
         return False
     
@@ -87,7 +122,7 @@ async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
 
 async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
     """Send a job to a connected external worker and await its terminal result."""
-    worker = connected_workers.get(provider_id)
+    worker = _get_live_worker(provider_id)
     if not worker:
         raise ProviderCallError(
             f"No external worker connected for provider {provider_id}",
@@ -126,7 +161,7 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
 
 async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
     """Request cancellation from a connected external worker."""
-    worker = connected_workers.get(provider_id)
+    worker = _get_live_worker(provider_id)
     if not worker:
         return False
 
@@ -327,7 +362,7 @@ async def worker_websocket(
                         is_retryable=True,
                     )
                 )
-        if provider_id in connected_workers:
+        if connected_workers.get(provider_id) is worker:
             del connected_workers[provider_id]
 
 
@@ -347,10 +382,10 @@ async def list_connected_workers():
 @router.get("/api/workers/{provider_id}/status")
 async def get_worker_status(provider_id: str):
     """Get status of a specific worker."""
-    if provider_id not in connected_workers:
+    worker = _get_live_worker(provider_id)
+    if worker is None:
         return {"connected": False}
-    
-    worker = connected_workers[provider_id]
+
     return {
         "connected": True,
         **worker.to_dict()

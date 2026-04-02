@@ -283,6 +283,7 @@ class TestEventBusQueueFull:
         assert stats["last_drop"]["event_type"] == EventType.JOB_CREATED.value
         assert stats["last_drop"]["queue_maxsize"] == 1
         assert stats["subscriber_counts"]["job"] == 1
+        assert stats["last_drop"]["reason"] == "queue_full"
 
     @pytest.mark.asyncio
     async def test_queue_full_drops_event(self):
@@ -312,6 +313,29 @@ class TestEventBusQueueFull:
             pass
 
         assert bus.dropped_event_count() >= 0
+
+    @pytest.mark.asyncio
+    async def test_terminal_event_evicts_oldest_when_queue_full(self):
+        bus = EventBus(replay_buffer_size=10)
+        queue = asyncio.Queue(maxsize=2)
+        queue.put_nowait(Event(type=EventType.JOB_PROGRESS, data={"i": 1}))
+        queue.put_nowait(Event(type=EventType.JOB_PROGRESS, data={"i": 2}))
+        bus._subscribers["job"] = [queue]
+
+        await bus.publish(Event(type=EventType.JOB_COMPLETED, data={"i": 3}))
+
+        first = queue.get_nowait()
+        second = queue.get_nowait()
+
+        assert first.type == EventType.JOB_PROGRESS
+        assert second.type == EventType.JOB_COMPLETED
+
+        stats = bus.get_stats()
+        assert stats["terminal_events_preserved"] == 1
+        assert stats["evicted_events_for_terminal"] == 1
+        assert stats["dropped_events"] == 1
+        assert stats["dropped_events_by_topic"] == {"job": 1}
+        assert stats["last_drop"]["reason"] == "evicted_for_terminal"
 
 
 class TestEmitProviderFunctions:

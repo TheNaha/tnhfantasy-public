@@ -202,15 +202,13 @@ export default function Dashboard() {
                 if (autoRefreshOnJobComplete) {
                     // Invalidate all gallery queries regardless of filters
                     queryClient.invalidateQueries({ queryKey: ['gallery'] });
-                    // Also trigger immediate refetch
-                    refetch();
                     toast.success("🎉 Generation complete! Gallery updated.", {
                         duration: toastSuccessDuration,
                     });
                 }
             }
         }
-    }, [lastCompletedJob, queryClient, refetch, autoRefreshOnJobComplete, toastSuccessDuration]);
+    }, [lastCompletedJob, queryClient, autoRefreshOnJobComplete, toastSuccessDuration]);
 
     // Keyboard shortcuts (ESC to close modals)
     useKeyboardShortcuts({

@@ -2,7 +2,7 @@
  * Provider Management Component
  * UI for configuring serverless providers (Modal, Beam, RunPod)
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Plus, Settings, Trash2, Power, PowerOff, Edit2,
@@ -12,19 +12,22 @@ import toast from 'react-hot-toast';
 import { providersApi } from '../api';
 import { useConfirmation } from '../store/confirmationStore';
 import useProviderStore from '../store/providerStore';
+import useProviderServerData from '../hooks/useProviderServerData';
 
 export default function ProviderManagement() {
     const [showAddModal, setShowAddModal] = useState(false);
     const [editingProvider, setEditingProvider] = useState(null);
     const [showLogs, setShowLogs] = useState(null);
     const { confirm } = useConfirmation();
-    const providers = useProviderStore((state) => state.providers);
-    const lbConfig = useProviderStore((state) => state.lbConfig);
-    const lbStats = useProviderStore((state) => state.lbStats);
-    const loading = useProviderStore((state) => state.isLoading);
-    const containerStatuses = useProviderStore((state) => state.containerStatuses);
+    const {
+        providers,
+        lbConfig,
+        lbStats,
+        containerStatuses,
+        isLoading: loading,
+        refreshAll: refreshProviderServerData,
+    } = useProviderServerData({ realtime: false });
     const containerLoading = useProviderStore((state) => state.containerLoading);
-    const connectProviders = useProviderStore((state) => state.connect);
     const startProviderContainer = useProviderStore((state) => state.startContainer);
     const stopProviderContainer = useProviderStore((state) => state.stopContainer);
     const restartProviderContainer = useProviderStore((state) => state.restartContainer);
@@ -33,10 +36,6 @@ export default function ProviderManagement() {
     const removeProvider = useProviderStore((state) => state.deleteProvider);
     const updateLoadBalancerStrategy = useProviderStore((state) => state.updateLoadBalancerStrategy);
     const saveProvider = useProviderStore((state) => state.saveProvider);
-
-    useEffect(() => {
-        connectProviders();
-    }, [connectProviders]);
 
     // ⚡ Bolt: Create an O(1) Hash Map for provider stats to avoid O(N²) lookups during render
     const providerStatsMap = useMemo(() => {
@@ -50,6 +49,7 @@ export default function ProviderManagement() {
     const deployModalApp = async (providerId) => {
         try {
             await deployProvider(providerId);
+            await refreshProviderServerData();
             toast.success('Modal app deployed successfully!');
         } catch (error) {
             console.error('Failed to deploy Modal app:', error);
@@ -60,6 +60,7 @@ export default function ProviderManagement() {
     const startContainer = async (providerId) => {
         try {
             await startProviderContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to start container:', error);
             toast.error(`Failed to start container: ${error.message}`);
@@ -69,6 +70,7 @@ export default function ProviderManagement() {
     const stopContainer = async (providerId) => {
         try {
             await stopProviderContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to stop container:', error);
             toast.error(`Failed to stop container: ${error.message}`);
@@ -78,6 +80,7 @@ export default function ProviderManagement() {
     const restartContainer = async (providerId) => {
         try {
             await restartProviderContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to restart container:', error);
             toast.error(`Failed to restart container: ${error.message}`);
@@ -87,6 +90,7 @@ export default function ProviderManagement() {
     const toggleProvider = async (providerId, currentlyEnabled) => {
         try {
             await toggleProviderEnabled(providerId, currentlyEnabled);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to toggle provider:', error);
             toast.error(`Failed to toggle provider: ${error.message}`);
@@ -104,6 +108,7 @@ export default function ProviderManagement() {
 
         try {
             await removeProvider(providerId);
+            await refreshProviderServerData();
             toast.success('Provider deleted');
         } catch (error) {
             console.error('Failed to delete provider:', error);
@@ -114,6 +119,7 @@ export default function ProviderManagement() {
     const updateLBStrategy = async (strategy) => {
         try {
             await updateLoadBalancerStrategy(strategy);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to update load balancer:', error);
             toast.error(`Failed to update load balancer: ${error.message}`);
@@ -408,6 +414,7 @@ export default function ProviderManagement() {
                         onSave={async () => {
                             setShowAddModal(false);
                             setEditingProvider(null);
+                            await refreshProviderServerData();
                         }}
                         saveProvider={saveProvider}
                     />

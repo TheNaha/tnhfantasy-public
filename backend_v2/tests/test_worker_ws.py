@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,10 +11,12 @@ from api.routes.worker_ws import (
     ConnectedWorker,
     connected_workers,
     dispatch_job_to_worker,
+    is_worker_connected,
     pending_job_futures,
     request_worker_job_cancel,
     worker_websocket,
 )
+from api.provider_client import ProviderCallError
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
 
@@ -249,3 +252,20 @@ async def test_request_worker_job_cancel_sends_cancel_message():
         "type": "cancel_job",
         "job_id": "job-5",
     }]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_stale_worker_connection():
+    websocket = DummyWebSocket()
+    worker = ConnectedWorker(websocket, "provider-a")
+    worker.last_heartbeat = worker.last_heartbeat - timedelta(seconds=120)
+    connected_workers["provider-a"] = worker
+
+    assert is_worker_connected("provider-a") is False
+
+    with pytest.raises(ProviderCallError, match="No external worker connected"):
+        await dispatch_job_to_worker(
+            "provider-a",
+            {"id": "job-6", "workflow": {"1": {}}, "metadata": {}},
+            timeout=1.0,
+        )

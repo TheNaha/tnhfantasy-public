@@ -9,6 +9,7 @@ import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
 import useReconciliationStore from '../store/reconciliationStore';
 import { useProviderStore } from '../store/providerStore';
+import useProviderServerData from '../hooks/useProviderServerData';
 
 export default function Providers() {
     const [showAddModal, setShowAddModal] = useState(false);
@@ -18,13 +19,15 @@ export default function Providers() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     
     const { startReconciliation } = useReconciliationStore();
-    const providers = useProviderStore(state => state.providers);
-    const isLoading = useProviderStore(state => state.isLoading);
-    const containerStatuses = useProviderStore(state => state.containerStatuses);
+    const {
+        providers,
+        isLoading,
+        containerStatuses,
+        lbConfig,
+        lbStats,
+        refreshAll: refreshProviderServerData,
+    } = useProviderServerData({ realtime: false });
     const containerLoading = useProviderStore(state => state.containerLoading);
-    const lbConfig = useProviderStore(state => state.lbConfig);
-    const lbStats = useProviderStore(state => state.lbStats);
-    const refreshProviders = useProviderStore(state => state.refreshAll);
     const startContainer = useProviderStore(state => state.startContainer);
     const stopContainer = useProviderStore(state => state.stopContainer);
     const restartContainer = useProviderStore(state => state.restartContainer);
@@ -41,11 +44,11 @@ export default function Providers() {
     const refreshAll = useCallback(async () => {
         setIsRefreshing(true);
         try {
-            await refreshProviders();
+            await refreshProviderServerData();
         } finally {
             setIsRefreshing(false);
         }
-    }, [refreshProviders]);
+    }, [refreshProviderServerData]);
 
     // Enrich providers with container status and default enabled to true
     const enrichedProviders = useMemo(() => providers.map(provider => ({
@@ -72,6 +75,7 @@ export default function Providers() {
     const handleStart = async (providerId) => {
         try {
             await startContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to start container:', error);
             toast.error(`Failed to start container: ${error.message}`);
@@ -81,6 +85,7 @@ export default function Providers() {
     const handleStop = async (providerId) => {
         try {
             await stopContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to stop container:', error);
             toast.error(`Failed to stop container: ${error.message}`);
@@ -90,6 +95,7 @@ export default function Providers() {
     const handleDeploy = async (providerId) => {
         try {
             const result = await deployProvider(providerId);
+            await refreshProviderServerData();
             const providerType = result.provider_type || 'Provider';
             toast.success(`${providerType.charAt(0).toUpperCase() + providerType.slice(1)} app deployed successfully!`);
         } catch (error) {
@@ -112,6 +118,7 @@ export default function Providers() {
     const handleSetup = async (providerId) => {
         try {
             const result = await setupProvider(providerId);
+            await refreshProviderServerData();
             toast.success(`Setup complete! ${result.message}`);
         } catch (error) {
             console.error('Failed to setup provider:', error);
@@ -130,6 +137,7 @@ export default function Providers() {
 
         try {
             const result = await resetProviderModelStatus(providerId);
+            await refreshProviderServerData();
             toast.success(`Reset complete! ${result.deleted_count} entries cleared. Click Reconcile to re-download.`);
         } catch (error) {
             console.error('Failed to reset status:', error);
@@ -140,6 +148,7 @@ export default function Providers() {
     const handleRestart = async (providerId) => {
         try {
             await restartContainer(providerId);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to restart container:', error);
             toast.error(`Failed to restart container: ${error.message}`);
@@ -154,6 +163,7 @@ export default function Providers() {
         // Note: Browser confirm() is blocked, proceeding directly
         try {
             await deleteProvider(providerId);
+            await refreshProviderServerData();
             toast.success('Provider deleted');
         } catch (error) {
             console.error('Failed to delete provider:', error);
@@ -164,6 +174,7 @@ export default function Providers() {
     const handleToggleEnabled = async (providerId, currentlyEnabled) => {
         try {
             await toggleProviderEnabled(providerId, currentlyEnabled);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to toggle provider:', error);
             toast.error(`Failed to toggle provider: ${error.message}`);
@@ -173,6 +184,7 @@ export default function Providers() {
     const handleUpdateLBStrategy = async (strategy) => {
         try {
             await updateLoadBalancerStrategy(strategy);
+            await refreshProviderServerData();
         } catch (error) {
             console.error('Failed to update load balancer:', error);
             toast.error(`Failed to update load balancer: ${error.message}`);

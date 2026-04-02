@@ -22,6 +22,7 @@ class LoadBalancerRuntimeState:
     provider_failures: Dict[str, int] = field(default_factory=dict)
     provider_job_counts: Dict[str, int] = field(default_factory=dict)
     initialized: bool = False
+    initializing: bool = False
     lock: threading.RLock = field(default_factory=threading.RLock)
 
     def snapshot(self) -> Dict[str, Any]:
@@ -39,6 +40,7 @@ class LoadBalancerRuntimeState:
             self.provider_failures = {}
             self.provider_job_counts = {}
             self.initialized = False
+            self.initializing = False
 
 
 _runtime_state = LoadBalancerRuntimeState()
@@ -67,9 +69,21 @@ class LoadBalancer:
         (runtime_state or cls._runtime_state).reset()
     
     @classmethod
-    def load_state_from_db(cls, session: Session, runtime_state: Optional[LoadBalancerRuntimeState] = None):
+    def load_state_from_db(
+        cls,
+        session: Session,
+        runtime_state: Optional[LoadBalancerRuntimeState] = None,
+        *,
+        force: bool = False,
+    ):
         """Load persisted state from database on startup."""
         state_store = runtime_state or cls._runtime_state
+
+        with state_store.lock:
+            if not force and (state_store.initialized or state_store.initializing):
+                return
+            state_store.initializing = True
+
         try:
             state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == 1)).first()
 
@@ -92,6 +106,7 @@ class LoadBalancer:
                 # On startup, reset to the actual currently running jobs only.
                 state_store.provider_job_counts = active_job_counts
                 state_store.initialized = True
+                state_store.initializing = False
 
             logger.info(
                 "lb_state_loaded",
@@ -103,6 +118,7 @@ class LoadBalancer:
             with state_store.lock:
                 state_store.provider_job_counts = {}
                 state_store.initialized = True
+                state_store.initializing = False
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
@@ -137,10 +153,9 @@ class LoadBalancer:
         self.repo = ProviderRepository(session)
         self.strategy = strategy
         self.runtime_state = runtime_state or LoadBalancer.default_runtime_state()
-        
-        # Load state from DB if not initialized
-        if not self.runtime_state.initialized:
-            LoadBalancer.load_state_from_db(session, self.runtime_state)
+
+        # Load shared state once per process/runtime container.
+        LoadBalancer.load_state_from_db(session, self.runtime_state)
     
     def get_next_provider(
         self, 

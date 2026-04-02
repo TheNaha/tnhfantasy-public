@@ -60,7 +60,7 @@ const FeedCard = memo(function FeedCard({
     queryKey: ["metadata", item.name],
     queryFn: loadMetadata,
     enabled: true, // Always fetch for header display - fixes "invalid model" issue
-    staleTime: Infinity, // Metadata doesn't change
+    staleTime: 5 * 60 * 1000,
   });
 
   const handleReuse = async () => {

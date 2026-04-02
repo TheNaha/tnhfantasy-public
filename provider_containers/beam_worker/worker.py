@@ -258,11 +258,14 @@ async def run_inference(request: InferenceRequest):
                             if "images" in update:
                                 print(f"[{PROVIDER_ID}] Images count: {len(update['images'])}")
                         elif update.get("status") == "error":
-                            message = update.get("message") or update.get("error") or "Unknown worker error"
-                            update["message"] = message
-                            update.setdefault("error", message)
-                            update.setdefault("retryable", False)
-                            print(f"[{PROVIDER_ID}] ✗ Error: {message}")
+                            error_message = update.get("message") or update.get("error") or "Unknown worker error"
+                            update = build_error_response(
+                                error_message,
+                                retryable=bool(update.get("retryable", False)),
+                                code=update.get("code"),
+                                details=update.get("details") if isinstance(update.get("details"), dict) else None,
+                            )
+                            print(f"[{PROVIDER_ID}] ✗ Error: {error_message}")
                         
                         yield json.dumps(update) + "\n"
                         

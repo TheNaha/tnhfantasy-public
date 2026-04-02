@@ -55,6 +55,18 @@ class EventType(str, Enum):
     MODEL_SYNC_FAILED = "model.sync_failed"
 
 
+TERMINAL_EVENT_TYPES = {
+    EventType.JOB_COMPLETED,
+    EventType.JOB_FAILED,
+    EventType.JOB_CANCELLED,
+    EventType.DOWNLOAD_COMPLETED,
+    EventType.DOWNLOAD_FAILED,
+    EventType.RECONCILIATION_COMPLETED,
+    EventType.MODEL_SYNC_COMPLETED,
+    EventType.MODEL_SYNC_FAILED,
+}
+
+
 @dataclass
 class Event:
     """Event payload for SSE streaming."""
@@ -93,7 +105,45 @@ class EventBus:
         self._replay_enabled = True
         self._dropped_events = 0
         self._dropped_events_by_topic: Dict[str, int] = {}
+        self._terminal_events_preserved = 0
+        self._terminal_events_dropped = 0
+        self._evicted_events_for_terminal = 0
         self._last_drop: Optional[Dict[str, Any]] = None
+
+    def _record_drop(
+        self,
+        *,
+        topic: str,
+        event_type: str,
+        subscriber_count: int,
+        queue: asyncio.Queue,
+        reason: str,
+    ) -> None:
+        self._dropped_events += 1
+        self._dropped_events_by_topic[topic] = self._dropped_events_by_topic.get(topic, 0) + 1
+        self._last_drop = {
+            "topic": topic,
+            "event_type": event_type,
+            "timestamp": datetime.utcnow().isoformat(),
+            "subscriber_count": subscriber_count,
+            "queue_size": queue.qsize(),
+            "queue_maxsize": queue.maxsize,
+            "reason": reason,
+        }
+        if reason == "terminal_event_dropped":
+            self._terminal_events_dropped += 1
+        elif reason == "evicted_for_terminal":
+            self._evicted_events_for_terminal += 1
+
+        if self._dropped_events == 1 or self._dropped_events % 50 == 0:
+            logger.warning(
+                "event_dropped",
+                topic=topic,
+                event_type=event_type,
+                dropped_events=self._dropped_events,
+                subscriber_count=subscriber_count,
+                reason=reason,
+            )
     
     async def publish(self, event: Event) -> None:
         """
@@ -116,25 +166,42 @@ class EventBus:
                     # Non-blocking put to avoid slow subscribers blocking publishers
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
-                    # Drop event if queue is full (subscriber too slow)
-                    self._dropped_events += 1
-                    self._dropped_events_by_topic[topic] = self._dropped_events_by_topic.get(topic, 0) + 1
-                    self._last_drop = {
-                        "topic": topic,
-                        "event_type": event.type.value,
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "subscriber_count": len(queues),
-                        "queue_size": queue.qsize(),
-                        "queue_maxsize": queue.maxsize,
-                    }
-                    if self._dropped_events == 1 or self._dropped_events % 50 == 0:
-                        logger.warning(
-                            "event_dropped",
+                    # Preserve terminal events by evicting one stale queued event when possible.
+                    if event.type in TERMINAL_EVENT_TYPES:
+                        try:
+                            evicted_event = queue.get_nowait()
+                            evicted_topic = evicted_event.type.value.split(".")[0]
+                            self._record_drop(
+                                topic=evicted_topic,
+                                event_type=evicted_event.type.value,
+                                subscriber_count=len(queues),
+                                queue=queue,
+                                reason="evicted_for_terminal",
+                            )
+                            queue.put_nowait(event)
+                            self._terminal_events_preserved += 1
+                            continue
+                        except asyncio.QueueEmpty:
+                            pass
+                        except asyncio.QueueFull:
+                            pass
+
+                        self._record_drop(
                             topic=topic,
                             event_type=event.type.value,
-                            dropped_events=self._dropped_events,
                             subscriber_count=len(queues),
+                            queue=queue,
+                            reason="terminal_event_dropped",
                         )
+                        continue
+
+                    self._record_drop(
+                        topic=topic,
+                        event_type=event.type.value,
+                        subscriber_count=len(queues),
+                        queue=queue,
+                        reason="queue_full",
+                    )
     
     async def subscribe(self, topic: str, max_queue_size: int = 100) -> AsyncGenerator[Event, None]:
         """
@@ -207,6 +274,9 @@ class EventBus:
             "replay_buffer_capacity": self._replay_buffer.maxlen,
             "dropped_events": self._dropped_events,
             "dropped_events_by_topic": dict(self._dropped_events_by_topic),
+            "terminal_events_preserved": self._terminal_events_preserved,
+            "terminal_events_dropped": self._terminal_events_dropped,
+            "evicted_events_for_terminal": self._evicted_events_for_terminal,
             "last_drop": dict(self._last_drop) if self._last_drop else None,
         }
     

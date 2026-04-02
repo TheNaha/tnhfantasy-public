@@ -5,9 +5,9 @@
  *   - Routing: React Router v6 with lazy-loaded page components to minimise
  *     the initial JS bundle.  AnimatePresence wraps route transitions for
  *     smooth page animations via Framer Motion.
- *   - State: Zustand stores (jobStore, providerStore, reconciliationStore) are
- *     initialised here so that WebSocket connections are established regardless
- *     of which page the user lands on.
+ *   - State: Zustand stores (jobStore, reconciliationStore) are initialised
+ *     here for global realtime flows. Provider server-state is owned by React
+ *     Query hooks consumed by layout/pages.
  *   - Data fetching: React Query (QueryClient) provides server-state caching.
  *   - Global UI overlays:
  *       ErrorBoundary → QueryClientProvider → Router → Layout → ConfirmationHost
@@ -28,7 +28,6 @@ import useSettingsStore from './store/settingsStore';
 import { useBrandingStore } from './store/brandingStore';
 import { useJobStore } from './store/jobStore';
 import useReconciliationStore from './store/reconciliationStore';
-import { useProviderStore } from './store/providerStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobNotifications } from './hooks/useJobNotifications.jsx';
 import { api } from './api';
@@ -93,7 +92,6 @@ function App() {
     const setupBrowserLifecycle = useJobStore((state) => state.setupBrowserLifecycle);
     const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
     const connectReconciliation = useReconciliationStore((state) => state.connect);
-    const connectProviders = useProviderStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
 
     // Initialize dynamic viewport height for iOS Safari
@@ -110,7 +108,6 @@ function App() {
         connectJobs();
         setupBrowserLifecycle();
         connectReconciliation();
-        connectProviders();
         
         // Fetch initial data
         fetchJobs();
@@ -122,7 +119,6 @@ function App() {
     }, [
         connectJobs,
         connectReconciliation,
-        connectProviders,
         disconnectJobs,
         fetchJobs,
         setupBrowserLifecycle,

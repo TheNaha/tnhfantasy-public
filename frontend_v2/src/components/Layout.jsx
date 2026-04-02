@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import { useBrandingStore } from '../store/brandingStore';
-import { useProviderStore } from '../store/providerStore';
+import useProviderServerData from '../hooks/useProviderServerData';
 
 const NavItem = ({ to, icon: Icon, label }) => {
     const location = useLocation();
@@ -31,8 +31,7 @@ export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const branding = useBrandingStore(state => state.branding);
-    const providers = useProviderStore(state => state.providers);
-    const containerStatuses = useProviderStore(state => state.containerStatuses);
+    const { providers, containerStatuses } = useProviderServerData();
     const runningProviders = providers.filter(provider =>
         ['running', 'starting'].includes(containerStatuses[provider.id]?.status)
     );
