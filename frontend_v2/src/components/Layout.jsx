@@ -36,9 +36,6 @@ export default function Layout({ children }) {
         const runtimeState = provider.runtime_state || {};
         return provider.enabled && ['running', 'starting', 'active', 'connected'].includes(runtimeState.status);
     });
-    const statusLabel = runningProviders.length > 0
-        ? `${runningProviders.length} provider${runningProviders.length === 1 ? '' : 's'} online`
-        : 'No providers online';
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -107,12 +104,42 @@ export default function Layout({ children }) {
                 </nav>
 
                 <div className="p-4 border-t border-gray-800">
-                    <div className="bg-gray-900 rounded-lg p-3 text-sm text-gray-400">
-                        <div className="flex justify-between items-center mb-2">
-                            <span>Status</span>
-                            <span className={`w-2 h-2 rounded-full ${runningProviders.length > 0 ? 'bg-green-500' : 'bg-gray-600'}`}></span>
+                    <div className="bg-gray-900/60 rounded-xl p-3 border border-gray-800/60">
+                        <div className="flex items-center justify-between mb-2.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">System Status</span>
+                            <span className={`inline-block h-2 w-2 rounded-full ${runningProviders.length > 0 ? 'bg-green-500' : 'bg-gray-600'}`} />
                         </div>
-                        <p>{statusLabel}</p>
+                        {providers.length > 0 ? (
+                            <div className="space-y-1.5">
+                                {providers.map((provider) => {
+                                    const status = provider.runtime_state?.status;
+                                    const isOnline = provider.enabled && ['running', 'active', 'connected'].includes(status);
+                                    const isDisabled = !provider.enabled;
+                                    return (
+                                        <div key={provider.id} className="flex items-center gap-2 group">
+                                            <span className={`provider-dot ${isOnline ? 'online' : 'offline'}`} />
+                                            <span className={`text-xs truncate ${
+                                                isDisabled
+                                                    ? 'text-gray-600'
+                                                    : isOnline
+                                                        ? 'text-gray-300'
+                                                        : 'text-gray-500'
+                                            }`}>
+                                                {provider.id}
+                                            </span>
+                                            {isDisabled && (
+                                                <span className="text-[9px] text-gray-600 ml-auto">off</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <p className="text-xs text-gray-600">No providers</p>
+                        )}
+                        <div className="mt-2.5 pt-2 border-t border-gray-800/50 text-xs text-gray-500">
+                            {runningProviders.length}/{providers.length} online
+                        </div>
                     </div>
                 </div>
             </div>

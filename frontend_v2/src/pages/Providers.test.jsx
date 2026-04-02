@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Providers from './Providers';
@@ -63,49 +63,21 @@ function buildProvider(overrides = {}) {
             status: 'running',
             worker_url: 'http://comfy-provider-modal-primary:8000',
         },
-        deploy_state: {
-            status: 'idle',
-            message: '',
-        },
+        deploy_state: { status: 'idle', message: '' },
         reconciliation_state: {
-            status: 'idle',
-            phase: null,
-            message: '',
-            stats: {},
-            active_downloads: [],
-            errors: [],
+            status: 'idle', phase: null, message: '',
+            stats: {}, active_downloads: [], errors: [],
         },
-        model_sync: {
-            total_models: 4,
-            stats: {
-                installed: 3,
-                pending: 1,
-                downloading: 0,
-                failed: 0,
-            },
-        },
-        storage: {
-            total: 4,
-            by_directory: {
-                checkpoints: 2,
-                loras: 2,
-            },
-        },
+        model_sync: { total_models: 4, stats: { installed: 3, pending: 1, downloading: 0, failed: 0 } },
+        storage: { total: 4, by_directory: { checkpoints: 2, loras: 2 } },
         capabilities: {
-            managed_deploy: true,
-            deploy: true,
-            start_container: true,
-            stop_container: true,
-            restart_container: true,
-            view_logs: true,
-            setup: true,
-            reconcile: true,
-            reset_status: true,
+            managed_deploy: true, deploy: true,
+            start_container: true, stop_container: true, restart_container: true,
+            view_logs: true, setup: true, reconcile: true, reset_status: true,
         },
         capability_reasons: {},
         diagnostics: {
-            warnings: [],
-            errors: [],
+            warnings: [], errors: [],
             worker: {
                 backend_url: 'http://backend_v2:8002',
                 worker_url: 'http://comfy-provider-modal-primary:8000',
@@ -124,10 +96,7 @@ function buildProvider(overrides = {}) {
 function buildHookData(overrides = {}) {
     return {
         providers: [buildProvider()],
-        lbConfig: {
-            strategy: 'round-robin',
-            fallback_enabled: true,
-        },
+        lbConfig: { strategy: 'round-robin', fallback_enabled: true },
         lbStats: {
             total_providers: 1,
             provider_stats: [{ id: 'modal-primary', failures: 0, jobs_assigned: 0 }],
@@ -144,33 +113,24 @@ describe('Providers page', () => {
         mockUseProvidersPageData.mockReturnValue(buildHookData());
     });
 
-    it('renders unified sync and storage sections from the canonical provider record', () => {
+    it('renders the provider list with provider name and status visible', () => {
         render(<Providers />);
 
+        // Provider name should be visible in the list row
         expect(screen.getByText('modal-primary')).toBeInTheDocument();
-        expect(screen.getByText('DB Sync')).toBeInTheDocument();
-        expect(screen.getByText('Provider Storage')).toBeInTheDocument();
-        expect(screen.getAllByText('4 models').length).toBeGreaterThan(0);
-        expect(screen.getByText(/Checkpoints: 2/)).toBeInTheDocument();
+        // Running status should be shown as a metric chip
+        expect(screen.getByText('Running')).toBeInTheDocument();
+        // Load balancer bar should show strategy
+        expect(screen.getByText('Round Robin')).toBeInTheDocument();
     });
 
-    it('shows a safe empty storage fallback when provider storage is unavailable', () => {
+    it('shows empty state when no providers are configured', () => {
         mockUseProvidersPageData.mockReturnValue(
-            buildHookData({
-                providers: [
-                    buildProvider({
-                        storage: {
-                            total: 0,
-                            by_directory: {},
-                        },
-                    }),
-                ],
-            }),
+            buildHookData({ providers: [], lbStats: { total_providers: 0, provider_stats: [] } }),
         );
 
         render(<Providers />);
 
-        expect(screen.getByText('Provider Storage')).toBeInTheDocument();
-        expect(screen.getByText('No storage stats yet')).toBeInTheDocument();
+        expect(screen.getByText('No providers configured')).toBeInTheDocument();
     });
 });
