@@ -7,6 +7,7 @@ import {
     normalizeReconciliationState,
     unwrapEventData,
 } from './providerRealtimeTransforms';
+import { mergeProviderSyncStatus } from './useProviderModels';
 
 export const PROVIDERS_PAGE_QUERY_KEYS = {
     providers: ['providers-page', 'providers'],
@@ -107,6 +108,25 @@ function mergeStorageState(currentProviders, event) {
     }));
 }
 
+function mergeModelStatusState(currentProviders, event) {
+    const payload = unwrapEventData(event);
+    const providerId = extractProviderId(payload);
+    if (!providerId || !payload.status) {
+        return { providers: currentProviders, patched: false };
+    }
+
+    let didPatch = false;
+    const providers = patchProviders(currentProviders, providerId, (provider) => {
+        didPatch = true;
+        return {
+            ...provider,
+            model_sync: mergeProviderSyncStatus(provider.model_sync || {}, payload),
+        };
+    });
+
+    return { providers, patched: didPatch };
+}
+
 async function ensureProvidersRealtime(queryClient) {
     if (providersRealtimeCleanup && providersRealtimeQueryClient === queryClient) {
         return;
@@ -162,7 +182,32 @@ async function ensureProvidersRealtime(queryClient) {
 
         unsubs.push(ws.on(ws.EventTypes.MODEL_STATUS_UPDATE, (event) => {
             const payload = unwrapEventData(event);
-            if (payload.status === 'ready' || payload.status === 'failed') {
+            const providerId = extractProviderId(payload);
+            const hasExpectedSchema = Boolean(providerId && payload.status);
+
+            let providersPatched = false;
+            queryClient.setQueryData(
+                PROVIDERS_PAGE_QUERY_KEYS.providers,
+                (current) => {
+                    const merged = mergeModelStatusState(current, event);
+                    providersPatched = merged.patched;
+                    return merged.providers;
+                },
+            );
+
+            if (providerId) {
+                queryClient.setQueriesData(
+                    { queryKey: ['providerModels', providerId] },
+                    (current) => {
+                        if (!current) {
+                            return current;
+                        }
+                        return mergeProviderSyncStatus(current, payload);
+                    },
+                );
+            }
+
+            if (!hasExpectedSchema || !providersPatched) {
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             }
         }));

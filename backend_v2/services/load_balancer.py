@@ -1,6 +1,8 @@
 # Load Balancer - Distributes jobs across multiple providers.
+import os
 import random
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Set
 from datetime import datetime
@@ -14,6 +16,32 @@ from infrastructure.logging import get_logger
 logger = get_logger("load_balancer")
 
 
+def _parse_positive_float(raw_value: Optional[str], default: float) -> float:
+    try:
+        parsed = float(raw_value) if raw_value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
+
+
+def _parse_positive_int(raw_value: Optional[str], default: int) -> int:
+    try:
+        parsed = int(raw_value) if raw_value is not None else default
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
+
+
+MODEL_AVAILABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_MODEL_AVAILABILITY_CACHE_TTL_SECONDS"),
+    3.0,
+)
+MODEL_AVAILABILITY_CACHE_MAX_ENTRIES = _parse_positive_int(
+    os.getenv("COMFY_MODEL_AVAILABILITY_CACHE_MAX_ENTRIES"),
+    256,
+)
+
+
 @dataclass
 class LoadBalancerRuntimeState:
     """Shared in-memory runtime state for load balancing decisions."""
@@ -21,6 +49,7 @@ class LoadBalancerRuntimeState:
     round_robin_index: int = 0
     provider_failures: Dict[str, int] = field(default_factory=dict)
     provider_job_counts: Dict[str, int] = field(default_factory=dict)
+    model_availability_cache: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -31,6 +60,13 @@ class LoadBalancerRuntimeState:
                 "round_robin_index": self.round_robin_index,
                 "provider_failures": dict(self.provider_failures),
                 "provider_job_counts": dict(self.provider_job_counts),
+                "model_availability_cache": {
+                    key: {
+                        "eligible_provider_ids": list(value.get("eligible_provider_ids", [])),
+                        "expires_at": value.get("expires_at"),
+                    }
+                    for key, value in self.model_availability_cache.items()
+                },
                 "initialized": self.initialized,
             }
 
@@ -39,6 +75,7 @@ class LoadBalancerRuntimeState:
             self.round_robin_index = 0
             self.provider_failures = {}
             self.provider_job_counts = {}
+            self.model_availability_cache = {}
             self.initialized = False
             self.initializing = False
 
@@ -57,11 +94,74 @@ class LoadBalancer:
         return cls._runtime_state
 
     @classmethod
+    def invalidate_model_availability_cache(
+        cls,
+        provider_id: Optional[str] = None,
+        runtime_state: Optional[LoadBalancerRuntimeState] = None,
+    ) -> None:
+        """Clear cached model-availability lookups after model status changes."""
+        state = runtime_state or cls._runtime_state
+        with state.lock:
+            cleared_entries = len(state.model_availability_cache)
+            state.model_availability_cache.clear()
+
+        if cleared_entries:
+            logger.debug(
+                "lb_model_availability_cache_invalidated",
+                provider_id=provider_id,
+                cleared_entries=cleared_entries,
+            )
+
+    @classmethod
     def _get_state_snapshot(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None) -> Dict[str, Any]:
         """Return a copy of current in-memory balancer state."""
         snapshot = (runtime_state or cls._runtime_state).snapshot()
+        snapshot.pop("model_availability_cache", None)
         snapshot.pop("initialized", None)
         return snapshot
+
+    @staticmethod
+    def _build_model_availability_cache_key(required_models: Dict[str, List[str]]) -> Any:
+        """Create stable hashable key for required-model lookup payload."""
+        return tuple(
+            (directory, tuple(sorted(set(filenames))))
+            for directory, filenames in sorted(required_models.items())
+            if filenames
+        )
+
+    def _get_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]]) -> Optional[List[str]]:
+        cache_key = self._build_model_availability_cache_key(required_models)
+        now = time.monotonic()
+
+        with self.runtime_state.lock:
+            cache_entry = self.runtime_state.model_availability_cache.get(cache_key)
+            if not cache_entry:
+                return None
+
+            expires_at = cache_entry.get("expires_at", 0.0)
+            if expires_at <= now:
+                self.runtime_state.model_availability_cache.pop(cache_key, None)
+                return None
+
+            return list(cache_entry.get("eligible_provider_ids", []))
+
+    def _set_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]], eligible_provider_ids: List[str]) -> None:
+        cache_key = self._build_model_availability_cache_key(required_models)
+        now = time.monotonic()
+
+        with self.runtime_state.lock:
+            cache = self.runtime_state.model_availability_cache
+            if cache_key not in cache and len(cache) >= MODEL_AVAILABILITY_CACHE_MAX_ENTRIES:
+                oldest_key = min(
+                    cache,
+                    key=lambda key: cache[key].get("expires_at", 0.0),
+                )
+                cache.pop(oldest_key, None)
+
+            cache[cache_key] = {
+                "eligible_provider_ids": tuple(eligible_provider_ids),
+                "expires_at": now + MODEL_AVAILABILITY_CACHE_TTL_SECONDS,
+            }
 
     @classmethod
     def reset_state(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None):
@@ -183,9 +283,12 @@ class LoadBalancer:
         
         # Filter by model availability if required
         if required_models:
-            from .model_availability_service import ModelAvailabilityService
-            availability_service = ModelAvailabilityService(self.session)
-            eligible_ids = availability_service.get_providers_with_models(required_models)
+            eligible_ids = self._get_cached_eligible_provider_ids(required_models)
+            if eligible_ids is None:
+                from .model_availability_service import ModelAvailabilityService
+                availability_service = ModelAvailabilityService(self.session)
+                eligible_ids = availability_service.get_providers_with_models(required_models)
+                self._set_cached_eligible_provider_ids(required_models, eligible_ids)
             
             if not eligible_ids:
                 # No provider has all required models

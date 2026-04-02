@@ -3,6 +3,7 @@
 
 from cachetools import TTLCache
 import asyncio
+import os
 from typing import Callable, Any, TypeVar, Coroutine
 
 from infrastructure.logging import get_logger
@@ -15,8 +16,36 @@ T = TypeVar('T')
 _in_flight: dict[str, asyncio.Task] = {}
 _in_flight_lock = asyncio.Lock()
 
-# Short-lived cache for completed requests (1 second TTL)
-_result_cache = TTLCache(maxsize=100, ttl=1.0)
+
+def _resolve_result_cache_ttl_seconds() -> float:
+    default_ttl_seconds = 3.0
+    raw_value = os.getenv("COMFY_REQUEST_DEDUP_TTL_SECONDS")
+    if raw_value is None:
+        return default_ttl_seconds
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "request_dedup_ttl_invalid",
+            raw_value=raw_value,
+            fallback_ttl=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    if parsed <= 0:
+        logger.warning(
+            "request_dedup_ttl_non_positive",
+            raw_value=raw_value,
+            fallback_ttl=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    return parsed
+
+
+# Short-lived cache for completed requests (default 3s TTL)
+_result_cache = TTLCache(maxsize=100, ttl=_resolve_result_cache_ttl_seconds())
 
 
 async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, T]]) -> T:

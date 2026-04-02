@@ -562,6 +562,11 @@ class ModelServiceV2:
             error_message=error_message
         )
         provider_key = status_obj.provider_id or status_obj.provider_name or provider_name
+
+        # Provider readiness changed; clear model-aware routing memoization.
+        from services.load_balancer import LoadBalancer
+        LoadBalancer.invalidate_model_availability_cache(provider_id=provider_key)
+
         return {
             "file_id": status_obj.file_id,
             "provider_id": provider_key,

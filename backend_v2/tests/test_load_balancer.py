@@ -221,3 +221,52 @@ class TestLoadBalancer:
         assert persisted is not None
         provider_job_counts = persisted.provider_job_counts or {}
         assert provider_job_counts.get(selected.id, 0) == 0
+
+    def test_model_availability_filter_is_memoized(self, session: Session, providers, monkeypatch):
+        lb = LoadBalancer(session, strategy="round-robin")
+        required_models = {"checkpoints": ["dream.safetensors"]}
+        call_count = 0
+
+        def fake_get_providers_with_models(_self, _required_models):
+            nonlocal call_count
+            call_count += 1
+            return ["provider-1"]
+
+        monkeypatch.setattr(
+            "services.model_availability_service.ModelAvailabilityService.get_providers_with_models",
+            fake_get_providers_with_models,
+        )
+
+        first = lb.get_next_provider(required_models=required_models)
+        second = lb.get_next_provider(required_models=required_models)
+
+        assert first is not None
+        assert second is not None
+        assert first.id == "provider-1"
+        assert second.id == "provider-1"
+        assert call_count == 1
+
+    def test_model_availability_cache_can_be_invalidated(self, session: Session, providers, monkeypatch):
+        lb = LoadBalancer(session, strategy="round-robin")
+        required_models = {"checkpoints": ["dream.safetensors"]}
+        call_count = 0
+
+        def fake_get_providers_with_models(_self, _required_models):
+            nonlocal call_count
+            call_count += 1
+            return ["provider-1"]
+
+        monkeypatch.setattr(
+            "services.model_availability_service.ModelAvailabilityService.get_providers_with_models",
+            fake_get_providers_with_models,
+        )
+
+        first = lb.get_next_provider(required_models=required_models)
+        assert first is not None
+        assert call_count == 1
+
+        LoadBalancer.invalidate_model_availability_cache(provider_id="provider-1")
+
+        second = lb.get_next_provider(required_models=required_models)
+        assert second is not None
+        assert call_count == 2

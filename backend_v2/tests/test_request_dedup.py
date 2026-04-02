@@ -160,7 +160,7 @@ async def test_deduplicated_exception_handling():
 
 @pytest.mark.asyncio
 async def test_deduplicated_cache_expiration():
-    """Test that the cache expires after the TTL (1.0s)."""
+    """Test that the cache expires after the configured TTL."""
     execution_count = 0
 
     async def counting_coro():
@@ -173,8 +173,10 @@ async def test_deduplicated_cache_expiration():
     assert result1 == "count_1"
     assert execution_count == 1
 
-    # Wait for TTL to expire (TTL is 1.0s)
-    await asyncio.sleep(1.1)
+    ttl_seconds = get_dedup_stats()["cache_ttl"]
+
+    # Wait for TTL to expire with a small buffer.
+    await asyncio.sleep(ttl_seconds + 0.1)
 
     # Second call (should execute again)
     result2 = await deduplicated("key_ttl", counting_coro)
@@ -291,4 +293,4 @@ def test_get_dedup_stats_structure():
     assert stats["cache_size"] == 0
     assert stats["in_flight_count"] == 0
     assert stats["cache_maxsize"] == 100
-    assert stats["cache_ttl"] == 1.0
+    assert stats["cache_ttl"] > 0

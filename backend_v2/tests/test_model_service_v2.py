@@ -196,6 +196,33 @@ class TestModelServiceV2Cache:
         assert isinstance(result, list)
 
 
+class TestModelServiceV2ProviderStatus:
+    async def test_update_provider_status_invalidates_lb_model_cache(self, service):
+        status_obj = SimpleNamespace(
+            file_id=42,
+            provider_id="modal-primary",
+            provider_name="modal-primary",
+            status="ready",
+            storage_path="models/checkpoints/test.safetensors",
+            size_bytes=123,
+            downloaded_at=None,
+        )
+        service.repo.update_provider_status = lambda **_kwargs: status_obj
+
+        with patch("services.load_balancer.LoadBalancer.invalidate_model_availability_cache") as invalidate_cache:
+            result = await service.update_provider_file_status(
+                file_id=42,
+                provider_name="modal-primary",
+                status="ready",
+                storage_path="models/checkpoints/test.safetensors",
+                size_bytes=123,
+            )
+
+        invalidate_cache.assert_called_once_with(provider_id="modal-primary")
+        assert result["provider_id"] == "modal-primary"
+        assert result["status"] == "ready"
+
+
 class TestModelServiceV2Search:
     async def test_search_by_tag(self, service, civitai_data):
         with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):

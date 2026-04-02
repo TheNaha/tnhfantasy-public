@@ -90,7 +90,16 @@ describe('useProvidersPageData', () => {
                 runtime_state: { status: 'stopped', connected: true },
                 deploy_state: { status: 'idle' },
                 reconciliation_state: { status: 'idle' },
-                model_sync: { total_models: 0, stats: {} },
+                model_sync: {
+                    total_models: 1,
+                    stats: { installed: 0, pending: 1, downloading: 0, failed: 0 },
+                    models: [
+                        {
+                            file_id: 42,
+                            provider_status: { status: 'pending', storage_path: null, size_bytes: null, error_message: null },
+                        },
+                    ],
+                },
                 storage: { total: 0, by_directory: {} },
                 capabilities: {},
                 capability_reasons: {},
@@ -198,5 +207,69 @@ describe('useProvidersPageData', () => {
         await waitFor(() => {
             expect(result.result.current.logs).toBe('provider logs');
         });
+    });
+
+    it('patches model status updates in the providers cache without broad refetches', async () => {
+        const queryClient = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false },
+            },
+        });
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const wrapper = createWrapper(queryClient);
+
+        const result = renderHook(() => useProvidersPageData(), { wrapper });
+
+        await waitFor(() => {
+            expect(result.result.current.providers).toHaveLength(1);
+        });
+
+        await act(async () => {
+            websocketMock.emit('model.status_update', {
+                data: {
+                    provider_id: 'provider-1',
+                    file_id: 42,
+                    status: 'ready',
+                    storage_path: 'models/checkpoints/test.safetensors',
+                },
+            });
+        });
+
+        await waitFor(() => {
+            const stats = result.result.current.providers[0].model_sync?.stats || {};
+            expect(stats.installed).toBe(1);
+            expect(stats.pending).toBe(0);
+        });
+
+        const broadInvalidationCalls = invalidateSpy.mock.calls.filter(
+            ([filters]) => filters?.queryKey?.[0] === 'providers-page' && filters?.queryKey?.[1] === 'providers',
+        );
+        expect(broadInvalidationCalls).toHaveLength(0);
+    });
+
+    it('falls back to providers invalidation when model status payload schema is incomplete', async () => {
+        const queryClient = new QueryClient({
+            defaultOptions: {
+                queries: { retry: false },
+            },
+        });
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const wrapper = createWrapper(queryClient);
+
+        renderHook(() => useProvidersPageData(), { wrapper });
+
+        await waitFor(() => {
+            expect(queryClient.getQueryData(['providers-page', 'providers'])).toBeDefined();
+        });
+
+        await act(async () => {
+            websocketMock.emit('model.status_update', {
+                data: {
+                    status: 'ready',
+                },
+            });
+        });
+
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['providers-page', 'providers'] });
     });
 });
