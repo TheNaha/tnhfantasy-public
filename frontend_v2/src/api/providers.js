@@ -62,8 +62,14 @@ export const providersApi = {
      */
     reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile`),
 
-    /** Get health/status summary for a single provider. */
-    getStatus: (providerId) => api.get(`/api/providers/${providerId}/status`),
+    /** Get canonical status-card payloads for all providers. */
+    getStatusCards: () => api.get('/api/providers/status-cards'),
+
+    /** Get canonical status-card payload for one provider. */
+    getStatusCard: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
+
+    /** Backward-compatible alias for single-provider status-card payload. */
+    getStatus: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
 
     // Aliases kept for backward compatibility with older call-sites
     getLoadBalancerConfig: () => api.get('/api/providers/config/load-balancing'),

@@ -294,6 +294,159 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
 _modal_stats_cache = TTLCache(maxsize=10, ttl=30)
 
 
+def _normalize_reconciliation_for_card(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize reconciliation status values for card display consistency."""
+    normalized = dict(state or {})
+    status = normalized.get("status") or "idle"
+    if status in {"started", "progress", "running"}:
+        status = "reconciling"
+    normalized["status"] = status
+    if status in {"completed", "failed"} and not normalized.get("phase"):
+        normalized["phase"] = status
+    return normalized
+
+
+def _empty_storage_payload(provider_id: str, error: Optional[str] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "provider_id": provider_id,
+        "total": 0,
+        "by_directory": {},
+    }
+    if error:
+        payload["error"] = error
+    return payload
+
+
+async def _fetch_provider_storage_stats(provider_id: str, provider: Any) -> Dict[str, Any]:
+    """Fetch provider storage stats from worker runtime with cache and safe fallbacks."""
+    cache_key = f"modal_stats_{provider_id}"
+    if cache_key in _modal_stats_cache:
+        return _modal_stats_cache[cache_key]
+
+    runtime = resolve_provider_runtime(provider)
+    if runtime.mode != "container_http":
+        return _empty_storage_payload(provider_id, "Stats are only available for container-backed providers")
+
+    container_manager = get_container_manager()
+    if not container_manager:
+        return _empty_storage_payload(provider_id, "Container manager not initialized")
+
+    try:
+        container = container_manager.client.containers.get(runtime.container_name or f"comfy-provider-{provider_id}")
+        if container.status != "running":
+            return _empty_storage_payload(provider_id, "Container not running")
+    except Exception:
+        return _empty_storage_payload(provider_id, "Container not found")
+
+    provider_type = provider.type if hasattr(provider, "type") else "modal"
+    if provider_type == "beam":
+        stats_endpoint = "/beam-stats"
+    elif provider_type == "modal":
+        stats_endpoint = "/modal-stats"
+    else:
+        stats_endpoint = "/provider-stats"
+
+    worker_url = f"{runtime.worker_url}{stats_endpoint}"
+
+    try:
+        async with aiohttp.ClientSession() as http_session:
+            async with http_session.get(
+                worker_url,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status != 200:
+                    return _empty_storage_payload(provider_id, f"HTTP {response.status}")
+
+                payload = await response.json()
+                result = {
+                    "provider_id": payload.get("provider_id") or provider_id,
+                    "total": payload.get("total", 0),
+                    "by_directory": payload.get("by_directory") or {},
+                }
+                if payload.get("error"):
+                    result["error"] = payload["error"]
+
+                _modal_stats_cache[cache_key] = result
+                return result
+    except Exception as e:
+        logger.error("modal_stats_fetch_failed", provider_id=provider_id, error=str(e))
+        return _empty_storage_payload(provider_id, str(e))
+
+
+async def _build_provider_status_card(
+    provider_id: str,
+    session: Session,
+    service: Optional[ProviderService] = None,
+    provider_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build canonical provider status payload used by provider cards."""
+    provider_service = service or get_provider_service(session)
+    provider = await provider_service.get_provider(provider_id)
+    provider_info = provider_payload or provider_service._provider_to_dict(provider)
+
+    sync_status = await get_provider_sync_status(provider_id, session)
+    storage_stats = await _fetch_provider_storage_stats(provider_id, provider)
+    reconciliation_state = await provider_service.get_provider_reconciliation_state(provider_id)
+    deploy_state = await provider_service.get_provider_deploy_state(provider_id)
+
+    return {
+        "provider_id": provider_id,
+        "provider_type": provider_info.get("type"),
+        "sync": {
+            "total_models": sync_status.get("total_models", 0),
+            "stats": sync_status.get("stats") or {},
+        },
+        "storage": storage_stats,
+        "reconciliation": _normalize_reconciliation_for_card(reconciliation_state),
+        "deploy": deploy_state,
+        "runtime": provider_info.get("runtime") or {},
+    }
+
+
+@router.get("/status-cards")
+async def get_provider_status_cards(session: Session = Depends(get_session)):
+    """Return canonical provider status payloads for all configured providers."""
+    service = get_provider_service(session)
+    providers = await service.list_providers()
+    cards: Dict[str, Dict[str, Any]] = {}
+
+    for provider in providers:
+        provider_id = provider.get("id")
+        if not provider_id:
+            continue
+        try:
+            cards[provider_id] = await _build_provider_status_card(
+                provider_id,
+                session,
+                service=service,
+                provider_payload=provider,
+            )
+        except Exception as exc:
+            logger.warning("provider_status_card_failed", provider_id=provider_id, error=str(exc))
+            cards[provider_id] = {
+                "provider_id": provider_id,
+                "provider_type": provider.get("type"),
+                "sync": {"total_models": 0, "stats": {}},
+                "storage": _empty_storage_payload(provider_id, "Failed to load storage stats"),
+                "reconciliation": _normalize_reconciliation_for_card(provider.get("reconciliation_state") or {}),
+                "deploy": provider.get("deploy_state") or {"status": "idle"},
+                "runtime": provider.get("runtime") or {},
+                "error": "Failed to build provider status card",
+            }
+
+    return {
+        "status_cards": cards,
+        "count": len(cards),
+    }
+
+
+@router.get("/{provider_id}/status-card")
+async def get_provider_status_card(provider_id: str, session: Session = Depends(get_session)):
+    """Return canonical provider status payload for a single provider."""
+    service = get_provider_service(session)
+    return await _build_provider_status_card(provider_id, session, service=service)
+
+
 @router.get("/{provider_id}/modal-stats")
 async def get_provider_modal_stats(provider_id: str, session: Session = Depends(get_session)):
     """
@@ -301,64 +454,10 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
     Cached for 30 seconds to reduce load.
     Works with both Modal and Beam providers.
     """
-    # Check cache first
-    cache_key = f"modal_stats_{provider_id}"
-    if cache_key in _modal_stats_cache:
-        return _modal_stats_cache[cache_key]
-    
-    # Get provider to verify it exists  
+    # Get provider to verify it exists
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found")
-    
-    runtime = resolve_provider_runtime(provider)
-    if runtime.mode != "container_http":
-        return {
-            "provider_id": provider_id,
-            "error": "Stats are only available for container-backed providers",
-            "total": 0,
-        }
-
-    container_manager = get_container_manager()
-    if not container_manager:
-        raise HTTPException(status_code=500, detail="Container manager not initialized")
-
-    try:
-        container = container_manager.client.containers.get(runtime.container_name or f"comfy-provider-{provider_id}")
-        if container.status != "running":
-            return {"provider_id": provider_id, "error": "Container not running", "total": 0}
-    except Exception:
-        return {"provider_id": provider_id, "error": "Container not found", "total": 0}
-
-    # Use correct endpoint based on provider type
-    provider_type = provider.type if hasattr(provider, 'type') else "modal"
-    if provider_type == "beam":
-        stats_endpoint = "/beam-stats"
-    elif provider_type == "modal":
-        stats_endpoint = "/modal-stats"
-    else:
-        stats_endpoint = "/provider-stats"  # Generic fallback
-
-    worker_url = f"{runtime.worker_url}{stats_endpoint}"
-    
-    try:
-        async with aiohttp.ClientSession() as http_session:
-            async with http_session.get(
-                worker_url,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    # Cache the result
-                    _modal_stats_cache[cache_key] = result
-                    return result
-                else:
-                    return {"provider_id": provider_id, "error": f"HTTP {response.status}", "total": 0}
-            
-    except Exception as e:
-        logger.error("modal_stats_fetch_failed", provider_id=provider_id, error=str(e))
-        return {"provider_id": provider_id, "error": str(e), "total": 0}
+    return await _fetch_provider_storage_stats(provider_id, provider)
 
 
 @router.get("/{provider_id}/sync-status")

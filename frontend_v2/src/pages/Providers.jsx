@@ -23,6 +23,7 @@ export default function Providers() {
         providers,
         isLoading,
         containerStatuses,
+        providerStatusCards,
         lbConfig,
         lbStats,
         refreshAll: refreshProviderServerData,
@@ -54,8 +55,9 @@ export default function Providers() {
     const enrichedProviders = useMemo(() => providers.map(provider => ({
         ...provider,
         container_status: containerStatuses[provider.id]?.status || 'stopped',
+        status_card: providerStatusCards[provider.id] || null,
         enabled: provider.enabled !== undefined ? provider.enabled : true // Default to enabled if not set
-    })), [providers, containerStatuses]);
+    })), [providers, containerStatuses, providerStatusCards]);
 
     // ⚡ Bolt: Create an O(1) Hash Map for provider stats to avoid O(N²) lookups during render
     const providerStatsMap = useMemo(() => {

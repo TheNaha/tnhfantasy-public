@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { Play, Square, Settings, Rocket, Server, Circle, Loader2, FileText, RefreshCw, Edit2, Trash2, Power, PowerOff, AlertTriangle, RotateCcw } from 'lucide-react';
 import SyncStatusBadge from './SyncStatusBadge';
 import ReconciliationStatus from './ReconciliationStatus';
-import { normalizeReconciliationStatus, useProviderSyncStatus, useModalStats } from '../../hooks/useProviderModels';
-import useReconciliationStore from '../../store/reconciliationStore';
 import { providersApi } from '../../api';
 
 const STATUS_COLORS = {
@@ -31,10 +29,10 @@ export default function ProviderCard({
     providerFailures,
     jobsAssigned = 0
 }) {
-    const { data: syncStatus } = useProviderSyncStatus(provider.id);
-    const { data: modalStats } = useModalStats(provider.id);
-    const rawReconciliation = useReconciliationStore(state => state.activeReconciliations[provider.id]);
-    const reconciliation = rawReconciliation ? normalizeReconciliationStatus(rawReconciliation) : null;
+    const statusCard = provider.status_card || {};
+    const syncStats = statusCard.sync?.stats || null;
+    const modalStats = statusCard.storage || null;
+    const reconciliation = statusCard.reconciliation || null;
     const [showLogs, setShowLogs] = useState(false);
     const [showReconciliation, setShowReconciliation] = useState(false);
     const [logs, setLogs] = useState('');
@@ -177,7 +175,7 @@ export default function ProviderCard({
             <div className="mb-4">
                 <SyncStatusBadge
                     providerId={provider.id}
-                    stats={syncStatus?.stats}
+                    stats={syncStats}
                     modalStats={modalStats}
                     reconciliation={reconciliation}
                     onReconciliationClick={() => setShowReconciliation(true)}

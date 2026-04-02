@@ -7,6 +7,7 @@ export const PROVIDER_QUERY_KEYS = {
     providers: ['providers'],
     containerStatuses: ['providerContainerStatuses'],
     loadBalancer: ['providerLoadBalancer'],
+    statusCards: ['providerStatusCards'],
 };
 
 export function unwrapEventData(data) {
@@ -106,6 +107,16 @@ export function useProviderServerData(options = {}) {
         refetchOnWindowFocus: true,
     });
 
+    const statusCardsQuery = useQuery({
+        queryKey: PROVIDER_QUERY_KEYS.statusCards,
+        queryFn: async () => {
+            const data = await providersApi.getStatusCards();
+            return data.status_cards || {};
+        },
+        staleTime: 15 * 1000,
+        refetchOnWindowFocus: true,
+    });
+
     useEffect(() => {
         if (!realtime) {
             return undefined;
@@ -155,15 +166,17 @@ export function useProviderServerData(options = {}) {
             providersQuery.refetch(),
             containerStatusesQuery.refetch(),
             loadBalancerQuery.refetch(),
+            statusCardsQuery.refetch(),
         ]);
     };
 
     return {
         providers: providersQuery.data || [],
         containerStatuses: containerStatusesQuery.data || {},
+        providerStatusCards: statusCardsQuery.data || {},
         lbConfig: loadBalancerQuery.data?.config || null,
         lbStats: loadBalancerQuery.data?.stats || null,
-        isLoading: providersQuery.isLoading || containerStatusesQuery.isLoading || loadBalancerQuery.isLoading,
+        isLoading: providersQuery.isLoading || containerStatusesQuery.isLoading || loadBalancerQuery.isLoading || statusCardsQuery.isLoading,
         refreshAll,
         queryKeys: PROVIDER_QUERY_KEYS,
     };

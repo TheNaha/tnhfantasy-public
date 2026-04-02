@@ -246,6 +246,91 @@ class TestProvidersRouteReconcile:
         data = response.json()
         assert data.get("status") in {"idle", "deploying", "failed", "succeeded"}
 
+    def test_get_provider_status_card_route(self, client):
+        payload = {
+            "id": "status-card-provider",
+            "type": "modal",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {},
+            "config": {},
+        }
+        create_response = client.post("/api/providers", json=payload)
+        assert create_response.status_code == 200
+
+        sync_payload = {
+            "provider": "status-card-provider",
+            "total_models": 3,
+            "stats": {
+                "installed": 2,
+                "pending": 1,
+                "downloading": 0,
+                "failed": 0,
+            },
+            "models": [],
+        }
+        storage_payload = {
+            "provider_id": "status-card-provider",
+            "total": 2,
+            "by_directory": {"checkpoints": 1, "loras": 1},
+        }
+
+        with patch("api.routes.providers.get_provider_sync_status", new=AsyncMock(return_value=sync_payload)), \
+             patch("api.routes.providers._fetch_provider_storage_stats", new=AsyncMock(return_value=storage_payload)):
+            response = client.get("/api/providers/status-card-provider/status-card")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["provider_id"] == "status-card-provider"
+        assert data["sync"]["total_models"] == 3
+        assert data["storage"]["total"] == 2
+        assert data["reconciliation"]["status"] in {"idle", "reconciling", "completed", "failed"}
+
+    def test_get_provider_status_cards_batch_route(self, client):
+        provider_ids = ["status-cards-a", "status-cards-b"]
+        for provider_id in provider_ids:
+            payload = {
+                "id": provider_id,
+                "type": "modal",
+                "enabled": True,
+                "priority": 1,
+                "credentials": {},
+                "config": {},
+            }
+            create_response = client.post("/api/providers", json=payload)
+            assert create_response.status_code == 200
+
+        sync_payload = {
+            "provider": "ignored",
+            "total_models": 1,
+            "stats": {
+                "installed": 1,
+                "pending": 0,
+                "downloading": 0,
+                "failed": 0,
+            },
+            "models": [],
+        }
+        storage_payload = {
+            "provider_id": "ignored",
+            "total": 1,
+            "by_directory": {"checkpoints": 1},
+        }
+
+        with patch("api.routes.providers.get_provider_sync_status", new=AsyncMock(return_value=sync_payload)), \
+             patch("api.routes.providers._fetch_provider_storage_stats", new=AsyncMock(return_value=storage_payload)):
+            response = client.get("/api/providers/status-cards")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == len(provider_ids)
+        assert set(data["status_cards"].keys()) == set(provider_ids)
+        for provider_id in provider_ids:
+            card = data["status_cards"][provider_id]
+            assert card["provider_id"] == provider_id
+            assert "sync" in card
+            assert "storage" in card
+
     def test_setup_provider_not_found(self, client):
         response = client.post(
             "/api/providers/nonexistent/setup",
