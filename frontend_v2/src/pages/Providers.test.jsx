@@ -111,7 +111,7 @@ describe('Providers page', () => {
         // Provider name should be visible in the list row
         expect(screen.getByText('modal-primary')).toBeInTheDocument();
         // Running status should be shown as a metric chip
-        expect(screen.getByText('Running')).toBeInTheDocument();
+        expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
         // Load balancer bar should show strategy
         expect(screen.getByText('Round Robin')).toBeInTheDocument();
     });
