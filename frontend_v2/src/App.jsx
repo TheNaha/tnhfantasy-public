@@ -5,7 +5,7 @@
  *   - Routing: React Router v6 with lazy-loaded page components to minimise
  *     the initial JS bundle.  AnimatePresence wraps route transitions for
  *     smooth page animations via Framer Motion.
- *   - State: Zustand stores (jobStore, reconciliationStore) are initialised
+ *   - State: Zustand stores (jobStore) are initialised
  *     here for global realtime flows. Provider server-state is owned by React
  *     Query hooks consumed by layout/pages.
  *   - Data fetching: React Query (QueryClient) provides server-state caching.
@@ -27,7 +27,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
 import { useBrandingStore } from './store/brandingStore';
 import { useJobStore } from './store/jobStore';
-import useReconciliationStore from './store/reconciliationStore';
 import useStore from './store/useStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobNotifications } from './hooks/useJobNotifications.jsx';
@@ -73,7 +72,6 @@ function App() {
     const fetchJobs = useJobStore((state) => state.fetchJobs);
     const setupBrowserLifecycle = useJobStore((state) => state.setupBrowserLifecycle);
     const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
-    const connectReconciliation = useReconciliationStore((state) => state.connect);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
     const initCollections = useStore((state) => state.initCollections);
 
@@ -130,10 +128,9 @@ function App() {
     // Initialize all global stores on app startup.
     // No cleanup on unmount to avoid StrictMode connect/disconnect churn in development.
     useEffect(() => {
-        // Connect all global stores
+        // Connect global realtime stores
         connectJobs();
         setupBrowserLifecycle();
-        connectReconciliation();
         
         // Fetch initial data
         fetchJobs();
@@ -144,7 +141,6 @@ function App() {
         };
     }, [
         connectJobs,
-        connectReconciliation,
         disconnectJobs,
         fetchJobs,
         setupBrowserLifecycle,

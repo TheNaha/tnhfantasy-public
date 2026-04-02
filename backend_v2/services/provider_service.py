@@ -14,7 +14,11 @@ from infrastructure.request_dedup import deduplicated, is_in_flight
 from infrastructure.logging import provider_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
 from api.provider_runtime import resolve_provider_runtime
-from services.provider_deploy_orchestrator import ProviderDeployOrchestrator
+from services.provider_deploy_orchestrator import (
+    ProviderDeployOrchestrator,
+    ProviderDeployStepExecutionError,
+    ProviderDeployStepTimeoutError,
+)
 
 logger = provider_logger()
 
@@ -697,8 +701,13 @@ class ProviderService:
                     )
                     continue
 
-                exec_result = orchestrator.run_step(deploy_container, command)
-                exit_code, output = self._decode_exec_output(exec_result)
+                try:
+                    exec_result = orchestrator.run_step(deploy_container, command)
+                    exit_code, output = self._decode_exec_output(exec_result)
+                except ProviderDeployStepTimeoutError as exc:
+                    exit_code, output = -1, str(exc)
+                except ProviderDeployStepExecutionError as exc:
+                    exit_code, output = -1, str(exc)
                 success = exit_code == 0
                 if success:
                     completed_steps.add(name)

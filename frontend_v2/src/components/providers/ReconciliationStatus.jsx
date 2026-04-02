@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { X, Download, CheckCircle, XCircle, Clock, HardDrive, AlertCircle, RefreshCw, Trash2, Loader2, Search } from 'lucide-react';
 import { motion } from 'framer-motion';
-import useReconciliationStore from '../../store/reconciliationStore';
-import { providersApi } from '../../api';
-import { normalizeReconciliationStatus } from '../../hooks/useProviderModels';
+import { useProviderReconciliationState } from '../../hooks/useProvidersPageData';
 
 // Phase definitions with static Tailwind classes
 const PHASES = {
@@ -54,32 +52,25 @@ const PHASES = {
 const PHASE_ORDER = ['validating', 'fetching', 'downloading', 'deleting', 'completed'];
 
 export default function ReconciliationStatus({ providerId, onClose }) {
-    // Read from global store - WebSocket updates happen globally now
-    const rawStoreStatus = useReconciliationStore(state => state.activeReconciliations[providerId]);
-    const storeStatus = hasReconciliationContent(rawStoreStatus)
-        ? normalizeReconciliationStatus(rawStoreStatus)
-        : null;
-    const [localStatus, setLocalStatus] = useState(null);
-    
-    // Use store status if available, otherwise fall back to local fetch
-    const status = storeStatus || (localStatus ? normalizeReconciliationStatus(localStatus) : null);
+    const { reconciliationState, isLoading } = useProviderReconciliationState(providerId);
 
-    // Initial fetch only if not in store
-    useEffect(() => {
-        if (storeStatus) return; // Already have data from store
-        
-        const fetchInitialStatus = async () => {
-            try {
-                const data = await providersApi.getReconciliationStatus(providerId);
-                setLocalStatus(normalizeReconciliationStatus(data));
-            } catch (error) {
-                console.error('Failed to fetch reconciliation status:', error);
-            }
+    const status = useMemo(() => {
+        if (reconciliationState) {
+            return reconciliationState;
+        }
+        return {
+            provider_id: providerId,
+            status: 'idle',
+            phase: null,
+            message: '',
+            stats: {},
+            active_downloads: [],
+            errors: [],
+            current_download: null,
         };
-        fetchInitialStatus();
-    }, [providerId, storeStatus]);
+    }, [providerId, reconciliationState]);
 
-    if (!status) {
+    if (isLoading && !reconciliationState) {
         return (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
                 <div className="bg-gray-800 rounded-xl border border-gray-700 p-8">
@@ -295,8 +286,8 @@ export default function ReconciliationStatus({ providerId, onClose }) {
                 {/* Footer */}
                 <div className="sticky bottom-0 bg-gray-800 border-t border-gray-700 px-6 py-4 flex justify-between items-center">
                     <div className="flex items-center gap-2 text-sm text-gray-400">
-                        <span className={`w-2 h-2 rounded-full ${storeStatus ? 'bg-green-500' : 'bg-yellow-500'}`} />
-                        {storeStatus ? 'Live updates active' : 'Fetched status'}
+                        <span className="w-2 h-2 rounded-full bg-green-500" />
+                        Live updates active
                     </div>
                     <button
                         onClick={onClose}
@@ -307,19 +298,6 @@ export default function ReconciliationStatus({ providerId, onClose }) {
                 </div>
             </motion.div>
         </div>
-    );
-}
-
-function hasReconciliationContent(status) {
-    if (!status) return false;
-    return Boolean(
-        status.status ||
-        status.phase ||
-        status.message ||
-        status.stats ||
-        status.current_download ||
-        (Array.isArray(status.active_downloads) && status.active_downloads.length > 0) ||
-        (Array.isArray(status.errors) && status.errors.length > 0)
     );
 }
 

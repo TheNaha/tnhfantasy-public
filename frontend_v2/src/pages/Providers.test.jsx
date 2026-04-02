@@ -20,17 +20,9 @@ const mutationsState = vi.hoisted(() => ({
     saveProvider: vi.fn(),
 }));
 
-const reconciliationStoreState = vi.hoisted(() => ({
-    startReconciliation: vi.fn(),
-}));
-
 vi.mock('../hooks/useProvidersPageData', () => ({
     default: mockUseProvidersPageData,
     useProviderMutations: () => mutationsState,
-}));
-
-vi.mock('../store/reconciliationStore', () => ({
-    default: () => reconciliationStoreState,
 }));
 
 vi.mock('../components/providers/ProviderModal', () => ({

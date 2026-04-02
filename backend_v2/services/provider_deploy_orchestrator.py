@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import queue
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -8,12 +10,36 @@ from infrastructure.logging import provider_logger
 
 logger = provider_logger()
 
+DEFAULT_STEP_TIMEOUT_SECONDS = 300.0
+
+
+def _resolve_step_timeout_seconds(raw_timeout: Optional[float]) -> float:
+    raw_value: Any = raw_timeout
+    if raw_value is None:
+        raw_value = os.getenv("COMFY_PROVIDER_DEPLOY_STEP_TIMEOUT_SECONDS", str(DEFAULT_STEP_TIMEOUT_SECONDS))
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        parsed = DEFAULT_STEP_TIMEOUT_SECONDS
+
+    return max(parsed, 1.0)
+
+
+class ProviderDeployStepTimeoutError(TimeoutError):
+    """Raised when a deploy step does not finish within configured timeout."""
+
+
+class ProviderDeployStepExecutionError(RuntimeError):
+    """Raised when a deploy step crashes before producing an exec result."""
+
 
 class ProviderDeployOrchestrator:
     """Run provider deploy commands in a dedicated ephemeral container."""
 
-    def __init__(self, container_manager: Any):
+    def __init__(self, container_manager: Any, *, step_timeout_seconds: Optional[float] = None):
         self.container_manager = container_manager
+        self.step_timeout_seconds = _resolve_step_timeout_seconds(step_timeout_seconds)
 
     def start_attempt_container(
         self,
@@ -53,13 +79,42 @@ class ProviderDeployOrchestrator:
             network="comfy-network",
         )
 
-    def run_step(self, container: Any, command: List[str]) -> Any:
+    def run_step(self, container: Any, command: List[str], *, timeout_seconds: Optional[float] = None) -> Any:
+        step_timeout = self.step_timeout_seconds if timeout_seconds is None else max(float(timeout_seconds), 1.0)
         logger.info(
             "provider_deploy_step_exec",
             container_name=getattr(container, "name", None),
             command=" ".join(command),
+            timeout_seconds=step_timeout,
         )
-        return container.exec_run(cmd=command, stream=False, demux=True)
+
+        result_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=1)
+
+        def _exec() -> None:
+            try:
+                exec_result = container.exec_run(cmd=command, stream=False, demux=True)
+                result_queue.put(("result", exec_result))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        worker = threading.Thread(target=_exec, daemon=True, name="provider-deploy-step")
+        worker.start()
+        worker.join(timeout=step_timeout)
+
+        if worker.is_alive():
+            raise ProviderDeployStepTimeoutError(
+                f"Deploy step timed out after {step_timeout:.0f}s"
+            )
+
+        try:
+            result_type, payload = result_queue.get_nowait()
+        except queue.Empty as exc:
+            raise ProviderDeployStepExecutionError("Deploy step finished without result") from exc
+
+        if result_type == "error":
+            raise ProviderDeployStepExecutionError("Deploy step execution crashed") from payload
+
+        return payload
 
     def cleanup_container(self, container: Optional[Any]) -> None:
         if container is None:

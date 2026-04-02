@@ -17,7 +17,7 @@ import {
     Trash2,
     Wrench,
 } from 'lucide-react';
-import { providersApi } from '../../api';
+import { useProviderLogs } from '../../hooks/useProvidersPageData';
 import ReconciliationStatus from './ReconciliationStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
@@ -65,8 +65,12 @@ export default function ProviderCard({
     const [showDeployDetails, setShowDeployDetails] = useState(false);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
     const [showReconciliation, setShowReconciliation] = useState(false);
-    const [logs, setLogs] = useState('');
-    const [loadingLogs, setLoadingLogs] = useState(false);
+    const [logsError, setLogsError] = useState('');
+    const {
+        logs,
+        fetchLogs,
+        isLoading: loadingLogs,
+    } = useProviderLogs(provider.id);
 
     const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
     const loadingLabel = loading ? loading.charAt(0).toUpperCase() + loading.slice(1) : null;
@@ -83,18 +87,14 @@ export default function ProviderCard({
         return 'Provider';
     }, [capabilities]);
 
-    const fetchLogs = async () => {
-        setLoadingLogs(true);
+    const fetchProviderLogs = async () => {
         try {
-            const data = await providersApi.getContainerLogs(provider.id);
-            setLogs(data.logs || 'No logs available');
+            await fetchLogs();
+            setLogsError('');
             setShowLogs(true);
         } catch (error) {
-            console.error('Failed to fetch logs:', error);
-            setLogs(`Failed to fetch logs: ${error.message}`);
+            setLogsError(`Failed to fetch logs: ${error.message}`);
             setShowLogs(true);
-        } finally {
-            setLoadingLogs(false);
         }
     };
 
@@ -195,7 +195,7 @@ export default function ProviderCard({
                             <ActionButton onClick={onRestart} disabled={Boolean(loading)} tone="blue" icon={RefreshCw} label="Restart" />
                         )}
                         {capabilities.view_logs && (
-                            <ActionButton onClick={fetchLogs} disabled={loadingLogs} tone="blue" icon={FileText} label="Logs" />
+                            <ActionButton onClick={fetchProviderLogs} disabled={loadingLogs} tone="blue" icon={FileText} label="Logs" />
                         )}
                         {capabilities.setup && (
                             <ActionButton onClick={onSetup} disabled={Boolean(loading)} tone="blue" icon={Wrench} label="Setup" />
@@ -252,7 +252,7 @@ export default function ProviderCard({
                 <ModalShell title={`Container Logs - ${provider.id}`} onClose={() => setShowLogs(false)} maxWidth="max-w-4xl">
                     <div className="flex-1 overflow-y-auto p-4">
                         <pre className="whitespace-pre-wrap break-words rounded-lg border border-gray-700 bg-gray-950 p-4 text-xs text-gray-300">
-                            {logs}
+                            {logsError && !logs ? logsError : logs || 'No logs available'}
                         </pre>
                     </div>
                 </ModalShell>

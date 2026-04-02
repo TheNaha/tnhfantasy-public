@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { normalizeReconciliationStatus as normalizeRealtimeReconciliationStatus } from './providerRealtimeTransforms';
 
 function unwrapPayload(payload) {
     return payload?.data ?? payload ?? {};
@@ -28,7 +29,7 @@ export function normalizeProviderSyncStatus(payload) {
         ...source,
         ...statusSource,
         provider_id: statusSource.provider_id ?? source.provider_id ?? source.providerId ?? null,
-        status: statusSource.status ?? source.status ?? 'idle',
+        status: normalizeRealtimeReconciliationStatus(statusSource.status ?? source.status),
         phase: statusSource.phase ?? source.phase ?? (
             statusSource.status === 'completed'
                 ? 'completed'

@@ -166,33 +166,13 @@ class EventBus:
                     # Non-blocking put to avoid slow subscribers blocking publishers
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
-                    # Preserve terminal events by evicting one stale queued event when possible.
-                    if event.type in TERMINAL_EVENT_TYPES:
-                        try:
-                            evicted_event = queue.get_nowait()
-                            evicted_topic = evicted_event.type.value.split(".")[0]
-                            self._record_drop(
-                                topic=evicted_topic,
-                                event_type=evicted_event.type.value,
-                                subscriber_count=len(queues),
-                                queue=queue,
-                                reason="evicted_for_terminal",
-                            )
-                            queue.put_nowait(event)
-                            self._terminal_events_preserved += 1
-                            continue
-                        except asyncio.QueueEmpty:
-                            pass
-                        except asyncio.QueueFull:
-                            pass
-
-                        self._record_drop(
-                            topic=topic,
-                            event_type=event.type.value,
-                            subscriber_count=len(queues),
-                            queue=queue,
-                            reason="terminal_event_dropped",
-                        )
+                    # Preserve terminal events by retrying enqueue and evicting stale
+                    # queued events as needed.
+                    if event.type in TERMINAL_EVENT_TYPES and self._preserve_terminal_event(
+                        queue=queue,
+                        event=event,
+                        subscriber_count=len(queues),
+                    ):
                         continue
 
                     self._record_drop(
@@ -202,6 +182,49 @@ class EventBus:
                         queue=queue,
                         reason="queue_full",
                     )
+
+    def _preserve_terminal_event(
+        self,
+        *,
+        queue: asyncio.Queue,
+        event: Event,
+        subscriber_count: int,
+    ) -> bool:
+        """Best-effort enqueue for terminal events under backpressure."""
+        topic = event.type.value.split(".")[0]
+        evicted_any = False
+        max_attempts = max(3, (queue.maxsize if queue.maxsize > 0 else 1) + 1)
+
+        for _attempt in range(max_attempts):
+            try:
+                queue.put_nowait(event)
+                if evicted_any:
+                    self._terminal_events_preserved += 1
+                return True
+            except asyncio.QueueFull:
+                try:
+                    evicted_event = queue.get_nowait()
+                    evicted_any = True
+                    evicted_topic = evicted_event.type.value.split(".")[0]
+                    self._record_drop(
+                        topic=evicted_topic,
+                        event_type=evicted_event.type.value,
+                        subscriber_count=subscriber_count,
+                        queue=queue,
+                        reason="evicted_for_terminal",
+                    )
+                except asyncio.QueueEmpty:
+                    # Consumer may have drained queue after QueueFull check; retry put.
+                    continue
+
+        self._record_drop(
+            topic=topic,
+            event_type=event.type.value,
+            subscriber_count=subscriber_count,
+            queue=queue,
+            reason="terminal_event_dropped",
+        )
+        return False
     
     async def subscribe(self, topic: str, max_queue_size: int = 100) -> AsyncGenerator[Event, None]:
         """

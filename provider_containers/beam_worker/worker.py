@@ -12,7 +12,7 @@ import base64
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse, Response
 import httpx
 import websockets
@@ -403,12 +403,24 @@ async def delete_model_internal(path: str) -> bool:
     """Internal helper for deleting models."""
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
+            response = await client.request(
+                "DELETE",
                 f"{BEAM_STORAGE_URL}/delete-model",
                 json={"path": path},
                 headers=get_beam_headers(),
             )
-            return response.status_code == 200
+            if response.status_code == 200:
+                return True
+
+            if response.status_code in {404, 405, 422}:
+                response = await client.post(
+                    f"{BEAM_STORAGE_URL}/delete-model",
+                    json={"path": path},
+                    headers=get_beam_headers(),
+                )
+                return response.status_code == 200
+
+            return False
     except Exception:
         return False
 
@@ -433,18 +445,33 @@ async def get_beam_stats():
 
 @app.delete("/delete-model")
 @app.post("/delete-model")
-async def delete_model(request: DeleteModelRequest):
+async def delete_model(
+    request: Optional[DeleteModelRequest] = Body(default=None),
+    path: Optional[str] = Query(default=None),
+):
     """Delete model from Beam storage."""
-    print(f"[{PROVIDER_ID}] Deleting model: {request.path}")
+    model_path = request.path if request and request.path else path
+    if not model_path:
+        raise HTTPException(status_code=422, detail="path is required")
+
+    print(f"[{PROVIDER_ID}] Deleting model: {model_path}")
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
+            response = await client.request(
+                "DELETE",
                 f"{BEAM_STORAGE_URL}/delete-model",
-                json={"path": request.path},
+                json={"path": model_path},
                 headers=get_beam_headers(),
             )
+            if response.status_code in {404, 405, 422}:
+                response = await client.post(
+                    f"{BEAM_STORAGE_URL}/delete-model",
+                    json={"path": model_path},
+                    headers=get_beam_headers(),
+                )
+
             if response.status_code == 200:
-                print(f"[{PROVIDER_ID}] ✓ Deleted: {request.path}")
+                print(f"[{PROVIDER_ID}] ✓ Deleted: {model_path}")
                 return response.json()
             return {"success": False, "code": response.status_code}
     except Exception as e:

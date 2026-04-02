@@ -10,7 +10,6 @@ import AddModelToProviderModal from '../components/providers/AddModelToProviderM
 import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { providersApi } from '../api';
-import useReconciliationStore from '../store/reconciliationStore';
 import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
 
 const FILTERS = [
@@ -31,7 +30,6 @@ export default function Providers() {
     const [selectedProviderId, setSelectedProviderId] = useState(null);
     const [resetConfirm, setResetConfirm] = useState({ isOpen: false, providerId: null });
 
-    const { startReconciliation } = useReconciliationStore();
     const {
         providers,
         lbConfig,
@@ -125,7 +123,6 @@ export default function Providers() {
     const handleReconcile = async (providerId) => {
         try {
             await reconcileProvider(providerId);
-            startReconciliation(providerId);
             setReconcilingProviderId(providerId);
         } catch (error) { toast.error(`Reconciliation failed: ${error.message}`); }
     };

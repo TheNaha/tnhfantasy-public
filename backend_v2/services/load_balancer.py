@@ -362,14 +362,20 @@ class LoadBalancer:
         This decrements the active job count for least-connections tracking.
         Should be called after every job completion (success or failure).
         """
+        persist_needed = False
         with self.runtime_state.lock:
             if provider_id in self.runtime_state.provider_job_counts:
+                previous_count = self.runtime_state.provider_job_counts[provider_id]
                 self.runtime_state.provider_job_counts[provider_id] = max(
                     0, self.runtime_state.provider_job_counts[provider_id] - 1
                 )
                 active_jobs = self.runtime_state.provider_job_counts[provider_id]
+                persist_needed = active_jobs != previous_count
             else:
                 active_jobs = 0
+
+        if persist_needed:
+            LoadBalancer.save_state_to_db(self.session, self.runtime_state)
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
     def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:

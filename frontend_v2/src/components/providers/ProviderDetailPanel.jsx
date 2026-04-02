@@ -18,7 +18,7 @@ import {
     XCircle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { providersApi } from '../../api';
+import { useProviderLogs } from '../../hooks/useProvidersPageData';
 import ReconciliationStatus from './ReconciliationStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
@@ -76,8 +76,8 @@ export default function ProviderDetailPanel({
     const [activeTab, setActiveTab] = useState('runtime');
     const [showLogs, setShowLogs] = useState(false);
     const [showReconciliation, setShowReconciliation] = useState(false);
-    const [logs, setLogs] = useState('');
-    const [loadingLogs, setLoadingLogs] = useState(false);
+    const [logsError, setLogsError] = useState('');
+    const { logs, fetchLogs, isLoading: loadingLogs } = useProviderLogs(provider.id);
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
     const deploy = provider.deploy_state ?? EMPTY_OBJECT;
@@ -98,17 +98,14 @@ export default function ProviderDetailPanel({
         return 'Provider';
     }, [capabilities]);
 
-    const fetchLogs = async () => {
-        setLoadingLogs(true);
+    const fetchProviderLogs = async () => {
         try {
-            const data = await providersApi.getContainerLogs(provider.id);
-            setLogs(data.logs || 'No logs available');
+            await fetchLogs();
+            setLogsError('');
             setShowLogs(true);
         } catch (error) {
-            setLogs(`Failed to fetch logs: ${error.message}`);
+            setLogsError(`Failed to fetch logs: ${error.message}`);
             setShowLogs(true);
-        } finally {
-            setLoadingLogs(false);
         }
     };
 
@@ -217,15 +214,15 @@ export default function ProviderDetailPanel({
                             loading={loading}
                             loadingLogs={loadingLogs}
                             showLogs={showLogs}
-                            logs={logs}
                             onStart={onStart}
                             onStop={onStop}
                             onRestart={onRestart}
                             onSetup={onSetup}
-                            fetchLogs={fetchLogs}
+                            fetchLogs={fetchProviderLogs}
                             setShowLogs={setShowLogs}
                             jobsAssigned={jobsAssigned}
                             providerFailures={providerFailures}
+                            logs={logsError || logs || 'No logs available'}
                         />
                     )}
                     {activeTab === 'deploy' && (

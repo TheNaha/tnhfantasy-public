@@ -14,6 +14,7 @@ Features:
 import socketio
 import asyncio
 import logging
+import os
 from typing import Dict, Set, Any
 from datetime import datetime
 
@@ -44,6 +45,7 @@ sio = socketio.AsyncServer(
 
 # Track connected clients and their subscriptions
 connected_clients: Dict[str, Set[str]] = {}  # sid -> set of rooms
+WS_BROADCAST_QUEUE_SIZE = max(int(os.getenv("COMFY_WS_BROADCAST_QUEUE_SIZE", "500")), 1)
 
 
 class WebSocketManager:
@@ -68,7 +70,7 @@ class WebSocketManager:
         # Subscribe to all topics
         topics = ["job", "download", "provider", "reconciliation", "model"]
         
-        async for event in event_bus.subscribe_multiple(topics):
+        async for event in event_bus.subscribe_multiple(topics, max_queue_size=WS_BROADCAST_QUEUE_SIZE):
             if not self._running:
                 break
             

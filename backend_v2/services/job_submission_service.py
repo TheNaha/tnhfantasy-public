@@ -86,6 +86,25 @@ class JobSubmissionService:
             )
 
         job = await self.job_service.create_job(workflow, metadata)
-        await job_queue.enqueue(job.id)
+        try:
+            await job_queue.enqueue(job.id)
+        except Exception as exc:
+            logger.error("job_enqueue_failed", job_id=job.id, error=str(exc))
+
+            # Compensating action: best-effort delete so callers don't leave
+            # orphaned pending jobs that never execute.
+            try:
+                self.job_service.repo.delete(job.id)
+            except Exception as cleanup_exc:
+                logger.error("job_enqueue_cleanup_failed", job_id=job.id, error=str(cleanup_exc))
+
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "queue_unavailable",
+                    "message": "Failed to enqueue job. Please retry.",
+                },
+            ) from exc
+
         logger.info("job_enqueued", job_id=job.id)
         return job

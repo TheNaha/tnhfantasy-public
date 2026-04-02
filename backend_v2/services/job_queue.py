@@ -259,38 +259,33 @@ class JobQueue:
         """Internal recovery implementation."""
         recovered_count = 0
         failed_count = 0
-        
-        # Re-queue pending jobs
-        pending = job_service.get_pending_jobs()
-        for job in pending:
-            await self.enqueue(job.id, job.provider_id)
-            recovered_count += 1
-        
-        # Handle stuck running jobs
-        running = job_service.get_running_jobs()
+
+        pending = list(job_service.get_pending_jobs())
+        running = list(job_service.get_running_jobs())
+
+        stale_running = []
+        recoverable_running = []
         for job in running:
             if job.started_at:
                 elapsed = (datetime.utcnow() - job.started_at).total_seconds()
                 if elapsed > timeout_seconds:
-                    # Job was running when server died - mark failed
-                    try:
-                        await job_service.update_job(
-                            job.id, 
-                            status=JobStatus.FAILED, 
-                            error="Server restart during processing - job timed out"
-                        )
-                        failed_count += 1
-                        logger.warning("job_recovery_timeout", job_id=job.id, elapsed=f"{elapsed:.0f}s")
-                    except Exception as e:
-                        logger.error("job_recovery_failed", job_id=job.id, error=str(e))
-                else:
-                    # Job might still be valid, re-queue
-                    await self.enqueue(job.id, job.provider_id)
-                    recovered_count += 1
-            else:
-                # No started_at timestamp, re-queue
-                await self.enqueue(job.id, job.provider_id)
-                recovered_count += 1
+                    stale_running.append((job, elapsed))
+                    continue
+            recoverable_running.append(job)
+
+        if stale_running:
+            failed_count = await self._mark_recovery_timeouts_atomically(
+                job_service=job_service,
+                stale_running=stale_running,
+            )
+
+        for job in pending:
+            await self.enqueue(job.id, job.provider_id)
+            recovered_count += 1
+
+        for job in recoverable_running:
+            await self.enqueue(job.id, job.provider_id)
+            recovered_count += 1
         
         if recovered_count > 0 or failed_count > 0:
             logger.info("job_recovery_complete", recovered=recovered_count, failed=failed_count)
@@ -298,6 +293,43 @@ class JobQueue:
             logger.info("job_recovery_none")
         
         return recovered_count, failed_count
+
+    async def _mark_recovery_timeouts_atomically(self, job_service, stale_running) -> int:
+        """Mark stale running jobs failed in one transaction to avoid partial state updates."""
+        session = getattr(job_service, "session", None)
+        if session is None:
+            raise RuntimeError("Job recovery requires a JobService with an active session")
+
+        error_message = "Server restart during processing - job timed out"
+        now = datetime.utcnow()
+
+        try:
+            for job, _elapsed in stale_running:
+                job.status = JobStatus.FAILED
+                job.error = error_message
+                job.completed_at = now
+                job.updated_at = now
+                session.add(job)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            logger.error(
+                "job_recovery_atomic_update_failed",
+                error=str(exc),
+                stale_jobs=[job.id for job, _elapsed in stale_running],
+            )
+            raise
+
+        failed_count = 0
+        for job, elapsed in stale_running:
+            failed_count += 1
+            logger.warning("job_recovery_timeout", job_id=job.id, elapsed=f"{elapsed:.0f}s")
+            try:
+                await emit_job_event(EventType.JOB_FAILED, job_service._job_to_dict(job))
+            except Exception as exc:
+                logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
+
+        return failed_count
 
 
 # Global singleton

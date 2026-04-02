@@ -362,6 +362,37 @@ class TestEventBusQueueFull:
         assert stats["dropped_events_by_topic"] == {"job": 1}
         assert stats["last_drop"]["reason"] == "evicted_for_terminal"
 
+    @pytest.mark.asyncio
+    async def test_terminal_event_retries_after_queue_drain_race(self):
+        class _QueueDrainRace:
+            maxsize = 1
+
+            def __init__(self):
+                self._items = []
+                self._put_calls = 0
+
+            def put_nowait(self, item):
+                self._put_calls += 1
+                if self._put_calls <= 2:
+                    raise asyncio.QueueFull
+                self._items.append(item)
+
+            def get_nowait(self):
+                raise asyncio.QueueEmpty
+
+            def qsize(self):
+                return len(self._items)
+
+        bus = EventBus(replay_buffer_size=10)
+        queue = _QueueDrainRace()
+        bus._subscribers["job"] = [queue]
+
+        await bus.publish(Event(type=EventType.JOB_COMPLETED, data={"id": "job-race"}))
+
+        assert len(queue._items) == 1
+        assert queue._items[0].type == EventType.JOB_COMPLETED
+        assert bus.get_stats()["dropped_events"] == 0
+
 
 class TestEmitProviderFunctions:
     """Tests for provider/model emit functions (lines 205, 213-219)."""

@@ -19,7 +19,7 @@ def manager():
 async def test_manager_start_stop_broadcasting(manager, mock_sio):
     # Mock event_bus.subscribe_multiple
     with patch("core.events.event_bus.subscribe_multiple") as mock_sub:
-        async def mock_gen(topics):
+        async def mock_gen(topics, max_queue_size=100):
             # Yield one event then stop
             yield Event(type=EventType.JOB_PROGRESS, data={"id": "1"})
 

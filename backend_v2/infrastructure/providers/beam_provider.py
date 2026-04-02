@@ -152,8 +152,19 @@ class BeamProvider(ServerlessProvider):
         """Delete model via worker container."""
         client = get_http_client()
         url = f"{self.worker_url}/delete-model"
-        response = await client.post(url, json={"path": path})
-        return response.status_code == 200
+        try:
+            delete_response = await client.request("DELETE", url, json={"path": path})
+        except Exception:
+            delete_response = None
+
+        if delete_response is not None and delete_response.status_code == 200:
+            return True
+
+        if delete_response is None or delete_response.status_code in {404, 405, 422}:
+            fallback_response = await client.post(url, json={"path": path})
+            return fallback_response.status_code == 200
+
+        return False
     
     def get_file_proxy(self) -> FileProxyProvider:
         return self._file_proxy

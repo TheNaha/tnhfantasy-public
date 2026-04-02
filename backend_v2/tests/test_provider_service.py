@@ -1,5 +1,6 @@
 """Tests for services/provider_service.py"""
 import asyncio
+import time
 import pytest
 from unittest.mock import MagicMock, patch
 from sqlmodel import Session, SQLModel, create_engine
@@ -227,10 +228,15 @@ class _DummyContainer:
     status = "running"
     name = "deploy-container"
 
-    def __init__(self, results):
+    def __init__(self, results, delays=None):
         self._results = list(results)
+        self._delays = list(delays or [])
 
     def exec_run(self, cmd, stream=False, demux=True):
+        if self._delays:
+            delay = self._delays.pop(0)
+            if delay > 0:
+                time.sleep(delay)
         if not self._results:
             return _DummyExecResult(0, "no-op")
         return self._results.pop(0)
@@ -323,6 +329,33 @@ class TestProviderServiceDeploy:
             result = await service.deploy_provider_app("test-provider", container_manager)
 
         assert result["status"] == "already_running"
+
+    async def test_deploy_timeout_marks_failed_step(self, service, sample_provider_data):
+        timeout_provider_data = dict(sample_provider_data)
+        timeout_provider_data["id"] = "timeout-provider"
+        await service.create_provider(timeout_provider_data)
+
+        # Keep execution comfortably beyond the configured timeout.
+        container = _DummyContainer(
+            [_DummyExecResult(0, "modal deploy ok")],
+            delays=[1.5],
+        )
+        container_manager = _DummyContainerManager("timeout-provider", container)
+
+        with patch.dict("os.environ", {"COMFY_PROVIDER_DEPLOY_STEP_TIMEOUT_SECONDS": "1"}, clear=False):
+            with pytest.raises(ProviderError, match="deploy failed"):
+                await service.deploy_provider_app("timeout-provider", container_manager)
+
+        provider = await service.get_provider("timeout-provider")
+        deploy_state = (provider.config or {}).get("deploy_state", {})
+
+        assert deploy_state.get("status") == "failed"
+        steps = deploy_state.get("steps") or []
+        assert steps
+        assert steps[0]["name"] == "modal_app"
+        assert steps[0]["success"] is False
+        assert steps[0]["exit_code"] == -1
+        assert "timed out" in (steps[0].get("output") or "")
 
 
 class TestProviderServiceReconciliationState:

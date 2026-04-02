@@ -17,10 +17,6 @@ const providersApiMock = vi.hoisted(() => ({
     getContainerLogs: vi.fn(),
 }));
 
-const reconciliationStoreState = vi.hoisted(() => ({
-    startReconciliation: vi.fn(),
-}));
-
 vi.mock('../api', () => ({
     providersApi: providersApiMock,
 }));
@@ -47,10 +43,6 @@ vi.mock('../api/websocket', () => ({
         RECONCILIATION_COMPLETED: 'reconciliation.completed',
         MODEL_STATUS_UPDATE: 'model.status_update',
     },
-}));
-
-vi.mock('../store/reconciliationStore', () => ({
-    default: () => reconciliationStoreState,
 }));
 
 vi.mock('../components/providers/ProviderModal', () => ({

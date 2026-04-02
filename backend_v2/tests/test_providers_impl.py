@@ -255,6 +255,53 @@ class TestBeamProvider:
         assert updates[-1]["status"] == "success"
         assert updates[-1]["images"][0]["filename"] == "beam-tail.png"
 
+    async def test_delete_model_uses_delete_first(self):
+        provider = self.get_provider()
+
+        delete_response = MagicMock()
+        delete_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=delete_response)
+        mock_client.post = AsyncMock()
+
+        with patch("infrastructure.providers.beam_provider.get_http_client", return_value=mock_client):
+            result = await provider.delete_model("models/checkpoints/model.safetensors")
+
+        assert result is True
+        mock_client.request.assert_awaited_once_with(
+            "DELETE",
+            "http://comfy-provider-beam-primary:8000/delete-model",
+            json={"path": "models/checkpoints/model.safetensors"},
+        )
+        mock_client.post.assert_not_awaited()
+
+    async def test_delete_model_falls_back_to_post_on_delete_not_supported(self):
+        provider = self.get_provider()
+
+        delete_response = MagicMock()
+        delete_response.status_code = 405
+        fallback_response = MagicMock()
+        fallback_response.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=delete_response)
+        mock_client.post = AsyncMock(return_value=fallback_response)
+
+        with patch("infrastructure.providers.beam_provider.get_http_client", return_value=mock_client):
+            result = await provider.delete_model("models/loras/model.safetensors")
+
+        assert result is True
+        mock_client.request.assert_awaited_once_with(
+            "DELETE",
+            "http://comfy-provider-beam-primary:8000/delete-model",
+            json={"path": "models/loras/model.safetensors"},
+        )
+        mock_client.post.assert_awaited_once_with(
+            "http://comfy-provider-beam-primary:8000/delete-model",
+            json={"path": "models/loras/model.safetensors"},
+        )
+
 
 # ===== MODAL PROVIDER TESTS =====
 

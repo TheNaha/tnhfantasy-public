@@ -2,11 +2,20 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { providersApi } from '../api';
 import * as ws from '../api/websocket';
+import {
+    extractProviderId,
+    normalizeReconciliationState,
+    unwrapEventData,
+} from './providerRealtimeTransforms';
 
 export const PROVIDERS_PAGE_QUERY_KEYS = {
     providers: ['providers-page', 'providers'],
     loadBalancer: ['providers-page', 'load-balancer'],
+    providerLogs: (providerId, tail = 200) => ['providers-page', 'provider-logs', providerId, tail],
 };
+
+const PROVIDERS_STALE_TIME = 15 * 1000;
+const PROVIDER_LOGS_STALE_TIME = 30 * 1000;
 
 const PROVIDER_REALTIME_TOPICS = ['provider', 'reconciliation', 'model'];
 
@@ -15,13 +24,8 @@ let providersRealtimeCleanup = null;
 let providersRealtimeQueryClient = null;
 let providersRealtimeInitPromise = null;
 
-function unwrapEventData(data) {
-    return data?.data ?? data ?? {};
-}
-
-function extractProviderId(data) {
-    const payload = unwrapEventData(data);
-    return payload.provider_id ?? payload.providerId ?? payload.id ?? null;
+async function fetchProvidersList() {
+    return normalizeProvidersPayload(await providersApi.list());
 }
 
 function normalizeProvidersPayload(payload) {
@@ -61,16 +65,6 @@ function mergeRuntimeState(currentProviders, event) {
     }));
 }
 
-function normalizeReconciliationStatus(status) {
-    if (['started', 'queued'].includes(status)) {
-        return 'queued';
-    }
-    if (['running', 'progress', 'reconciling'].includes(status)) {
-        return 'reconciling';
-    }
-    return status || 'idle';
-}
-
 function mergeReconciliationState(currentProviders, event) {
     const payload = unwrapEventData(event);
     const providerId = extractProviderId(payload);
@@ -80,18 +74,7 @@ function mergeReconciliationState(currentProviders, event) {
 
     return patchProviders(currentProviders, providerId, (provider) => ({
         ...provider,
-        reconciliation_state: {
-            ...(provider.reconciliation_state || {}),
-            provider_id: providerId,
-            status: normalizeReconciliationStatus(payload.status),
-            phase: payload.phase ?? provider.reconciliation_state?.phase ?? null,
-            message: payload.message ?? provider.reconciliation_state?.message ?? '',
-            stats: payload.stats ?? provider.reconciliation_state?.stats ?? {},
-            active_downloads: payload.active_downloads ?? provider.reconciliation_state?.active_downloads ?? [],
-            errors: payload.errors ?? provider.reconciliation_state?.errors ?? [],
-            current_download: payload.current_download ?? provider.reconciliation_state?.current_download ?? null,
-            updated_at: payload.updated_at ?? provider.reconciliation_state?.updated_at ?? null,
-        },
+        reconciliation_state: normalizeReconciliationState(payload, provider.reconciliation_state || {}),
     }));
 }
 
@@ -203,8 +186,8 @@ export function useProvidersPageData({ realtime = true } = {}) {
 
     const providersQuery = useQuery({
         queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers,
-        queryFn: async () => normalizeProvidersPayload(await providersApi.list()),
-        staleTime: 15 * 1000,
+        queryFn: fetchProvidersList,
+        staleTime: PROVIDERS_STALE_TIME,
         refetchOnWindowFocus: true,
     });
 
@@ -245,6 +228,79 @@ export function useProvidersPageData({ realtime = true } = {}) {
         lbStats: loadBalancerQuery.data?.stats || null,
         isLoading: providersQuery.isLoading || loadBalancerQuery.isLoading,
         refreshAll,
+    };
+}
+
+export function useProviderReconciliationState(providerId, { realtime = true } = {}) {
+    const queryClient = useQueryClient();
+
+    const providersQuery = useQuery({
+        queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers,
+        queryFn: fetchProvidersList,
+        staleTime: PROVIDERS_STALE_TIME,
+        refetchOnWindowFocus: true,
+        enabled: Boolean(providerId),
+        select: (providers) => {
+            const provider = providers.find((entry) => entry.id === providerId);
+            if (!provider) {
+                return null;
+            }
+            return normalizeReconciliationState(provider.reconciliation_state || {}, {
+                provider_id: provider.id,
+            });
+        },
+    });
+
+    useEffect(() => {
+        if (!realtime) {
+            return undefined;
+        }
+
+        providersRealtimeConsumers += 1;
+        ensureProvidersRealtime(queryClient).catch((error) => {
+            console.error('[useProviderReconciliationState] WebSocket subscription failed:', error);
+        });
+
+        return () => {
+            providersRealtimeConsumers = Math.max(0, providersRealtimeConsumers - 1);
+            if (providersRealtimeConsumers === 0) {
+                providersRealtimeCleanup?.();
+            }
+        };
+    }, [queryClient, realtime]);
+
+    return {
+        reconciliationState: providersQuery.data,
+        isLoading: providersQuery.isLoading,
+        isFetching: providersQuery.isFetching,
+    };
+}
+
+export function useProviderLogs(providerId, { tail = 200 } = {}) {
+    const queryKey = PROVIDERS_PAGE_QUERY_KEYS.providerLogs(providerId, tail);
+
+    const logsQuery = useQuery({
+        queryKey,
+        queryFn: () => providersApi.getContainerLogs(providerId, tail),
+        enabled: false,
+        staleTime: PROVIDER_LOGS_STALE_TIME,
+    });
+
+    const fetchLogs = async () => {
+        if (!providerId) {
+            return { logs: '' };
+        }
+        const result = await logsQuery.refetch();
+        if (result.error) {
+            throw result.error;
+        }
+        return result.data || { logs: '' };
+    };
+
+    return {
+        logs: logsQuery.data?.logs || '',
+        fetchLogs,
+        isLoading: logsQuery.isFetching,
     };
 }
 
