@@ -18,7 +18,7 @@ import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { api, createIdempotencyKey } from '../api';
+import { api, generateApi, createIdempotencyKey } from '../api';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -343,7 +343,7 @@ export default function SimpleGenerator() {
             };
 
             console.log('[Generate] Sending POST to /api/generate...');
-            const data = await api.post('/api/generate', { workflow, metadata }, {
+            const data = await generateApi.workflow(workflow, metadata, {
                 idempotencyKey: createIdempotencyKey('generate-simple')
             });
             console.log('[Generate] Response received:', data);
@@ -473,7 +473,7 @@ export default function SimpleGenerator() {
                     adetailerModel
                 };
 
-                jobs.push(api.post('/api/generate', { workflow, metadata }, {
+                jobs.push(generateApi.workflow(workflow, metadata, {
                     idempotencyKey: createIdempotencyKey(`generate-variation-${i}`)
                 }));
             }

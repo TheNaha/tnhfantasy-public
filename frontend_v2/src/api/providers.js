@@ -45,14 +45,17 @@ export const providersApi = {
     // Load Balancing
     // -------------------------------------------------------------------------
 
-    /** Get the current load balancing strategy configuration. */
-    getLoadBalancing: () => api.get('/api/providers/load-balancing'),
+    /**
+     * Get the current load balancing strategy configuration.
+     * Canonical endpoint: /api/providers/config/load-balancing
+     */
+    getLoadBalancing: () => api.get('/api/providers/config/load-balancing'),
 
     /**
      * Update the load balancing strategy.
      * @param {object} config - e.g. { strategy: 'least-connections' }
      */
-    updateLoadBalancing: (config) => api.put('/api/providers/load-balancing', config),
+    updateLoadBalancing: (config) => api.put('/api/providers/config/load-balancing', config),
 
     /**
      * Trigger a full model reconciliation for a single provider.
@@ -69,11 +72,11 @@ export const providersApi = {
     getStatusCard: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
 
     /** Backward-compatible alias for single-provider status-card payload. */
-    getStatus: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
+    getStatus: (providerId) => providersApi.getStatusCard(providerId),
 
     // Aliases kept for backward compatibility with older call-sites
-    getLoadBalancerConfig: () => api.get('/api/providers/config/load-balancing'),
-    updateLoadBalancerConfig: (config) => api.put('/api/providers/load-balancing', config),
+    getLoadBalancerConfig: () => providersApi.getLoadBalancing(),
+    updateLoadBalancerConfig: (config) => providersApi.updateLoadBalancing(config),
 
     // -------------------------------------------------------------------------
     // Container management

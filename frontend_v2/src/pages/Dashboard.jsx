@@ -33,6 +33,7 @@ import StatsPanel from '../components/stats/StatsPanel';
 import EmptyState from '../components/EmptyState';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
+import { useGalleryAutoRefresh } from '../hooks/useGalleryAutoRefresh';
 import {
     buildGeneratorStateFromMetadata,
     hydrateGeneratorStateModelVisuals,
@@ -81,8 +82,8 @@ export default function Dashboard() {
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
         await storeDeleteJob(jobId);
-        queryClient.invalidateQueries({ queryKey: ['gallery'] });
-    }, [storeDeleteJob, queryClient]);
+        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+    }, [storeDeleteJob, queryClient, filters]);
 
     // Wrapped deleteJob with confirmation modal for card dismiss button
     const handleJobDelete = useCallback((jobId) => {
@@ -172,9 +173,6 @@ export default function Dashboard() {
         selectImage(image);
     }, [selectImage]);
 
-    // Track last completed job to avoid duplicate refreshes
-    const lastCompletedJobRef = useRef(null);
-
     // Data Fetching
     const {
         data,
@@ -224,21 +222,13 @@ export default function Dashboard() {
     // Use lastCompletedJob from store which gets set when job.completed WebSocket event fires
     const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
     
-    useEffect(() => {
-        if (lastCompletedJob && lastCompletedJob.outputs && lastCompletedJob.outputs.length > 0) {
-            // Check if this is a new completion we haven't handled yet
-            if (lastCompletedJobRef.current !== lastCompletedJob.id) {
-                lastCompletedJobRef.current = lastCompletedJob.id;
-                if (autoRefreshOnJobComplete) {
-                    // Invalidate all gallery queries regardless of filters
-                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
-                    toast.success("🎉 Generation complete! Gallery updated.", {
-                        duration: toastSuccessDuration,
-                    });
-                }
-            }
-        }
-    }, [lastCompletedJob, queryClient, autoRefreshOnJobComplete, toastSuccessDuration]);
+    useGalleryAutoRefresh({
+        lastCompletedJob,
+        autoRefreshOnJobComplete,
+        queryClient,
+        filters,
+        toastSuccessDuration,
+    });
 
     // Keyboard shortcuts (ESC to close modals)
     useKeyboardShortcuts({
@@ -275,7 +265,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple([filename]);
-                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
+                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
                     if (selectedImage?.name === filename) closeSelectedImage();
                     toast.success(`Successfully deleted ${filename}`, {
                         icon: '🗑️',
@@ -289,7 +279,7 @@ export default function Dashboard() {
                 }
             }
         });
-    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration]);
+    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters]);
 
     const useParameters = useCallback(async () => {
         if (!metadata) return;
@@ -394,7 +384,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
+                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
                     setSelectedFiles(new Set());
                     setSelectionMode(false);
                     toast.success(`Deleted ${selectedFiles.size} images`);
@@ -404,7 +394,7 @@ export default function Dashboard() {
                 }
             }
         });
-    }, [queryClient, selectedFiles]);
+    }, [queryClient, selectedFiles, filters]);
 
     const handleCancelSelectionMode = useCallback(() => {
         setSelectionMode(false);

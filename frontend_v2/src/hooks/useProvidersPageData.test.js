@@ -31,7 +31,7 @@ const websocketMock = vi.hoisted(() => {
 vi.mock('../api', () => ({
     providersApi: {
         list: vi.fn(),
-        getLoadBalancerConfig: vi.fn(),
+        getLoadBalancing: vi.fn(),
         getContainerLogs: vi.fn(),
     },
 }));
@@ -107,7 +107,7 @@ describe('useProvidersPageData', () => {
                 credential_summary: {},
             }],
         });
-        providersApi.getLoadBalancerConfig.mockResolvedValue({
+        providersApi.getLoadBalancing.mockResolvedValue({
             config: { strategy: 'round-robin', fallback_enabled: true },
             stats: { total_providers: 1, provider_stats: [] },
         });

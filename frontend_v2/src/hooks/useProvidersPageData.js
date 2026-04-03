@@ -19,11 +19,7 @@ const PROVIDERS_STALE_TIME = 15 * 1000;
 const PROVIDER_LOGS_STALE_TIME = 30 * 1000;
 
 const PROVIDER_REALTIME_TOPICS = ['provider', 'reconciliation', 'model'];
-
-let providersRealtimeConsumers = 0;
-let providersRealtimeCleanup = null;
-let providersRealtimeQueryClient = null;
-let providersRealtimeInitPromise = null;
+const providersRealtimeByClient = new WeakMap();
 
 async function fetchProvidersList() {
     return normalizeProvidersPayload(await providersApi.list());
@@ -127,21 +123,31 @@ function mergeModelStatusState(currentProviders, event) {
     return { providers, patched: didPatch };
 }
 
+function getProvidersRealtimeState(queryClient) {
+    let realtimeState = providersRealtimeByClient.get(queryClient);
+    if (!realtimeState) {
+        realtimeState = {
+            consumers: 0,
+            cleanup: null,
+            initPromise: null,
+        };
+        providersRealtimeByClient.set(queryClient, realtimeState);
+    }
+    return realtimeState;
+}
+
 async function ensureProvidersRealtime(queryClient) {
-    if (providersRealtimeCleanup && providersRealtimeQueryClient === queryClient) {
+    const realtimeState = getProvidersRealtimeState(queryClient);
+
+    if (realtimeState.cleanup) {
         return;
     }
 
-    if (providersRealtimeInitPromise) {
-        return providersRealtimeInitPromise;
+    if (realtimeState.initPromise) {
+        return realtimeState.initPromise;
     }
 
-    providersRealtimeInitPromise = (async () => {
-        if (providersRealtimeCleanup && providersRealtimeQueryClient !== queryClient) {
-            providersRealtimeCleanup();
-            providersRealtimeCleanup = null;
-        }
-
+    realtimeState.initPromise = (async () => {
         await ws.connect();
         await ws.subscribe(PROVIDER_REALTIME_TOPICS);
 
@@ -212,18 +218,16 @@ async function ensureProvidersRealtime(queryClient) {
             }
         }));
 
-        providersRealtimeQueryClient = queryClient;
-        providersRealtimeCleanup = () => {
+        realtimeState.cleanup = () => {
             unsubs.forEach((unsub) => unsub?.());
             ws.unsubscribe(PROVIDER_REALTIME_TOPICS);
-            providersRealtimeCleanup = null;
-            providersRealtimeQueryClient = null;
+            realtimeState.cleanup = null;
         };
     })().finally(() => {
-        providersRealtimeInitPromise = null;
+        realtimeState.initPromise = null;
     });
 
-    return providersRealtimeInitPromise;
+    return realtimeState.initPromise;
 }
 
 export function useProvidersPageData({ realtime = true } = {}) {
@@ -238,7 +242,7 @@ export function useProvidersPageData({ realtime = true } = {}) {
 
     const loadBalancerQuery = useQuery({
         queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer,
-        queryFn: () => providersApi.getLoadBalancerConfig(),
+        queryFn: () => providersApi.getLoadBalancing(),
         staleTime: 30 * 1000,
         refetchOnWindowFocus: true,
     });
@@ -247,15 +251,18 @@ export function useProvidersPageData({ realtime = true } = {}) {
         if (!realtime) {
             return undefined;
         }
-        providersRealtimeConsumers += 1;
+
+        const realtimeState = getProvidersRealtimeState(queryClient);
+        realtimeState.consumers += 1;
+
         ensureProvidersRealtime(queryClient).catch((error) => {
             console.error('[useProvidersPageData] WebSocket subscription failed:', error);
         });
 
         return () => {
-            providersRealtimeConsumers = Math.max(0, providersRealtimeConsumers - 1);
-            if (providersRealtimeConsumers === 0) {
-                providersRealtimeCleanup?.();
+            realtimeState.consumers = Math.max(0, realtimeState.consumers - 1);
+            if (realtimeState.consumers === 0) {
+                realtimeState.cleanup?.();
             }
         };
     }, [queryClient, realtime]);
@@ -301,15 +308,17 @@ export function useProviderReconciliationState(providerId, { realtime = true } =
             return undefined;
         }
 
-        providersRealtimeConsumers += 1;
+        const realtimeState = getProvidersRealtimeState(queryClient);
+        realtimeState.consumers += 1;
+
         ensureProvidersRealtime(queryClient).catch((error) => {
             console.error('[useProviderReconciliationState] WebSocket subscription failed:', error);
         });
 
         return () => {
-            providersRealtimeConsumers = Math.max(0, providersRealtimeConsumers - 1);
-            if (providersRealtimeConsumers === 0) {
-                providersRealtimeCleanup?.();
+            realtimeState.consumers = Math.max(0, realtimeState.consumers - 1);
+            if (realtimeState.consumers === 0) {
+                realtimeState.cleanup?.();
             }
         };
     }, [queryClient, realtime]);
@@ -450,8 +459,8 @@ export function useProviderMutations() {
             });
         },
         async updateLoadBalancerStrategy(strategy, currentConfig = null) {
-            const config = currentConfig || (await providersApi.getLoadBalancerConfig()).config || {};
-            const result = await providersApi.updateLoadBalancerConfig({ ...config, strategy });
+            const config = currentConfig || (await providersApi.getLoadBalancing()).config || {};
+            const result = await providersApi.updateLoadBalancing({ ...config, strategy });
             await invalidateProviders();
             return result;
         },

@@ -69,7 +69,7 @@ const useStore = create(
                 try {
                     // Check for localStorage migration
                     const migrated = localStorage.getItem(MIGRATION_KEY);
-                    if (!migrated) {
+                    if (migrated !== 'true') {
                         const oldData = localStorage.getItem(OLD_STORAGE_KEY);
                         if (oldData) {
                             try {
@@ -94,7 +94,7 @@ const useStore = create(
                                 localStorage.setItem(MIGRATION_KEY, 'true');
                             } catch (e) {
                                 console.warn('[Store] Collection migration failed:', e);
-                                localStorage.setItem(MIGRATION_KEY, 'failed');
+                                localStorage.removeItem(MIGRATION_KEY);
                             }
                         } else {
                             localStorage.setItem(MIGRATION_KEY, 'true');

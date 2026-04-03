@@ -95,11 +95,27 @@ def get_modal_function(func_name: str):
 @app.get("/health")
 async def health_check():
     """Container health check endpoint."""
+    missing = []
+    if not MODAL_APP_NAME:
+        missing.append("MODAL_APP_NAME")
+
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "provider_id": PROVIDER_ID,
+                "ready": False,
+                "missing": missing,
+            },
+        )
+
     return {
         "status": "healthy",
         "provider_id": PROVIDER_ID,
         "modal_username": MODAL_USERNAME,
         "modal_app": MODAL_APP_NAME,
+        "ready": True,
     }
 
 

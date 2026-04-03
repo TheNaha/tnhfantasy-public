@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
-import { api, createIdempotencyKey } from '../api';
+import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
@@ -103,7 +103,7 @@ export default function Img2ImgGenerator() {
                 loras: selectedLoras
             };
 
-            await api.post('/api/generate', { workflow, metadata }, {
+            await generateApi.workflow(workflow, metadata, {
                 idempotencyKey: createIdempotencyKey('generate-img2img')
             });
 

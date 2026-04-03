@@ -101,12 +101,32 @@ def get_beam_headers() -> Dict[str, str]:
 @app.get("/health")
 async def health_check():
     """Container health check endpoint."""
+    missing = []
+    if not BEAM_API_KEY:
+        missing.append("BEAM_API_KEY")
+    if not BEAM_GPU_URL:
+        missing.append("BEAM_GPU_URL")
+    if not BEAM_STORAGE_URL:
+        missing.append("BEAM_STORAGE_URL")
+
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "provider_id": PROVIDER_ID,
+                "ready": False,
+                "missing": missing,
+            },
+        )
+
     return {
         "status": "healthy",
         "provider_id": PROVIDER_ID,
         "gpu_endpoint": BEAM_GPU_URL or "not configured",
         "storage_endpoint": BEAM_STORAGE_URL or "not configured",
         "has_api_key": bool(BEAM_API_KEY),
+        "ready": True,
     }
 
 

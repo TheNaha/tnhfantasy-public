@@ -8,6 +8,34 @@
 
 import api, { createIdempotencyKey } from './client';
 
+const LEGACY_PRESET_STORAGE_KEY = 'comfy-generator-presets';
+
+function readLegacyPresets() {
+    if (typeof window === 'undefined') {
+        return [];
+    }
+
+    try {
+        const raw = window.localStorage.getItem(LEGACY_PRESET_STORAGE_KEY);
+        if (!raw) {
+            return [];
+        }
+
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeLegacyPresets(presets) {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    window.localStorage.setItem(LEGACY_PRESET_STORAGE_KEY, JSON.stringify(presets));
+}
+
 export const generateApi = {
     /**
      * Submit a simple generation request.
@@ -32,10 +60,15 @@ export const generateApi = {
      * @param {object} [params]  - Additional metadata to store with the job.
      * @returns {Promise<{job: object}>} Newly created job record.
      */
-    workflow: (workflow, params = {}) => api.post('/api/generate/workflow', {
-        workflow,
-        ...params,
-    }),
+    workflow: (workflow, params = {}, options = {}) => {
+        const metadata = params?.metadata ?? params ?? {};
+        return api.post('/api/generate', {
+            workflow,
+            metadata,
+        }, {
+            idempotencyKey: options.idempotencyKey || createIdempotencyKey('generate-workflow'),
+        });
+    },
 
     /**
      * Fetch available generation presets from the server.
@@ -45,7 +78,7 @@ export const generateApi = {
      *
      * @returns {Promise<{presets: object[]}>}
      */
-    getPresets: () => api.get('/api/generate/presets'),
+    getPresets: async () => ({ presets: readLegacyPresets() }),
 
     /**
      * Persist a new generation preset on the server.
@@ -53,7 +86,16 @@ export const generateApi = {
      * @param {object} preset - Preset object with `name`, `description`, and `data` fields.
      * @returns {Promise<object>} Saved preset record.
      */
-    savePreset: (preset) => api.post('/api/generate/presets', preset),
+    savePreset: async (preset) => {
+        const presets = readLegacyPresets();
+        const savedPreset = {
+            ...preset,
+            id: preset?.id ?? Date.now(),
+        };
+        presets.push(savedPreset);
+        writeLegacyPresets(presets);
+        return savedPreset;
+    },
 };
 
 export default generateApi;

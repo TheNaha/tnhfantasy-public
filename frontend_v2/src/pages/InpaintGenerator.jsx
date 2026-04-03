@@ -14,7 +14,7 @@ import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
-import { filesApi, api, createIdempotencyKey } from '../api';
+import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
@@ -152,7 +152,7 @@ export default function InpaintGenerator() {
                 usedInpaintModel: !!inpaintCheckpoint
             };
 
-            await api.post('/api/generate', { workflow, metadata }, {
+            await generateApi.workflow(workflow, metadata, {
                 idempotencyKey: createIdempotencyKey('generate-inpaint')
             });
 

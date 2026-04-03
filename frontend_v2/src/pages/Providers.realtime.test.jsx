@@ -13,7 +13,7 @@ function emitWsEvent(eventType, payload) {
 
 const providersApiMock = vi.hoisted(() => ({
     list: vi.fn(),
-    getLoadBalancerConfig: vi.fn(),
+    getLoadBalancing: vi.fn(),
     getContainerLogs: vi.fn(),
 }));
 
@@ -156,7 +156,7 @@ describe('Providers realtime integration', () => {
             providers: [createProviderRecord()],
         });
 
-        providersApiMock.getLoadBalancerConfig.mockResolvedValue({
+        providersApiMock.getLoadBalancing.mockResolvedValue({
             config: {
                 strategy: 'round-robin',
                 fallback_enabled: true,

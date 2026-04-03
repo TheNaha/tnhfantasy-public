@@ -1,11 +1,11 @@
 # Modal provider implementation
 import os
-import json
 import base64
 import urllib.parse
 from typing import Dict, List, AsyncIterator, Any, Optional
 
 from .base import ServerlessProvider, FileProxyProvider
+from .ndjson import iter_ndjson_payloads
 from .runtime import get_provider_worker_base_url
 from infrastructure.http_client import get_http_client
 
@@ -89,25 +89,12 @@ class ModalProvider(ServerlessProvider):
                 if response.status_code != 200:
                     yield {"status": "error", "error": f"Worker returned {response.status_code}"}
                     return
-                
-                # Read streaming NDJSON response
-                buffer = ""
-                async for chunk in response.aiter_bytes():
-                    buffer += chunk.decode()
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                yield data
-                            except json.JSONDecodeError:
-                                pass
 
-                if buffer.strip():
-                    try:
-                        yield json.loads(buffer.strip())
-                    except json.JSONDecodeError:
-                        pass
+                async for payload in iter_ndjson_payloads(
+                    response.aiter_bytes(),
+                    source=f"modal_provider:{self.provider_id}",
+                ):
+                    yield payload
     
     async def download_model(
         self,

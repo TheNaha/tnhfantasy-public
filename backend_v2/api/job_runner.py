@@ -176,18 +176,17 @@ async def execute_job(
 
             try:
                 if runtime.mode == "container_http":
-                    final_result = await asyncio.wait_for(
-                        call_provider_fn(
-                            worker_url=runtime.worker_url,
-                            workflow=job.workflow,
-                            job_id=job_id,
-                            job_service=job_service,
-                            total_nodes=total_nodes,
-                            timeout=timeout,
-                            use_snapshot=use_snapshot,
-                            provider_id=current_provider.id,
-                        ),
+                    # call_provider_fn already enforces stream/client timeout semantics.
+                    # Avoid double-wrapping with asyncio.wait_for to keep timeout ownership clear.
+                    final_result = await call_provider_fn(
+                        worker_url=runtime.worker_url,
+                        workflow=job.workflow,
+                        job_id=job_id,
+                        job_service=job_service,
+                        total_nodes=total_nodes,
                         timeout=timeout,
+                        use_snapshot=use_snapshot,
+                        provider_id=current_provider.id,
                     )
                 elif runtime.mode == "external_worker":
                     from api.routes.worker_ws import dispatch_job_to_worker
