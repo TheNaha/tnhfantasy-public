@@ -33,7 +33,10 @@ import StatsPanel from '../components/stats/StatsPanel';
 import EmptyState from '../components/EmptyState';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
-import { buildGeneratorStateFromMetadata } from '../utils/reuseParameters';
+import {
+    buildGeneratorStateFromMetadata,
+    hydrateGeneratorStateModelVisuals,
+} from '../utils/reuseParameters';
 
 export default function Dashboard() {
     const navigate = useNavigate();
@@ -288,7 +291,7 @@ export default function Dashboard() {
         });
     }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration]);
 
-    const useParameters = useCallback(() => {
+    const useParameters = useCallback(async () => {
         if (!metadata) return;
 
         const reuseState = buildGeneratorStateFromMetadata(metadata);
@@ -300,7 +303,9 @@ export default function Dashboard() {
             return;
         }
 
-        useGeneratorStore.getState().setAll(reuseState);
+        const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
+
+        useGeneratorStore.getState().setAll(hydratedState);
 
         useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
 

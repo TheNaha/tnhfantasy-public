@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildGeneratorStateFromMetadata } from './reuseParameters';
+import {
+    buildGeneratorStateFromMetadata,
+    hydrateGeneratorStateModelVisuals,
+} from './reuseParameters';
 
 describe('buildGeneratorStateFromMetadata', () => {
     it('normalizes direct metadata fields and aliases for generator state', () => {
@@ -150,5 +153,76 @@ describe('buildGeneratorStateFromMetadata', () => {
         expect(buildGeneratorStateFromMetadata(null)).toEqual({});
         expect(buildGeneratorStateFromMetadata(undefined)).toEqual({});
         expect(buildGeneratorStateFromMetadata('not-an-object')).toEqual({});
+    });
+
+    it('hydrates checkpoint and lora visuals from catalog lookup when missing', async () => {
+        const lookupModel = async (directory, modelName) => {
+            if (directory === 'models/checkpoints' && modelName === 'nova_xl.safetensors') {
+                return {
+                    name: 'nova_xl.safetensors',
+                    display_name: 'Nova XL',
+                    civitai_id: 123,
+                    preview: 'https://example.com/checkpoint-preview.jpg',
+                };
+            }
+
+            if (directory === 'models/loras' && modelName === 'detail_lora.safetensors') {
+                return {
+                    name: 'detail_lora.safetensors',
+                    display_name: 'Detail LoRA',
+                    civitai_id: 456,
+                    preview: 'https://example.com/lora-preview.jpg',
+                };
+            }
+
+            return null;
+        };
+
+        const hydrated = await hydrateGeneratorStateModelVisuals({
+            selectedCheckpoint: {
+                name: 'nova_xl.safetensors',
+                display_name: 'Nova XL',
+            },
+            selectedLoras: [
+                {
+                    name: 'detail_lora.safetensors',
+                    strength: 0.8,
+                },
+            ],
+        }, lookupModel);
+
+        expect(hydrated.selectedCheckpoint?.preview).toBe('https://example.com/checkpoint-preview.jpg');
+        expect(hydrated.selectedCheckpoint?.civitai_id).toBe(123);
+        expect(hydrated.selectedLoras?.[0]?.preview).toBe('https://example.com/lora-preview.jpg');
+        expect(hydrated.selectedLoras?.[0]?.civitai_id).toBe(456);
+        expect(hydrated.selectedLoras?.[0]?.strength).toBe(0.8);
+    });
+
+    it('does not overwrite existing model visuals during hydration', async () => {
+        const lookupModel = async () => ({
+            preview: 'https://example.com/new-preview.jpg',
+            civitai_id: 999,
+        });
+
+        const hydrated = await hydrateGeneratorStateModelVisuals({
+            selectedCheckpoint: {
+                name: 'checkpoint.safetensors',
+                preview: 'https://example.com/existing-preview.jpg',
+                civitai_id: 111,
+            },
+            selectedLoras: [
+                {
+                    name: 'my_lora.safetensors',
+                    preview: 'https://example.com/existing-lora-preview.jpg',
+                    civitai_id: 222,
+                    strength: 1.0,
+                },
+            ],
+        }, lookupModel);
+
+        expect(hydrated.selectedCheckpoint?.preview).toBe('https://example.com/existing-preview.jpg');
+        expect(hydrated.selectedCheckpoint?.civitai_id).toBe(111);
+        expect(hydrated.selectedLoras?.[0]?.preview).toBe('https://example.com/existing-lora-preview.jpg');
+        expect(hydrated.selectedLoras?.[0]?.civitai_id).toBe(222);
     });
 });

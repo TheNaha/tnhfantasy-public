@@ -23,7 +23,10 @@ import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
-import { buildGeneratorStateFromMetadata } from "../../utils/reuseParameters";
+import {
+  buildGeneratorStateFromMetadata,
+  hydrateGeneratorStateModelVisuals,
+} from "../../utils/reuseParameters";
 
 const FeedCard = memo(function FeedCard({
   item,
@@ -86,7 +89,9 @@ const FeedCard = memo(function FeedCard({
       return;
     }
 
-    useGeneratorStore.getState().setAll(reuseState);
+    const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
+
+    useGeneratorStore.getState().setAll(hydratedState);
 
     // Disable auto-randomize seed to allow reproduction of the same image
     useSettingsStore

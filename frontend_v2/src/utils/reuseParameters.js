@@ -1,3 +1,5 @@
+import { filesApi } from '../api';
+
 function hasOwn(obj, key) {
     return Boolean(obj && Object.prototype.hasOwnProperty.call(obj, key));
 }
@@ -151,6 +153,157 @@ function normalizeCheckpoint(checkpoint) {
     }
 
     return null;
+}
+
+function normalizeName(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+    return value.trim().toLowerCase();
+}
+
+function candidateNames(model) {
+    const names = [
+        model?.name,
+        model?.display_name,
+        model?.filename,
+        model?.file?.filename,
+    ].filter((value) => typeof value === 'string' && value.trim() !== '');
+
+    return Array.from(new Set(names));
+}
+
+function pickBestModelMatch(models, targetName) {
+    if (!Array.isArray(models) || models.length === 0) {
+        return null;
+    }
+
+    const normalizedTarget = normalizeName(targetName);
+    if (!normalizedTarget) {
+        return null;
+    }
+
+    const exact = models.find((model) => (
+        candidateNames(model).some((name) => normalizeName(name) === normalizedTarget)
+    ));
+    if (exact) {
+        return exact;
+    }
+
+    const suffixMatch = models.find((model) => (
+        candidateNames(model).some((name) => normalizeName(name).endsWith(`/${normalizedTarget}`) || normalizeName(name).includes(normalizedTarget))
+    ));
+
+    return suffixMatch || null;
+}
+
+async function defaultLookupModel(directory, modelName) {
+    if (!modelName) {
+        return null;
+    }
+
+    const response = await filesApi.list({
+        directory,
+        search: modelName,
+        limit: 50,
+        offset: 0,
+        sort: 'name_asc',
+    });
+
+    const files = response?.files || [];
+    return pickBestModelMatch(files, modelName);
+}
+
+function missingModelVisuals(model) {
+    if (!model || typeof model !== 'object') {
+        return false;
+    }
+
+    const hasPreview = typeof model.preview === 'string' && model.preview.trim() !== '';
+    const hasCivitaiId = model.civitai_id !== undefined && model.civitai_id !== null;
+    return !hasPreview && !hasCivitaiId;
+}
+
+function mergeModelVisuals(targetModel, sourceModel) {
+    if (!sourceModel || typeof sourceModel !== 'object') {
+        return targetModel;
+    }
+
+    return {
+        ...sourceModel,
+        ...targetModel,
+        preview: targetModel.preview || sourceModel.preview,
+        civitai_id: targetModel.civitai_id ?? sourceModel.civitai_id,
+        display_name: targetModel.display_name || sourceModel.display_name,
+    };
+}
+
+export async function hydrateGeneratorStateModelVisuals(
+    stateUpdates,
+    lookupModel = defaultLookupModel,
+) {
+    if (!stateUpdates || typeof stateUpdates !== 'object') {
+        return stateUpdates;
+    }
+
+    const hydrated = { ...stateUpdates };
+
+    const checkpoint = hydrated.selectedCheckpoint;
+    if (checkpoint && missingModelVisuals(checkpoint)) {
+        const checkpointName = checkpoint.name || checkpoint.display_name;
+
+        if (checkpointName) {
+            const [checkpointMatch, unetMatch] = await Promise.all([
+                lookupModel('models/checkpoints', checkpointName).catch(() => null),
+                lookupModel('models/unet', checkpointName).catch(() => null),
+            ]);
+
+            const matchedCheckpoint = checkpointMatch || unetMatch;
+            if (matchedCheckpoint) {
+                hydrated.selectedCheckpoint = mergeModelVisuals(checkpoint, matchedCheckpoint);
+            }
+        }
+    }
+
+    if (Array.isArray(hydrated.selectedLoras) && hydrated.selectedLoras.length > 0) {
+        const loraNames = Array.from(new Set(
+            hydrated.selectedLoras
+                .filter((lora) => lora && missingModelVisuals(lora))
+                .map((lora) => lora.name || lora.display_name)
+                .filter(Boolean)
+        ));
+
+        if (loraNames.length > 0) {
+            const loraLookups = await Promise.all(
+                loraNames.map(async (loraName) => {
+                    const match = await lookupModel('models/loras', loraName).catch(() => null);
+                    return [loraName, match];
+                })
+            );
+
+            const loraByName = new Map(
+                loraLookups
+                    .filter(([, model]) => Boolean(model))
+                    .map(([name, model]) => [normalizeName(name), model])
+            );
+
+            hydrated.selectedLoras = hydrated.selectedLoras.map((lora) => {
+                if (!lora || !missingModelVisuals(lora)) {
+                    return lora;
+                }
+
+                const key = normalizeName(lora.name || lora.display_name);
+                const matchedLora = loraByName.get(key);
+                if (!matchedLora) {
+                    return lora;
+                }
+
+                return mergeModelVisuals(lora, matchedLora);
+            });
+        }
+    }
+
+    return hydrated;
 }
 
 function normalizeLoras(loras) {
