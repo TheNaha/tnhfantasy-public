@@ -20,8 +20,9 @@ export default function ModelImportCard({ model, onCancel }) {
 
     const selectedVersion = model.modelVersions?.find(v => v.id === parseInt(selectedVersionId)) || model.modelVersions?.[0];
     const primaryFile = selectedVersion?.files?.find(f => f.primary) || selectedVersion?.files?.[0];
+    const selectedVersionPreviewId = selectedVersion?.civitai_version_id || selectedVersion?.id;
     const previewImage = model.id ?
-        `/api/v2/models/preview/${model.id}${selectedVersion?.id ? `?version_id=${selectedVersion.id}` : ''}` :
+        `/api/v2/models/preview/${model.id}${selectedVersionPreviewId ? `?version_id=${selectedVersionPreviewId}&image_index=0` : '?image_index=0'}` :
         selectedVersion?.images?.[0]?.url;
     const isSelectedVersionInstalled = installedVersions.includes(parseInt(selectedVersionId));
 

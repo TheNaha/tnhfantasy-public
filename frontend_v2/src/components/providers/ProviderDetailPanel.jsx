@@ -435,18 +435,76 @@ function SyncTab({
     modelSync, storage, reconciliation, capabilities, loading,
     onReconcile, onResetStatus, showReconciliation, setShowReconciliation, providerId,
 }) {
+    const dbModels = modelSync.total_models || 0;
+    const storageModels = storage.total || 0;
+    const reconciliationStatus = reconciliation.status || 'idle';
+    const storageEntries = Object.entries(storage.by_directory || {});
+    const modelDelta = Math.abs(dbModels - storageModels);
+
+    const barStyles = [
+        'from-cyan-500 to-blue-500',
+        'from-fuchsia-500 to-violet-500',
+        'from-emerald-500 to-teal-500',
+        'from-amber-500 to-orange-500',
+        'from-rose-500 to-pink-500',
+    ];
+
     return (
         <>
-            <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
-                <DataRow label="DB Sync" value={`${modelSync.total_models || 0} models`} />
-                <DataRow label="Provider Storage" value={`${storage.total || 0} models`} />
-                <StatusRow
-                    label="Reconciliation"
-                    value={humanize(reconciliation.status || 'idle')}
-                    tone={STATUS_TONE[reconciliation.status || 'idle']}
-                />
-                <DataRow label="Directory Breakdown" value={formatDir(storage.by_directory)} />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-blue-500/15 bg-blue-500/8 p-4">
+                    <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs uppercase tracking-wide text-blue-200/75">DB Sync</span>
+                        <Server size={14} className="text-blue-300" />
+                    </div>
+                    <div className="text-xl font-semibold text-white">{dbModels} models</div>
+                </div>
+
+                <div className="rounded-xl border border-purple-500/15 bg-purple-500/8 p-4">
+                    <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs uppercase tracking-wide text-purple-200/75">Provider Storage</span>
+                        <Download size={14} className="text-purple-300" />
+                    </div>
+                    <div className="text-xl font-semibold text-white">{storageModels} models</div>
+                </div>
+
+                <div className="rounded-xl border border-white/[0.08] bg-gray-900/60 p-4">
+                    <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs uppercase tracking-wide text-gray-500">Reconciliation</span>
+                        <Circle className={`fill-current ${statusDotClass(STATUS_TONE[reconciliationStatus])}`} size={8} />
+                    </div>
+                    <div className="text-lg font-medium text-white">{humanize(reconciliationStatus)}</div>
+                </div>
             </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4">
+                <div className="mb-3 flex items-center justify-between gap-4">
+                    <span className="text-xs uppercase tracking-wide text-gray-500">Directory Breakdown</span>
+                    <span className="text-xs text-gray-500">{storageEntries.length} directories</span>
+                </div>
+
+                {storageEntries.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                        {storageEntries.map(([dir, count]) => (
+                            <span
+                                key={dir}
+                                className="rounded-full border border-gray-700 bg-gray-800/70 px-2.5 py-1 text-xs text-gray-300"
+                            >
+                                {capitalize(dir)}: {count}
+                            </span>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-sm text-gray-500">No storage data yet</div>
+                )}
+            </div>
+
+            {modelDelta > 0 && (
+                <Notice
+                    tone="yellow"
+                    message={`Model count mismatch detected: DB reports ${dbModels} while provider storage reports ${storageModels}. Run reconciliation to align state.`}
+                />
+            )}
 
             <div className="flex flex-wrap gap-2">
                 {capabilities.reconcile && (
@@ -459,13 +517,14 @@ function SyncTab({
             </div>
 
             {/* Inline storage breakdown */}
-            {storage.by_directory && Object.keys(storage.by_directory).length > 0 && (
+            {storageEntries.length > 0 && (
                 <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-3">Storage by Directory</div>
                     <div className="space-y-2">
-                        {Object.entries(storage.by_directory).map(([dir, count]) => {
-                            const total = storage.total || 1;
+                        {storageEntries.map(([dir, count], index) => {
+                            const total = storageModels || 1;
                             const pct = Math.round((count / total) * 100);
+                            const barTone = barStyles[index % barStyles.length];
                             return (
                                 <div key={dir}>
                                     <div className="flex items-center justify-between text-xs mb-1">
@@ -474,7 +533,7 @@ function SyncTab({
                                     </div>
                                     <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
                                         <div
-                                            className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500"
+                                            className={`h-full rounded-full bg-gradient-to-r ${barTone}`}
                                             style={{ width: `${pct}%` }}
                                         />
                                     </div>

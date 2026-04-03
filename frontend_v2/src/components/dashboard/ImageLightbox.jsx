@@ -15,7 +15,8 @@ export default memo(function ImageLightbox({
     job, // Job info associated with this image
     onClose,
     onDelete,
-    onReuseParameters
+    onReuseParameters,
+    reuseInProgress = false,
 }) {
     const [imgIndex, setImgIndex] = useState(currentIndex);
 
@@ -267,9 +268,11 @@ export default memo(function ImageLightbox({
 
                                 <button
                                     onClick={onReuseParameters}
-                                    className="w-full bg-blue-600 hover:bg-blue-500 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-900/20"
+                                    disabled={reuseInProgress}
+                                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-900/20"
                                 >
-                                    <RefreshCw size={16} /> Reuse Parameters
+                                    {reuseInProgress ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                                    {reuseInProgress ? 'Loading Parameters...' : 'Reuse Parameters'}
                                 </button>
                             </div>
                         ) : (

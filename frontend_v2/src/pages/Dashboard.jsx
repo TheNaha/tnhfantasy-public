@@ -69,6 +69,15 @@ export default function Dashboard() {
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);
 
+    // Filters
+    const [showFavorites, setShowFavorites] = useState(false);
+    const [filters, setFilters] = useState({
+        search: '',
+        model: '',
+        sampler: '',
+        aspect_ratio: ''
+    });
+
     // Confirmation Modal
     const [confirmModal, setConfirmModal] = useState({
         isOpen: false,
@@ -108,6 +117,8 @@ export default function Dashboard() {
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
     const [showSelectCollection, setShowSelectCollection] = useState(false);
     const [showStatsPanel, setShowStatsPanel] = useState(false);
+    const [isReusingParameters, setIsReusingParameters] = useState(false);
+    const reuseParametersLockRef = useRef(false);
     const {
         selectedImage,
         metadata,
@@ -132,16 +143,6 @@ export default function Dashboard() {
         if (!selectedImage) return [];
         return selectedImage.siblingImages || [selectedImage];
     }, [selectedImage]);
-
-
-    // Filters
-    const [showFavorites, setShowFavorites] = useState(false);
-    const [filters, setFilters] = useState({
-        search: '',
-        model: '',
-        sampler: '',
-        aspect_ratio: ''
-    });
 
     // Batch Operations
     const [selectionMode, setSelectionMode] = useState(false);
@@ -282,28 +283,39 @@ export default function Dashboard() {
     }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters]);
 
     const useParameters = useCallback(async () => {
-        if (!metadata) return;
-
-        const reuseState = buildGeneratorStateFromMetadata(metadata);
-        if (Object.keys(reuseState).length === 0) {
-            toast.error('Could not parse reusable parameters from this image.', {
-                icon: '⚠️',
-                duration: toastErrorDuration,
-            });
+        if (reuseParametersLockRef.current) {
             return;
         }
 
-        const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
+        if (!metadata) return;
 
-        useGeneratorStore.getState().setAll(hydratedState);
+        reuseParametersLockRef.current = true;
+        setIsReusingParameters(true);
+        try {
+            const reuseState = buildGeneratorStateFromMetadata(metadata);
+            if (Object.keys(reuseState).length === 0) {
+                toast.error('Could not parse reusable parameters from this image.', {
+                    icon: '⚠️',
+                    duration: toastErrorDuration,
+                });
+                return;
+            }
 
-        useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
+            const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
 
-        toast.success('Parameters loaded! Auto-randomize seed disabled for reproduction.', {
-            icon: '🎯',
-            duration: toastSuccessDuration
-        });
-        navigate('/generate');
+            useGeneratorStore.getState().setAll(hydratedState);
+
+            useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
+
+            toast.success('Parameters loaded! Auto-randomize seed disabled for reproduction.', {
+                icon: '🎯',
+                duration: toastSuccessDuration
+            });
+            navigate('/generate');
+        } finally {
+            reuseParametersLockRef.current = false;
+            setIsReusingParameters(false);
+        }
     }, [metadata, navigate, toastErrorDuration, toastSuccessDuration]);
 
     const handlePullToRefresh = useCallback(async () => {
@@ -673,6 +685,7 @@ export default function Dashboard() {
                     onClose={closeSelectedImage}
                     onDelete={handleDelete}
                     onReuseParameters={useParameters}
+                    reuseInProgress={isReusingParameters}
                 />
             )}
 

@@ -916,81 +916,114 @@ async def search_huggingface(query: str, limit: int = 20):
 PREVIEW_CACHE_DIR = os.path.join(os.path.dirname(__file__), "../../cache/previews")
 
 
-def get_cache_path(model_id: int, version_id: int = None) -> str:
+def get_cache_path(model_id: int, version_id: int = None, image_index: int = 0) -> str:
     """Get cache path for a model preview image."""
     os.makedirs(PREVIEW_CACHE_DIR, exist_ok=True)
-    if version_id:
-        return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{version_id}.jpg")
-    return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}.jpg")
+    if version_id is not None:
+        return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{version_id}_{image_index}.img")
+    return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{image_index}.img")
 
 
-def fetch_civitai_preview(model_id: int, version_id: int = None) -> tuple:
+def _get_cache_meta_path(cache_path: str) -> str:
+    return f"{cache_path}.meta"
+
+
+def fetch_civitai_preview(model_id: int, version_id: int = None, image_index: int = 0) -> tuple:
     """Fetch preview image from CivitAI API and cache it."""
-    cache_path = get_cache_path(model_id, version_id)
-    
+    cache_path = get_cache_path(model_id, version_id, image_index)
+    cache_meta_path = _get_cache_meta_path(cache_path)
+
     # Check cache first
     if os.path.exists(cache_path):
         with open(cache_path, 'rb') as f:
-            return f.read(), "image/jpeg"
-    
+            cached_content = f.read()
+        cached_content_type = "image/jpeg"
+        if os.path.exists(cache_meta_path):
+            try:
+                with open(cache_meta_path, 'r', encoding='utf-8') as meta_file:
+                    cached_content_type = meta_file.read().strip() or cached_content_type
+            except Exception:
+                pass
+        return cached_content, cached_content_type
+
     # Fetch from CivitAI API
     try:
         api_url = f"https://civitai.com/api/v1/models/{model_id}"
         response = requests.get(api_url, timeout=10)
         response.raise_for_status()
         model_data = response.json()
-        
+
         # Get model versions
         model_versions = model_data.get('modelVersions', [])
         if not model_versions:
             return None, None
-        
+
         # Find target version
         target_version = None
-        if version_id:
+        if version_id is not None:
             target_version = next((v for v in model_versions if v.get('id') == version_id), None)
         if not target_version:
             target_version = model_versions[0]
-        
-        # Find first image (skip videos)
-        images = target_version.get('images', [])
-        image_url = None
-        for img in images:
-            if img.get('type', 'image').lower() == 'image':
-                image_url = img.get('url')
-                break
-        
-        # Fallback to first image
-        if not image_url and images:
-            image_url = images[0].get('url')
-        
+
+        # Keep only image entries and ignore video previews.
+        raw_images = target_version.get('images', [])
+        image_candidates = [
+            img for img in raw_images
+            if isinstance(img, dict)
+            and img.get('url')
+            and img.get('type', 'image').lower() != 'video'
+        ]
+
+        # Fallback: keep any URL if no explicit image candidates were found.
+        if not image_candidates:
+            image_candidates = [
+                img for img in raw_images
+                if isinstance(img, dict) and img.get('url')
+            ]
+
+        if not image_candidates:
+            return None, None
+
+        safe_image_index = min(max(image_index, 0), len(image_candidates) - 1)
+        image_url = image_candidates[safe_image_index].get('url')
         if not image_url:
             return None, None
-        
+
         # Fetch the image
         img_response = requests.get(image_url, timeout=30)
         img_response.raise_for_status()
         image_data = img_response.content
         content_type = img_response.headers.get('Content-Type', 'image/jpeg')
-        
-        # Cache it
+
+        # Cache bytes and content type
         with open(cache_path, 'wb') as f:
             f.write(image_data)
-        
+        with open(cache_meta_path, 'w', encoding='utf-8') as meta_file:
+            meta_file.write(content_type)
+
         return image_data, content_type
-        
+
     except Exception as e:
-        logger.warning("civitai_preview_fetch_failed", model_id=model_id, error=str(e))
+        logger.warning(
+            "civitai_preview_fetch_failed",
+            model_id=model_id,
+            version_id=version_id,
+            image_index=image_index,
+            error=str(e),
+        )
         return None, None
 
 
 @router.get("/preview/{model_id}")
-async def get_model_preview_image(model_id: int, version_id: int = None):
+async def get_model_preview_image(model_id: int, version_id: int = None, image_index: int = 0):
     """
     Fetch and cache model preview image from CivitAI.
     Automatically filters out videos and returns the first image.
     """
-    image_data, content_type = fetch_civitai_preview(model_id, version_id)
+    if image_index < 0:
+        raise HTTPException(status_code=400, detail="image_index must be >= 0")
+
+    image_data, content_type = fetch_civitai_preview(model_id, version_id, image_index)
     
     if not image_data:
         raise HTTPException(status_code=404, detail="Preview image not found")
@@ -999,7 +1032,7 @@ async def get_model_preview_image(model_id: int, version_id: int = None):
         content=image_data,
         media_type=content_type,
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400",
             "X-Cache-Source": "civitai-proxy"
         }
     )

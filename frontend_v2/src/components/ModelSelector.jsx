@@ -58,7 +58,16 @@ const ModelSelector = memo(function ModelSelector({
     if (!version) return model;
     const file = version.file || {};
     const versionImages = version.images || [];
-    const previewImage = versionImages[0]?.url || model.preview;
+    const selectedVersionPreviewId = version.civitai_version_id || version.id;
+    const previewImage = model.civitai_id
+      ? (() => {
+          const params = new URLSearchParams({ image_index: "0" });
+          if (selectedVersionPreviewId) {
+            params.set("version_id", String(selectedVersionPreviewId));
+          }
+          return `/api/v2/models/preview/${model.civitai_id}?${params.toString()}`;
+        })()
+      : (versionImages[0]?.url || model.preview);
 
     return {
       ...model,
@@ -76,6 +85,7 @@ const ModelSelector = memo(function ModelSelector({
       default_version: version.name,
       version_description: version.description || "",
       selectedVersionId: version.id,
+      selectedVersionPreviewId,
       // Size from version file
       size: file.size_kb ? file.size_kb * 1024 : model.size,
       // Keep original model reference for version switching
@@ -316,9 +326,14 @@ const ModelSelector = memo(function ModelSelector({
             {/* Preview Image */}
             {(() => {
               if (selectedModel?.civitai_id) {
+                const versionPreviewId = selectedModel.selectedVersionPreviewId || selectedModel.selectedVersionId;
+                const params = new URLSearchParams({ image_index: "0" });
+                if (versionPreviewId) {
+                  params.set("version_id", String(versionPreviewId));
+                }
                 return (
                   <img
-                    src={`/api/v2/models/preview/${selectedModel.civitai_id}`}
+                    src={`/api/v2/models/preview/${selectedModel.civitai_id}?${params.toString()}`}
                     alt={selectedModel?.display_name || selectedModel?.name}
                     className="w-10 h-10 rounded object-cover bg-gray-800 flex-shrink-0"
                     onError={(e) => {
@@ -810,7 +825,7 @@ const ModelSelector = memo(function ModelSelector({
                             if (model.civitai_id) {
                               return (
                                 <img
-                                  src={`/api/v2/models/preview/${model.civitai_id}`}
+                                  src={`/api/v2/models/preview/${model.civitai_id}?image_index=0`}
                                   alt={model.display_name || model.name}
                                   className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
                                   loading="lazy"

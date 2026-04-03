@@ -1,4 +1,4 @@
-import { useState, memo, useCallback } from "react";
+import { useState, useRef, memo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -37,6 +37,8 @@ const FeedCard = memo(function FeedCard({
   onDelete,
 }) {
   const [showDetails, setShowDetails] = useState(false);
+  const [reusing, setReusing] = useState(false);
+  const reuseLockRef = useRef(false);
   const navigate = useNavigate();
   const settings = useSettingsStore((state) => state.settings);
   const encodedName = encodeURIComponent(item.name);
@@ -68,45 +70,58 @@ const FeedCard = memo(function FeedCard({
   });
 
   const handleReuse = async () => {
-    // Fetch metadata if not loaded yet
-    let meta = metadata;
-    if (!meta) {
-      try {
-        meta = await loadMetadata();
-        if (!meta) {
-          console.error("Failed to load metadata");
-          return;
-        }
-      } catch (error) {
-        console.error("Error loading metadata:", error);
-        return;
-      }
-    }
-
-    const reuseState = buildGeneratorStateFromMetadata(meta);
-    if (Object.keys(reuseState).length === 0) {
-      toast.error("Could not parse reusable parameters from this image.");
+    if (reuseLockRef.current) {
       return;
     }
 
-    const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
+    reuseLockRef.current = true;
+    setReusing(true);
 
-    useGeneratorStore.getState().setAll(hydratedState);
+    try {
+      // Fetch metadata if not loaded yet
+      let meta = metadata;
+      if (!meta) {
+        try {
+          meta = await loadMetadata();
+          if (!meta) {
+            toast.error("Failed to load metadata");
+            return;
+          }
+        } catch (error) {
+          console.error("Error loading metadata:", error);
+          toast.error("Failed to load metadata");
+          return;
+        }
+      }
 
-    // Disable auto-randomize seed to allow reproduction of the same image
-    useSettingsStore
-      .getState()
-      .updateSetting("generator", "autoRandomizeSeed", false);
+      const reuseState = buildGeneratorStateFromMetadata(meta);
+      if (Object.keys(reuseState).length === 0) {
+        toast.error("Could not parse reusable parameters from this image.");
+        return;
+      }
 
-    toast.success(
-      "Parameters loaded! Auto-randomize seed disabled for reproduction.",
-      {
-        icon: "🎯",
-        duration: settings.ui.toastSuccessDuration,
-      },
-    );
+      const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
 
-    navigate("/generate");
+      useGeneratorStore.getState().setAll(hydratedState);
+
+      // Disable auto-randomize seed to allow reproduction of the same image
+      useSettingsStore
+        .getState()
+        .updateSetting("generator", "autoRandomizeSeed", false);
+
+      toast.success(
+        "Parameters loaded! Auto-randomize seed disabled for reproduction.",
+        {
+          icon: "🎯",
+          duration: settings.ui.toastSuccessDuration,
+        },
+      );
+
+      navigate("/generate");
+    } finally {
+      reuseLockRef.current = false;
+      setReusing(false);
+    }
   };
 
   // Quick Remix: Load params, randomize seed, and generate immediately
@@ -311,11 +326,12 @@ const FeedCard = memo(function FeedCard({
               {/* Primary actions - always visible */}
               <button
                 onClick={handleReuse}
-                className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white"
+                disabled={reusing}
+                className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
                 title="Reuse Parameters"
                 aria-label="Reuse Parameters"
               >
-                <RefreshCw size={18} aria-hidden="true" />
+                {reusing ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
               </button>
               <a
                 href={imageEndpoint}

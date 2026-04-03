@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 
 export default function ModelDetailsModal({ file, onClose }) {
-    const [activeImage, setActiveImage] = useState(null);
+    const [activeImageIndex, setActiveImageIndex] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
     
     if (!file) return null;
@@ -31,17 +31,59 @@ export default function ModelDetailsModal({ file, onClose }) {
     const trainedWords = selectedVersion?.trained_words || file.trained_words || [];
     const versionDescription = selectedVersion?.description || file.version_description;
     const versionImages = selectedVersion?.images || images;
+    const versionIdForPreview = selectedVersion?.civitai_version_id || selectedVersion?.id;
+
+    const versionImageItems = versionImages.map((img, index) => {
+        const directUrl = img?.url || null;
+        if (!directUrl && !civitaiId) {
+            return null;
+        }
+
+        let cachedUrl = null;
+        if (civitaiId) {
+            const params = new URLSearchParams({ image_index: String(index) });
+            if (versionIdForPreview) {
+                params.set('version_id', String(versionIdForPreview));
+            }
+            cachedUrl = `/api/v2/models/preview/${civitaiId}?${params.toString()}`;
+        }
+
+        return {
+            cachedUrl,
+            directUrl,
+        };
+    }).filter(Boolean);
 
     // Get active image or first preview
     const getPreviewUrl = () => {
-        if (activeImage) return activeImage;
-        if (versionImages.length > 0) return versionImages[0].url;
+        const activeItem = activeImageIndex !== null ? versionImageItems[activeImageIndex] : null;
+        if (activeItem?.cachedUrl || activeItem?.directUrl) {
+            return activeItem.cachedUrl || activeItem.directUrl;
+        }
+
+        const firstVersionImage = versionImageItems[0];
+        if (firstVersionImage?.cachedUrl || firstVersionImage?.directUrl) {
+            return firstVersionImage.cachedUrl || firstVersionImage.directUrl;
+        }
+
         if (file.preview) return file.preview;
-        if (civitaiId) return `/api/v2/models/preview/${civitaiId}`;
+        if (civitaiId) {
+            const params = new URLSearchParams({ image_index: '0' });
+            if (versionIdForPreview) {
+                params.set('version_id', String(versionIdForPreview));
+            }
+            return `/api/v2/models/preview/${civitaiId}?${params.toString()}`;
+        }
         return null;
     };
 
     const previewUrl = getPreviewUrl();
+    const previewFallbackUrl = (
+        (activeImageIndex !== null ? versionImageItems[activeImageIndex]?.directUrl : null)
+        || versionImageItems[0]?.directUrl
+        || file.preview
+        || null
+    );
 
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
@@ -58,23 +100,41 @@ export default function ModelDetailsModal({ file, onClose }) {
                                 src={previewUrl}
                                 alt={displayName}
                                 className="w-full h-full object-contain"
-                                onError={(e) => { e.target.style.display = 'none'; }}
+                                onError={(e) => {
+                                    if (previewFallbackUrl && e.currentTarget.src !== previewFallbackUrl) {
+                                        e.currentTarget.src = previewFallbackUrl;
+                                        return;
+                                    }
+                                    e.target.style.display = 'none';
+                                }}
                             />
                         </div>
                     )}
 
                     {/* Image Gallery */}
-                    {versionImages.length > 1 && (
+                    {versionImageItems.length > 1 && (
                         <div className="grid grid-cols-3 gap-2">
-                            {versionImages.map((img, i) => (
+                            {versionImageItems.map((img, i) => (
                                 <button
                                     key={i}
-                                    onClick={() => setActiveImage(img.url)}
-                                    className={`aspect-square rounded-lg overflow-hidden border ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
+                                    onClick={() => setActiveImageIndex(i)}
+                                    className={`aspect-square rounded-lg overflow-hidden border ${activeImageIndex === i ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
                                     aria-label={`View preview image ${i + 1}`}
-                                    aria-pressed={activeImage === img.url}
+                                    aria-pressed={activeImageIndex === i}
                                 >
-                                    <img src={img.url} alt={`Preview ${i}`} className="w-full h-full object-cover" loading="lazy" />
+                                    <img
+                                        src={img.cachedUrl || img.directUrl}
+                                        alt={`Preview ${i}`}
+                                        className="w-full h-full object-cover"
+                                        loading="lazy"
+                                        onError={(e) => {
+                                            if (img.directUrl && e.currentTarget.src !== img.directUrl) {
+                                                e.currentTarget.src = img.directUrl;
+                                                return;
+                                            }
+                                            e.currentTarget.style.display = 'none';
+                                        }}
+                                    />
                                 </button>
                             ))}
                         </div>
@@ -109,7 +169,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                                 value={selectedVersionId || selectedVersion?.id || ''}
                                 onChange={(e) => {
                                     setSelectedVersionId(parseInt(e.target.value));
-                                    setActiveImage(null);
+                                    setActiveImageIndex(null);
                                 }}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                             >
