@@ -189,6 +189,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
 
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
+    job_id = job.id
 
     async def fake_call_provider(**kwargs):
         await kwargs["job_service"].update_job(
@@ -202,9 +203,9 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
     monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
-    await process_job(job.id)
+    await process_job(job_id)
 
-    updated_job = await _get_job_from_fresh_session(session, job.id)
+    updated_job = await _get_job_from_fresh_session(session, job_id)
     assert updated_job.status == JobStatus.CANCELLED
     assert updated_job.completed_at is not None
 

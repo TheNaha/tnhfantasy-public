@@ -1,7 +1,6 @@
 import modal
 import subprocess
 import time
-import asyncio
 import logging
 
 import os
@@ -9,28 +8,16 @@ import json
 from typing import Dict, Any
 from pathlib import Path
 
-try:
-    from provider_core.utils import get_safe_path as _shared_get_safe_path
-except Exception:
-    _shared_get_safe_path = None
-
-
-def get_safe_path(base_dir: str, requested_path: str) -> str:
-    """Resolve and validate a path to prevent directory traversal."""
-    if _shared_get_safe_path is not None:
-        return _shared_get_safe_path(base_dir, requested_path)
-
-    clean_path = (requested_path or "").lstrip("/\\")
-    if not clean_path:
-        raise ValueError("Invalid path: path cannot be empty")
-
-    full_path = os.path.abspath(os.path.join(base_dir, clean_path))
-    base_path = os.path.abspath(base_dir)
-
-    if os.path.commonpath([base_path, full_path]) != base_path:
-        raise ValueError("Access denied: Path outside allowed directory")
-
-    return full_path
+from provider_core.utils import get_safe_path
+from provider_core.validation import (
+    MIN_MODEL_SIZE,
+    VALID_FILE_HEADERS,
+    validate_downloaded_file,
+)
+from provider_core.workflow_executor import (
+    IMAGE_FETCH_FILESYSTEM,
+    execute_comfy_workflow,
+)
 
 # Configure logging for Modal functions
 logging.basicConfig(
@@ -123,86 +110,7 @@ def _validate_download(path: str, total_size: int = 0) -> Dict[str, Any]:
     Returns:
         Dict with validation result. If valid=False, contains error message.
     """
-    import os
-    
-    validation_errors = []
-    
-    if not os.path.exists(path):
-        return {"valid": False, "error": "File not found"}
-        
-    actual_size = os.path.getsize(path)
-    
-    # 1. Size validation - check actual vs expected
-    if total_size > 0 and actual_size != total_size:
-        validation_errors.append(f"Size mismatch: expected {total_size}, got {actual_size}")
-    
-    # 2. Minimum size check - models should be at least 10KB
-    MIN_MODEL_SIZE = 10 * 1024  # 10 KB
-    if actual_size < MIN_MODEL_SIZE:
-        validation_errors.append(f"File too small: {actual_size} bytes (min: {MIN_MODEL_SIZE})")
-    
-    # 3. Magic bytes validation
-    VALID_HEADERS = {
-        b'{"__metadata__': 'safetensors',  # Safetensors JSON header
-        b'PK': 'zip/ckpt',                  # ZIP archive (some ckpt files)
-        b'\x80\x04': 'pickle',          # Python pickle format
-        b'\x80\x05': 'pickle5',         # Python pickle protocol 5
-        b'GGUF': 'gguf',                    # GGUF format (llama.cpp)
-        b'\x89PNG': 'png',                  # PNG (for preview images, skip)
-    }
-    
-    detected_format = "unknown"
-    header_valid = False
-    
-    # Skip header check for certain file types
-    skip_header_check = path.endswith(('.png', '.jpg', '.jpeg', '.json', '.txt', '.yaml', '.yml'))
-    
-    if not skip_header_check and actual_size >= 16:
-        try:
-            with open(path, 'rb') as f:
-                header = f.read(16)
-            
-            for magic, fmt in VALID_HEADERS.items():
-                if header.startswith(magic):
-                    header_valid = True
-                    detected_format = fmt
-                    break
-            
-            # Additional checks if not matched
-            if not header_valid and header[0:1] == b'{':
-                header_valid = True
-                detected_format = "safetensors/json"
-            
-            if not header_valid:
-                # Log but don't fail immediately, unless it looks like HTML
-                if b'<html' in header.lower() or b'<!doctype' in header.lower():
-                    validation_errors.append("Downloaded HTML instead of model (possible auth error)")
-        except Exception as e:
-            validation_errors.append(f"Error reading header: {e}")
-            
-    # 4. Safetensors Integrity Check (Strict)
-    if "safetensors" in detected_format or path.endswith(".safetensors"):
-        try:
-            from safetensors import safe_open
-            # Just try to open it to read metadata - this validates the header structure
-            with safe_open(path, framework="pt", device="cpu") as f:
-                 pass
-        except Exception as e:
-            validation_errors.append(f"Safetensors corrupted: {e}")
-
-    if validation_errors:
-        return {
-            "valid": False,
-            "error": "; ".join(validation_errors),
-            "errors": validation_errors,
-            "format": detected_format
-        }
-    
-    return {
-        "valid": True,
-        "format": detected_format,
-        "size": actual_size
-    }
+    return validate_downloaded_file(path, total_size)
 
 
 
@@ -214,186 +122,15 @@ async def _execute_workflow(workflow_json: Dict[str, Any], port: int = 8188):
     Execute a ComfyUI workflow and stream progress updates.
     Shared between stable and snapshot modes.
     """
-    import uuid
-    import websockets
-    import urllib.request
-    
-    server_address = f"127.0.0.1:{port}"
-    client_id = str(uuid.uuid4())
-    
-    logger.info(f"Connecting to ComfyUI at {server_address} with client_id={client_id}")
-
-    # Retry loop for websocket connection
-    max_retries = 5
-    retry_delay = 1
-    websocket = None
-    
-    for attempt in range(max_retries):
-        try:
-            websocket = await websockets.connect(f"ws://{server_address}/ws?clientId={client_id}")
-            logger.debug(f" WebSocket connected successfully")
-            break
-        except (OSError, websockets.exceptions.InvalidMessage, websockets.exceptions.InvalidHandshake) as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"Connection attempt {attempt+1} failed: {e}. Retrying in {retry_delay}s...")
-                await asyncio.sleep(retry_delay)
-                retry_delay *= 2
-            else:
-                raise e
-
-    message_count = 0
-    prompt_id = None
-    
-    try:
-        # Queue the prompt
-        p = {"prompt": workflow_json, "client_id": client_id}
-        data = json.dumps(p).encode('utf-8')
-        req = urllib.request.Request(f"http://{server_address}/prompt", data=data)
-        req.add_header('Content-Type', 'application/json')
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                response_data = json.loads(response.read())
-                prompt_id = response_data['prompt_id']
-                logger.info(f"Prompt queued: {prompt_id}")
-                
-                # Check if there are any errors in the response
-                if 'error' in response_data:
-                    logger.error(f" Prompt error: {response_data['error']}")
-                    yield {"status": "error", "message": response_data['error']}
-                    return
-                if 'node_errors' in response_data and response_data['node_errors']:
-                    logger.error(f" Node errors: {response_data['node_errors']}")
-                    yield {"status": "error", "message": str(response_data['node_errors'])}
-                    return
-                    
-                yield {"status": "queued", "prompt_id": prompt_id}
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode() if e.fp else ""
-            logger.error(f" HTTP Error {e.code}: {e.reason}")
-            logger.error(f" Response body: {error_body}")
-            yield {"status": "error", "message": f"ComfyUI rejected workflow: {error_body}"}
-            return
-
-        # Listen for messages
-        logger.debug(f" Starting to listen for WebSocket messages...")
-        
-        while True:
-            try:
-                out = await websocket.recv()
-                message_count += 1
-                
-                if isinstance(out, str):
-                    message = json.loads(out)
-                    msg_type = message.get('type', 'unknown')
-                    logger.debug(f" Message #{message_count}: type={msg_type}")
-                    
-                    if msg_type == 'executing':
-                        data = message['data']
-                        node = data.get('node')
-                        msg_prompt_id = data.get('prompt_id')
-                        
-                        logger.debug(f" Executing: node={node}, prompt_id={msg_prompt_id}")
-                        
-                        if node is None and msg_prompt_id == prompt_id:
-                            logger.debug(f" Execution finished! Breaking loop.")
-                            break  # Execution finished
-                        elif msg_prompt_id == prompt_id:
-                            yield {"status": "executing", "node": node, "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'execution_cached':
-                        data = message['data']
-                        if data.get('prompt_id') == prompt_id:
-                            nodes = data.get('nodes', [])
-                            yield {"status": "execution_cached", "nodes": nodes, "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'progress':
-                        data = message['data']
-                        if data.get('prompt_id') == prompt_id:
-                            logger.debug(f" Progress: {data.get('value')}/{data.get('max')}")
-                            yield {"status": "progress", "value": data['value'], "max": data['max'], "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'execution_error':
-                        logger.error(f" Execution error: {message}")
-                        yield {"status": "error", "message": str(message.get('data', {}))}
-                        return
-                    
-                    elif msg_type == 'status':
-                        # Status updates about queue
-                        logger.debug(f" Status: {message.get('data', {})}")
-                else:
-                    logger.debug(f" Received binary message of {len(out)} bytes")
-                    
-            except websockets.exceptions.ConnectionClosed as e:
-                logger.error(f" Websocket connection closed unexpectedly: {e}")
-                break
-    finally:
-        if websocket:
-            await websocket.close()
-            logger.debug(f" WebSocket closed. Total messages received: {message_count}")
-
-    # Fetch History to get outputs
-    logger.debug(f" Fetching history for prompt_id: {prompt_id}")
-    
-    try:
-        with urllib.request.urlopen(f"http://{server_address}/history/{prompt_id}") as response:
-            history = json.loads(response.read())
-    except Exception as e:
-        logger.error(f" Failed to fetch history: {e}")
-        yield {"status": "error", "message": f"Failed to fetch history: {e}"}
-        return
-    
-    if prompt_id not in history:
-        logger.error(f" Prompt {prompt_id} not found in history. Available: {list(history.keys())}")
-        yield {"status": "error", "message": "Prompt not found in history"}
-        return
-        
-    history_data = history[prompt_id]
-    logger.debug(f" History data keys: {list(history_data.keys())}")
-    logger.debug(f" Outputs: {list(history_data.get('outputs', {}).keys())}")
-    
-    images_output = []
-    
-    for node_id, node_output in history_data.get('outputs', {}).items():
-        logger.debug(f" Node {node_id} output keys: {list(node_output.keys())}")
-        
-        if 'images' in node_output:
-            logger.debug(f" Node {node_id} has {len(node_output['images'])} images")
-            
-            for img in node_output['images']:
-                filename = img['filename']
-                subfolder = img.get('subfolder', '')
-                folder_type = img.get('type', 'output')
-                
-                logger.debug(f" Image: filename={filename}, subfolder={subfolder}, type={folder_type}")
-                
-                if folder_type == 'output':
-                    base_dir = "/root/comfy/ComfyUI/output"
-                else:
-                    base_dir = "/root/comfy/ComfyUI/temp"
-                    
-                if subfolder:
-                    filepath = os.path.join(base_dir, subfolder, filename)
-                else:
-                    filepath = os.path.join(base_dir, filename)
-                
-                logger.debug(f" Looking for file: {filepath}")
-                logger.debug(f" File exists: {os.path.exists(filepath)}")
-                    
-                try:
-                    with open(filepath, "rb") as f:
-                        image_data = f.read()
-                        logger.debug(f" Read {len(image_data)} bytes from {filepath}")
-                        images_output.append({
-                            "filename": filename,
-                            "data": image_data,
-                            "type": folder_type
-                        })
-                except Exception as e:
-                    logger.error(f" Failed to read output image {filepath}: {e}")
-
-    logger.debug(f" Total images collected: {len(images_output)}")
-    yield {"status": "success", "images": images_output}
+    async for update in execute_comfy_workflow(
+        workflow_json,
+        port,
+        image_fetch_mode=IMAGE_FETCH_FILESYSTEM,
+        output_dir="/root/comfy/ComfyUI/output",
+        temp_dir="/root/comfy/ComfyUI/temp",
+        logger=logger,
+    ):
+        yield update
 
 
 
@@ -819,15 +556,8 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
         "by_directory": {}
     }
 
-    VALID_HEADERS = {
-        b'{"__metadata__': 'safetensors',
-        b'{': 'safetensors/json',
-        b'PK': 'zip/ckpt',
-        b'\x80\x04': 'pickle',
-        b'\x80\x05': 'pickle5',
-        b'GGUF': 'gguf',
-    }
-    MIN_SIZE = 10 * 1024  # 10KB
+    VALID_HEADERS = VALID_FILE_HEADERS
+    MIN_SIZE = MIN_MODEL_SIZE
     
     def validate_single_file_in_dir(directory, name):
         """Helper to validate a single file, returns (directory, result)."""

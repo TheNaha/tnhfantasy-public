@@ -24,7 +24,6 @@ from infrastructure.database import (
 )
 from services.job_service import JobService
 from services.provider_service import ProviderService
-from services.model_service import ModelService
 from core.events import event_bus, EventBus
 from infrastructure.logging import get_logger
 
@@ -61,11 +60,6 @@ def get_job_service(session: Session) -> JobService:
 def get_provider_service(session: Session) -> ProviderService:
     """Get provider service instance."""
     return ProviderService(session)
-
-
-def get_model_service(session: Session) -> ModelService:
-    """Get model service instance (V1 - legacy)."""
-    return ModelService(session)
 
 
 def get_model_service_v2(session: Session):

@@ -18,7 +18,15 @@ import json
 import subprocess
 import time
 from provider_core.utils import get_safe_path
-import asyncio
+from provider_core.validation import (
+    MIN_MODEL_SIZE,
+    VALID_FILE_HEADERS,
+    validate_downloaded_file,
+)
+from provider_core.workflow_executor import (
+    IMAGE_FETCH_VIEW_API,
+    execute_comfy_workflow,
+)
 from typing import Dict, Any
 import base64
 
@@ -153,88 +161,11 @@ def _validate_download(path: str, total_size: int = 0) -> Dict[str, Any]:
     Returns:
         Dict with validation result. If valid=False, contains error message.
     """
-    validation_errors = []
-    
-    if not os.path.exists(path):
-        return {"valid": False, "error": "File not found"}
-        
-    actual_size = os.path.getsize(path)
-    
-    # 1. Size validation - check actual vs expected
-    if total_size > 0 and actual_size != total_size:
-        validation_errors.append(f"Size mismatch: expected {total_size}, got {actual_size}")
-    
-    # 2. Minimum size check - models should be at least 10KB
-    MIN_MODEL_SIZE = 10 * 1024  # 10 KB
-    if actual_size < MIN_MODEL_SIZE:
-        validation_errors.append(f"File too small: {actual_size} bytes (min: {MIN_MODEL_SIZE})")
-    
-    # 3. Magic bytes validation
-    VALID_HEADERS = {
-        b'{"__metadata__': 'safetensors',  # Safetensors JSON header
-        b'PK': 'zip/ckpt',                  # ZIP archive (some ckpt files)
-        b'\x80\x04': 'pickle',          # Python pickle format
-        b'\x80\x05': 'pickle5',         # Python pickle protocol 5
-        b'GGUF': 'gguf',                    # GGUF format (llama.cpp)
-        b'\x89PNG': 'png',                  # PNG (for preview images, skip)
-    }
-    
-    detected_format = "unknown"
-    header_valid = False
-    
-    # Skip header check for certain file types
-    skip_header_check = path.endswith(('.png', '.jpg', '.jpeg', '.json', '.txt', '.yaml', '.yml'))
-    
-    if not skip_header_check and actual_size >= 16:
-        try:
-            with open(path, 'rb') as f:
-                header = f.read(16)
-            
-            for magic, fmt in VALID_HEADERS.items():
-                if header.startswith(magic):
-                    header_valid = True
-                    detected_format = fmt
-                    break
-            
-            # Additional checks if not matched
-            if not header_valid and header[0:1] == b'{':
-                header_valid = True
-                detected_format = "safetensors/json"
-            
-            if not header_valid:
-                # Log but don't fail immediately, unless it looks like HTML
-                if b'<html' in header.lower() or b'<!doctype' in header.lower():
-                    validation_errors.append("Downloaded HTML instead of model (possible auth error)")
-                else:
-                     print(f"[Validate] ⚠ Unknown format: header={header[:8].hex()}")
-        except Exception as e:
-            validation_errors.append(f"Error reading header: {e}")
-            
-    # 4. Safetensors Integrity Check (Strict)
-    if "safetensors" in detected_format or path.endswith(".safetensors"):
-        try:
-            from safetensors import safe_open
-            # Just try to open it to read metadata - this validates the header structure
-            with safe_open(path, framework="pt", device="cpu") as f:
-                 pass
-            print(f"[Validate] ✓ Safetensors integrity check passed")
-        except Exception as e:
-            print(f"[Validate] ✗ Safetensors integrity check failed: {e}")
-            validation_errors.append(f"Safetensors corrupted: {e}")
-
-    if validation_errors:
-        return {
-            "valid": False,
-            "error": "; ".join(validation_errors),
-            "errors": validation_errors,
-            "format": detected_format
-        }
-    
-    return {
-        "valid": True,
-        "format": detected_format,
-        "size": actual_size
-    }
+    return validate_downloaded_file(
+        path,
+        total_size,
+        unknown_header_log_prefix="Validate",
+    )
 
 
 def init_comfyui():
@@ -258,170 +189,13 @@ def init_comfyui():
 
 async def _execute_workflow(workflow_json: Dict[str, Any], port: int = 8188):
     """Execute a ComfyUI workflow and stream progress updates."""
-    import uuid
-    import websockets
-    import urllib.request
-    
-    server_address = f"127.0.0.1:{port}"
-    client_id = str(uuid.uuid4())
-    
-    # Connect WebSocket
-    max_retries = 5
-    retry_delay = 1
-    websocket = None
-    
-    for attempt in range(max_retries):
-        try:
-            websocket = await websockets.connect(f"ws://{server_address}/ws?clientId={client_id}")
-            break
-        except Exception as e:
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-                retry_delay *= 2
-            else:
-                raise e
-
-    prompt_id = None
-    
-    try:
-        # Queue prompt
-        p = {"prompt": workflow_json, "client_id": client_id}
-        data = json.dumps(p).encode('utf-8')
-        req = urllib.request.Request(f"http://{server_address}/prompt", data=data)
-        req.add_header('Content-Type', 'application/json')
-        
-        try:
-            with urllib.request.urlopen(req) as response:
-                response_data = json.loads(response.read())
-                prompt_id = response_data['prompt_id']
-                
-                if 'error' in response_data:
-                    yield {"status": "error", "message": response_data['error']}
-                    return
-                if 'node_errors' in response_data and response_data['node_errors']:
-                    yield {"status": "error", "message": str(response_data['node_errors'])}
-                    return
-                    
-                yield {"status": "queued", "prompt_id": prompt_id}
-        except Exception as e:
-            yield {"status": "error", "message": f"ComfyUI rejected workflow: {e}"}
-            return
-
-        # Listen for progress
-        print(f"[_execute_workflow] Listening for progress on prompt_id={prompt_id}")
-        while True:
-            try:
-                out = await websocket.recv()
-                
-                if isinstance(out, str):
-                    message = json.loads(out)
-                    msg_type = message.get('type', 'unknown')
-                    
-                    if msg_type == 'executing':
-                        data = message['data']
-                        node = data.get('node')
-                        msg_prompt_id = data.get('prompt_id')
-                        print(f"[_execute_workflow] Executing: node={node}, prompt_id={msg_prompt_id}")
-                        
-                        if node is None and msg_prompt_id == prompt_id:
-                            print(f"[_execute_workflow] Got completion signal (node=None)")
-                            break
-                        elif msg_prompt_id == prompt_id:
-                            yield {"status": "executing", "node": node, "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'execution_cached':
-                        data = message['data']
-                        if data.get('prompt_id') == prompt_id:
-                            nodes = data.get('nodes', [])
-                            yield {"status": "execution_cached", "nodes": nodes, "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'progress':
-                        data = message['data']
-                        if data.get('prompt_id') == prompt_id:
-                            yield {"status": "progress", "value": data['value'], "max": data['max'], "prompt_id": prompt_id}
-                    
-                    elif msg_type == 'execution_error':
-                        print(f"[_execute_workflow] Got execution error: {message.get('data', {})}")
-                        yield {"status": "error", "message": str(message.get('data', {}))}
-                        return
-                    
-                    elif msg_type == 'executed':
-                        # Node execution completed
-                        data = message.get('data', {})
-                        print(f"[_execute_workflow] Executed: node={data.get('node')}, prompt_id={data.get('prompt_id')}")
-                    
-                    else:
-                        print(f"[_execute_workflow] Unknown message type: {msg_type}")
-                        
-            except Exception as e:
-                print(f"[ERROR] Websocket error: {e}")
-                import traceback
-                traceback.print_exc()
-                break
-        
-        print(f"[_execute_workflow] Exited while loop")
-    finally:
-        if websocket:
-            await websocket.close()
-
-    # Fetch outputs
-    print(f"[_execute_workflow] Fetching history for prompt_id={prompt_id}")
-    try:
-        with urllib.request.urlopen(f"http://{server_address}/history/{prompt_id}") as response:
-            history = json.loads(response.read())
-    except Exception as e:
-        print(f"[_execute_workflow] Failed to fetch history: {e}")
-        yield {"status": "error", "message": f"Failed to fetch history: {e}"}
-        return
-    
-    if prompt_id not in history:
-        print(f"[_execute_workflow] Prompt not found in history")
-        yield {"status": "error", "message": "Prompt not found in history"}
-        return
-        
-    history_data = history[prompt_id]
-    images_output = []
-    
-    print(f"[_execute_workflow] Processing outputs from {len(history_data.get('outputs', {}))} nodes")
-    
-    # Small delay to ensure files are fully written
-    await asyncio.sleep(0.5)
-    
-    for node_id, node_output in history_data.get('outputs', {}).items():
-        if 'images' in node_output:
-            print(f"[_execute_workflow] Node {node_id} has {len(node_output['images'])} images")
-            for img in node_output['images']:
-                filename = img['filename']
-                subfolder = img.get('subfolder', '')
-                folder_type = img.get('type', 'output')
-                
-                # Use ComfyUI's /view API to fetch image bytes
-                # This avoids Beam volume I/O issues
-                view_url = f"http://{server_address}/view?filename={filename}"
-                if subfolder:
-                    view_url += f"&subfolder={subfolder}"
-                if folder_type:
-                    view_url += f"&type={folder_type}"
-                
-                print(f"[_execute_workflow] Fetching image via API: {view_url}")
-                    
-                try:
-                    with urllib.request.urlopen(view_url, timeout=30) as response:
-                        data = response.read()
-                        print(f"[_execute_workflow] Fetched {len(data)} bytes via API")
-                        images_output.append({
-                            "filename": filename,
-                            "data": data,
-                            "type": folder_type
-                        })
-                    print(f"[_execute_workflow] Successfully fetched {filename}")
-                except Exception as e:
-                    print(f"[ERROR] Failed to fetch image {filename}: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-    print(f"[_execute_workflow] Yielding success with {len(images_output)} images")
-    yield {"status": "success", "images": images_output}
+    async for update in execute_comfy_workflow(
+        workflow_json,
+        port,
+        image_fetch_mode=IMAGE_FETCH_VIEW_API,
+        history_delay_seconds=0.5,
+    ):
+        yield update
 
 
 # =============================================================================
@@ -473,7 +247,7 @@ async def setup():
     dirs = [
         "/mnt/data/models/checkpoints", "/mnt/data/models/loras", "/mnt/data/models/vae",
         "/mnt/data/models/controlnet", "/mnt/data/models/unet", "/mnt/data/models/clip",
-        "/mnt/data/models/embeddings", "/mnt/data/models/upscale/models",
+        "/mnt/data/models/embeddings", "/mnt/data/models/upscale_models",
         "/mnt/data/models/hypernetworks", "/mnt/data/models/motion_modules",
         "/mnt/data/output", "/mnt/data/input", "/mnt/data/downloads",
     ]
@@ -772,16 +546,7 @@ async def validate_models(request: Request):
         return {"valid": [], "invalid": [], "partial": [], "total": 0}
     
     # Magic bytes for validation
-    VALID_HEADERS = {
-        b'{"__metadata__': 'safetensors',
-        b'{': 'safetensors/json',
-        b'PK': 'zip/ckpt',
-        b'\x80\x04': 'pickle',
-        b'\x80\x05': 'pickle5',
-        b'GGUF': 'gguf',
-    }
-    
-    MIN_MODEL_SIZE = 10 * 1024  # 10 KB
+    VALID_HEADERS = VALID_FILE_HEADERS
     
     valid_models = []
     invalid_models = []

@@ -1,0 +1,296 @@
+"""Shared ComfyUI workflow execution helpers for provider workers."""
+
+import asyncio
+import json
+import logging
+import os
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from typing import Any, AsyncGenerator, Dict, List
+
+
+IMAGE_FETCH_FILESYSTEM = "filesystem"
+IMAGE_FETCH_VIEW_API = "view_api"
+
+
+def _get_websockets_module():
+    import websockets
+
+    return websockets
+
+
+def _log(logger: logging.Logger | None, level: int, message: str) -> None:
+    if logger is not None:
+        logger.log(level, message)
+
+
+async def _connect_with_retry(
+    ws_url: str,
+    *,
+    max_retries: int,
+    initial_retry_delay_seconds: float,
+    logger: logging.Logger | None,
+):
+    websockets = _get_websockets_module()
+    retry_delay = initial_retry_delay_seconds
+
+    for attempt in range(max_retries):
+        try:
+            return await websockets.connect(ws_url), websockets
+        except Exception as error:  # pragma: no cover - provider runtime dependent
+            if attempt >= max_retries - 1:
+                raise
+            _log(
+                logger,
+                logging.WARNING,
+                f"Workflow websocket connect failed (attempt {attempt + 1}/{max_retries}): {error}",
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
+
+    raise RuntimeError("Workflow websocket connection retries exhausted")
+
+
+def _queue_prompt(
+    server_address: str,
+    workflow_json: Dict[str, Any],
+    client_id: str,
+) -> tuple[str | None, Dict[str, Any] | None]:
+    payload = {"prompt": workflow_json, "client_id": client_id}
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"http://{server_address}/prompt", data=data)
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        with urllib.request.urlopen(req) as response:
+            response_data = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        body = ""
+        if error.fp:
+            body = error.read().decode(errors="replace")
+        message = body or str(error)
+        return None, {"status": "error", "message": f"ComfyUI rejected workflow: {message}"}
+    except Exception as error:
+        return None, {"status": "error", "message": f"ComfyUI rejected workflow: {error}"}
+
+    prompt_id = response_data.get("prompt_id")
+    if not prompt_id:
+        return None, {"status": "error", "message": "ComfyUI did not return a prompt_id"}
+
+    if "error" in response_data:
+        return None, {"status": "error", "message": response_data["error"]}
+
+    node_errors = response_data.get("node_errors")
+    if node_errors:
+        return None, {"status": "error", "message": str(node_errors)}
+
+    return prompt_id, None
+
+
+def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
+    try:
+        with urllib.request.urlopen(f"http://{server_address}/history/{prompt_id}") as response:
+            history = json.loads(response.read())
+    except Exception as error:
+        return None, f"Failed to fetch history: {error}"
+
+    if prompt_id not in history:
+        return None, "Prompt not found in history"
+
+    return history[prompt_id], None
+
+
+def _collect_images_from_filesystem(
+    history_data: Dict[str, Any],
+    *,
+    output_dir: str,
+    temp_dir: str,
+    logger: logging.Logger | None,
+) -> List[Dict[str, Any]]:
+    images_output: List[Dict[str, Any]] = []
+
+    for node_output in history_data.get("outputs", {}).values():
+        for image in node_output.get("images", []):
+            filename = image.get("filename")
+            if not filename:
+                continue
+
+            subfolder = image.get("subfolder") or ""
+            folder_type = image.get("type", "output")
+            base_dir = output_dir if folder_type == "output" else temp_dir
+            filepath = os.path.join(base_dir, subfolder, filename) if subfolder else os.path.join(base_dir, filename)
+
+            try:
+                with open(filepath, "rb") as file_obj:
+                    images_output.append(
+                        {
+                            "filename": filename,
+                            "data": file_obj.read(),
+                            "type": folder_type,
+                        }
+                    )
+            except Exception as error:
+                _log(logger, logging.ERROR, f"Failed to read output image {filepath}: {error}")
+
+    return images_output
+
+
+def _collect_images_via_view_api(
+    history_data: Dict[str, Any],
+    *,
+    server_address: str,
+    view_timeout_seconds: float,
+    logger: logging.Logger | None,
+) -> List[Dict[str, Any]]:
+    images_output: List[Dict[str, Any]] = []
+
+    for node_output in history_data.get("outputs", {}).values():
+        for image in node_output.get("images", []):
+            filename = image.get("filename")
+            if not filename:
+                continue
+
+            subfolder = image.get("subfolder") or ""
+            folder_type = image.get("type", "output")
+            query = urllib.parse.urlencode(
+                {
+                    "filename": filename,
+                    "subfolder": subfolder,
+                    "type": folder_type,
+                }
+            )
+            view_url = f"http://{server_address}/view?{query}"
+
+            try:
+                with urllib.request.urlopen(view_url, timeout=view_timeout_seconds) as response:
+                    images_output.append(
+                        {
+                            "filename": filename,
+                            "data": response.read(),
+                            "type": folder_type,
+                        }
+                    )
+            except Exception as error:
+                _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
+
+    return images_output
+
+
+async def execute_comfy_workflow(
+    workflow_json: Dict[str, Any],
+    port: int = 8188,
+    *,
+    image_fetch_mode: str = IMAGE_FETCH_FILESYSTEM,
+    output_dir: str = "/root/comfy/ComfyUI/output",
+    temp_dir: str = "/root/comfy/ComfyUI/temp",
+    history_delay_seconds: float = 0.0,
+    view_timeout_seconds: float = 30.0,
+    max_retries: int = 5,
+    initial_retry_delay_seconds: float = 1.0,
+    logger: logging.Logger | None = None,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """Execute a ComfyUI workflow and yield provider stream updates."""
+    if image_fetch_mode not in {IMAGE_FETCH_FILESYSTEM, IMAGE_FETCH_VIEW_API}:
+        raise ValueError(f"Unsupported image fetch mode: {image_fetch_mode}")
+
+    server_address = f"127.0.0.1:{port}"
+    client_id = str(uuid.uuid4())
+    ws_url = f"ws://{server_address}/ws?clientId={client_id}"
+
+    _log(logger, logging.INFO, f"Connecting to ComfyUI websocket: {ws_url}")
+    websocket, websockets = await _connect_with_retry(
+        ws_url,
+        max_retries=max_retries,
+        initial_retry_delay_seconds=initial_retry_delay_seconds,
+        logger=logger,
+    )
+
+    prompt_id: str | None = None
+    try:
+        prompt_id, queue_error = _queue_prompt(server_address, workflow_json, client_id)
+        if queue_error:
+            yield queue_error
+            return
+
+        yield {"status": "queued", "prompt_id": prompt_id}
+
+        while True:
+            try:
+                message = await websocket.recv()
+            except websockets.exceptions.ConnectionClosed as error:
+                _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
+                break
+            except Exception as error:
+                _log(logger, logging.ERROR, f"Workflow websocket error: {error}")
+                break
+
+            if not isinstance(message, str):
+                continue
+
+            try:
+                payload = json.loads(message)
+            except json.JSONDecodeError:
+                _log(logger, logging.WARNING, "Ignoring non-JSON websocket payload")
+                continue
+
+            msg_type = payload.get("type")
+            msg_data = payload.get("data", {})
+            msg_prompt_id = msg_data.get("prompt_id")
+
+            if msg_type == "executing":
+                node = msg_data.get("node")
+                if node is None and msg_prompt_id == prompt_id:
+                    break
+                if msg_prompt_id == prompt_id:
+                    yield {"status": "executing", "node": node, "prompt_id": prompt_id}
+            elif msg_type == "execution_cached":
+                if msg_prompt_id == prompt_id:
+                    yield {
+                        "status": "execution_cached",
+                        "nodes": msg_data.get("nodes", []),
+                        "prompt_id": prompt_id,
+                    }
+            elif msg_type == "progress":
+                if msg_prompt_id == prompt_id:
+                    yield {
+                        "status": "progress",
+                        "value": msg_data.get("value", 0),
+                        "max": msg_data.get("max", 0),
+                        "prompt_id": prompt_id,
+                    }
+            elif msg_type == "execution_error":
+                yield {"status": "error", "message": str(msg_data)}
+                return
+    finally:
+        await websocket.close()
+
+    if not prompt_id:
+        yield {"status": "error", "message": "Missing prompt_id"}
+        return
+
+    if history_delay_seconds > 0:
+        await asyncio.sleep(history_delay_seconds)
+
+    history_data, history_error = _get_history(server_address, prompt_id)
+    if history_error:
+        yield {"status": "error", "message": history_error}
+        return
+
+    if image_fetch_mode == IMAGE_FETCH_VIEW_API:
+        images_output = _collect_images_via_view_api(
+            history_data,
+            server_address=server_address,
+            view_timeout_seconds=view_timeout_seconds,
+            logger=logger,
+        )
+    else:
+        images_output = _collect_images_from_filesystem(
+            history_data,
+            output_dir=output_dir,
+            temp_dir=temp_dir,
+            logger=logger,
+        )
+
+    yield {"status": "success", "images": images_output}

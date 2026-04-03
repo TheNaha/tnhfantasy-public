@@ -294,7 +294,7 @@ async def download_model(request: DownloadRequest):
     print(f"[{PROVIDER_ID}] Queueing download: {request.path}")
     try:
         download_func = get_modal_function("download_model")
-        download_func.spawn(
+        await download_func.spawn.aio(
             request.url,
             request.path,
             request.token,

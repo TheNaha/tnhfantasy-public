@@ -59,6 +59,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                     status = getattr(container, "status", "unknown")
                     health_status = getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
                     healthy = health_status == "healthy" if health_status else None
+                    connected = status == "running" and healthy is not False
         except Exception as exc:
             logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
 

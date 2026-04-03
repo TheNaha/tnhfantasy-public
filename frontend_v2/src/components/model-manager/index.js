@@ -3,5 +3,4 @@ export { default as DiscoverTab } from './DiscoverTab';
 export { default as InstalledTab } from './InstalledTab';
 export { default as ModelCard } from './ModelCard';
 export { default as ModelImportCard } from './ModelImportCard';
-export { default as DownloadQueue } from './DownloadQueue';
 export { default as ModelDetailsModal } from './ModelDetailsModal';

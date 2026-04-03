@@ -7,7 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response as FastAPIResponse
 
 from api.error_handlers import register_exception_handlers
-from api.routes import jobs, providers, health, files, downloads, settings as settings_routes, statistics, generation
+from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
 from api.routes import models_v2, prompts, collections
 from api.routes import worker_ws, kaggle
 from api.routes.websocket import socket_app
@@ -66,7 +66,6 @@ def configure_app(app: FastAPI):
     app.include_router(jobs.router)
     app.include_router(providers.router)
     app.include_router(files.router)
-    app.include_router(downloads.router)
     app.include_router(settings_routes.router)
     app.include_router(statistics.router)
     app.include_router(generation.router)

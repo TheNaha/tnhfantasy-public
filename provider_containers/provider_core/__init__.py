@@ -39,6 +39,11 @@ from .background import (
 )
 
 from .utils import get_safe_path, build_deploy_compatibility_response
+from .validation import (
+    MIN_MODEL_SIZE,
+    VALID_FILE_HEADERS,
+    validate_downloaded_file,
+)
 
 __all__ = [
     "get_safe_path",
@@ -77,4 +82,8 @@ __all__ = [
     "JobCancellationTracker",
     "get_job_tracker",
     "build_deploy_compatibility_response",
+    # Validation
+    "MIN_MODEL_SIZE",
+    "VALID_FILE_HEADERS",
+    "validate_downloaded_file",
 ]
