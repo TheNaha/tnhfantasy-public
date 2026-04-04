@@ -754,6 +754,7 @@ import os
 import asyncio
 import time
 import random
+import httpx
 from fastapi import Response
 from infrastructure.http_client import get_http_client
 from infrastructure.request_dedup import deduplicated, make_key
@@ -825,6 +826,34 @@ def _resolve_preview_failure_ttl_seconds() -> int:
     return parsed
 
 
+def _resolve_preview_not_found_ttl_seconds() -> int:
+    """Cooldown for CivitAI model IDs that return 404 (deleted/invalid)."""
+    default_ttl_seconds = 6 * 60 * 60
+    raw_value = os.getenv("COMFY_PREVIEW_NOT_FOUND_TTL_SECONDS")
+    if raw_value is None:
+        return default_ttl_seconds
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_not_found_ttl_invalid",
+            raw_value=raw_value,
+            default_value=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    if parsed < 0:
+        logger.warning(
+            "preview_not_found_ttl_negative",
+            raw_value=raw_value,
+            default_value=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    return parsed
+
+
 # Cache directory for preview images (prefer persistent output volume when available)
 PREVIEW_CACHE_DIR = _resolve_preview_cache_dir()
 PREVIEW_METADATA_TIMEOUT_SECONDS = _resolve_preview_timeout_seconds(
@@ -836,6 +865,7 @@ PREVIEW_IMAGE_TIMEOUT_SECONDS = _resolve_preview_timeout_seconds(
     8.0,
 )
 PREVIEW_FAILURE_TTL_SECONDS = _resolve_preview_failure_ttl_seconds()
+PREVIEW_NOT_FOUND_TTL_SECONDS = _resolve_preview_not_found_ttl_seconds()
 
 
 def _resolve_preview_prefetch_enabled() -> bool:
@@ -1032,6 +1062,10 @@ def _get_failure_marker_path(cache_path: str) -> str:
     return f"{cache_path}.fail"
 
 
+def _get_not_found_marker_path(cache_path: str) -> str:
+    return f"{cache_path}.404"
+
+
 def _has_recent_failure(failure_marker_path: str, ttl_seconds: int) -> bool:
     if ttl_seconds <= 0 or not os.path.exists(failure_marker_path):
         return False
@@ -1143,7 +1177,12 @@ def _list_civitai_model_ids_for_prefetch() -> List[int]:
                 ModelV2.source == "civitai",
             )
         ).all()
-        return [model_id for model_id in rows if isinstance(model_id, int)]
+        unique_ids = {
+            model_id
+            for model_id in rows
+            if isinstance(model_id, int) and model_id > 0
+        }
+        return list(unique_ids)
     finally:
         session.close()
 
@@ -1188,6 +1227,22 @@ async def fetch_civitai_preview(
     cache_path = get_cache_path(model_id, version_id, image_index)
     cache_meta_path = _get_cache_meta_path(cache_path)
     failure_marker_path = _get_failure_marker_path(cache_path)
+    not_found_marker_path = _get_not_found_marker_path(cache_path)
+
+    has_recent_not_found = await asyncio.to_thread(
+        _has_recent_failure,
+        not_found_marker_path,
+        PREVIEW_NOT_FOUND_TTL_SECONDS,
+    )
+    if has_recent_not_found:
+        logger.debug(
+            "civitai_preview_recent_not_found_skip",
+            model_id=model_id,
+            version_id=version_id,
+            image_index=image_index,
+            ttl_seconds=PREVIEW_NOT_FOUND_TTL_SECONDS,
+        )
+        return None, None, False
 
     has_recent_failure = await asyncio.to_thread(
         _has_recent_failure,
@@ -1237,8 +1292,32 @@ async def fetch_civitai_preview(
             content_type,
         )
         await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+        await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
         return image_data, content_type, False
 
+    except httpx.HTTPStatusError as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        if status_code == 404:
+            await asyncio.to_thread(_mark_failure, not_found_marker_path)
+            await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+            logger.info(
+                "civitai_preview_model_not_found",
+                model_id=model_id,
+                version_id=version_id,
+                image_index=image_index,
+                error=str(e),
+            )
+            return None, None, False
+
+        await asyncio.to_thread(_mark_failure, failure_marker_path)
+        logger.warning(
+            "civitai_preview_fetch_failed",
+            model_id=model_id,
+            version_id=version_id,
+            image_index=image_index,
+            error=str(e),
+        )
+        return None, None, False
     except Exception as e:
         await asyncio.to_thread(_mark_failure, failure_marker_path)
         logger.warning(

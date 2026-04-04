@@ -9,27 +9,25 @@ import {
     Trash2,
     ChevronRight,
 } from 'lucide-react';
+import {
+    providerBadgeToneClass,
+    summarizeProviderStatus,
+} from '../../utils/providerStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
 
-function statusColor(status) {
+function statusColorByTone(tone) {
     const map = {
-        running: 'text-green-400',
-        active: 'text-green-400',
-        connected: 'text-green-400',
-        stopped: 'text-gray-500',
-        idle: 'text-gray-500',
-        queued: 'text-blue-400',
-        reconciling: 'text-blue-400',
+        online: 'text-green-400',
+        offline: 'text-gray-500',
         deploying: 'text-purple-400',
+        syncing: 'text-blue-400',
+        downloading: 'text-cyan-400',
+        warning: 'text-amber-300',
         failed: 'text-red-400',
+        working: 'text-sky-300',
     };
-    return map[status] || map.idle;
-}
-
-function statusLabel(status) {
-    if (!status) return 'Stopped';
-    return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    return map[tone] || map.offline;
 }
 
 function deployBadgeText(capabilities) {
@@ -42,6 +40,7 @@ function deployBadgeText(capabilities) {
 export default function ProviderListItem({
     provider,
     loading,
+    actionLabel = null,
     isSelected,
     onSelect,
     onToggleEnabled,
@@ -55,9 +54,20 @@ export default function ProviderListItem({
     const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
     const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
     const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
+    const deploy = provider.deploy_state ?? EMPTY_OBJECT;
 
     const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
     const deployBadge = useMemo(() => deployBadgeText(capabilities), [capabilities]);
+    const currentAction = actionLabel || loading || null;
+
+    const statusSummary = useMemo(
+        () => summarizeProviderStatus(provider, {
+            actionLabel: currentAction,
+            jobsAssigned,
+            providerFailures,
+        }),
+        [currentAction, jobsAssigned, provider, providerFailures],
+    );
 
     const hasIssues = (diagnostics.warnings?.length || 0) > 0
         || (diagnostics.errors?.length || 0) > 0
@@ -103,7 +113,7 @@ export default function ProviderListItem({
                     {/* Tiny status dot */}
                     <Circle
                         size={8}
-                        className={`fill-current absolute -right-0.5 -top-0.5 ${statusColor(runtimeStatus)}`}
+                        className={`fill-current absolute -right-0.5 -top-0.5 ${statusColorByTone(statusSummary.dotTone)}`}
                     />
                 </div>
 
@@ -122,6 +132,11 @@ export default function ProviderListItem({
                         {!provider.enabled && (
                             <span className="flex-shrink-0 rounded-md bg-gray-700/50 border border-gray-600/30 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
                                 Disabled
+                            </span>
+                        )}
+                        {!['online', 'offline', 'configured', 'disabled'].includes(statusSummary.stage) && (
+                            <span className={`flex-shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${providerBadgeToneClass(statusSummary.stage)}`}>
+                                {statusSummary.label}
                             </span>
                         )}
                         {hasIssues && (
@@ -144,17 +159,32 @@ export default function ProviderListItem({
                             </>
                         )}
                     </div>
+                    {statusSummary.message && (
+                        <p className="mt-1 truncate text-[11px] text-gray-400" title={statusSummary.message}>
+                            {statusSummary.message}
+                        </p>
+                    )}
                 </div>
 
                 {/* Metrics */}
                 <div className="hidden items-center gap-2 md:flex">
                     <span className="metric-chip">
-                        <Circle size={6} className={`fill-current ${statusColor(runtimeStatus)}`} />
-                        {statusLabel(runtimeStatus)}
+                        <Circle size={6} className={`fill-current ${statusColorByTone(statusSummary.dotTone)}`} />
+                        {statusSummary.label}
                     </span>
                     {runtime.connected !== undefined && (
                         <span className={`metric-chip ${runtime.connected ? 'text-green-400' : 'text-gray-500'}`}>
                             {runtime.connected ? 'Connected' : 'Offline'}
+                        </span>
+                    )}
+                    {statusSummary.downloadsActive > 0 && (
+                        <span className="metric-chip text-cyan-300 border-cyan-500/20">
+                            {statusSummary.downloadsActive} downloading
+                        </span>
+                    )}
+                    {statusSummary.downloadsQueued > 0 && (
+                        <span className="metric-chip text-blue-300 border-blue-500/20">
+                            {statusSummary.downloadsQueued} queued
                         </span>
                     )}
                     <span className="metric-chip">
@@ -170,7 +200,11 @@ export default function ProviderListItem({
                 {/* Actions */}
                 <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                     <button
-                        onClick={() => onToggleEnabled?.(provider.id, provider.enabled)}
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleEnabled?.(provider.id, provider.enabled);
+                        }}
                         className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
                         title={provider.enabled ? 'Disable' : 'Enable'}
                         aria-label={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
@@ -178,7 +212,11 @@ export default function ProviderListItem({
                         {provider.enabled ? <Power size={14} /> : <PowerOff size={14} />}
                     </button>
                     <button
-                        onClick={() => onEdit?.(provider)}
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit?.(provider);
+                        }}
                         className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
                         title="Edit"
                         aria-label="Edit Provider"
@@ -186,14 +224,18 @@ export default function ProviderListItem({
                         <Edit2 size={14} />
                     </button>
                     <button
-                        onClick={() => onDelete?.(provider.id)}
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete?.(provider.id);
+                        }}
                         className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-red-400"
                         title="Delete"
                         aria-label="Delete Provider"
                     >
                         <Trash2 size={14} />
                     </button>
-                    {loading && (
+                    {currentAction && (
                         <Loader2 className="ml-1 animate-spin text-blue-400" size={14} />
                     )}
                     <ChevronRight
@@ -208,12 +250,17 @@ export default function ProviderListItem({
             {/* Mobile-only metrics row */}
             <div className="mt-3 flex flex-wrap items-center gap-2 md:hidden">
                 <span className="metric-chip">
-                    <Circle size={6} className={`fill-current ${statusColor(runtimeStatus)}`} />
-                    {statusLabel(runtimeStatus)}
+                    <Circle size={6} className={`fill-current ${statusColorByTone(statusSummary.dotTone)}`} />
+                    {statusSummary.label}
                 </span>
                 <span className="metric-chip">
                     {jobsAssigned} jobs
                 </span>
+                {statusSummary.downloadsActive > 0 && (
+                    <span className="metric-chip text-cyan-300 border-cyan-500/20">
+                        {statusSummary.downloadsActive} downloading
+                    </span>
+                )}
                 {providerFailures > 0 && (
                     <span className="metric-chip text-red-400 border-red-500/20">
                         {providerFailures} fails

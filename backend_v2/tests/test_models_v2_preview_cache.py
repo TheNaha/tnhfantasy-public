@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+import httpx
 
 from api.routes import models_v2
 from infrastructure.request_dedup import clear_dedup_cache
@@ -164,6 +165,33 @@ async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypa
 
     first_data, first_content_type, first_cache_hit = await models_v2.fetch_civitai_preview(987654, image_index=0)
     second_data, second_content_type, second_cache_hit = await models_v2.fetch_civitai_preview(987654, image_index=0)
+
+    assert first_data is None
+    assert first_content_type is None
+    assert first_cache_hit is False
+    assert second_data is None
+    assert second_content_type is None
+    assert second_cache_hit is False
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeypatch, tmp_path):
+    monkeypatch.setattr(models_v2, "PREVIEW_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(models_v2, "PREVIEW_NOT_FOUND_TTL_SECONDS", 3600)
+
+    calls = []
+
+    def fake_get(url, timeout=0):
+        calls.append(url)
+        request = httpx.Request("GET", url)
+        response = httpx.Response(status_code=404, request=request)
+        raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
+
+    monkeypatch.setattr(models_v2, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+
+    first_data, first_content_type, first_cache_hit = await models_v2.fetch_civitai_preview(579645, image_index=0)
+    second_data, second_content_type, second_cache_hit = await models_v2.fetch_civitai_preview(579645, image_index=0)
 
     assert first_data is None
     assert first_content_type is None

@@ -494,6 +494,81 @@ class ProviderService:
         age = datetime.now(timezone.utc) - started_at
         return age <= DEPLOY_IN_PROGRESS_TTL
 
+    def _has_active_deploy_attempt_container(
+        self,
+        container_manager: Any,
+        provider_id: str,
+        attempt_id: Optional[str],
+    ) -> bool:
+        """Best-effort probe for the deploy-attempt container tied to persisted deploy_state."""
+        if not attempt_id:
+            return False
+
+        containers_client = getattr(getattr(container_manager, "client", None), "containers", None)
+        if containers_client is None:
+            # Fail open when runtime probing is unavailable.
+            return True
+
+        expected_name = f"comfy-provider-deploy-{provider_id}-{str(attempt_id)[:8]}"
+
+        try:
+            container = containers_client.get(expected_name)
+            try:
+                container.reload()
+            except Exception:
+                pass
+            status = getattr(container, "status", None)
+            return status not in {"exited", "dead", "removing"}
+        except Exception:
+            pass
+
+        try:
+            matches = containers_client.list(
+                all=True,
+                filters={
+                    "label": [
+                        "comfy-provider-deploy=true",
+                        f"provider-id={provider_id}",
+                        f"deploy-attempt-id={attempt_id}",
+                    ]
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "provider_deploy_container_probe_failed",
+                provider_id=provider_id,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            return True
+
+        for container in matches or []:
+            try:
+                container.reload()
+            except Exception:
+                pass
+            status = getattr(container, "status", None)
+            if status not in {"exited", "dead", "removing"}:
+                return True
+
+        return False
+
+    def _mark_deploy_state_failed(self, provider: Provider, state: Dict[str, Any], *, message: str) -> Dict[str, Any]:
+        failed_state = self._build_deploy_state(
+            provider_id=provider.id,
+            provider_type=provider.type,
+            status="failed",
+            attempt_id=state.get("attempt_id") or "stale-state",
+            started_at=state.get("started_at"),
+            finished_at=self._utcnow_iso(),
+            message=message,
+            completed_steps=state.get("completed_steps"),
+            failed_steps=state.get("failed_steps"),
+            steps=state.get("steps") if isinstance(state.get("steps"), list) else None,
+        )
+        self._persist_deploy_state(provider, failed_state)
+        return failed_state
+
     @staticmethod
     def _is_reconciliation_in_progress(state: Dict[str, Any]) -> bool:
         return ProviderService.normalize_reconciliation_status(state.get("status")) in RECONCILIATION_IN_PROGRESS_STATUSES
@@ -523,22 +598,32 @@ class ProviderService:
         state = self._read_deploy_state(provider)
 
         if self._is_deploy_in_progress(state):
+            container_manager = None
+            try:
+                from services.container_manager import get_container_manager
+
+                container_manager = get_container_manager()
+            except Exception:
+                container_manager = None
+
+            if container_manager and not self._has_active_deploy_attempt_container(
+                container_manager,
+                provider.id,
+                state.get("attempt_id"),
+            ):
+                return self._mark_deploy_state_failed(
+                    provider,
+                    state,
+                    message="Previous deployment container disappeared and state was marked failed",
+                )
             return state
 
         if state.get("status") == "deploying":
-            stale_state = self._build_deploy_state(
-                provider_id=provider.id,
-                provider_type=provider.type,
-                status="failed",
-                attempt_id=state.get("attempt_id") or "stale-state",
-                started_at=state.get("started_at"),
-                finished_at=self._utcnow_iso(),
+            return self._mark_deploy_state_failed(
+                provider,
+                state,
                 message="Previous deployment state expired and was marked failed",
-                completed_steps=state.get("completed_steps"),
-                failed_steps=state.get("failed_steps"),
             )
-            self._persist_deploy_state(provider, stale_state)
-            return stale_state
 
         return state
 
@@ -617,13 +702,24 @@ class ProviderService:
 
         current_state = self._read_deploy_state(provider)
         if self._is_deploy_in_progress(current_state):
-            return {
-                "status": "already_running",
-                "provider_id": provider.id,
-                "provider_type": provider.type,
-                "message": "Deployment already in progress for this provider",
-                "deploy_state": current_state,
-            }
+            if not self._has_active_deploy_attempt_container(
+                container_manager,
+                provider.id,
+                current_state.get("attempt_id"),
+            ):
+                current_state = self._mark_deploy_state_failed(
+                    provider,
+                    current_state,
+                    message="Previous deployment container disappeared and state was marked failed",
+                )
+            else:
+                return {
+                    "status": "already_running",
+                    "provider_id": provider.id,
+                    "provider_type": provider.type,
+                    "message": "Deployment already in progress for this provider",
+                    "deploy_state": current_state,
+                }
 
         dedup_key = f"provider-deploy:{provider.id}"
         if is_in_flight(dedup_key):

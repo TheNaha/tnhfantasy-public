@@ -125,4 +125,18 @@ describe('Providers page', () => {
 
         expect(screen.getByText('No providers configured')).toBeInTheDocument();
     });
+
+    it('triggers provider row action buttons', async () => {
+        render(<Providers />);
+
+        fireEvent.click(screen.getByLabelText('Disable Provider'));
+        await waitFor(() => {
+            expect(mutationsState.toggleProviderEnabled).toHaveBeenCalledWith('modal-primary', true);
+        });
+
+        fireEvent.click(screen.getByLabelText('Delete Provider'));
+        await waitFor(() => {
+            expect(mutationsState.deleteProvider).toHaveBeenCalledWith('modal-primary');
+        });
+    });
 });

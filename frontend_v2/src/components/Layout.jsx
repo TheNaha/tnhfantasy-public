@@ -1,11 +1,17 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
 import { useBrandingStore } from '../store/brandingStore';
 import useProvidersPageData from '../hooks/useProvidersPageData';
+import {
+    providerBadgeToneClass,
+    providerDotToneClass,
+    providerTextToneClass,
+    summarizeProviderStatus,
+} from '../utils/providerStatus';
 
 const NavItem = ({ to, icon: Icon, label }) => {
     const location = useLocation();
@@ -27,15 +33,32 @@ const NavItem = ({ to, icon: Icon, label }) => {
     );
 };
 
+const EMPTY_STATS = Object.freeze({});
+
 export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const branding = useBrandingStore(state => state.branding);
-    const { providers } = useProvidersPageData();
-    const runningProviders = providers.filter((provider) => {
-        const runtimeState = provider.runtime_state || {};
-        return provider.enabled && ['running', 'starting', 'active', 'connected'].includes(runtimeState.status);
-    });
+    const { providers, lbStats } = useProvidersPageData();
+
+    const providerStatsMap = useMemo(() => {
+        const map = new Map();
+        if (lbStats?.provider_stats) {
+            lbStats.provider_stats.forEach((stat) => map.set(stat.id, stat));
+        }
+        return map;
+    }, [lbStats]);
+
+    const providerEntries = useMemo(() => providers.map((provider) => {
+        const stats = providerStatsMap.get(provider.id) || EMPTY_STATS;
+        const summary = summarizeProviderStatus(provider, {
+            jobsAssigned: stats.jobs_assigned ?? 0,
+            providerFailures: stats.failures ?? 0,
+        });
+        return { provider, stats, summary };
+    }), [providerStatsMap, providers]);
+
+    const runningProviderCount = providerEntries.filter((entry) => entry.summary.isOnline).length;
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -107,29 +130,40 @@ export default function Layout({ children }) {
                     <div className="bg-gray-900/60 rounded-xl p-3 border border-gray-800/60">
                         <div className="flex items-center justify-between mb-2.5">
                             <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">System Status</span>
-                            <span className={`inline-block h-2 w-2 rounded-full ${runningProviders.length > 0 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                            <span className={`inline-block h-2 w-2 rounded-full ${runningProviderCount > 0 ? 'bg-green-500' : 'bg-gray-600'}`} />
                         </div>
-                        {providers.length > 0 ? (
+                        {providerEntries.length > 0 ? (
                             <div className="space-y-1.5">
-                                {providers.map((provider) => {
-                                    const status = provider.runtime_state?.status;
-                                    const isOnline = provider.enabled && ['running', 'active', 'connected'].includes(status);
-                                    const isDisabled = !provider.enabled;
+                                {providerEntries.map(({ provider, summary }) => {
+                                    const statusMeta = [
+                                        summary.jobsAssigned > 0 ? `${summary.jobsAssigned} jobs` : null,
+                                        summary.downloadsActive > 0 ? `${summary.downloadsActive} dl` : null,
+                                        summary.downloadsQueued > 0 ? `${summary.downloadsQueued} queued` : null,
+                                    ].filter(Boolean).join(' · ');
+
+                                    const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
+
                                     return (
-                                        <div key={provider.id} className="flex items-center gap-2 group">
-                                            <span className={`provider-dot ${isOnline ? 'online' : 'offline'}`} />
-                                            <span className={`text-xs truncate ${
-                                                isDisabled
-                                                    ? 'text-gray-600'
-                                                    : isOnline
-                                                        ? 'text-gray-300'
-                                                        : 'text-gray-500'
-                                            }`}>
-                                                {provider.id}
-                                            </span>
-                                            {isDisabled && (
-                                                <span className="text-[9px] text-gray-600 ml-auto">off</span>
-                                            )}
+                                        <div key={provider.id} className="flex items-start gap-2 group">
+                                            <span className={`provider-dot ${providerDotToneClass(summary.dotTone)}`} />
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className={`text-xs truncate ${providerTextToneClass(summary.stage)}`}>
+                                                        {provider.id}
+                                                    </span>
+                                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide ${providerBadgeToneClass(summary.stage)}`}>
+                                                        {summary.label}
+                                                    </span>
+                                                    {summary.isDisabled && (
+                                                        <span className="text-[9px] text-gray-600 ml-auto">off</span>
+                                                    )}
+                                                </div>
+                                                {subtitle && (
+                                                    <p className="mt-0.5 truncate text-[10px] text-gray-400" title={subtitle}>
+                                                        {subtitle}
+                                                    </p>
+                                                )}
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -138,7 +172,7 @@ export default function Layout({ children }) {
                             <p className="text-xs text-gray-600">No providers</p>
                         )}
                         <div className="mt-2.5 pt-2 border-t border-gray-800/50 text-xs text-gray-500">
-                            {runningProviders.length}/{providers.length} online
+                            {runningProviderCount}/{providers.length} online
                         </div>
                     </div>
                 </div>

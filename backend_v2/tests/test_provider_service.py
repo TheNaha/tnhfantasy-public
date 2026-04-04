@@ -249,21 +249,34 @@ class _DummyContainer:
 
 
 class _DummyContainersClient:
-    def __init__(self, container):
+    def __init__(self, container, *, existing_names=None, listed_containers=None):
         self._container = container
+        self._existing_names = set(existing_names or [])
+        if container is not None and getattr(container, "name", None):
+            self._existing_names.add(container.name)
+        self._listed_containers = listed_containers
 
     def get(self, _name):
-        return self._container
+        if _name in self._existing_names:
+            return self._container
+        raise RuntimeError(f"container {_name} not found")
+
+    def list(self, all=True, filters=None):
+        if self._listed_containers is not None:
+            return list(self._listed_containers)
+        if self._container is None:
+            return []
+        return [self._container]
 
     def run(self, **_kwargs):
         return self._container
 
 
 class _DummyContainerManager:
-    def __init__(self, provider_id: str, container):
+    def __init__(self, provider_id: str, container, *, containers_client=None):
         self.running_containers = {provider_id: container}
         self.client = MagicMock()
-        self.client.containers = _DummyContainersClient(container)
+        self.client.containers = containers_client or _DummyContainersClient(container)
         self.build_worker_image = MagicMock(return_value=f"comfy-provider-{provider_id}:latest")
 
 
@@ -329,6 +342,76 @@ class TestProviderServiceDeploy:
             result = await service.deploy_provider_app("test-provider", container_manager)
 
         assert result["status"] == "already_running"
+
+    async def test_deploy_retries_when_attempt_container_is_missing(self, service, sample_provider_data):
+        stuck_provider_data = dict(sample_provider_data)
+        stuck_provider_data["id"] = "stuck-provider"
+        await service.create_provider(stuck_provider_data)
+        provider = await service.get_provider("stuck-provider")
+
+        stuck_state = service._build_deploy_state(
+            provider_id=provider.id,
+            provider_type=provider.type,
+            status="deploying",
+            attempt_id="179eec65-3a78-4f7f-8c96-4a12572efa5e",
+            started_at=service._utcnow_iso(),
+            message="Deployment started",
+            steps=[],
+        )
+        service._persist_deploy_state(provider, stuck_state)
+
+        deploy_container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
+        missing_attempt_client = _DummyContainersClient(
+            deploy_container,
+            existing_names=set(),
+            listed_containers=[],
+        )
+        container_manager = _DummyContainerManager(
+            "stuck-provider",
+            deploy_container,
+            containers_client=missing_attempt_client,
+        )
+
+        result = await service.deploy_provider_app("stuck-provider", container_manager)
+
+        assert result["status"] == "success"
+        provider = await service.get_provider("stuck-provider")
+        deploy_state = (provider.config or {}).get("deploy_state", {})
+        assert deploy_state.get("status") == "succeeded"
+
+    async def test_get_deploy_state_marks_failed_when_attempt_container_is_missing(self, service, sample_provider_data):
+        stuck_provider_data = dict(sample_provider_data)
+        stuck_provider_data["id"] = "stuck-provider-state"
+        await service.create_provider(stuck_provider_data)
+        provider = await service.get_provider("stuck-provider-state")
+
+        stuck_state = service._build_deploy_state(
+            provider_id=provider.id,
+            provider_type=provider.type,
+            status="deploying",
+            attempt_id="179eec65-3a78-4f7f-8c96-4a12572efa5e",
+            started_at=service._utcnow_iso(),
+            message="Deployment started",
+            steps=[],
+        )
+        service._persist_deploy_state(provider, stuck_state)
+
+        missing_attempt_client = _DummyContainersClient(
+            None,
+            existing_names=set(),
+            listed_containers=[],
+        )
+        container_manager = _DummyContainerManager(
+            "stuck-provider-state",
+            None,
+            containers_client=missing_attempt_client,
+        )
+
+        with patch("services.container_manager.get_container_manager", return_value=container_manager):
+            state = await service.get_provider_deploy_state("stuck-provider-state")
+
+        assert state["status"] == "failed"
+        assert "disappeared" in state.get("message", "")
 
     async def test_deploy_timeout_marks_failed_step(self, service, sample_provider_data):
         timeout_provider_data = dict(sample_provider_data)

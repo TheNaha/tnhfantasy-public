@@ -413,6 +413,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
     return result
 
 @app.function(
+    image=image,
     volumes={"/mnt/data": vol}, 
     scaledown_window=STORAGE_SCALEDOWN,
     max_containers=STORAGE_MAX_CONTAINERS

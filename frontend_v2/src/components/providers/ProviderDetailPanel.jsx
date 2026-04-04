@@ -20,6 +20,7 @@ import {
 import { motion } from 'framer-motion';
 import { useProviderLogs } from '../../hooks/useProvidersPageData';
 import ReconciliationStatus from './ReconciliationStatus';
+import { providerBadgeToneClass, summarizeProviderStatus } from '../../utils/providerStatus';
 
 const EMPTY_OBJECT = Object.freeze({});
 
@@ -98,6 +99,15 @@ export default function ProviderDetailPanel({
         return 'Provider';
     }, [capabilities]);
 
+    const statusSummary = useMemo(
+        () => summarizeProviderStatus(provider, {
+            actionLabel: loading || null,
+            jobsAssigned,
+            providerFailures,
+        }),
+        [jobsAssigned, loading, provider, providerFailures],
+    );
+
     const fetchProviderLogs = async () => {
         try {
             await fetchLogs();
@@ -168,6 +178,9 @@ export default function ProviderDetailPanel({
 
                     {/* Status summary chips */}
                     <div className="flex flex-wrap items-center gap-2 mb-4">
+                        <span className={`metric-chip border ${providerBadgeToneClass(statusSummary.stage)}`}>
+                            {statusSummary.label}
+                        </span>
                         <span className="metric-chip">
                             <Circle size={6} className={`fill-current ${statusDotClass(runtimeStatus)}`} />
                             {humanize(runtimeStatus)}
@@ -181,12 +194,30 @@ export default function ProviderDetailPanel({
                         <span className="metric-chip">
                             {deployBadge}
                         </span>
+                        {statusSummary.downloadsActive > 0 && (
+                            <span className="metric-chip text-cyan-300 border-cyan-500/20">
+                                {statusSummary.downloadsActive} downloading
+                            </span>
+                        )}
+                        {statusSummary.downloadsQueued > 0 && (
+                            <span className="metric-chip text-blue-300 border-blue-500/20">
+                                {statusSummary.downloadsQueued} queued
+                            </span>
+                        )}
+                        {(statusSummary.warningCount > 0 || statusSummary.errorCount > 0) && (
+                            <span className="metric-chip text-amber-300 border-amber-500/20">
+                                {statusSummary.errorCount + statusSummary.warningCount} alerts
+                            </span>
+                        )}
                         {!provider.enabled && (
                             <span className="metric-chip text-amber-400 border-amber-500/20">
                                 Disabled
                             </span>
                         )}
                     </div>
+                    {statusSummary.message && (
+                        <p className="text-xs text-gray-400 mb-3">{statusSummary.message}</p>
+                    )}
 
                     {/* Tab bar */}
                     <div className="tab-bar -mx-6 px-6">

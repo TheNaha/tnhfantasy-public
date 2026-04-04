@@ -440,6 +440,7 @@ textarea,
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  pointer-events: none;
   opacity: 0;
   background: linear-gradient(
     135deg,
@@ -611,6 +612,40 @@ textarea,
 .provider-dot.processing {
   background: #3b82f6;
   animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+.provider-dot.syncing {
+  background: #3b82f6;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.45);
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+.provider-dot.downloading {
+  background: #06b6d4;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.45);
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+.provider-dot.deploying {
+  background: #a855f7;
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.45);
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+.provider-dot.warning {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+.provider-dot.working {
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.45);
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}
+
+.provider-dot.failed {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.35);
 }
 
 /* Refined glow border for selected/active items */

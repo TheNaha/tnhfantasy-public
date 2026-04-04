@@ -261,7 +261,7 @@ export default function Providers() {
                         <ProviderListItem
                             key={provider.id}
                             provider={provider}
-                            loading={actionLoading[provider.id]}
+                            actionLabel={actionLoading[provider.id] ?? null}
                             isSelected={selectedProviderId === provider.id}
                             onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
                             onToggleEnabled={handleToggleEnabled}
