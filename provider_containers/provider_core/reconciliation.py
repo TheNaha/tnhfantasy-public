@@ -7,9 +7,9 @@ event pushes, and the shared reconciliation orchestration used by workers.
 import asyncio
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Set
 from datetime import datetime
-import httpx
 
 from .state import ReconciliationState
+from .http_client import get_http_client
 
 EVENT_PUSH_MAX_ATTEMPTS = 3
 EVENT_PUSH_INITIAL_BACKOFF_SECONDS = 0.5
@@ -56,11 +56,8 @@ async def report_file_status_v2(
         payload["error_message"] = error_message
     
     try:
-        if http_client:
-            response = await http_client.put(url, json=payload)
-        else:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.put(url, json=payload)
+        client = http_client or get_http_client()
+        response = await client.put(url, json=payload, timeout=10.0)
         
         if response.status_code != 200:
             print(f"[V2 Reconciliation] Warning: Failed to update status for file {file_id}: {response.status_code}")
@@ -98,11 +95,8 @@ async def batch_update_file_status_v2(
         }
         
         try:
-            if http_client:
-                response = await http_client.post(url, json=payload, timeout=30.0)
-            else:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(url, json=payload)
+            client = http_client or get_http_client()
+            response = await client.post(url, json=payload, timeout=30.0)
             
             if response.status_code == 200:
                 result = response.json()
@@ -169,11 +163,8 @@ async def push_reconciliation_event(
 
     for attempt in range(1, attempts + 1):
         try:
-            if http_client:
-                response = await http_client.post(url, json=payload, timeout=EVENT_PUSH_TIMEOUT_SECONDS)
-            else:
-                async with httpx.AsyncClient(timeout=EVENT_PUSH_TIMEOUT_SECONDS) as client:
-                    response = await client.post(url, json=payload)
+            client = http_client or get_http_client()
+            response = await client.post(url, json=payload, timeout=EVENT_PUSH_TIMEOUT_SECONDS)
 
             status_code = getattr(response, "status_code", None)
             if status_code is not None and status_code >= 400:
@@ -213,11 +204,8 @@ async def get_pending_downloads(
     url = f"{backend_url}/api/v2/models/providers/{provider_id}/pending-downloads"
     
     try:
-        if http_client:
-            response = await http_client.get(url, timeout=30.0)
-        else:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
+        client = http_client or get_http_client()
+        response = await client.get(url, timeout=30.0)
         
         if response.status_code == 200:
             data = response.json()
@@ -243,11 +231,8 @@ async def get_all_expected_paths(
     url = f"{backend_url}/api/v2/models/all-storage-paths"
     
     try:
-        if http_client:
-            response = await http_client.get(url, timeout=30.0)
-        else:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
+        client = http_client or get_http_client()
+        response = await client.get(url, timeout=30.0)
         
         if response.status_code == 200:
             data = response.json()
@@ -318,6 +303,7 @@ async def run_reconciliation_v2(
 ) -> None:
     """Run the shared V2 reconciliation flow with provider-specific callbacks."""
     reconciliation_state.start_reconciliation()
+    shared_http_client = get_http_client()
     print(f"[V2 Reconciliation] Starting version-aware reconciliation for {provider_id}")
 
     async def push_state(phase: str, message: str = None, active_downloads: list = None):
@@ -334,6 +320,7 @@ async def run_reconciliation_v2(
             active_downloads=active_downloads,
             errors=reconciliation_state.get_errors(),
             message=message,
+            http_client=shared_http_client,
         )
 
     print("[V2 Reconciliation] Step 0: Validating existing models...")
@@ -356,11 +343,18 @@ async def run_reconciliation_v2(
         print("[V2 Reconciliation] Step 1: Querying pending downloads...")
         await push_state("fetching", "Querying pending downloads from backend...")
 
-        pending_downloads = await get_pending_downloads(backend_url, provider_id)
+        pending_downloads = await get_pending_downloads(
+            backend_url,
+            provider_id,
+            http_client=shared_http_client,
+        )
         print(f"[V2 Reconciliation] Found {len(pending_downloads)} files pending download")
 
         print("[V2 Reconciliation] Step 2: Getting all expected storage paths...")
-        all_expected_paths = await get_all_expected_paths(backend_url)
+        all_expected_paths = await get_all_expected_paths(
+            backend_url,
+            http_client=shared_http_client,
+        )
         print(f"[V2 Reconciliation] {len(all_expected_paths)} total expected paths in database")
 
         print(f"[V2 Reconciliation] Step 3: Checking existing files on {storage_label}...")
@@ -374,8 +368,17 @@ async def run_reconciliation_v2(
         if missing_files:
             print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from {storage_label}")
             missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
-            await batch_update_file_status_v2(backend_url, provider_id, missing_updates)
-            pending_downloads = await get_pending_downloads(backend_url, provider_id)
+            await batch_update_file_status_v2(
+                backend_url,
+                provider_id,
+                missing_updates,
+                http_client=shared_http_client,
+            )
+            pending_downloads = await get_pending_downloads(
+                backend_url,
+                provider_id,
+                http_client=shared_http_client,
+            )
             print(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
 
         downloads_needed = []
@@ -393,7 +396,12 @@ async def run_reconciliation_v2(
 
         if already_ready:
             print(f"[V2 Reconciliation] Updating {len(already_ready)} already-existing files as ready...")
-            await batch_update_file_status_v2(backend_url, provider_id, already_ready)
+            await batch_update_file_status_v2(
+                backend_url,
+                provider_id,
+                already_ready,
+                http_client=shared_http_client,
+            )
 
         reconciliation_state.set_download_queue(downloads_needed)
         reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)
@@ -429,7 +437,13 @@ async def run_reconciliation_v2(
                 await push_state("downloading", f"Downloading {display_name}...", active_downloads_list.copy())
 
                 print(f"[V2 Reconciliation] [{index + 1}/{total_downloads}] ⬇ Starting: {display_name}")
-                await report_file_status_v2(backend_url, provider_id, file_id, "downloading")
+                await report_file_status_v2(
+                    backend_url,
+                    provider_id,
+                    file_id,
+                    "downloading",
+                    http_client=shared_http_client,
+                )
 
                 try:
                     token = determine_download_token(download_url, hf_token, civitai_token)
@@ -446,6 +460,7 @@ async def run_reconciliation_v2(
                         "ready",
                         storage_path=storage_path,
                         size_bytes=int(file_info.get("size_kb", 0) * 1024),
+                        http_client=shared_http_client,
                     )
                 except Exception as exc:
                     reconciliation_state.increment_downloads_failed()
@@ -457,6 +472,7 @@ async def run_reconciliation_v2(
                         file_id,
                         "failed",
                         error_message=str(exc),
+                        http_client=shared_http_client,
                     )
                 finally:
                     async with active_downloads_lock:

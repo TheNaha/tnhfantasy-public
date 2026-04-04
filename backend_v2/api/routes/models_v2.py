@@ -13,7 +13,6 @@
 #   PATCH  /api/v2/models/{id}/versions/{vid}/status/{pid} – Update provider file status
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
-from infrastructure.http_client import get_http_client
 
 from sqlmodel import Session
 from pydantic import BaseModel
@@ -748,173 +747,16 @@ async def resync_model_from_civitai(
 
 
 # ============================================================================
-# EXTERNAL API INTEGRATION (CivitAI / HuggingFace)
+# PREVIEW IMAGES - Fetch from CivitAI and cache
 # ============================================================================
 
 import os
-import re
 import asyncio
 import time
 import random
-import requests
 from fastapi import Response
 from infrastructure.http_client import get_http_client
 from infrastructure.request_dedup import deduplicated, make_key
-
-
-
-class ParseUrlRequest(BaseModel):
-    url: str
-
-
-@router.post("/external/parse")
-async def parse_model_url(request: ParseUrlRequest):
-    """
-    Parse a model URL to extract full metadata from CivitAI or HuggingFace.
-    This fetches the actual model data from the source API.
-    """
-    url = request.url.strip()
-    
-    # CivitAI URL parsing
-    if "civitai.com" in url:
-        # Extract model ID from URL patterns like:
-        # https://civitai.com/models/123456/model-name
-        # https://civitai.com/models/123456?modelVersionId=789
-        match = re.search(r'models/(\d+)', url)
-        if not match:
-            raise HTTPException(status_code=400, detail="Could not parse CivitAI model ID from URL")
-        
-        model_id = match.group(1)
-        
-        # Check for specific version in URL
-        version_match = re.search(r'modelVersionId=(\d+)', url)
-        version_id = version_match.group(1) if version_match else None
-        
-        try:
-            api_url = f"https://civitai.com/api/v1/models/{model_id}"
-            response = requests.get(api_url, timeout=15)
-            response.raise_for_status()
-            model_data = response.json()
-            
-            # Return in the same format as search results for consistency
-            return model_data
-            
-        except requests.RequestException as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch from CivitAI: {str(e)}")
-    
-    # HuggingFace URL parsing
-    elif "huggingface.co" in url:
-        # Extract model path from URL patterns like:
-        # https://huggingface.co/username/model-name
-        # https://huggingface.co/username/model-name/tree/main
-        match = re.search(r'huggingface\.co/([^/]+/[^/]+)', url)
-        if not match:
-            raise HTTPException(status_code=400, detail="Could not parse HuggingFace model path from URL")
-        
-        model_path = match.group(1)
-        
-        try:
-            api_url = f"https://huggingface.co/api/models/{model_path}"
-            response = requests.get(api_url, timeout=15)
-            response.raise_for_status()
-            hf_data = response.json()
-            
-            # Normalize to CivitAI-like format for consistent frontend handling
-            return {
-                "id": hf_data.get("id", model_path),
-                "name": model_path.split("/")[-1],
-                "type": "Checkpoint",
-                "nsfw": False,
-                "description": hf_data.get("description", ""),
-                "creator": {"username": hf_data.get("author", model_path.split("/")[0])},
-                "stats": {
-                    "downloadCount": hf_data.get("downloads", 0),
-                    "thumbsUpCount": hf_data.get("likes", 0)
-                },
-                "modelVersions": [{
-                    "id": hf_data.get("sha", "main"),
-                    "name": "main",
-                    "baseModel": "Unknown",
-                    "downloadUrl": f"https://huggingface.co/{model_path}/resolve/main/model.safetensors",
-                    "files": [{
-                        "name": "model.safetensors",
-                        "sizeKB": 0,
-                        "downloadUrl": f"https://huggingface.co/{model_path}/resolve/main/model.safetensors",
-                        "primary": True
-                    }],
-                    "images": []
-                }],
-                "source": "huggingface"
-            }
-            
-        except requests.RequestException as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch from HuggingFace: {str(e)}")
-    
-    else:
-        raise HTTPException(
-            status_code=400, 
-            detail="URL must be from CivitAI (civitai.com) or HuggingFace (huggingface.co)"
-        )
-
-
-@router.get("/external/civitai")
-async def search_civitai(query: str, limit: int = 20):
-    """Search models on CivitAI."""
-    import urllib.parse
-    try:
-        # Sentinel: URL-encode user-provided query to prevent SSRF and parameter injection
-        encoded_query = urllib.parse.quote(query, safe='')
-        url = f"https://civitai.com/api/v1/models?query={encoded_query}&limit={limit}"
-        response = await get_http_client().get(url, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise HTTPException(status_code=response.status_code, detail="CivitAI search failed")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/external/huggingface")
-async def search_huggingface(query: str, limit: int = 20):
-    """Search models on HuggingFace."""
-    import urllib.parse
-    try:
-        client = get_http_client()
-        # Sentinel: URL-encode user-provided query to prevent SSRF and parameter injection
-        encoded_query = urllib.parse.quote(query, safe='')
-        url = f"https://huggingface.co/api/models?search={encoded_query}&limit={limit}&filter=diffusers"
-        response = await get_http_client().get(url, timeout=10)
-        if response.status_code == 200:
-            hf_models = response.json()
-            
-            # Normalize to CivitAI-like format
-            items = []
-            for model in hf_models[:limit]:
-                items.append({
-                    "id": model.get("id", ""),
-                    "name": model.get("id", "").split("/")[-1],
-                    "type": "Checkpoint",
-                    "nsfw": False,
-                    "creator": {"username": model.get("author", "")},
-                    "modelVersions": [{
-                        "id": model.get("sha", ""),
-                        "name": "main",
-                        "downloadUrl": f"https://huggingface.co/{model.get('id')}/resolve/main/model.safetensors",
-                        "images": []
-                    }],
-                    "source": "huggingface"
-                })
-            
-            return {"items": items}
-        else:
-            raise HTTPException(status_code=response.status_code, detail="HuggingFace search failed")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# PREVIEW IMAGES - Fetch from CivitAI and cache
-# ============================================================================
 
 def _resolve_preview_cache_dir() -> str:
     configured_dir = os.getenv("COMFY_PREVIEW_CACHE_DIR")

@@ -87,25 +87,6 @@ export default function SimpleGenerator() {
 
         return { positive, negative };
     };
-
-
-    // Listen for custom events from ModelSelector
-    useEffect(() => {
-        const handleAddTriggerWords = (e) => addTriggerWords(e.detail);
-        const handleApplySDXL = () => {
-            applySDXLSettings();
-            toast.success("Applied SDXL Settings!");
-        };
-
-        window.addEventListener('addTriggerWords', handleAddTriggerWords);
-        window.addEventListener('applySDXLSettings', handleApplySDXL);
-
-        return () => {
-            window.removeEventListener('addTriggerWords', handleAddTriggerWords);
-            window.removeEventListener('applySDXLSettings', handleApplySDXL);
-        };
-    }, [addTriggerWords, applySDXLSettings]);
-
     // Obsolete saved prompts functionality removed - using Prompt Library instead
 
     // Handler for Prompt Library
@@ -197,6 +178,11 @@ export default function SimpleGenerator() {
     const handleAddTriggerWordsUI = (words) => {
         addTriggerWords(words);
         toast.success("Added trigger words!");
+    };
+
+    const handleApplySDXLSettingsUI = () => {
+        applySDXLSettings();
+        toast.success("Applied SDXL Settings!");
     };
 
     // ControlNet Handlers
@@ -587,6 +573,8 @@ export default function SimpleGenerator() {
                                     onChange={setSelectedCheckpoint}
                                     onVersionChange={setSelectedCheckpoint}
                                     onInfoClick={(model) => setViewingMetadata(model)}
+                                    onAddTriggerWords={handleAddTriggerWordsUI}
+                                    onApplySDXLSettings={handleApplySDXLSettingsUI}
                                     showAvailabilityBadge={true}
                                     providers={providers}
                                     providersLoading={providersLoading}
@@ -896,6 +884,7 @@ export default function SimpleGenerator() {
                                         metadata={selectedLoras[autoOpenLoraIndex]?.metadata}
                                         onChange={(m) => handleLoraChange(autoOpenLoraIndex, 'model', m)}
                                         onInfoClick={(model) => setViewingMetadata(model)}
+                                        onAddTriggerWords={handleAddTriggerWordsUI}
                                         directory="models/loras"
                                         autoOpen={true}
                                         onAutoOpenComplete={() => setAutoOpenLoraIndex(null)}

@@ -24,6 +24,7 @@ from infrastructure.database import (
 )
 from services.job_service import JobService
 from services.provider_service import ProviderService
+from services.external_model_service import ExternalModelService
 from core.events import event_bus, EventBus
 from infrastructure.logging import get_logger
 
@@ -66,6 +67,11 @@ def get_model_service_v2(session: Session):
     """Get model service V2 instance."""
     from services.model_service_v2 import ModelServiceV2
     return ModelServiceV2(session)
+
+
+def get_external_model_service() -> ExternalModelService:
+    """Get external model service instance."""
+    return ExternalModelService()
 
 
 def get_container_manager():

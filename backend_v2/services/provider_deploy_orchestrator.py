@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import os
-import queue
-import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -79,7 +78,7 @@ class ProviderDeployOrchestrator:
             network="comfy-network",
         )
 
-    def run_step(self, container: Any, command: List[str], *, timeout_seconds: Optional[float] = None) -> Any:
+    async def run_step(self, container: Any, command: List[str], *, timeout_seconds: Optional[float] = None) -> Any:
         step_timeout = self.step_timeout_seconds if timeout_seconds is None else max(float(timeout_seconds), 1.0)
         logger.info(
             "provider_deploy_step_exec",
@@ -88,33 +87,22 @@ class ProviderDeployOrchestrator:
             timeout_seconds=step_timeout,
         )
 
-        result_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue(maxsize=1)
-
-        def _exec() -> None:
-            try:
-                exec_result = container.exec_run(cmd=command, stream=False, demux=True)
-                result_queue.put(("result", exec_result))
-            except Exception as exc:
-                result_queue.put(("error", exc))
-
-        worker = threading.Thread(target=_exec, daemon=True, name="provider-deploy-step")
-        worker.start()
-        worker.join(timeout=step_timeout)
-
-        if worker.is_alive():
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    container.exec_run,
+                    cmd=command,
+                    stream=False,
+                    demux=True,
+                ),
+                timeout=step_timeout,
+            )
+        except asyncio.TimeoutError as exc:
             raise ProviderDeployStepTimeoutError(
                 f"Deploy step timed out after {step_timeout:.0f}s"
-            )
-
-        try:
-            result_type, payload = result_queue.get_nowait()
-        except queue.Empty as exc:
-            raise ProviderDeployStepExecutionError("Deploy step finished without result") from exc
-
-        if result_type == "error":
-            raise ProviderDeployStepExecutionError("Deploy step execution crashed") from payload
-
-        return payload
+            ) from exc
+        except Exception as exc:
+            raise ProviderDeployStepExecutionError("Deploy step execution crashed") from exc
 
     def cleanup_container(self, container: Optional[Any]) -> None:
         if container is None:

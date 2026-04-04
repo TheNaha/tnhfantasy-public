@@ -1,0 +1,51 @@
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from api.deps import get_external_model_service
+from services.external_model_service import ExternalModelService, ExternalModelServiceError
+
+router = APIRouter(prefix="/api/v2/models/external", tags=["models-v2"])
+
+
+class ParseUrlRequest(BaseModel):
+    url: str
+
+
+@router.post("/parse")
+async def parse_model_url(
+    request: ParseUrlRequest,
+    service: ExternalModelService = Depends(get_external_model_service),
+) -> Dict[str, Any]:
+    """Parse a model URL from CivitAI or HuggingFace and return normalized metadata."""
+    try:
+        return await service.parse_model_url(request.url)
+    except ExternalModelServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/civitai")
+async def search_civitai(
+    query: str,
+    limit: int = 20,
+    service: ExternalModelService = Depends(get_external_model_service),
+) -> Dict[str, Any]:
+    """Search models on CivitAI."""
+    try:
+        return await service.search_civitai(query=query, limit=limit)
+    except ExternalModelServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/huggingface")
+async def search_huggingface(
+    query: str,
+    limit: int = 20,
+    service: ExternalModelService = Depends(get_external_model_service),
+) -> Dict[str, Any]:
+    """Search models on HuggingFace."""
+    try:
+        return await service.search_huggingface(query=query, limit=limit)
+    except ExternalModelServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

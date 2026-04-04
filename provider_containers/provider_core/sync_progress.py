@@ -8,6 +8,8 @@ import time
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
+from .http_client import get_http_client
+
 
 @dataclass
 class SyncUpdate:
@@ -34,11 +36,13 @@ class SyncProgressReporter:
         backend_url: str,
         batch_interval: float = 5.0,
         http_client=None,
+        max_pending_updates: int = 1000,
     ):
         self.provider_id = provider_id
         self.backend_url = backend_url
         self.batch_interval = batch_interval
-        self._http_client = http_client
+        self._http_client = http_client or get_http_client()
+        self._max_pending_updates = max(1, int(max_pending_updates))
         
         self._pending_updates: List[Dict] = []
         self._last_batch_time: float = 0
@@ -78,13 +82,17 @@ class SyncProgressReporter:
                 "message": message,
                 "size_bytes": size_bytes,
             })
+            pending_count = len(self._pending_updates)
         
         # Check if we should flush
         current_time = time.time()
         should_flush = flush or (
             current_time - self._last_batch_time >= self.batch_interval
-            and len(self._pending_updates) > 0
+            and pending_count > 0
         )
+
+        if pending_count >= self._max_pending_updates:
+            should_flush = True
         
         if should_flush:
             await self.flush()
@@ -106,16 +114,9 @@ class SyncProgressReporter:
         }
         
         try:
-            if self._http_client:
-                response = await self._http_client.post(url, json=payload)
-                if response.status_code != 200:
-                    print(f"[SyncProgress] Batch error {response.status_code}: {response.text}")
-            else:
-                import httpx
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.post(url, json=payload)
-                    if response.status_code != 200:
-                        print(f"[SyncProgress] Batch error {response.status_code}: {response.text}")
+            response = await self._http_client.post(url, json=payload, timeout=10.0)
+            if response.status_code != 200:
+                print(f"[SyncProgress] Batch error {response.status_code}: {response.text}")
         except Exception as e:
             print(f"[SyncProgress] Batch failed: {e}")
 

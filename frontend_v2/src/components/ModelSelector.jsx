@@ -31,6 +31,8 @@ const ModelSelector = memo(function ModelSelector({
   onAutoOpenComplete, // Callback when auto-open modal is closed
   onVersionChange, // Callback when version is changed
   onInfoClick, // NEW: Callback for info button click
+  onAddTriggerWords,
+  onApplySDXLSettings,
   showAvailabilityBadge = false,
   providers = [],
   providersLoading = false,
@@ -477,11 +479,9 @@ const ModelSelector = memo(function ModelSelector({
                                     <div className="flex gap-2">
                                       <button
                                         onClick={() => {
-                                          window.dispatchEvent(
-                                            new CustomEvent("addTriggerWords", {
-                                              detail: version.trained_words,
-                                            }),
-                                          );
+                                          if (onAddTriggerWords) {
+                                            onAddTriggerWords(version.trained_words);
+                                          }
                                           toast.dismiss(t.id);
                                         }}
                                         className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
@@ -771,11 +771,9 @@ const ModelSelector = memo(function ModelSelector({
                                     <div className="flex gap-2">
                                       <button
                                         onClick={() => {
-                                          window.dispatchEvent(
-                                            new CustomEvent("addTriggerWords", {
-                                              detail: model.trained_words,
-                                            }),
-                                          );
+                                          if (onAddTriggerWords) {
+                                            onAddTriggerWords(model.trained_words);
+                                          }
                                           toast.dismiss(t.id);
                                         }}
                                         className="bg-blue-600 text-white text-xs px-2 py-1 rounded"
@@ -808,11 +806,9 @@ const ModelSelector = memo(function ModelSelector({
                                     <div className="flex gap-2">
                                       <button
                                         onClick={() => {
-                                          window.dispatchEvent(
-                                            new CustomEvent(
-                                              "applySDXLSettings",
-                                            ),
-                                          );
+                                          if (onApplySDXLSettings) {
+                                            onApplySDXLSettings();
+                                          }
                                           toast.dismiss(t.id);
                                         }}
                                         className="bg-purple-600 text-white text-xs px-2 py-1 rounded"
@@ -992,15 +988,9 @@ const ModelSelector = memo(function ModelSelector({
                                               <div className="flex gap-2">
                                                 <button
                                                   onClick={() => {
-                                                    window.dispatchEvent(
-                                                      new CustomEvent(
-                                                        "addTriggerWords",
-                                                        {
-                                                          detail:
-                                                            version.trained_words,
-                                                        },
-                                                      ),
-                                                    );
+                                                    if (onAddTriggerWords) {
+                                                      onAddTriggerWords(version.trained_words);
+                                                    }
                                                     toast.dismiss(t.id);
                                                   }}
                                                   className="bg-blue-600 text-white text-xs px-2 py-1 rounded"

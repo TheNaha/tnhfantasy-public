@@ -41,7 +41,7 @@ export const usePromptStore = create((set, get) => ({
         try {
             // Check for localStorage data to migrate
             const migrated = localStorage.getItem(MIGRATION_KEY);
-            if (!migrated) {
+            if (migrated !== 'true') {
                 const oldData = localStorage.getItem(OLD_STORAGE_KEY);
                 if (oldData) {
                     try {

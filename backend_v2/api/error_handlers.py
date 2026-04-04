@@ -1,7 +1,16 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.exceptions import (
+    ComfyError,
+    ConfigurationError,
+    ContainerError,
+    DownloadError,
+    JobError,
+    NotFoundError,
+    ProviderError,
+    ValidationError,
+)
 from infrastructure.logging import get_logger
 
 logger = get_logger("error_handlers")
@@ -24,6 +33,46 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=400,
             content={"error": exc.message, "code": exc.code, "field": exc.field},
+        )
+
+    @app.exception_handler(ProviderError)
+    async def provider_error_handler(request: Request, exc: ProviderError):
+        logger.error("provider_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=502,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(ContainerError)
+    async def container_error_handler(request: Request, exc: ContainerError):
+        logger.error("container_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=502,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(DownloadError)
+    async def download_error_handler(request: Request, exc: DownloadError):
+        logger.error("download_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=502,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(JobError)
+    async def job_error_handler(request: Request, exc: JobError):
+        logger.error("job_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=500,
+            content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(ConfigurationError)
+    async def configuration_error_handler(request: Request, exc: ConfigurationError):
+        logger.error("configuration_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=500,
+            content={"error": exc.message, "code": exc.code},
         )
 
     @app.exception_handler(ComfyError)

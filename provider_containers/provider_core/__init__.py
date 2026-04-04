@@ -39,6 +39,7 @@ from .background import (
 )
 
 from .utils import get_safe_path, build_deploy_compatibility_response
+from .downloads import download_model_to_path, build_authenticated_download_request
 from .validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
@@ -82,6 +83,8 @@ __all__ = [
     "JobCancellationTracker",
     "get_job_tracker",
     "build_deploy_compatibility_response",
+    "download_model_to_path",
+    "build_authenticated_download_request",
     # Validation
     "MIN_MODEL_SIZE",
     "VALID_FILE_HEADERS",

@@ -9,10 +9,10 @@ from typing import Dict, Any
 from pathlib import Path
 
 from provider_core.utils import get_safe_path
+from provider_core.downloads import download_model_to_path
 from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
-    validate_downloaded_file,
 )
 from provider_core.workflow_executor import (
     IMAGE_FETCH_FILESYSTEM,
@@ -97,21 +97,6 @@ image_snapshot = image_base.add_local_dir(
     remote_path="/root/comfy/ComfyUI/custom_nodes/memory_snapshot_helper",
     copy=True,
 )
-
-
-def _validate_download(path: str, total_size: int = 0) -> Dict[str, Any]:
-    """
-    Validate a downloaded file using strict checks.
-    
-    Args:
-        path: Path to the file to validate
-        total_size: Expected size from Content-Length (0 if unknown)
-        
-    Returns:
-        Dict with validation result. If valid=False, contains error message.
-    """
-    return validate_downloaded_file(path, total_size)
-
 
 
 # =============================================================================
@@ -302,40 +287,15 @@ class ComfyUISnapshot:
 )
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, info: dict = None):
-    """Download model with safe temp file pattern and validation."""
-    import requests
+    """Download model with shared validation pipeline and progress tracking."""
     import time
-    import math
-    
-    logger.info(f"[Download] Starting: {path}")
-    logger.info(f"[Download] URL: {url[:80]}...")
-    
+
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
         return {"status": "error", "error": "Invalid path"}
-
-    temp_path = full_path + ".downloading"  # Safe temp file
-    
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    logger.info(f"[Download] Using temp file: {os.path.basename(temp_path)}")
-    
-    headers = {}
-    
-    # Handle Tokens
-    hf_token = token if token and token.startswith("hf_") else os.environ.get("HF_TOKEN")
-    civitai_token = token if token and not token.startswith("hf_") else os.environ.get("CIVITAI_TOKEN")
-
-    if "huggingface.co" in url:
-        if hf_token:
-            headers["Authorization"] = f"Bearer {hf_token}"
-            logger.info("[Download] Using HuggingFace token")
-    elif "civitai.com" in url:
-        if civitai_token:
-            url += f"&token={civitai_token}" if "?" in url else f"?token={civitai_token}"
-            logger.info("[Download] Using CivitAI token")
 
     # Progress tracking
     import json
@@ -361,105 +321,70 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
         except Exception as e:
             logger.info(f"[Download] Failed to write progress: {e}")
 
-    update_progress("starting", 0)
+    last_progress_update = 0.0
 
-    try:
-        response = requests.get(url, stream=True, headers=headers)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-        
-        # Format size
-        if total_size > 0:
-            size_gb = total_size / (1024**3)
-            size_str = f"{size_gb:.2f} GB" if size_gb >= 1 else f"{total_size / (1024**2):.1f} MB"
-            logger.info(f"[Download] Size: {size_str}")
-        
-        block_size = 1024 * 1024  # 1MB
-        downloaded = 0
-        start_time = time.time()
-        last_update = 0
-        last_log_percent = 0
-        
-        # Download to TEMP FILE
-        with open(temp_path, "wb") as f:
-            for data in response.iter_content(block_size):
-                downloaded += len(data)
-                f.write(data)
-                
-                elapsed = time.time() - start_time
-                if elapsed > 0:
-                    speed = downloaded / elapsed
-                    percent = int((downloaded / total_size) * 100) if total_size > 0 else 0
-                    eta = (total_size - downloaded) / speed if speed > 0 and total_size > 0 else 0
-                    
-                    # Log every 10%
-                    if percent >= last_log_percent + 10:
-                        eta_str = f"{int(eta / 60)}m {int(eta % 60)}s" if eta > 60 else f"{int(eta)}s"
-                        logger.info(f"[Download] {percent}% - {speed / (1024**2):.1f} MB/s - ETA: {eta_str}")
-                        last_log_percent = percent
-                    
-                    # Update progress file every 0.5s
-                    if time.time() - last_update > 0.5:
-                        speed_str = f"{speed / (1024**2):.2f} MB/s"
-                        downloaded_str = f"{downloaded / (1024**2):.2f} MB"
-                        total_str = f"{total_size / (1024**2):.2f} MB"
-                        update_progress("downloading", percent, speed_str, f"{int(eta)}s", downloaded_str, total_str)
-                        last_update = time.time()
-        
-        # Stats
-        elapsed = time.time() - start_time
-        speed_mbps = (downloaded / (1024**2)) / elapsed if elapsed > 0 else 0
-        logger.info(f"[Download] ✓ Download complete (temp file)")
-        logger.info(f"[Download]   Size: {downloaded / (1024**2):.1f} MB in {elapsed:.1f}s ({speed_mbps:.1f} MB/s)")
-        
-        # ========================================
-        # VALIDATION
-        # ========================================
-        validation = _validate_download(temp_path, total_size)
-        
-        if not validation["valid"]:
-            logger.info(f"[Download] ✗ VALIDATION FAILED:")
-            for err in validation.get("errors", [validation["error"]]):
-                logger.info(f"[Download]   - {err}")
-            
-            # Delete invalid temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-                logger.info(f"[Download] ✗ Deleted invalid temp file")
-            
-            update_progress("error", message=f"Validation failed: {validation['error']}")
+    def progress_callback(payload: Dict[str, Any]):
+        nonlocal last_progress_update
+        status = payload.get("status")
+
+        if status == "starting":
+            update_progress("starting", 0)
             return
-        
-        detected_format = validation["format"]
-        actual_size = validation["size"]
-        logger.info(f"[Download] ✓ Validation passed: {detected_format}")
-        
-        # ========================================
-        # ATOMIC RENAME
-        # ========================================
-        if os.path.exists(full_path):
-            os.remove(full_path)
-        os.rename(temp_path, full_path)
-        logger.info(f"[Download] ✓ Moved to final path: {path}")
-        # ========================================
-        
-        update_progress("success", 100, message="Download complete")
-        
-        # Commit volume
+
+        if status == "downloading":
+            now = time.time()
+            if now - last_progress_update < 0.5:
+                return
+
+            total_bytes = payload.get("total_bytes", 0) or 0
+            downloaded_bytes = payload.get("downloaded_bytes", 0) or 0
+            speed_mbps = payload.get("speed_mbps", 0.0) or 0.0
+            eta_seconds = int(payload.get("eta_seconds", 0) or 0)
+            percent = int(payload.get("percent", 0) or 0)
+
+            downloaded_str = f"{downloaded_bytes / (1024 ** 2):.2f} MB"
+            total_str = f"{total_bytes / (1024 ** 2):.2f} MB" if total_bytes > 0 else "Unknown"
+            speed_str = f"{speed_mbps:.2f} MB/s"
+
+            update_progress(
+                "downloading",
+                percent,
+                speed_str,
+                f"{eta_seconds}s",
+                downloaded_str,
+                total_str,
+            )
+            last_progress_update = now
+            return
+
+        if status == "success":
+            update_progress("success", 100, message="Download complete")
+            return
+
+        if status == "error":
+            update_progress("error", message=payload.get("message", "Download failed"))
+
+    result = download_model_to_path(
+        url=url,
+        full_path=full_path,
+        path=path,
+        token=token,
+        hf_token=os.environ.get("HF_TOKEN"),
+        civitai_token=os.environ.get("CIVITAI_TOKEN"),
+        preview_url=preview_url,
+        metadata=info,
+        log=logger.info,
+        log_prefix="Download",
+        progress_callback=progress_callback,
+    )
+
+    if result.get("status") == "success":
         vol.commit()
-        
-        # Cleanup progress file
         time.sleep(5)
         if os.path.exists(progress_file):
             os.remove(progress_file)
-        
-    except Exception as e:
-        logger.info(f"[Download] ✗ Error: {e}")
-        update_progress("error", message=str(e))
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            logger.info(f"[Download] ✗ Cleaned up temp file")
+
+    return result
 
 @app.function(
     volumes={"/mnt/data": vol}, 

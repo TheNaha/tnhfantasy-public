@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.error_handlers import register_exception_handlers
 from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
-from api.routes import models_v2, prompts, collections
+from api.routes import models_v2, models_external, prompts, collections
 from api.routes import worker_ws, kaggle
 from api.routes.websocket import socket_app
 from config import settings, get_cors_origins
@@ -69,6 +69,7 @@ def configure_app(app: FastAPI):
     app.include_router(settings_routes.router)
     app.include_router(statistics.router)
     app.include_router(generation.router)
+    app.include_router(models_external.router)
     app.include_router(models_v2.router)
     app.include_router(prompts.router)
     app.include_router(collections.router)

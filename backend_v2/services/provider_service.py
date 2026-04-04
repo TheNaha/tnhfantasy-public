@@ -636,11 +636,11 @@ class ProviderService:
             }
 
         async def _run_deploy() -> Dict[str, Any]:
-            return self._execute_provider_deploy(provider, container_manager)
+            return await self._execute_provider_deploy(provider, container_manager)
 
         return await deduplicated(dedup_key, _run_deploy)
 
-    def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
+    async def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
         attempt_id = str(uuid4())
         started_at = self._utcnow_iso()
         provider = self._ensure_provider_v2_shape(provider)
@@ -702,7 +702,7 @@ class ProviderService:
                     continue
 
                 try:
-                    exec_result = orchestrator.run_step(deploy_container, command)
+                    exec_result = await orchestrator.run_step(deploy_container, command)
                     exit_code, output = self._decode_exec_output(exec_result)
                 except ProviderDeployStepTimeoutError as exc:
                     exit_code, output = -1, str(exc)

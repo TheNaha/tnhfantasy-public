@@ -15,13 +15,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 import os
 import json
+import logging
 import subprocess
 import time
 from provider_core.utils import get_safe_path
+from provider_core.downloads import download_model_to_path
 from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
-    validate_downloaded_file,
 )
 from provider_core.workflow_executor import (
     IMAGE_FETCH_VIEW_API,
@@ -29,6 +30,9 @@ from provider_core.workflow_executor import (
 )
 from typing import Dict, Any
 import base64
+
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -150,24 +154,6 @@ def _ensure_comfyui_running():
     return False
 
 
-def _validate_download(path: str, total_size: int = 0) -> Dict[str, Any]:
-    """
-    Validate a downloaded file using strict checks.
-    
-    Args:
-        path: Path to the file to validate
-        total_size: Expected size from Content-Length (0 if unknown)
-        
-    Returns:
-        Dict with validation result. If valid=False, contains error message.
-    """
-    return validate_downloaded_file(
-        path,
-        total_size,
-        unknown_header_log_prefix="Validate",
-    )
-
-
 def init_comfyui():
     """
     Pre-start ComfyUI when container boots.
@@ -258,18 +244,13 @@ async def setup():
 
 @storage_app.post("/download-model")
 async def download_model(request: Request):
-    """Download a model to the volume with progress tracking and safe temp file pattern."""
-    import requests
-    import time
-    
+    """Download a model to the volume with shared validation pipeline."""
     data = await request.json()
     url = data.get("url")
     path = data.get("path")
     token = data.get("token")
     preview_url = data.get("preview_url")
     metadata = data.get("metadata")
-    
-    from provider_core.utils import get_safe_path
 
     base_path = "/mnt/data"
     try:
@@ -278,135 +259,19 @@ async def download_model(request: Request):
         logger.error(f"[Download] Path traversal blocked: {e}")
         return {"status": "error", "error": "Invalid path"}
 
-    temp_path = full_path + ".downloading"  # Temp file suffix
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    
-    headers = {}
-    hf_token = token if token and token.startswith("hf_") else os.environ.get("HF_TOKEN")
-    civitai_token = token if token and not token.startswith("hf_") else os.environ.get("CIVITAI_TOKEN")
-
-    if "huggingface.co" in url and hf_token:
-        headers["Authorization"] = f"Bearer {hf_token}"
-    elif "civitai.com" in url and civitai_token:
-        url += f"&token={civitai_token}" if "?" in url else f"?token={civitai_token}"
-
-    try:
-        print(f"[Download] Starting: {path}")
-        print(f"[Download] URL: {url[:80]}...")
-        print(f"[Download] Using temp file: {os.path.basename(temp_path)}")
-        
-        response = requests.get(url, stream=True, headers=headers)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-        
-        # Format size for display
-        if total_size > 0:
-            size_mb = total_size / (1024 * 1024)
-            size_gb = total_size / (1024 * 1024 * 1024)
-            size_str = f"{size_gb:.2f} GB" if size_gb >= 1 else f"{size_mb:.1f} MB"
-            print(f"[Download] Size: {size_str}")
-        else:
-            print(f"[Download] Size: Unknown")
-        
-        # Download to TEMP FILE (not final path)
-        downloaded = 0
-        start_time = time.time()
-        last_log_percent = 0
-        chunk_size = 1024 * 1024  # 1 MB chunks
-        
-        with open(temp_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size):
-                f.write(chunk)
-                downloaded += len(chunk)
-                
-                # Log progress every 10%
-                if total_size > 0:
-                    percent = int((downloaded / total_size) * 100)
-                    if percent >= last_log_percent + 10:
-                        elapsed = time.time() - start_time
-                        speed_mbps = (downloaded / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-                        remaining = total_size - downloaded
-                        eta_seconds = remaining / (downloaded / elapsed) if elapsed > 0 and downloaded > 0 else 0
-                        
-                        # Format ETA
-                        if eta_seconds > 60:
-                            eta_str = f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s"
-                        else:
-                            eta_str = f"{int(eta_seconds)}s"
-                        
-                        print(f"[Download] {percent}% - {speed_mbps:.1f} MB/s - ETA: {eta_str}")
-                        last_log_percent = percent
-        
-        # Final stats
-        elapsed = time.time() - start_time
-        speed_mbps = (downloaded / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-        print(f"[Download] ✓ Download complete (temp file)")
-        print(f"[Download]   Size: {downloaded / (1024*1024):.1f} MB in {elapsed:.1f}s ({speed_mbps:.1f} MB/s)")
-        
-        # ========================================
-        # VALIDATION: Check if download is valid
-        # ========================================
-        validation = _validate_download(temp_path, total_size)
-        
-        if not validation["valid"]:
-            print(f"[Download] ✗ VALIDATION FAILED:")
-            for err in validation.get("errors", [validation["error"]]):
-                print(f"[Download]   - {err}")
-            
-            # Delete invalid temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-                print(f"[Download] ✗ Deleted invalid temp file")
-            
-            return {"status": "error", "message": f"Validation failed: {validation['error']}"}
-        
-        detected_format = validation["format"]
-        actual_size = validation["size"]
-        print(f"[Download] ✓ Validation passed: {detected_format}")
-        
-        # ========================================
-        # ATOMIC RENAME: Move temp to final path
-        # ========================================
-        # Remove old file if exists
-        if os.path.exists(full_path):
-            os.remove(full_path)
-        
-        # Atomic rename (instant operation)
-        os.rename(temp_path, full_path)
-        print(f"[Download] ✓ Moved to final path: {path}")
-        # ========================================
-        
-        if metadata:
-            with open(os.path.splitext(full_path)[0] + ".json", "w") as f:
-                json.dump(metadata, f)
-        
-        if preview_url:
-            try:
-                print(f"[Download] Fetching preview image...")
-                pr = requests.get(preview_url, timeout=30)
-                if pr.status_code == 200:
-                    with open(os.path.splitext(full_path)[0] + ".preview.png", "wb") as f:
-                        f.write(pr.content)
-                    print(f"[Download] ✓ Preview saved")
-            except Exception as pe:
-                print(f"[Download] ✗ Preview failed: {pe}")
-        
-        return {
-            "status": "success", 
-            "path": path, 
-            "size": actual_size, 
-            "speed_mbps": round(speed_mbps, 1), 
-            "format": detected_format,
-            "validated": True
-        }
-        
-    except Exception as e:
-        print(f"[Download] ✗ Error: {e}")
-        # Clean up temp file on error
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            print(f"[Download] ✗ Cleaned up temp file")
-        return {"status": "error", "message": str(e)}
+    return download_model_to_path(
+        url=url,
+        full_path=full_path,
+        path=path,
+        token=token,
+        hf_token=os.environ.get("HF_TOKEN"),
+        civitai_token=os.environ.get("CIVITAI_TOKEN"),
+        preview_url=preview_url,
+        metadata=metadata,
+        log=print,
+        log_prefix="Download",
+        validation_unknown_header_log_prefix="Validate",
+    )
 
 
 @storage_app.post("/list-models")
@@ -765,16 +630,12 @@ async def download_health():
 @download_app.post("/download-model")
 async def download_model_endpoint(request: Request):
     """Download a model - delegated from main storage app for separate scaling."""
-    import requests
-    
     data = await request.json()
     url = data.get("url")
     path = data.get("path")
     token = data.get("token")
     preview_url = data.get("preview_url")
     metadata = data.get("metadata")
-    
-    from provider_core.utils import get_safe_path
 
     base_path = "/mnt/data"
     try:
@@ -783,79 +644,24 @@ async def download_model_endpoint(request: Request):
         logger.error(f"[Download] Path traversal blocked: {e}")
         return {"status": "error", "error": "Invalid path"}
 
-    temp_path = full_path + ".downloading"
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    
-    headers = {}
-    hf_token = token if token and token.startswith("hf_") else os.environ.get("HF_TOKEN")
-    civitai_token = token if token and not token.startswith("hf_") else os.environ.get("CIVITAI_TOKEN")
+    result = download_model_to_path(
+        url=url,
+        full_path=full_path,
+        path=path,
+        token=token,
+        hf_token=os.environ.get("HF_TOKEN"),
+        civitai_token=os.environ.get("CIVITAI_TOKEN"),
+        preview_url=preview_url,
+        metadata=metadata,
+        log=print,
+        log_prefix="Download",
+        validation_unknown_header_log_prefix="Validate",
+    )
 
-    if "huggingface.co" in url and hf_token:
-        headers["Authorization"] = f"Bearer {hf_token}"
-    elif "civitai.com" in url and civitai_token:
-        url += f"&token={civitai_token}" if "?" in url else f"?token={civitai_token}"
+    if result.get("status") == "success":
+        return {"status": "success", "path": path, "size": result.get("size", 0)}
 
-    try:
-        print(f"[Download] Starting: {path}")
-        print(f"[Download] URL: {url[:80]}...")
-        
-        response = requests.get(url, stream=True, headers=headers)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-        
-        downloaded = 0
-        start_time = time.time()
-        chunk_size = 1024 * 1024  # 1 MB chunks
-        
-        with open(temp_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size):
-                f.write(chunk)
-                downloaded += len(chunk)
-        
-        elapsed = time.time() - start_time
-        speed_mbps = (downloaded / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-        print(f"[Download] ✓ Complete: {downloaded / (1024*1024):.1f} MB in {elapsed:.1f}s ({speed_mbps:.1f} MB/s)")
-        
-        # ========================================
-        # VALIDATION
-        # ========================================
-        validation = _validate_download(temp_path, total_size)
-        
-        if not validation["valid"]:
-            print(f"[Download] ✗ VALIDATION FAILED: {validation['error']}")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            return {"status": "error", "message": f"Validation failed: {validation['error']}"}
-            
-        print(f"[Download] ✓ Validation passed: {validation.get('format', 'unknown')}")
-        
-        # Atomic rename
-        if os.path.exists(full_path):
-            os.remove(full_path)
-        os.rename(temp_path, full_path)
-        
-        # Save metadata if provided
-        if metadata:
-            with open(os.path.splitext(full_path)[0] + ".json", "w") as f:
-                json.dump(metadata, f)
-        
-        # Fetch preview if provided
-        if preview_url:
-            try:
-                pr = requests.get(preview_url, timeout=30)
-                if pr.status_code == 200:
-                    with open(os.path.splitext(full_path)[0] + ".preview.png", "wb") as f:
-                        f.write(pr.content)
-            except:
-                pass
-        
-        return {"status": "success", "path": path, "size": downloaded}
-        
-    except Exception as e:
-        print(f"[Download] ✗ Error: {e}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return {"status": "error", "message": str(e)}
+    return {"status": "error", "message": result.get("message", "Download failed")}
 
 
 @asgi(
