@@ -1,6 +1,10 @@
 """Tests for provider streaming response parsing in api.provider_client."""
 
 from contextlib import asynccontextmanager
+import importlib
+import json
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -31,8 +35,9 @@ class FakeResponse:
 
 
 class FakeClient:
-    def __init__(self, response):
+    def __init__(self, response, capture=None):
         self._response = response
+        self._capture = capture
 
     async def __aenter__(self):
         return self
@@ -41,15 +46,35 @@ class FakeClient:
         return False
 
     def stream(self, *args, **kwargs):
+        if self._capture is not None:
+            self._capture["args"] = args
+            self._capture["kwargs"] = kwargs
         return self._response
 
 
-def install_streaming_client(monkeypatch, response):
+def install_streaming_client(monkeypatch, response, capture=None):
     @asynccontextmanager
     async def fake_get_streaming_client(timeout=600.0):
-        yield FakeClient(response)
+        yield FakeClient(response, capture=capture)
 
     monkeypatch.setattr("api.provider_client.get_streaming_client", fake_get_streaming_client)
+
+
+def build_provider_core_error_payload(message: str, *, retryable: bool = False):
+    """Load provider_core error builder to ensure backend parser stays contract-compatible."""
+    provider_containers_path = Path(__file__).resolve().parents[2] / "provider_containers"
+    path_str = str(provider_containers_path)
+    inserted = False
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+        inserted = True
+
+    try:
+        provider_models = importlib.import_module("provider_core.models")
+        return provider_models.build_error_response(message, retryable=retryable)
+    finally:
+        if inserted:
+            sys.path.remove(path_str)
 
 
 @pytest.mark.asyncio
@@ -273,3 +298,93 @@ async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
     assert exc_info.value.provider_id == "provider-proto"
     assert exc_info.value.is_retryable is False
     job_service.update_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_provider_accepts_modal_base64_success_payload(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"success","images":[{"filename":"image_0.png","data":"aGVsbG8=","_base64_encoded":true}]}\n',
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    result = await call_provider(
+        worker_url="http://worker",
+        workflow={"nodes": {}},
+        job_id="job-modal-success",
+        job_service=job_service,
+        total_nodes=0,
+        timeout=5.0,
+        provider_id="provider-modal",
+    )
+
+    assert result["status"] == "success"
+    assert result["images"][0]["filename"] == "image_0.png"
+    assert result["images"][0]["_base64_encoded"] is True
+    job_service.update_job.assert_awaited_once_with("job-modal-success", message="Queued in ComfyUI...")
+
+
+@pytest.mark.asyncio
+async def test_call_provider_handles_provider_core_error_payload(monkeypatch):
+    payload = build_provider_core_error_payload("provider-core failure", retryable=True)
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            json.dumps(payload).encode("utf-8") + b"\n",
+        ]
+    )
+    install_streaming_client(monkeypatch, response)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    with pytest.raises(ProviderCallError) as exc_info:
+        await call_provider(
+            worker_url="http://worker",
+            workflow={"nodes": {}},
+            job_id="job-provider-core-error",
+            job_service=job_service,
+            total_nodes=1,
+            timeout=5.0,
+            provider_id="provider-core",
+        )
+
+    assert str(exc_info.value) == "provider-core failure"
+    assert exc_info.value.provider_id == "provider-core"
+    assert exc_info.value.is_retryable is True
+    job_service.update_job.assert_awaited_once_with("job-provider-core-error", message="Queued in ComfyUI...")
+
+
+@pytest.mark.asyncio
+async def test_call_provider_sends_timeout_seconds_and_canonical_inference_path(monkeypatch):
+    response = FakeResponse(
+        chunks=[
+            b'{"status":"queued"}\n',
+            b'{"status":"success","images":[{"filename":"ok.png"}]}\n',
+        ]
+    )
+    capture = {}
+    install_streaming_client(monkeypatch, response, capture=capture)
+    job_service = SimpleNamespace(update_job=AsyncMock())
+
+    result = await call_provider(
+        worker_url="http://worker-timeout-test",
+        workflow={"nodes": {}},
+        job_id="job-timeout-payload",
+        job_service=job_service,
+        total_nodes=1,
+        timeout=12.5,
+        use_snapshot=True,
+        provider_id="provider-timeout",
+    )
+
+    assert result["status"] == "success"
+    assert capture["args"] == ("POST", "http://worker-timeout-test/inference")
+    assert capture["kwargs"]["timeout"] == 12.5
+    assert capture["kwargs"]["json"] == {
+        "workflow": {"nodes": {}},
+        "use_snapshot": True,
+        "job_id": "job-timeout-payload",
+        "timeout_seconds": 12.5,
+    }

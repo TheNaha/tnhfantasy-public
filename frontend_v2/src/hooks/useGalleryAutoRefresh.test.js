@@ -16,22 +16,19 @@ describe('useGalleryAutoRefresh', () => {
         vi.clearAllMocks();
     });
 
-    it('invalidates the current filtered gallery query for completed jobs with outputs', () => {
+    it('invalidates gallery queries for completed jobs with outputs', () => {
         const queryClient = { invalidateQueries: vi.fn() };
-        const filters = { search: 'cat', model: '', sampler: '', aspect_ratio: '' };
         const lastCompletedJob = { id: 'job-1', outputs: [{ filename: 'img.png' }] };
 
         renderHook(() => useGalleryAutoRefresh({
             lastCompletedJob,
             autoRefreshOnJobComplete: true,
             queryClient,
-            filters,
             toastSuccessDuration: 3000,
         }));
 
         expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
-            queryKey: ['gallery', filters],
-            exact: true,
+            queryKey: ['gallery'],
         });
         expect(toastMock.success).toHaveBeenCalledWith(
             '🎉 Generation complete! Gallery updated.',
@@ -46,7 +43,6 @@ describe('useGalleryAutoRefresh', () => {
             lastCompletedJob: { id: 'job-2', outputs: [] },
             autoRefreshOnJobComplete: true,
             queryClient,
-            filters: { search: '', model: '', sampler: '', aspect_ratio: '' },
             toastSuccessDuration: 3000,
         }));
 
@@ -56,7 +52,6 @@ describe('useGalleryAutoRefresh', () => {
 
     it('suppresses duplicate invalidation for the same completed job id', () => {
         const queryClient = { invalidateQueries: vi.fn() };
-        const filters = { search: '', model: '', sampler: '', aspect_ratio: '' };
         const completed = { id: 'job-3', outputs: [{ filename: 'x.png' }] };
 
         const { rerender } = renderHook((props) => useGalleryAutoRefresh(props), {
@@ -64,7 +59,6 @@ describe('useGalleryAutoRefresh', () => {
                 lastCompletedJob: completed,
                 autoRefreshOnJobComplete: true,
                 queryClient,
-                filters,
                 toastSuccessDuration: 3000,
             },
         });
@@ -73,7 +67,6 @@ describe('useGalleryAutoRefresh', () => {
             lastCompletedJob: { ...completed },
             autoRefreshOnJobComplete: true,
             queryClient,
-            filters,
             toastSuccessDuration: 3000,
         });
 
@@ -83,14 +76,12 @@ describe('useGalleryAutoRefresh', () => {
 
     it('triggers again when a new completed job id appears', () => {
         const queryClient = { invalidateQueries: vi.fn() };
-        const filters = { search: '', model: '', sampler: '', aspect_ratio: '' };
 
         const { rerender } = renderHook((props) => useGalleryAutoRefresh(props), {
             initialProps: {
                 lastCompletedJob: { id: 'job-4', outputs: [{ filename: 'a.png' }] },
                 autoRefreshOnJobComplete: true,
                 queryClient,
-                filters,
                 toastSuccessDuration: 3000,
             },
         });
@@ -99,7 +90,6 @@ describe('useGalleryAutoRefresh', () => {
             lastCompletedJob: { id: 'job-5', outputs: [{ filename: 'b.png' }] },
             autoRefreshOnJobComplete: true,
             queryClient,
-            filters,
             toastSuccessDuration: 3000,
         });
 
@@ -114,7 +104,6 @@ describe('useGalleryAutoRefresh', () => {
             lastCompletedJob: { id: 'job-6', outputs: [{ filename: 'x.png' }] },
             autoRefreshOnJobComplete: false,
             queryClient,
-            filters: { search: '', model: '', sampler: '', aspect_ratio: '' },
             toastSuccessDuration: 3000,
         }));
 

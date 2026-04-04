@@ -224,7 +224,7 @@ curl http://localhost:8001/health
 
 ```bash
 # Test inference endpoint
-curl -X POST http://localhost:8001/run-inference \
+curl -X POST http://localhost:8001/inference \
   -H "Content-Type: application/json" \
   -d '{"workflow": {...}}'
 ```

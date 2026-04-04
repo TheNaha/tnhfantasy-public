@@ -5,7 +5,6 @@ export function useGalleryAutoRefresh({
     lastCompletedJob,
     autoRefreshOnJobComplete,
     queryClient,
-    filters,
     toastSuccessDuration,
 }) {
     const lastCompletedJobRef = useRef(null);
@@ -25,7 +24,7 @@ export function useGalleryAutoRefresh({
             return;
         }
 
-        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
         toast.success('🎉 Generation complete! Gallery updated.', {
             duration: toastSuccessDuration,
         });
@@ -33,7 +32,6 @@ export function useGalleryAutoRefresh({
         lastCompletedJob,
         autoRefreshOnJobComplete,
         queryClient,
-        filters,
         toastSuccessDuration,
     ]);
 }

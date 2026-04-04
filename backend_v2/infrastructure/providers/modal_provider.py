@@ -82,7 +82,7 @@ class ModalProvider(ServerlessProvider):
         """
         from infrastructure.http_client import get_streaming_client
         
-        url = f"{self.worker_url}/run-inference"
+        url = f"{self.worker_url}/inference"
         
         async with get_streaming_client(timeout=600.0) as client:
             async with client.stream("POST", url, json={"workflow": workflow}) as response:

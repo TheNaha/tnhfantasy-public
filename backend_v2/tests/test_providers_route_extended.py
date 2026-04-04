@@ -208,6 +208,89 @@ class TestProvidersRouteReconcile:
         assert "reconciliation_state" in data
         assert data["reconciliation_state"]["status"] == "reconciling"
 
+    def test_reconciliation_event_emits_provider_stats_update(self, client):
+        mock_service = MagicMock()
+        mock_service.upsert_reconciliation_state = AsyncMock(
+            return_value={"provider_id": "test-provider", "status": "reconciling"}
+        )
+
+        with patch("api.routes.providers.get_provider_service", return_value=mock_service), \
+             patch("api.routes.providers.emit_provider_stats", new=AsyncMock()) as emit_stats:
+            response = client.post(
+                "/api/providers/test-provider/reconciliation-event",
+                json={
+                    "status": "reconciling",
+                    "phase": "downloading",
+                    "stats": {"total_models_in_storage": 9},
+                },
+            )
+
+        assert response.status_code == 200
+        emit_stats.assert_awaited_once_with("test-provider", {"total_models_in_storage": 9})
+
+    def test_reconciliation_event_without_stats_does_not_send_stats_overwrite(self, client):
+        mock_service = MagicMock()
+        mock_service.upsert_reconciliation_state = AsyncMock(
+            return_value={"provider_id": "test-provider", "status": "reconciling"}
+        )
+
+        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+            response = client.post(
+                "/api/providers/test-provider/reconciliation-event",
+                json={
+                    "status": "reconciling",
+                    "phase": "validating",
+                },
+            )
+
+        assert response.status_code == 200
+        upsert_args = mock_service.upsert_reconciliation_state.await_args.args
+        assert upsert_args[0] == "test-provider"
+        assert "stats" not in upsert_args[1]
+
+    def test_reconciliation_event_without_stats_preserves_status_card_storage_totals(self, client):
+        provider_id = "status-card-reconciliation-preserve"
+        payload = {
+            "id": provider_id,
+            "type": "modal",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {},
+            "config": {},
+        }
+        create_response = client.post("/api/providers", json=payload)
+        assert create_response.status_code == 200
+
+        first_event = client.post(
+            f"/api/providers/{provider_id}/reconciliation-event",
+            json={
+                "status": "reconciling",
+                "phase": "downloading",
+                "stats": {
+                    "total_models_in_storage": 6,
+                    "by_directory": {"checkpoints": 6},
+                },
+            },
+        )
+        assert first_event.status_code == 200
+
+        first_card = client.get(f"/api/providers/{provider_id}/status-card")
+        assert first_card.status_code == 200
+        assert first_card.json()["storage"]["total"] == 6
+
+        second_event = client.post(
+            f"/api/providers/{provider_id}/reconciliation-event",
+            json={
+                "status": "reconciling",
+                "phase": "validating",
+            },
+        )
+        assert second_event.status_code == 200
+
+        second_card = client.get(f"/api/providers/{provider_id}/status-card")
+        assert second_card.status_code == 200
+        assert second_card.json()["storage"]["total"] == 6
+
     def test_deploy_provider_not_found(self, client):
         response = client.post("/api/providers/nonexistent/deploy")
         assert response.status_code in (404, 500, 200)

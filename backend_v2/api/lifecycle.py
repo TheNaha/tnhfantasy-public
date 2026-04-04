@@ -58,7 +58,7 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             except Exception:
                 continue
 
-            if job.status not in {JobStatus.RUNNING, JobStatus.PROCESSING}:
+            if job.status != JobStatus.RUNNING:
                 continue
 
             job.status = JobStatus.PENDING

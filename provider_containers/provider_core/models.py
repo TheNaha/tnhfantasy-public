@@ -13,6 +13,7 @@ class InferenceRequest(BaseModel):
     workflow: Dict[str, Any]
     use_snapshot: bool = False
     job_id: Optional[str] = None
+    timeout_seconds: Optional[float] = None
 
 
 class CancelJobRequest(BaseModel):
@@ -118,5 +119,9 @@ MODEL_DIRECTORIES = [
     "models/upscale_models",
     "models/embeddings",
     "models/hypernetworks",
+    "models/aesthetics",
+    "models/poses",
+    "models/wildcards",
+    "models/ultralytics/bbox",
     "models/motion_modules",
 ]

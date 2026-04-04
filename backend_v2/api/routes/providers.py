@@ -19,7 +19,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_provider_service, get_container_manager
-from core.events import Event, EventType, event_bus
+from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
 from services.provider_lifecycle_service import ProviderLifecycleService
 from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
@@ -715,8 +715,6 @@ async def push_reconciliation_event(
     Emits them via WebSocket to connected frontends.
     Called by workers during reconciliation to push real-time updates.
     """
-    from core.events import event_bus, Event, EventType
-    
     # Map status to event type
     status_to_event = {
         "started": EventType.RECONCILIATION_STARTED,
@@ -729,25 +727,40 @@ async def push_reconciliation_event(
     
     event_type = status_to_event.get(request.status, EventType.RECONCILIATION_PROGRESS)
     
-    # Build event data
-    event_data = {
+    normalized_status = ProviderService.normalize_reconciliation_status(request.status)
+
+    # Build persistence updates. Keep existing stats when workers omit the field.
+    # Some progress heartbeats intentionally skip stats; treating missing as {} would
+    # clear previously reported totals and cause status-card regressions.
+    persistence_updates = {
         "provider_id": provider_id,
-        "status": ProviderService.normalize_reconciliation_status(request.status),
+        "status": normalized_status,
         "phase": request.phase,
-        "stats": request.stats or {},
         "current_download": request.current_download,
         "active_downloads": request.active_downloads or [],
         "errors": request.errors or [],
         "message": request.message,
         "last_contact_at": ProviderService._utcnow_iso(),
     }
+    if request.stats is not None:
+        persistence_updates["stats"] = request.stats
+
+    # Build event payload for websocket listeners.
+    event_data = {
+        **persistence_updates,
+        "stats": request.stats or {},
+    }
 
     service = get_provider_service(session)
-    persisted_state = await service.upsert_reconciliation_state(provider_id, event_data)
+    persisted_state = await service.upsert_reconciliation_state(provider_id, persistence_updates)
     _invalidate_provider_runtime_caches(provider_id)
-    
+
     # Emit event via EventBus (will be broadcast to WebSocket clients)
     await event_bus.publish(Event(type=event_type, data=event_data))
+
+    # Mirror reconciliation stats to provider.stats_update for event-first storage cards.
+    if request.stats:
+        await emit_provider_stats(provider_id, request.stats)
     
     return {"status": "ok", "event_type": event_type.value, "reconciliation_state": persisted_state}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -13,6 +13,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
@@ -43,17 +44,7 @@ export default function SimpleGenerator() {
         aspectRatioLocked
     } = useGeneratorStore();
 
-    const modelRequests = useMemo(() => ([
-        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
-        { key: 'controlNetModels', directory: 'models/controlnet', label: 'controlnet models' },
-        { key: 'upscalerModels', directory: 'models/upscale_models', label: 'upscaler models' },
-        { key: 'adetailerModels', directory: 'models/ultralytics/bbox', label: 'adetailer models' },
-        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
-        { key: 'clipModels', directory: 'models/clip', label: 'CLIP models' },
-        { key: 'unetModels', directory: 'models/unet', label: 'UNET models' },
-        { key: 'embeddingModels', directory: 'models/embeddings', label: 'embedding models' },
-    ]), []);
-    const { modelsByKey } = useModelDirectories(modelRequests);
+    const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
     const controlNetModels = modelsByKey.controlNetModels || [];
     const upscalerModels = modelsByKey.upscalerModels || [];

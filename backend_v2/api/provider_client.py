@@ -114,7 +114,12 @@ async def call_provider(
             async with client.stream(
                 "POST",
                 f"{worker_url}/inference",
-                json={"workflow": workflow, "use_snapshot": use_snapshot, "job_id": job_id},
+                json={
+                    "workflow": workflow,
+                    "use_snapshot": use_snapshot,
+                    "job_id": job_id,
+                    "timeout_seconds": timeout,
+                },
                 timeout=timeout,
             ) as response:
 

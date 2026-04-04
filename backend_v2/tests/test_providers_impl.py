@@ -25,8 +25,9 @@ class _FakeStreamResponse:
 
 
 class _FakeStreamingClient:
-    def __init__(self, response):
+    def __init__(self, response, recorder=None):
         self._response = response
+        self._recorder = recorder
 
     async def __aenter__(self):
         return self
@@ -35,13 +36,16 @@ class _FakeStreamingClient:
         return False
 
     def stream(self, *args, **kwargs):
+        if self._recorder is not None:
+            self._recorder["args"] = args
+            self._recorder["kwargs"] = kwargs
         return self._response
 
 
-def _install_streaming_client(monkeypatch, response):
+def _install_streaming_client(monkeypatch, response, recorder=None):
     @asynccontextmanager
     async def fake_get_streaming_client(timeout=600.0):
-        yield _FakeStreamingClient(response)
+        yield _FakeStreamingClient(response, recorder=recorder)
 
     monkeypatch.setattr("infrastructure.http_client.get_streaming_client", fake_get_streaming_client)
 
@@ -255,6 +259,19 @@ class TestBeamProvider:
         assert updates[-1]["status"] == "success"
         assert updates[-1]["images"][0]["filename"] == "beam-tail.png"
 
+    async def test_run_inference_uses_canonical_inference_endpoint(self, monkeypatch):
+        response = _FakeStreamResponse(
+            chunks=[b'{"status":"success","images":[]}\n']
+        )
+        recorder = {}
+        _install_streaming_client(monkeypatch, response, recorder=recorder)
+
+        provider = self.get_provider()
+        _ = [update async for update in provider.run_inference({"nodes": {}})]
+
+        assert recorder["args"][0] == "POST"
+        assert recorder["args"][1] == "http://comfy-provider-beam-primary:8000/inference"
+
     async def test_delete_model_uses_delete_first(self):
         provider = self.get_provider()
 
@@ -432,3 +449,16 @@ class TestModalProvider:
 
         assert updates[-1]["status"] == "success"
         assert updates[-1]["images"][0]["filename"] == "modal-tail.png"
+
+    async def test_run_inference_uses_canonical_inference_endpoint(self, monkeypatch):
+        response = _FakeStreamResponse(
+            chunks=[b'{"status":"success","images":[]}\n']
+        )
+        recorder = {}
+        _install_streaming_client(monkeypatch, response, recorder=recorder)
+
+        provider = self.get_provider()
+        _ = [update async for update in provider.run_inference({"nodes": {}})]
+
+        assert recorder["args"][0] == "POST"
+        assert recorder["args"][1] == "http://comfy-provider-modal-primary:8000/inference"

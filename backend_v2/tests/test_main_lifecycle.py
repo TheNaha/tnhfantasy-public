@@ -20,14 +20,6 @@ class TestMainLifecycle:
             message="Rendering",
             error="old-error",
         )
-        processing_job = Job(
-            status=JobStatus.PROCESSING,
-            workflow={"nodes": {}},
-            started_at=datetime.utcnow(),
-            progress=33.0,
-            overall_progress=88.0,
-            message="Post-processing",
-        )
         post_processing_job = Job(
             status=JobStatus.POST_PROCESSING,
             workflow={"nodes": {}},
@@ -47,13 +39,11 @@ class TestMainLifecycle:
             message="Done",
         )
         session.add(running_job)
-        session.add(processing_job)
         session.add(post_processing_job)
         session.add(completed_job)
         session.commit()
 
         running_job_id = running_job.id
-        processing_job_id = processing_job.id
         post_processing_job_id = post_processing_job.id
         completed_job_id = completed_job.id
 
@@ -62,11 +52,10 @@ class TestMainLifecycle:
         count = _requeue_inflight_jobs_for_shutdown()
 
         refreshed_running = session.get(Job, running_job_id)
-        refreshed_processing = session.get(Job, processing_job_id)
         refreshed_post_processing = session.get(Job, post_processing_job_id)
         refreshed_completed = session.get(Job, completed_job_id)
 
-        assert count == 2
+        assert count == 1
 
         assert refreshed_running.status == JobStatus.PENDING
         assert refreshed_running.started_at is None
@@ -75,14 +64,6 @@ class TestMainLifecycle:
         assert refreshed_running.overall_progress == 0.0
         assert refreshed_running.message == "Requeued after server shutdown"
         assert refreshed_running.error is None
-
-        assert refreshed_processing.status == JobStatus.PENDING
-        assert refreshed_processing.started_at is None
-        assert refreshed_processing.completed_at is None
-        assert refreshed_processing.progress == 0.0
-        assert refreshed_processing.overall_progress == 0.0
-        assert refreshed_processing.message == "Requeued after server shutdown"
-        assert refreshed_processing.error is None
 
         assert refreshed_post_processing.status == JobStatus.POST_PROCESSING
         assert refreshed_post_processing.message == "Finishing outputs"

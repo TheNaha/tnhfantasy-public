@@ -176,7 +176,10 @@ class TestRunMigrations:
 
         assert "started_at" in columns
         assert "completed_at" in columns
-        assert applied == {"001_jobs_started_completed"}
+        assert applied == {
+            "001_jobs_started_completed",
+            "004_normalize_legacy_job_statuses",
+        }
 
     def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
         db_path = tmp_path / "provider_status_migration.db"
@@ -230,6 +233,7 @@ class TestRunMigrations:
 
         assert "001_jobs_started_completed" in applied
         assert "002_prompts_fts" in applied
+        assert "004_normalize_legacy_job_statuses" in applied
 
     def test_run_migrations_is_idempotent_with_version_tracking(self, tmp_path):
         db_path = tmp_path / "migration_idempotent.db"
@@ -249,7 +253,30 @@ class TestRunMigrations:
         assert [row[0] for row in rows] == [
             "001_jobs_started_completed",
             "002_prompts_fts",
+            "004_normalize_legacy_job_statuses",
         ]
+
+    def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):
+        db_path = tmp_path / "legacy_job_statuses.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
+            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-queued', 'queued')"))
+            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-processing', 'processing')"))
+            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-running', 'running')"))
+
+        with patch.object(db_module, "engine", engine):
+            db_module._run_migrations()
+
+        with engine.connect() as conn:
+            statuses = dict(conn.execute(text("SELECT id, status FROM jobs")).all())
+            applied = db_module._get_applied_migrations(conn)
+
+        assert statuses["job-queued"] == "pending"
+        assert statuses["job-processing"] == "running"
+        assert statuses["job-running"] == "running"
+        assert "004_normalize_legacy_job_statuses" in applied
 
     def test_verify_required_columns_raises_for_missing_columns(self, tmp_path):
         db_path = tmp_path / "verify.db"

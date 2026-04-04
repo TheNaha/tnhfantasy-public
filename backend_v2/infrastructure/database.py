@@ -203,6 +203,37 @@ def _migration_add_provider_status_provider_id(conn) -> bool:
     return True
 
 
+def _migration_normalize_legacy_job_statuses(conn) -> bool:
+    """Normalize legacy job statuses to the current lifecycle model."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    conn.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'pending'
+            WHERE status = 'queued'
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'running'
+            WHERE status = 'processing'
+            """
+        )
+    )
+    conn.commit()
+    logger.info("migration_job_statuses_normalized")
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -220,6 +251,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="003_provider_status_provider_id",
             description="Add provider_id column and indexes to provider_version_status",
             apply_fn=_migration_add_provider_status_provider_id,
+        ),
+        MigrationStep(
+            version="004_normalize_legacy_job_statuses",
+            description="Normalize legacy jobs.status values (queued->pending, processing->running)",
+            apply_fn=_migration_normalize_legacy_job_statuses,
         ),
     ]
 

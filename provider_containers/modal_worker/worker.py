@@ -64,11 +64,13 @@ CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"))
 RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "7200"))
+INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
 # Runtime config (can be updated via /config endpoint without restart)
 runtime_config = {
     "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
     "validation_timeout_seconds": VALIDATION_TIMEOUT_SECONDS,
+    "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
 }
 
 # Function cache for Modal functions
@@ -144,6 +146,7 @@ async def get_config():
             "MAX_CONCURRENT_DOWNLOADS": MAX_CONCURRENT_DOWNLOADS,
             "VALIDATION_TIMEOUT_SECONDS": VALIDATION_TIMEOUT_SECONDS,
             "RECONCILIATION_INTERVAL_SECONDS": RECONCILIATION_INTERVAL_SECONDS,
+            "INFERENCE_TIMEOUT_SECONDS": INFERENCE_TIMEOUT_SECONDS,
         }
     }
 
@@ -156,6 +159,7 @@ async def update_config(updates: Dict[str, Any]):
     Supported keys:
     - max_concurrent_downloads: int
     - validation_timeout_seconds: float
+    - inference_timeout_seconds: float
     """
     updated = []
     for key, value in updates.items():
@@ -204,7 +208,6 @@ async def cancel_job_endpoint(request: CancelJobRequest):
 # ============================================
 
 @app.post("/inference")
-@app.post("/run-inference")
 async def run_inference(request: InferenceRequest):
     """
     Execute ComfyUI workflow via Modal.
@@ -212,6 +215,14 @@ async def run_inference(request: InferenceRequest):
     """
     use_snapshot = request.use_snapshot
     job_id = request.job_id
+    inference_timeout = max(
+        1.0,
+        float(
+            request.timeout_seconds
+            or runtime_config.get("inference_timeout_seconds")
+            or INFERENCE_TIMEOUT_SECONDS
+        ),
+    )
     mode_name = "SNAPSHOT (experimental)" if use_snapshot else "STABLE"
     class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
     
@@ -228,38 +239,44 @@ async def run_inference(request: InferenceRequest):
         
         async def generate():
             try:
-                async for update in comfy_instance.run.remote_gen.aio(request.workflow):
-                    # Check if job was cancelled
-                    if job_id and await job_tracker.is_cancelled(job_id):
-                        print(f"[{PROVIDER_ID}] Job {job_id} cancelled, aborting stream")
-                        yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
-                        return
-                    
-                    # Debug logging for success updates
-                    if update.get("status") == "success":
-                        print(f"[{PROVIDER_ID}] Modal returned SUCCESS")
-                        if "images" in update:
-                            print(f"[{PROVIDER_ID}] Images count from Modal: {len(update['images'])}")
-                        else:
-                            print(f"[{PROVIDER_ID}] WARNING: Modal returned success but NO images key!")
-                    
-                    # Normalize image payloads for backend-side persistence.
-                    if update.get("status") == "success" and "images" in update:
-                        saved_images = []
-                        for i, img in enumerate(update["images"]):
-                            if "data" in img and isinstance(img["data"], bytes):
-                                # Encode as base64
-                                img_b64 = base64.b64encode(img["data"]).decode('utf-8')
-                                saved_images.append({
-                                    "filename": img.get("filename", f"image_{i}.png"),
-                                    "data": img_b64,
-                                    "_base64_encoded": True
-                                })
-                        
-                        # Replace images with saved versions
-                        update["images"] = saved_images
-                    
-                    yield json.dumps(update) + "\n"
+                async with asyncio.timeout(inference_timeout):
+                    async for update in comfy_instance.run.remote_gen.aio(request.workflow):
+                        # Check if job was cancelled
+                        if job_id and await job_tracker.is_cancelled(job_id):
+                            print(f"[{PROVIDER_ID}] Job {job_id} cancelled, aborting stream")
+                            yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                            return
+
+                        # Debug logging for success updates
+                        if update.get("status") == "success":
+                            print(f"[{PROVIDER_ID}] Modal returned SUCCESS")
+                            if "images" in update:
+                                print(f"[{PROVIDER_ID}] Images count from Modal: {len(update['images'])}")
+                            else:
+                                print(f"[{PROVIDER_ID}] WARNING: Modal returned success but NO images key!")
+
+                        # Normalize image payloads for backend-side persistence.
+                        if update.get("status") == "success" and "images" in update:
+                            saved_images = []
+                            for i, img in enumerate(update["images"]):
+                                if "data" in img and isinstance(img["data"], bytes):
+                                    # Encode as base64
+                                    img_b64 = base64.b64encode(img["data"]).decode('utf-8')
+                                    saved_images.append({
+                                        "filename": img.get("filename", f"image_{i}.png"),
+                                        "data": img_b64,
+                                        "_base64_encoded": True
+                                    })
+
+                            # Replace images with saved versions
+                            update["images"] = saved_images
+
+                        yield json.dumps(update) + "\n"
+
+            except TimeoutError:
+                error_msg = f"Inference timed out after {int(inference_timeout)}s"
+                print(f"[{PROVIDER_ID}] {error_msg}")
+                yield json.dumps(build_error_response(error_msg, retryable=True, code=408)) + "\n"
             
             except modal.exception.ConnectionError as ce:
                 # Modal connection timeout - likely happened after job executed but before results streamed

@@ -97,7 +97,7 @@ class JobService:
         """
         # Track timing based on status changes
         status = updates.get("status")
-        if status == JobStatus.RUNNING or status == JobStatus.PROCESSING:
+        if status == JobStatus.RUNNING:
             updates["started_at"] = datetime.utcnow()
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
             updates["completed_at"] = datetime.utcnow()
@@ -149,7 +149,7 @@ class JobService:
     
     def get_running_jobs(self) -> List[Job]:
         """Get all running/processing jobs."""
-        return self.repo.get_by_statuses([JobStatus.RUNNING, JobStatus.PROCESSING])
+        return self.repo.get_by_statuses([JobStatus.RUNNING])
 
     def get_pending_queue_items(self) -> List[JobQueueItem]:
         """Get pending queue items (lightweight)."""
@@ -157,7 +157,7 @@ class JobService:
 
     def get_running_queue_items(self) -> List[JobQueueItem]:
         """Get running/processing queue items (lightweight)."""
-        return self.repo.get_queue_items([JobStatus.RUNNING, JobStatus.PROCESSING])
+        return self.repo.get_queue_items([JobStatus.RUNNING])
     
     def get_average_duration(self, sample_size: int = 10) -> float:
         """

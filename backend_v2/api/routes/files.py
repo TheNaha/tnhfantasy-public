@@ -826,7 +826,23 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
     
     try:
         # Validate directory
-        allowed_dirs = ["output", "models/checkpoints", "models/loras", "models/vae", "models/controlnet", "models/embeddings", "models/upscale_models", "models/hypernetworks", "models/aesthetics", "models/poses", "models/wildcards", "models/motion_modules"]
+        allowed_dirs = [
+            "output",
+            "models/checkpoints",
+            "models/loras",
+            "models/vae",
+            "models/controlnet",
+            "models/unet",
+            "models/clip",
+            "models/embeddings",
+            "models/upscale_models",
+            "models/hypernetworks",
+            "models/aesthetics",
+            "models/poses",
+            "models/wildcards",
+            "models/ultralytics/bbox",
+            "models/motion_modules",
+        ]
         if req.directory not in allowed_dirs:
             raise HTTPException(status_code=400, detail="Invalid directory")
         

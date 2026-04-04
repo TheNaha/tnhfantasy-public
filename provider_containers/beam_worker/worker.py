@@ -71,6 +71,7 @@ VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"
 DOWNLOAD_TIMEOUT_SECONDS = float(os.getenv("DOWNLOAD_TIMEOUT_SECONDS", "1800"))
 WS_MAX_SIZE_MB = int(os.getenv("WS_MAX_SIZE_MB", "20"))
 WS_OPEN_TIMEOUT = int(os.getenv("WS_OPEN_TIMEOUT", "120"))
+INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
 # Runtime config (can be updated via /config endpoint without restart)
 runtime_config = {
@@ -79,6 +80,7 @@ runtime_config = {
     "download_timeout_seconds": DOWNLOAD_TIMEOUT_SECONDS,
     "ws_max_size_mb": WS_MAX_SIZE_MB,
     "ws_open_timeout": WS_OPEN_TIMEOUT,
+    "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
 }
 
 # Initialize state and job tracker
@@ -159,6 +161,7 @@ async def get_config():
             "DOWNLOAD_TIMEOUT_SECONDS": DOWNLOAD_TIMEOUT_SECONDS,
             "WS_MAX_SIZE_MB": WS_MAX_SIZE_MB,
             "WS_OPEN_TIMEOUT": WS_OPEN_TIMEOUT,
+            "INFERENCE_TIMEOUT_SECONDS": INFERENCE_TIMEOUT_SECONDS,
         }
     }
 
@@ -174,6 +177,7 @@ async def update_config(updates: Dict[str, Any]):
     - download_timeout_seconds: float
     - ws_max_size_mb: int
     - ws_open_timeout: int
+    - inference_timeout_seconds: float
     """
     updated = []
     for key, value in updates.items():
@@ -222,8 +226,6 @@ async def cancel_job_endpoint(request: CancelJobRequest):
 # ============================================
 
 @app.post("/inference")
-@app.post("/run-inference")
-@app.post("/run")
 async def run_inference(request: InferenceRequest):
     """
     Execute workflow via GPU endpoint using WebSocket.
@@ -233,6 +235,14 @@ async def run_inference(request: InferenceRequest):
         raise HTTPException(status_code=500, detail="BEAM_GPU_URL not configured")
     
     job_id = request.job_id
+    inference_timeout = max(
+        1.0,
+        float(
+            request.timeout_seconds
+            or runtime_config.get("inference_timeout_seconds")
+            or INFERENCE_TIMEOUT_SECONDS
+        ),
+    )
     
     # Convert HTTP URL to WebSocket URL
     ws_url = BEAM_GPU_URL.replace("https://", "wss://").replace("http://", "ws://")
@@ -249,52 +259,58 @@ async def run_inference(request: InferenceRequest):
             headers = {"Authorization": f"Bearer {BEAM_API_KEY}"}
             if BEAM_WORKSPACE_ID:
                 headers["X-Beam-Workspace-Id"] = BEAM_WORKSPACE_ID
-            
-            async with websockets.connect(
-                ws_url,
-                extra_headers=headers,
-                open_timeout=runtime_config["ws_open_timeout"],
-                close_timeout=10,
-                ping_interval=30,
-                ping_timeout=60,
-                max_size=runtime_config["ws_max_size_mb"] * 1024 * 1024,
-            ) as websocket:
-                print(f"[{PROVIDER_ID}] WebSocket connected, sending workflow...")
-                await websocket.send(json.dumps({"workflow": request.workflow}))
-                
-                async for message in websocket:
-                    # Check if job was cancelled
-                    if job_id and await job_tracker.is_cancelled(job_id):
-                        print(f"[{PROVIDER_ID}] Job {job_id} cancelled, closing WebSocket")
-                        await websocket.close()
-                        yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
-                        return
-                    
-                    try:
-                        update = json.loads(message)
-                        
-                        if update.get("status") == "progress":
-                            print(f"[{PROVIDER_ID}] Progress: {update.get('value')}/{update.get('max')}")
-                        elif update.get("status") == "success":
-                            print(f"[{PROVIDER_ID}] ✓ Inference complete")
-                            if "images" in update:
-                                print(f"[{PROVIDER_ID}] Images count: {len(update['images'])}")
-                        elif update.get("status") == "error":
-                            error_message = update.get("message") or update.get("error") or "Unknown worker error"
-                            update = build_error_response(
-                                error_message,
-                                retryable=bool(update.get("retryable", False)),
-                                code=update.get("code"),
-                                details=update.get("details") if isinstance(update.get("details"), dict) else None,
-                            )
-                            print(f"[{PROVIDER_ID}] ✗ Error: {error_message}")
-                        
-                        yield json.dumps(update) + "\n"
-                        
-                        if update.get("status") in ("success", "error"):
-                            break
-                    except json.JSONDecodeError:
-                        print(f"[{PROVIDER_ID}] Non-JSON message: {message[:100]}")
+
+            async with asyncio.timeout(inference_timeout):
+                async with websockets.connect(
+                    ws_url,
+                    extra_headers=headers,
+                    open_timeout=runtime_config["ws_open_timeout"],
+                    close_timeout=10,
+                    ping_interval=30,
+                    ping_timeout=60,
+                    max_size=runtime_config["ws_max_size_mb"] * 1024 * 1024,
+                ) as websocket:
+                    print(f"[{PROVIDER_ID}] WebSocket connected, sending workflow...")
+                    await websocket.send(json.dumps({"workflow": request.workflow}))
+
+                    async for message in websocket:
+                        # Check if job was cancelled
+                        if job_id and await job_tracker.is_cancelled(job_id):
+                            print(f"[{PROVIDER_ID}] Job {job_id} cancelled, closing WebSocket")
+                            await websocket.close()
+                            yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                            return
+
+                        try:
+                            update = json.loads(message)
+
+                            if update.get("status") == "progress":
+                                print(f"[{PROVIDER_ID}] Progress: {update.get('value')}/{update.get('max')}")
+                            elif update.get("status") == "success":
+                                print(f"[{PROVIDER_ID}] ✓ Inference complete")
+                                if "images" in update:
+                                    print(f"[{PROVIDER_ID}] Images count: {len(update['images'])}")
+                            elif update.get("status") == "error":
+                                error_message = update.get("message") or update.get("error") or "Unknown worker error"
+                                update = build_error_response(
+                                    error_message,
+                                    retryable=bool(update.get("retryable", False)),
+                                    code=update.get("code"),
+                                    details=update.get("details") if isinstance(update.get("details"), dict) else None,
+                                )
+                                print(f"[{PROVIDER_ID}] ✗ Error: {error_message}")
+
+                            yield json.dumps(update) + "\n"
+
+                            if update.get("status") in ("success", "error"):
+                                break
+                        except json.JSONDecodeError:
+                            print(f"[{PROVIDER_ID}] Non-JSON message: {message[:100]}")
+
+        except TimeoutError:
+            error_msg = f"Inference timed out after {int(inference_timeout)}s"
+            print(f"[{PROVIDER_ID}] {error_msg}")
+            yield json.dumps(build_error_response(error_msg, retryable=True, code=408)) + "\n"
         
         except websockets.exceptions.InvalidStatusCode as e:
             error_msg = f"WebSocket rejected with status {e.status_code}"

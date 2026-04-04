@@ -62,6 +62,46 @@ class ProviderStatusService:
             payload["error"] = error
         return payload
 
+    @staticmethod
+    def _storage_payload_from_reconciliation_state(
+        provider_id: str,
+        reconciliation_state: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Derive storage stats from persisted reconciliation state when available."""
+        if not isinstance(reconciliation_state, dict):
+            return None
+
+        stats = reconciliation_state.get("stats")
+        if not isinstance(stats, dict) or not stats:
+            return None
+
+        by_directory = stats.get("by_directory")
+        if not isinstance(by_directory, dict):
+            by_directory = {}
+
+        total_value = None
+        for key in ("total", "total_models", "total_models_in_storage"):
+            value = stats.get(key)
+            if isinstance(value, (int, float)):
+                total_value = value
+                break
+
+        if total_value is None and by_directory:
+            total_value = sum(
+                int(value)
+                for value in by_directory.values()
+                if isinstance(value, (int, float))
+            )
+
+        if total_value is None:
+            return None
+
+        return {
+            "provider_id": provider_id,
+            "total": int(total_value),
+            "by_directory": by_directory,
+        }
+
     async def get_provider_sync_status(self, provider_id: str) -> Dict[str, Any]:
         """Return V2-backed sync counts for a provider."""
         service = ModelServiceV2(self.session)
@@ -117,9 +157,22 @@ class ProviderStatusService:
         self,
         provider_id: str,
         provider: Optional[Any] = None,
+        reconciliation_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Fetch provider storage stats from the worker with cache and fallbacks."""
         cache_key = f"modal_stats_{provider_id}"
+
+        if reconciliation_state is None:
+            try:
+                reconciliation_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
+            except Exception:
+                reconciliation_state = None
+
+        state_payload = self._storage_payload_from_reconciliation_state(provider_id, reconciliation_state)
+        if state_payload:
+            _modal_stats_cache[cache_key] = state_payload
+            return state_payload
+
         if cache_key in _modal_stats_cache:
             return _modal_stats_cache[cache_key]
 
@@ -301,8 +354,12 @@ class ProviderStatusService:
             "stats": sync_status.get("stats") or {},
             "updated_at": ProviderService._utcnow_iso(),
         }
-        storage_stats = await self.get_provider_storage_stats(provider_id, provider)
         reconciliation_state = await self.get_live_reconciliation_state(provider_id, provider)
+        storage_stats = await self.get_provider_storage_stats(
+            provider_id,
+            provider,
+            reconciliation_state=reconciliation_state,
+        )
         deploy_state = await self.provider_service.get_provider_deploy_state(provider_id)
         diagnostics = self.build_provider_diagnostics(
             provider_id=provider_id,

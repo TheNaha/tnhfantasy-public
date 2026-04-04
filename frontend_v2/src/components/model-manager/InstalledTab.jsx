@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
+import { MODEL_MANAGER_CATEGORIES } from '../../constants/modelDirectories';
 import {
     availabilityTone,
     formatAvailabilityBadgeLabel,
@@ -11,20 +12,7 @@ import {
 } from '../../utils/modelAvailability';
 import ModelDetailsModal from './ModelDetailsModal';
 
-const CATEGORIES = [
-    { id: "checkpoints", label: "Checkpoints", path: "models/checkpoints" },
-    { id: "unet", label: "UNET (Flux)", path: "models/unet" },
-    { id: "loras", label: "LoRAs", path: "models/loras" },
-    { id: "controlnet", label: "ControlNet", path: "models/controlnet" },
-    { id: "embeddings", label: "Embeddings", path: "models/embeddings" },
-    { id: "vae", label: "VAE", path: "models/vae" },
-    { id: "clip", label: "CLIP", path: "models/clip" },
-    { id: "hypernetworks", label: "Hypernetworks", path: "models/hypernetworks" },
-    { id: "aesthetics", label: "Aesthetics", path: "models/aesthetics" },
-    { id: "poses", label: "Poses", path: "models/poses" },
-    { id: "wildcards", label: "Wildcards", path: "models/wildcards" },
-    { id: "motion_modules", label: "Motion", path: "models/motion_modules" },
-];
+const CATEGORIES = MODEL_MANAGER_CATEGORIES;
 
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [category, setCategory] = useState("checkpoints");

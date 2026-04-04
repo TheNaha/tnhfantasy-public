@@ -91,8 +91,8 @@ export default function Dashboard() {
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
         await storeDeleteJob(jobId);
-        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
-    }, [storeDeleteJob, queryClient, filters]);
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+    }, [storeDeleteJob, queryClient]);
 
     // Wrapped deleteJob with confirmation modal for card dismiss button
     const handleJobDelete = useCallback((jobId) => {
@@ -227,7 +227,6 @@ export default function Dashboard() {
         lastCompletedJob,
         autoRefreshOnJobComplete,
         queryClient,
-        filters,
         toastSuccessDuration,
     });
 
@@ -266,7 +265,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple([filename]);
-                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
                     if (selectedImage?.name === filename) closeSelectedImage();
                     toast.success(`Successfully deleted ${filename}`, {
                         icon: '🗑️',
@@ -396,7 +395,7 @@ export default function Dashboard() {
             onConfirm: async () => {
                 try {
                     await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+                    queryClient.invalidateQueries({ queryKey: ['gallery'] });
                     setSelectedFiles(new Set());
                     setSelectionMode(false);
                     toast.success(`Deleted ${selectedFiles.size} images`);

@@ -5,10 +5,11 @@
  * Uses a source image and transforms it based on prompts and denoise setting.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { ImageIcon, Wand2, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
@@ -38,11 +39,7 @@ export default function Img2ImgGenerator() {
         randomizeSeed, addLora, removeLora, updateLora
     } = useGeneratorStore();
 
-    const modelRequests = useMemo(() => ([
-        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
-        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
-    ]), []);
-    const { modelsByKey } = useModelDirectories(modelRequests);
+    const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
     const vaeModels = modelsByKey.vaeModels || [];
 

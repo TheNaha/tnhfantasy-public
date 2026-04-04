@@ -15,10 +15,16 @@ from provider_core.models import (
 
 class TestProviderModels:
     def test_inference_request_valid(self):
-        req = InferenceRequest(workflow={"key": "val"}, use_snapshot=True, job_id="123")
+        req = InferenceRequest(
+            workflow={"key": "val"},
+            use_snapshot=True,
+            job_id="123",
+            timeout_seconds=42.0,
+        )
         assert req.workflow == {"key": "val"}
         assert req.use_snapshot is True
         assert req.job_id == "123"
+        assert req.timeout_seconds == 42.0
 
     def test_inference_request_missing_workflow(self):
         with pytest.raises(ValidationError):
@@ -82,3 +88,14 @@ class TestProviderModels:
     def test_model_directories_use_upscale_models(self):
         assert "models/upscale_models" in MODEL_DIRECTORIES
         assert "models/upscale/models" not in MODEL_DIRECTORIES
+
+    def test_model_directories_include_extended_directory_set(self):
+        for directory in [
+            "models/unet",
+            "models/clip",
+            "models/aesthetics",
+            "models/poses",
+            "models/wildcards",
+            "models/ultralytics/bbox",
+        ]:
+            assert directory in MODEL_DIRECTORIES

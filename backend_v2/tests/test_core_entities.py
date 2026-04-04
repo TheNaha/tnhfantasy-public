@@ -43,9 +43,8 @@ def test_job_defaults():
 def test_job_status_enum():
     """Test JobStatus enum values."""
     assert JobStatus.PENDING == "pending"
-    assert JobStatus.QUEUED == "queued"
     assert JobStatus.RUNNING == "running"
-    assert JobStatus.PROCESSING == "processing"
+    assert JobStatus.POST_PROCESSING == "post-processing"
     assert JobStatus.COMPLETED == "completed"
     assert JobStatus.FAILED == "failed"
     assert JobStatus.CANCELLED == "cancelled"

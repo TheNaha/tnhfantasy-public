@@ -9,6 +9,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
@@ -44,11 +45,7 @@ export default function InpaintGenerator() {
     } = useGeneratorStore();
 
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
-    const modelRequests = useMemo(() => ([
-        { key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' },
-        { key: 'vaeModels', directory: 'models/vae', label: 'VAE models' },
-    ]), []);
-    const { modelsByKey } = useModelDirectories(modelRequests);
+    const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 

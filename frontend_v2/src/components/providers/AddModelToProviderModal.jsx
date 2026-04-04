@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, X, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAddModelToProviders } from '../../hooks/useProviderModels';
+import { PROVIDER_MODEL_DIRECTORIES } from '../../constants/modelDirectories';
 
 export default function AddModelToProviderModal({ providers, onClose }) {
     const [selectedProviders, setSelectedProviders] = useState([]);
@@ -10,21 +11,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
     const [modelName, setModelName] = useState('');
     const addModel = useAddModelToProviders();
 
-    const directories = [
-        'models/checkpoints',
-        'models/loras',
-        'models/vae',
-        'models/controlnet',
-        'models/upscale_models',
-        'models/unet',
-        'models/clip',
-        'models/embeddings',
-        'models/hypernetworks',
-        'models/aesthetics',
-        'models/poses',
-        'models/wildcards',
-        'models/motion_modules'
-    ];
+    const directories = PROVIDER_MODEL_DIRECTORIES;
 
     const toggleProvider = (providerId) => {
         setSelectedProviders(prev =>
