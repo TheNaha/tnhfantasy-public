@@ -9,7 +9,8 @@ from infrastructure.logging import provider_logger
 
 logger = provider_logger()
 
-DEFAULT_STEP_TIMEOUT_SECONDS = 300.0
+# Modal image builds can legitimately exceed 5 minutes on cold dependency paths.
+DEFAULT_STEP_TIMEOUT_SECONDS = 1800.0
 
 
 def _resolve_step_timeout_seconds(raw_timeout: Optional[float]) -> float:

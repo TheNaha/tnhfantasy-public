@@ -1,4 +1,5 @@
 import io
+import asyncio
 import json
 import urllib.error
 import urllib.parse
@@ -23,6 +24,18 @@ class _FakeWebSocket:
         if self._messages:
             return self._messages.pop(0)
         raise self._connection_closed_exc("stream ended")
+
+    async def close(self):
+        self.closed = True
+
+
+class _SlowWebSocket:
+    def __init__(self, sleep_seconds=3600):
+        self.sleep_seconds = sleep_seconds
+        self.closed = False
+
+    async def recv(self):
+        await asyncio.sleep(self.sleep_seconds)
 
     async def close(self):
         self.closed = True
@@ -265,4 +278,41 @@ async def test_execute_comfy_workflow_reports_prompt_rejection(monkeypatch):
     assert len(updates) == 1
     assert updates[0]["status"] == "error"
     assert "invalid workflow" in updates[0]["message"]
+    assert websocket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_execute_comfy_workflow_reports_stalled_prompt(monkeypatch):
+    prompt_id = "prompt-stalled"
+    websocket = _SlowWebSocket()
+    fake_websockets = _FakeWebSocketsModule(websocket)
+    monkeypatch.setattr(
+        "provider_core.workflow_executor._get_websockets_module",
+        lambda: fake_websockets,
+    )
+
+    def fake_urlopen(target, timeout=None):
+        del timeout
+        if isinstance(target, urllib.request.Request):
+            return _BytesResponse(json.dumps({"prompt_id": prompt_id}).encode("utf-8"))
+
+        if f"/history/{prompt_id}" in target:
+            return _BytesResponse(json.dumps({}).encode("utf-8"))
+
+        raise AssertionError(f"Unexpected URL: {target}")
+
+    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+
+    updates = await _collect_updates(
+        execute_comfy_workflow(
+            workflow_json={"nodes": {}},
+            port=8188,
+            image_fetch_mode=IMAGE_FETCH_FILESYSTEM,
+            stall_timeout_seconds=0.01,
+        )
+    )
+
+    assert [update["status"] for update in updates] == ["queued", "error"]
+    assert updates[-1].get("code") == 408
+    assert updates[-1].get("details", {}).get("reason") == "workflow_stalled"
     assert websocket.closed is True

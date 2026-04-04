@@ -1,11 +1,13 @@
 import modal
+import asyncio
 import subprocess
 import time
 import logging
 
 import os
 import json
-from typing import Dict, Any
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
 from pathlib import Path
 
 # IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
@@ -57,6 +59,16 @@ COMFYUI_TIMEOUT = int(os.getenv("MODAL_GPU_TIMEOUT", "600"))
 COMFYUI_MAX_CONTAINERS = int(os.getenv("MODAL_GPU_MAX_CONTAINERS", "1"))
 COMFYUI_SCALEDOWN = int(os.getenv("MODAL_GPU_SCALEDOWN", "40"))
 COMFYUI_SCALEDOWN_SNAPSHOT = int(os.getenv("MODAL_GPU_SCALEDOWN_SNAPSHOT", "40"))
+COMFYUI_STALL_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_STALL_TIMEOUT_SECONDS", "300"))
+COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS", "180"))
+COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "30"))
+COMFYUI_CAPTURE_STALL_DIAGNOSTICS = os.getenv("MODAL_COMFYUI_CAPTURE_STALL_DIAGNOSTICS", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS = float(
+    os.getenv("MODAL_COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS", "8")
+)
+COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS = int(os.getenv("MODAL_COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS", "12000"))
 
 # Download function settings
 DOWNLOAD_TIMEOUT = int(os.getenv("MODAL_DOWNLOAD_TIMEOUT", "1800"))
@@ -87,7 +99,7 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 image_base = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0")
-    .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors",)
+    .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy",)
     # Ensure shared provider_core utilities are present in cloud runtime.
     .add_local_dir(
         local_path=PROVIDER_CORE_LOCAL_PATH,
@@ -128,6 +140,182 @@ image_snapshot = image_base.add_local_dir(
 # =============================================================================
 # Shared workflow execution logic
 # =============================================================================
+
+
+def _start_comfy_server(port: int):
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port)]
+    subprocess.Popen(cmd)
+
+
+def _wait_for_comfy_ready(port: int, timeout_seconds: float, label: str):
+    import requests
+
+    deadline = time.time() + max(timeout_seconds, 1.0)
+    while time.time() < deadline:
+        try:
+            response = requests.get(f"http://127.0.0.1:{port}", timeout=2)
+            if response.status_code == 200:
+                logger.info(f"[{label}] ComfyUI is ready")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(1)
+
+    logger.warning(f"[{label}] ComfyUI did not respond within {int(timeout_seconds)} seconds")
+    return False
+
+
+def _restart_comfy_server(port: int, label: str):
+    logger.warning(f"[{label}] Restarting ComfyUI server")
+    try:
+        subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
+        subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+    except Exception as exc:
+        logger.info(f"[{label}] Process cleanup warning during restart: {exc}")
+
+    time.sleep(1)
+    _start_comfy_server(port)
+    _wait_for_comfy_ready(port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, label)
+
+
+def _truncate_output(raw: str, max_chars: int) -> str:
+    if not isinstance(raw, str):
+        return ""
+    if len(raw) <= max_chars:
+        return raw
+    return raw[:max_chars] + "\n...<truncated>..."
+
+
+def _run_command_capture(command: list[str], timeout_seconds: float) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_seconds, 1.0),
+            check=False,
+        )
+    except Exception as exc:
+        return f"<command_failed: {exc}>"
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    output = "\n".join(part for part in [stdout, stderr] if part).strip()
+    if not output:
+        output = f"<no_output exit_code={result.returncode}>"
+    return _truncate_output(output, COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS)
+
+
+def _fetch_local_json(port: int, path: str, timeout_seconds: float = 2.5) -> Dict[str, Any]:
+    import requests
+
+    url = f"http://127.0.0.1:{port}{path}"
+    try:
+        response = requests.get(url, timeout=max(timeout_seconds, 1.0))
+    except Exception as exc:
+        return {"_error": str(exc), "_url": url}
+
+    if response.status_code != 200:
+        return {
+            "_status_code": response.status_code,
+            "_url": url,
+            "_body": _truncate_output(response.text or "", 1200),
+        }
+
+    try:
+        return response.json()
+    except Exception as exc:
+        return {
+            "_error": f"json_decode_failed: {exc}",
+            "_url": url,
+            "_body": _truncate_output(response.text or "", 1200),
+        }
+
+
+def _find_comfy_pid() -> Optional[int]:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "ComfyUI/main.py"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    for line in (result.stdout or "").splitlines():
+        token = line.strip()
+        if token.isdigit():
+            return int(token)
+    return None
+
+
+def _capture_stall_diagnostics(port: int, label: str, details: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Capture best-effort diagnostics for frozen ComfyUI runs before recycling the server."""
+    if not COMFYUI_CAPTURE_STALL_DIAGNOSTICS:
+        return None
+
+    details = details or {}
+    prompt_id = details.get("prompt_id") or "unknown"
+    safe_prompt_id = str(prompt_id).replace("/", "_").replace(" ", "_")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    diagnostics_dir = Path("/mnt/data/diagnostics/comfyui_stalls")
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics_path = diagnostics_dir / f"{label.lower()}_{timestamp}_{safe_prompt_id}.json"
+
+    comfy_pid = _find_comfy_pid()
+    py_spy_dump = "<comfy_pid_not_found>"
+    if comfy_pid is not None:
+        py_spy_dump = _run_command_capture(
+            ["py-spy", "dump", "--pid", str(comfy_pid)],
+            COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS,
+        )
+
+    report = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "label": label,
+        "port": port,
+        "stall_details": details,
+        "comfy_pid": comfy_pid,
+        "queue": _fetch_local_json(port, "/queue"),
+        "system_stats": _fetch_local_json(port, "/system_stats"),
+        "history": _fetch_local_json(port, f"/history/{prompt_id}") if prompt_id != "unknown" else {"_skipped": "no_prompt_id"},
+        "process_table": _run_command_capture(
+            ["ps", "-eo", "pid,ppid,pcpu,pmem,etime,stat,command"],
+            COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS,
+        ),
+        "nvidia_smi": _run_command_capture(
+            [
+                "nvidia-smi",
+                "--query-gpu=timestamp,index,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS,
+        ),
+        "py_spy_dump": py_spy_dump,
+    }
+
+    try:
+        with open(diagnostics_path, "w", encoding="utf-8") as file_obj:
+            json.dump(report, file_obj, indent=2)
+    except Exception as exc:
+        logger.error(f"[{label}] Failed to persist stall diagnostics: {exc}")
+        return None
+
+    try:
+        vol.commit()
+    except Exception as exc:
+        logger.info(f"[{label}] Volume commit failed for diagnostics file: {exc}")
+
+    logger.warning(f"[{label}] Captured ComfyUI stall diagnostics: {diagnostics_path}")
+    return str(diagnostics_path)
+
+
 async def _execute_workflow(workflow_json: Dict[str, Any], port: int = 8188):
     """
     Execute a ComfyUI workflow and stream progress updates.
@@ -139,6 +327,7 @@ async def _execute_workflow(workflow_json: Dict[str, Any], port: int = 8188):
         image_fetch_mode=IMAGE_FETCH_FILESYSTEM,
         output_dir="/root/comfy/ComfyUI/output",
         temp_dir="/root/comfy/ComfyUI/temp",
+        stall_timeout_seconds=COMFYUI_STALL_TIMEOUT_SECONDS,
         logger=logger,
     ):
         yield update
@@ -166,32 +355,38 @@ class ComfyUIStable:
     
     @modal.enter()
     def launch_server(self):
-        import requests
-        
         logger.info("[ComfyUIStable] Starting ComfyUI server via comfy-cli...")
-        
-        # Start ComfyUI in background using comfy launch with Popen
-        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
-        subprocess.Popen(cmd)
-        
-        # Wait for server to be ready
-        logger.info("[ComfyUIStable] Waiting for ComfyUI to be ready...")
-        for i in range(120):  # 2 minute timeout for cold start
-            try:
-                response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
-                if response.status_code == 200:
-                    logger.info("[ComfyUIStable] ComfyUI is ready!")
-                    return
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(1)
-        
-        logger.info("[ComfyUIStable] Warning - ComfyUI did not respond within 120 seconds.")
+        _start_comfy_server(self.port)
+        _wait_for_comfy_ready(self.port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, "ComfyUIStable")
+        self._completed_runs = 0
     
     @modal.method()
     async def run(self, workflow_json: Dict[str, Any]):
+        if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
+            await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUIStable")
+            self._completed_runs = 0
+
+        saw_stall = False
+        stall_details = None
         async for update in _execute_workflow(workflow_json, self.port):
+            details = update.get("details") if isinstance(update, dict) else None
+            if update.get("status") == "error" and isinstance(details, dict) and details.get("reason") == "workflow_stalled":
+                saw_stall = True
+                stall_details = dict(details)
             yield update
+
+        self._completed_runs = getattr(self, "_completed_runs", 0) + 1
+        if saw_stall:
+            diagnostics_path = await asyncio.to_thread(
+                _capture_stall_diagnostics,
+                self.port,
+                "ComfyUIStable",
+                stall_details,
+            )
+            if diagnostics_path:
+                logger.warning(f"[ComfyUIStable] Stall diagnostics saved at: {diagnostics_path}")
+            await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUIStable")
+            self._completed_runs = 0
 
 
 
@@ -217,27 +412,10 @@ class ComfyUISnapshot:
     
     @modal.enter(snap=True)
     def launch_for_snapshot(self):
-        import requests
-        
         logger.info("[ComfyUISnapshot] Snapshotting: Starting ComfyUI via comfy-cli...")
-        
-        # Start ComfyUI in background using comfy launch with Popen
-        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
-        subprocess.Popen(cmd)
-        
-        # Wait for server to be ready
-        logger.info("[ComfyUISnapshot] Waiting for ComfyUI to be ready...")
-        for i in range(60):
-            try:
-                response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
-                if response.status_code == 200:
-                    logger.info("[ComfyUISnapshot] ComfyUI is ready for snapshot!")
-                    return
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(1)
-        
-        logger.info("[ComfyUISnapshot] Warning - ComfyUI did not respond within 60 seconds.")
+        _start_comfy_server(self.port)
+        _wait_for_comfy_ready(self.port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, "ComfyUISnapshot")
+        self._completed_runs = 0
     
     @modal.enter(snap=False)
     def restore_from_snapshot(self):
@@ -295,8 +473,31 @@ class ComfyUISnapshot:
     
     @modal.method()
     async def run(self, workflow_json: Dict[str, Any]):
+        if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
+            await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUISnapshot")
+            self._completed_runs = 0
+
+        saw_stall = False
+        stall_details = None
         async for update in _execute_workflow(workflow_json, self.port):
+            details = update.get("details") if isinstance(update, dict) else None
+            if update.get("status") == "error" and isinstance(details, dict) and details.get("reason") == "workflow_stalled":
+                saw_stall = True
+                stall_details = dict(details)
             yield update
+
+        self._completed_runs = getattr(self, "_completed_runs", 0) + 1
+        if saw_stall:
+            diagnostics_path = await asyncio.to_thread(
+                _capture_stall_diagnostics,
+                self.port,
+                "ComfyUISnapshot",
+                stall_details,
+            )
+            if diagnostics_path:
+                logger.warning(f"[ComfyUISnapshot] Stall diagnostics saved at: {diagnostics_path}")
+            await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUISnapshot")
+            self._completed_runs = 0
 
 
 

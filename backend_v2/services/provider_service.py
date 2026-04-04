@@ -337,6 +337,18 @@ class ProviderService:
                 env_vars["MODAL_GPU_MAX_CONTAINERS"] = str(comfyui["max_containers"])
             if "scaledown_window_seconds" in comfyui:
                 env_vars["MODAL_GPU_SCALEDOWN"] = str(comfyui["scaledown_window_seconds"])
+            if "stall_timeout_seconds" in comfyui:
+                env_vars["MODAL_COMFYUI_STALL_TIMEOUT_SECONDS"] = str(comfyui["stall_timeout_seconds"])
+            if "max_runs_before_restart" in comfyui:
+                env_vars["MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART"] = str(comfyui["max_runs_before_restart"])
+            if "healthcheck_timeout_seconds" in comfyui:
+                env_vars["MODAL_COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS"] = str(comfyui["healthcheck_timeout_seconds"])
+            if "capture_stall_diagnostics" in comfyui:
+                env_vars["MODAL_COMFYUI_CAPTURE_STALL_DIAGNOSTICS"] = str(bool(comfyui["capture_stall_diagnostics"])).lower()
+            if "stall_diagnostics_timeout_seconds" in comfyui:
+                env_vars["MODAL_COMFYUI_STALL_DIAGNOSTICS_TIMEOUT_SECONDS"] = str(comfyui["stall_diagnostics_timeout_seconds"])
+            if "stall_diagnostics_max_chars" in comfyui:
+                env_vars["MODAL_COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS"] = str(comfyui["stall_diagnostics_max_chars"])
 
             download = self._clean_dict(self._clean_dict(deploy_config.get("functions")).get("download"))
             if "timeout_seconds" in download:

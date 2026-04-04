@@ -187,6 +187,7 @@ async def execute_comfy_workflow(
     temp_dir: str = "/root/comfy/ComfyUI/temp",
     history_delay_seconds: float = 0.0,
     view_timeout_seconds: float = 30.0,
+    stall_timeout_seconds: float = 300.0,
     max_retries: int = 5,
     initial_retry_delay_seconds: float = 1.0,
     logger: logging.Logger | None = None,
@@ -216,9 +217,51 @@ async def execute_comfy_workflow(
 
         yield {"status": "queued", "prompt_id": prompt_id}
 
+        effective_stall_timeout_seconds = max(float(stall_timeout_seconds), 1.0)
+        last_prompt_node: str | None = None
+
         while True:
             try:
-                message = await websocket.recv()
+                message = await asyncio.wait_for(
+                    websocket.recv(),
+                    timeout=effective_stall_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                # ComfyUI occasionally deadlocks mid-run on long-lived containers.
+                # Probe history once before failing the request as stalled.
+                history_probe, _history_probe_error = _get_history(server_address, prompt_id)
+                if history_probe is not None:
+                    _log(
+                        logger,
+                        logging.WARNING,
+                        (
+                            "Workflow websocket stalled but history is available; "
+                            "continuing with collected outputs"
+                        ),
+                    )
+                    break
+
+                stalled_message = (
+                    f"Workflow stalled after {int(effective_stall_timeout_seconds)}s "
+                    f"without websocket updates"
+                )
+                if last_prompt_node:
+                    stalled_message += f" (last node: {last_prompt_node})"
+
+                _log(logger, logging.ERROR, stalled_message)
+                yield {
+                    "status": "error",
+                    "message": stalled_message,
+                    "code": 408,
+                    "retryable": True,
+                    "details": {
+                        "reason": "workflow_stalled",
+                        "prompt_id": prompt_id,
+                        "last_node": last_prompt_node,
+                        "stall_timeout_seconds": int(effective_stall_timeout_seconds),
+                    },
+                }
+                return
             except websockets.exceptions.ConnectionClosed as error:
                 _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
                 break
@@ -244,6 +287,7 @@ async def execute_comfy_workflow(
                 if node is None and msg_prompt_id == prompt_id:
                     break
                 if msg_prompt_id == prompt_id:
+                    last_prompt_node = str(node) if node is not None else None
                     yield {"status": "executing", "node": node, "prompt_id": prompt_id}
             elif msg_type == "execution_cached":
                 if msg_prompt_id == prompt_id:
