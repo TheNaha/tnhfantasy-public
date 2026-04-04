@@ -214,6 +214,16 @@ curl http://localhost:8001/health
 # {"status":"healthy","provider_id":"modal-account2",...}
 ```
 
+### ModuleNotFoundError: provider_core During Cloud Deploy
+
+- Symptom:
+  - `ModuleNotFoundError: No module named 'provider_core'` while loading `modal_app.py` or `beam_app.py` in cloud runtime.
+- Cause:
+  - Deploy/build context did not include the sibling `provider_core` package.
+- Fix:
+  - Use `provider_containers/` as deploy/build context so `provider_core` is available.
+  - For Modal cloud functions, keep explicit image packaging for `provider_core` in `modal_worker/modal_app.py`.
+
 ### Provider Shows "Inactive"
 
 - Container may have crashed - check logs

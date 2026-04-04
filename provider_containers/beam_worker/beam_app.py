@@ -18,6 +18,9 @@ import json
 import logging
 import subprocess
 import time
+# IMPORTANT: provider_core is a sibling package and must be present in the deploy
+# source context. Deploying beam_app.py from only beam_worker/ (without the
+# provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.utils import get_safe_path
 from provider_core.downloads import download_model_to_path
 from provider_core.validation import (

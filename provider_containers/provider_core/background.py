@@ -52,7 +52,13 @@ async def reconciliation_loop(
             
             if status == 200:
                 result = response.json()
-                print(f"[Worker Reconciliation] ✓ Success: {result}")
+                if isinstance(result, dict) and result.get("status") == "already_running":
+                    print("[Worker Reconciliation] ℹ Reconciliation already running; skipping duplicate trigger")
+                else:
+                    print(f"[Worker Reconciliation] ✓ Success: {result}")
+            elif status == 409:
+                # Backend lock says reconciliation is already in progress.
+                print("[Worker Reconciliation] ℹ Reconciliation already in progress (backend lock)")
             else:
                 print(f"[Worker Reconciliation] ✗ Failed: {status}")
         

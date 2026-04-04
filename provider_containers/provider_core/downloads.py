@@ -8,12 +8,24 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 
 from .validation import validate_downloaded_file
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
+
+
+def _require_requests():
+    if requests is None:
+        raise RuntimeError(
+            "The 'requests' package is required for model download operations. "
+            "Install it in the runtime environment or ensure the download image includes it."
+        )
+    return requests
 
 
 def _append_query_param(url: str, key: str, value: str) -> str:
@@ -93,6 +105,7 @@ def download_model_to_path(
     request_timeout_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Download a model file to disk with strict validation and atomic rename."""
+    requests_client = _require_requests()
     logger = log or _default_log
     label = path or os.path.basename(full_path)
     temp_path = full_path + ".downloading"
@@ -122,7 +135,7 @@ def download_model_to_path(
         if request_timeout_seconds is not None:
             request_kwargs["timeout"] = request_timeout_seconds
 
-        response = requests.get(resolved_url, **request_kwargs)
+        response = requests_client.get(resolved_url, **request_kwargs)
         response.raise_for_status()
 
         total_size = int(response.headers.get("content-length", 0) or 0)
@@ -213,7 +226,7 @@ def download_model_to_path(
         preview_saved = False
         if preview_url:
             try:
-                preview_response = requests.get(preview_url, timeout=preview_timeout_seconds)
+                preview_response = requests_client.get(preview_url, timeout=preview_timeout_seconds)
                 if preview_response.status_code == 200:
                     preview_path = os.path.splitext(full_path)[0] + ".preview.png"
                     with open(preview_path, "wb") as preview_handle:

@@ -63,6 +63,7 @@ CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
 # Worker settings (hot-reloadable via restart or /config endpoint)
 MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"))
+RECONCILIATION_LIST_TIMEOUT_SECONDS = float(os.getenv("RECONCILIATION_LIST_TIMEOUT_SECONDS", "45"))
 RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "7200"))
 INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
@@ -70,6 +71,7 @@ INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600")
 runtime_config = {
     "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
     "validation_timeout_seconds": VALIDATION_TIMEOUT_SECONDS,
+    "reconciliation_list_timeout_seconds": RECONCILIATION_LIST_TIMEOUT_SECONDS,
     "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
 }
 
@@ -145,6 +147,7 @@ async def get_config():
         "env": {
             "MAX_CONCURRENT_DOWNLOADS": MAX_CONCURRENT_DOWNLOADS,
             "VALIDATION_TIMEOUT_SECONDS": VALIDATION_TIMEOUT_SECONDS,
+            "RECONCILIATION_LIST_TIMEOUT_SECONDS": RECONCILIATION_LIST_TIMEOUT_SECONDS,
             "RECONCILIATION_INTERVAL_SECONDS": RECONCILIATION_INTERVAL_SECONDS,
             "INFERENCE_TIMEOUT_SECONDS": INFERENCE_TIMEOUT_SECONDS,
         }
@@ -159,6 +162,7 @@ async def update_config(updates: Dict[str, Any]):
     Supported keys:
     - max_concurrent_downloads: int
     - validation_timeout_seconds: float
+    - reconciliation_list_timeout_seconds: float
     - inference_timeout_seconds: float
     """
     updated = []
@@ -536,21 +540,47 @@ async def get_reconciliation_status():
 async def perform_reconciliation_v2():
     async def validate_existing(delete_invalid: bool):
         validate_fn = get_modal_function("validate_models")
-        return await asyncio.wait_for(
-            validate_fn.remote.aio(MODEL_DIRECTORIES, delete_invalid),
-            timeout=300.0,
+        timeout_seconds = max(
+            1.0,
+            float(runtime_config.get("validation_timeout_seconds") or VALIDATION_TIMEOUT_SECONDS),
         )
+        try:
+            return await asyncio.wait_for(
+                validate_fn.remote.aio(MODEL_DIRECTORIES, delete_invalid),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(f"validate_models timed out after {int(timeout_seconds)}s") from exc
+        except Exception as exc:
+            message = str(exc).strip() or repr(exc)
+            raise RuntimeError(f"validate_models failed: {type(exc).__name__}: {message}") from exc
 
     async def list_existing_files():
         paths = set()
         list_models_func = get_modal_function("list_models_with_metadata")
+        list_timeout_seconds = max(
+            1.0,
+            float(runtime_config.get("reconciliation_list_timeout_seconds") or RECONCILIATION_LIST_TIMEOUT_SECONDS),
+        )
         for directory in MODEL_DIRECTORIES:
             try:
-                files = await list_models_func.remote.aio(directory)
+                files = await asyncio.wait_for(
+                    list_models_func.remote.aio(directory),
+                    timeout=list_timeout_seconds,
+                )
                 for file_info in files:
                     paths.add(f"{directory}/{file_info['name']}")
+            except asyncio.TimeoutError:
+                print(
+                    f"[V2 Reconciliation] Warning: Timeout listing {directory} "
+                    f"after {int(list_timeout_seconds)}s"
+                )
             except Exception as exc:
-                print(f"[V2 Reconciliation] Warning: Error listing {directory}: {exc}")
+                message = str(exc).strip() or repr(exc)
+                print(
+                    f"[V2 Reconciliation] Warning: Error listing {directory}: "
+                    f"{type(exc).__name__}: {message}"
+                )
         return paths
 
     async def download_file(download_url: str, storage_path: str, token: str = None):

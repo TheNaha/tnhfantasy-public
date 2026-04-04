@@ -8,6 +8,9 @@ import json
 from typing import Dict, Any
 from pathlib import Path
 
+# IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
+# to import this module unless provider_core is explicitly packaged into the
+# image (see image_base.add_local_dir below).
 from provider_core.utils import get_safe_path
 from provider_core.downloads import download_model_to_path
 from provider_core.validation import (
@@ -25,6 +28,23 @@ logging.basicConfig(
     format='%(levelname)s %(name)s: %(message)s'
 )
 logger = logging.getLogger("modal_app")
+
+
+def _resolve_provider_core_local_path() -> Path:
+    """Resolve provider_core source path for Modal image packaging."""
+    candidates = [
+        Path(__file__).parent / "provider_core",
+        Path(__file__).parent.parent / "provider_core",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise RuntimeError("provider_core source directory not found for modal image build")
+
+
+PROVIDER_CORE_LOCAL_PATH = _resolve_provider_core_local_path()
 
 # =============================================================================
 # Per-Function Configuration from Environment (set during modal deploy)
@@ -68,6 +88,12 @@ image_base = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0")
     .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors",)
+    # Ensure shared provider_core utilities are present in cloud runtime.
+    .add_local_dir(
+        local_path=PROVIDER_CORE_LOCAL_PATH,
+        remote_path="/root/provider_core",
+        copy=True,
+    )
     # Install ComfyUI using comfy-cli
     .run_commands("comfy --skip-prompt install --fast-deps --nvidia")
     # Install Custom Nodes via comfy-cli registry
