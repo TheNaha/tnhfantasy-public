@@ -100,6 +100,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                                 src={previewUrl}
                                 alt={displayName}
                                 className="w-full h-full object-contain"
+                                decoding="async"
                                 onError={(e) => {
                                     if (previewFallbackUrl && e.currentTarget.src !== previewFallbackUrl) {
                                         e.currentTarget.src = previewFallbackUrl;
@@ -127,6 +128,8 @@ export default function ModelDetailsModal({ file, onClose }) {
                                         alt={`Preview ${i}`}
                                         className="w-full h-full object-cover"
                                         loading="lazy"
+                                        decoding="async"
+                                        fetchPriority="low"
                                         onError={(e) => {
                                             if (img.directUrl && e.currentTarget.src !== img.directUrl) {
                                                 e.currentTarget.src = img.directUrl;

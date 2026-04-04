@@ -14,7 +14,12 @@ from infrastructure.background_tasks import cancel_background_tasks, start_backg
 from infrastructure.database import create_db_and_tables
 from infrastructure.http_client import close_http_client
 from infrastructure.logging import get_logger
-from infrastructure.scheduler import schedule_vacuum, start_scheduler, stop_scheduler
+from infrastructure.scheduler import (
+    schedule_preview_prefetch,
+    schedule_vacuum,
+    start_scheduler,
+    stop_scheduler,
+)
 from services.job_queue import job_queue
 from services.job_service import JobService
 from sqlmodel import select
@@ -134,6 +139,15 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
     schedule_vacuum(vacuum_database, interval_seconds=86400)
+    from api.routes.models_v2 import (
+        PREVIEW_PREFETCH_INTERVAL_SECONDS,
+        prefetch_stale_model_previews,
+    )
+
+    schedule_preview_prefetch(
+        prefetch_stale_model_previews,
+        interval_seconds=PREVIEW_PREFETCH_INTERVAL_SECONDS,
+    )
 
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(

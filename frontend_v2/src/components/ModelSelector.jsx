@@ -59,7 +59,8 @@ const ModelSelector = memo(function ModelSelector({
     const file = version.file || {};
     const versionImages = version.images || [];
     const selectedVersionPreviewId = version.civitai_version_id || version.id;
-    const previewImage = model.civitai_id
+    const directPreviewImage = versionImages[0]?.url || model.preview;
+    const proxyPreviewImage = model.civitai_id
       ? (() => {
           const params = new URLSearchParams({ image_index: "0" });
           if (selectedVersionPreviewId) {
@@ -67,7 +68,8 @@ const ModelSelector = memo(function ModelSelector({
           }
           return `/api/v2/models/preview/${model.civitai_id}?${params.toString()}`;
         })()
-      : (versionImages[0]?.url || model.preview);
+      : null;
+    const previewImage = directPreviewImage || proxyPreviewImage;
 
     return {
       ...model,
@@ -325,7 +327,34 @@ const ModelSelector = memo(function ModelSelector({
           >
             {/* Preview Image */}
             {(() => {
-              if (selectedModel?.civitai_id) {
+                if (selectedModel?.preview) {
+                  return (
+                    <img
+                      src={selectedModel.preview}
+                      alt={selectedModel?.display_name || selectedModel?.name}
+                      className="w-10 h-10 rounded object-cover bg-gray-800 flex-shrink-0"
+                      decoding="async"
+                      onError={(e) => {
+                        if (selectedModel?.civitai_id) {
+                          const versionPreviewId =
+                            selectedModel.selectedVersionPreviewId ||
+                            selectedModel.selectedVersionId;
+                          const params = new URLSearchParams({ image_index: "0" });
+                          if (versionPreviewId) {
+                            params.set("version_id", String(versionPreviewId));
+                          }
+                          const proxyPreview = `/api/v2/models/preview/${selectedModel.civitai_id}?${params.toString()}`;
+                          if (e.currentTarget.src !== proxyPreview) {
+                            e.currentTarget.src = proxyPreview;
+                            return;
+                          }
+                        }
+                        e.target.style.display = "none";
+                      }}
+                    />
+                  );
+                }
+                if (selectedModel?.civitai_id) {
                 const versionPreviewId = selectedModel.selectedVersionPreviewId || selectedModel.selectedVersionId;
                 const params = new URLSearchParams({ image_index: "0" });
                 if (versionPreviewId) {
@@ -336,18 +365,7 @@ const ModelSelector = memo(function ModelSelector({
                     src={`/api/v2/models/preview/${selectedModel.civitai_id}?${params.toString()}`}
                     alt={selectedModel?.display_name || selectedModel?.name}
                     className="w-10 h-10 rounded object-cover bg-gray-800 flex-shrink-0"
-                    onError={(e) => {
-                      e.target.style.display = "none";
-                    }}
-                  />
-                );
-              }
-              if (selectedModel?.preview) {
-                return (
-                  <img
-                    src={selectedModel.preview}
-                    alt={selectedModel?.name}
-                    className="w-10 h-10 rounded object-cover bg-gray-800 flex-shrink-0"
+                    decoding="async"
                     onError={(e) => {
                       e.target.style.display = "none";
                     }}
@@ -822,19 +840,6 @@ const ModelSelector = memo(function ModelSelector({
                         >
                           {/* Image */}
                           {(() => {
-                            if (model.civitai_id) {
-                              return (
-                                <img
-                                  src={`/api/v2/models/preview/${model.civitai_id}?image_index=0`}
-                                  alt={model.display_name || model.name}
-                                  className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    e.target.style.display = "none";
-                                  }}
-                                />
-                              );
-                            }
                             if (model.preview) {
                               return (
                                 <img
@@ -842,6 +847,30 @@ const ModelSelector = memo(function ModelSelector({
                                   alt={model.display_name || model.name}
                                   className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
                                   loading="lazy"
+                                  decoding="async"
+                                  fetchPriority="low"
+                                  onError={(e) => {
+                                    if (model.civitai_id) {
+                                      const proxyPreview = `/api/v2/models/preview/${model.civitai_id}?image_index=0`;
+                                      if (e.currentTarget.src !== proxyPreview) {
+                                        e.currentTarget.src = proxyPreview;
+                                        return;
+                                      }
+                                    }
+                                    e.target.style.display = "none";
+                                  }}
+                                />
+                              );
+                            }
+                            if (model.civitai_id) {
+                              return (
+                                <img
+                                  src={`/api/v2/models/preview/${model.civitai_id}?image_index=0`}
+                                  alt={model.display_name || model.name}
+                                  className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
+                                  loading="lazy"
+                                  decoding="async"
+                                  fetchPriority="low"
                                   onError={(e) => {
                                     e.target.style.display = "none";
                                   }}

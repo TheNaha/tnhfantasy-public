@@ -18,7 +18,7 @@ from infrastructure.http_client import get_http_client
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session
+from api.deps import get_session, get_session_sync
 from services.model_service_v2 import ModelServiceV2
 from core.exceptions import NotFoundError
 from infrastructure.logging import model_logger
@@ -753,9 +753,13 @@ async def resync_model_from_civitai(
 
 import os
 import re
+import asyncio
+import time
+import random
 import requests
 from fastapi import Response
 from infrastructure.http_client import get_http_client
+from infrastructure.request_dedup import deduplicated, make_key
 
 
 
@@ -912,8 +916,262 @@ async def search_huggingface(query: str, limit: int = 20):
 # PREVIEW IMAGES - Fetch from CivitAI and cache
 # ============================================================================
 
-# Cache directory for preview images
-PREVIEW_CACHE_DIR = os.path.join(os.path.dirname(__file__), "../../cache/previews")
+def _resolve_preview_cache_dir() -> str:
+    configured_dir = os.getenv("COMFY_PREVIEW_CACHE_DIR")
+    if configured_dir:
+        return configured_dir
+
+    output_dir = os.getenv("OUTPUT_DIR")
+    if output_dir:
+        return os.path.join(output_dir, "cache", "previews")
+
+    return os.path.join(os.path.dirname(__file__), "../../cache/previews")
+
+
+def _resolve_preview_timeout_seconds(env_name: str, default_value: float) -> float:
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default_value
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_timeout_invalid",
+            env_name=env_name,
+            raw_value=raw_value,
+            default_value=default_value,
+        )
+        return default_value
+
+    if parsed <= 0:
+        logger.warning(
+            "preview_timeout_non_positive",
+            env_name=env_name,
+            raw_value=raw_value,
+            default_value=default_value,
+        )
+        return default_value
+
+    return parsed
+
+
+def _resolve_preview_failure_ttl_seconds() -> int:
+    default_ttl_seconds = 600
+    raw_value = os.getenv("COMFY_PREVIEW_FAILURE_TTL_SECONDS")
+    if raw_value is None:
+        return default_ttl_seconds
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_failure_ttl_invalid",
+            raw_value=raw_value,
+            default_value=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    if parsed < 0:
+        logger.warning(
+            "preview_failure_ttl_negative",
+            raw_value=raw_value,
+            default_value=default_ttl_seconds,
+        )
+        return default_ttl_seconds
+
+    return parsed
+
+
+# Cache directory for preview images (prefer persistent output volume when available)
+PREVIEW_CACHE_DIR = _resolve_preview_cache_dir()
+PREVIEW_METADATA_TIMEOUT_SECONDS = _resolve_preview_timeout_seconds(
+    "COMFY_PREVIEW_METADATA_TIMEOUT_SECONDS",
+    6.0,
+)
+PREVIEW_IMAGE_TIMEOUT_SECONDS = _resolve_preview_timeout_seconds(
+    "COMFY_PREVIEW_IMAGE_TIMEOUT_SECONDS",
+    8.0,
+)
+PREVIEW_FAILURE_TTL_SECONDS = _resolve_preview_failure_ttl_seconds()
+
+
+def _resolve_preview_prefetch_enabled() -> bool:
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_ENABLED")
+    if raw_value is None:
+        return True
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_preview_prefetch_interval_seconds() -> int:
+    default_interval = 900
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_INTERVAL_SECONDS")
+    if raw_value is None:
+        return default_interval
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_interval_invalid",
+            raw_value=raw_value,
+            default_value=default_interval,
+        )
+        return default_interval
+
+    if parsed <= 0:
+        logger.warning(
+            "preview_prefetch_interval_non_positive",
+            raw_value=raw_value,
+            default_value=default_interval,
+        )
+        return default_interval
+
+    return parsed
+
+
+def _resolve_preview_prefetch_batch_size() -> int:
+    default_batch_size = 12
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_BATCH_SIZE")
+    if raw_value is None:
+        return default_batch_size
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_batch_invalid",
+            raw_value=raw_value,
+            default_value=default_batch_size,
+        )
+        return default_batch_size
+
+    if parsed <= 0:
+        logger.warning(
+            "preview_prefetch_batch_non_positive",
+            raw_value=raw_value,
+            default_value=default_batch_size,
+        )
+        return default_batch_size
+
+    return parsed
+
+
+def _resolve_preview_prefetch_max_candidates() -> int:
+    default_candidates = 200
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_MAX_CANDIDATES")
+    if raw_value is None:
+        return default_candidates
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_candidates_invalid",
+            raw_value=raw_value,
+            default_value=default_candidates,
+        )
+        return default_candidates
+
+    if parsed <= 0:
+        logger.warning(
+            "preview_prefetch_candidates_non_positive",
+            raw_value=raw_value,
+            default_value=default_candidates,
+        )
+        return default_candidates
+
+    return parsed
+
+
+def _resolve_preview_prefetch_stale_after_seconds() -> int:
+    default_stale_seconds = 604800  # 7 days
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_STALE_AFTER_SECONDS")
+    if raw_value is None:
+        return default_stale_seconds
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_stale_after_invalid",
+            raw_value=raw_value,
+            default_value=default_stale_seconds,
+        )
+        return default_stale_seconds
+
+    if parsed < 0:
+        logger.warning(
+            "preview_prefetch_stale_after_negative",
+            raw_value=raw_value,
+            default_value=default_stale_seconds,
+        )
+        return default_stale_seconds
+
+    return parsed
+
+
+def _resolve_preview_prefetch_jitter_seconds() -> float:
+    default_jitter_seconds = 45.0
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_JITTER_SECONDS")
+    if raw_value is None:
+        return default_jitter_seconds
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_jitter_invalid",
+            raw_value=raw_value,
+            default_value=default_jitter_seconds,
+        )
+        return default_jitter_seconds
+
+    if parsed < 0:
+        logger.warning(
+            "preview_prefetch_jitter_negative",
+            raw_value=raw_value,
+            default_value=default_jitter_seconds,
+        )
+        return default_jitter_seconds
+
+    return parsed
+
+
+def _resolve_preview_prefetch_item_delay_seconds() -> float:
+    default_delay_seconds = 0.35
+    raw_value = os.getenv("COMFY_PREVIEW_PREFETCH_ITEM_DELAY_SECONDS")
+    if raw_value is None:
+        return default_delay_seconds
+
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preview_prefetch_item_delay_invalid",
+            raw_value=raw_value,
+            default_value=default_delay_seconds,
+        )
+        return default_delay_seconds
+
+    if parsed < 0:
+        logger.warning(
+            "preview_prefetch_item_delay_negative",
+            raw_value=raw_value,
+            default_value=default_delay_seconds,
+        )
+        return default_delay_seconds
+
+    return parsed
+
+
+PREVIEW_PREFETCH_ENABLED = _resolve_preview_prefetch_enabled()
+PREVIEW_PREFETCH_INTERVAL_SECONDS = _resolve_preview_prefetch_interval_seconds()
+PREVIEW_PREFETCH_BATCH_SIZE = _resolve_preview_prefetch_batch_size()
+PREVIEW_PREFETCH_MAX_CANDIDATES = _resolve_preview_prefetch_max_candidates()
+PREVIEW_PREFETCH_STALE_AFTER_SECONDS = _resolve_preview_prefetch_stale_after_seconds()
+PREVIEW_PREFETCH_JITTER_SECONDS = _resolve_preview_prefetch_jitter_seconds()
+PREVIEW_PREFETCH_ITEM_DELAY_SECONDS = _resolve_preview_prefetch_item_delay_seconds()
 
 
 def get_cache_path(model_id: int, version_id: int = None, image_index: int = 0) -> str:
@@ -928,82 +1186,219 @@ def _get_cache_meta_path(cache_path: str) -> str:
     return f"{cache_path}.meta"
 
 
-def fetch_civitai_preview(model_id: int, version_id: int = None, image_index: int = 0) -> tuple:
-    """Fetch preview image from CivitAI API and cache it."""
+def _get_failure_marker_path(cache_path: str) -> str:
+    return f"{cache_path}.fail"
+
+
+def _has_recent_failure(failure_marker_path: str, ttl_seconds: int) -> bool:
+    if ttl_seconds <= 0 or not os.path.exists(failure_marker_path):
+        return False
+
+    try:
+        with open(failure_marker_path, 'r', encoding='utf-8') as marker_file:
+            failed_at = float(marker_file.read().strip())
+    except Exception:
+        return False
+
+    return (time.time() - failed_at) < ttl_seconds
+
+
+def _mark_failure(failure_marker_path: str) -> None:
+    with open(failure_marker_path, 'w', encoding='utf-8') as marker_file:
+        marker_file.write(str(time.time()))
+
+
+def _clear_failure_marker(failure_marker_path: str) -> None:
+    if os.path.exists(failure_marker_path):
+        os.remove(failure_marker_path)
+
+
+def _load_preview_from_cache(cache_path: str, cache_meta_path: str) -> tuple:
+    if not os.path.exists(cache_path):
+        return None, None
+
+    with open(cache_path, 'rb') as image_file:
+        cached_content = image_file.read()
+
+    cached_content_type = "image/jpeg"
+    if os.path.exists(cache_meta_path):
+        try:
+            with open(cache_meta_path, 'r', encoding='utf-8') as meta_file:
+                cached_content_type = meta_file.read().strip() or cached_content_type
+        except Exception:
+            pass
+
+    return cached_content, cached_content_type
+
+
+def _save_preview_to_cache(cache_path: str, cache_meta_path: str, image_data: bytes, content_type: str) -> None:
+    with open(cache_path, 'wb') as image_file:
+        image_file.write(image_data)
+    with open(cache_meta_path, 'w', encoding='utf-8') as meta_file:
+        meta_file.write(content_type)
+
+
+def _select_preview_url(model_data: Dict[str, Any], version_id: Optional[int], image_index: int) -> Optional[str]:
+    model_versions = model_data.get('modelVersions', [])
+    if not model_versions:
+        return None
+
+    target_version = None
+    if version_id is not None:
+        target_version = next((v for v in model_versions if v.get('id') == version_id), None)
+    if not target_version:
+        target_version = model_versions[0]
+
+    raw_images = target_version.get('images', [])
+    image_candidates = [
+        img for img in raw_images
+        if isinstance(img, dict)
+        and img.get('url')
+        and img.get('type', 'image').lower() != 'video'
+    ]
+
+    if not image_candidates:
+        image_candidates = [
+            img for img in raw_images
+            if isinstance(img, dict) and img.get('url')
+        ]
+
+    if not image_candidates:
+        return None
+
+    safe_image_index = min(max(image_index, 0), len(image_candidates) - 1)
+    return image_candidates[safe_image_index].get('url')
+
+
+def _is_preview_cache_stale(
+    model_id: int,
+    version_id: Optional[int],
+    image_index: int,
+    stale_after_seconds: int,
+) -> bool:
+    cache_path = get_cache_path(model_id, version_id, image_index)
+    if not os.path.exists(cache_path):
+        return True
+
+    if stale_after_seconds <= 0:
+        return True
+
+    try:
+        return (time.time() - os.path.getmtime(cache_path)) >= stale_after_seconds
+    except OSError:
+        return True
+
+
+def _list_civitai_model_ids_for_prefetch() -> List[int]:
+    from sqlmodel import select
+    from core.entities_v2 import ModelV2
+
+    session = get_session_sync()
+    try:
+        rows = session.exec(
+            select(ModelV2.civitai_model_id).where(
+                ModelV2.civitai_model_id.is_not(None),
+                ModelV2.source == "civitai",
+            )
+        ).all()
+        return [model_id for model_id in rows if isinstance(model_id, int)]
+    finally:
+        session.close()
+
+
+def _select_stale_prefetch_candidates(
+    model_ids: List[int],
+    max_candidates: int,
+    batch_size: int,
+    stale_after_seconds: int,
+) -> List[int]:
+    if not model_ids or batch_size <= 0:
+        return []
+
+    shuffled_ids = model_ids[:]
+    random.shuffle(shuffled_ids)
+
+    if max_candidates > 0 and len(shuffled_ids) > max_candidates:
+        shuffled_ids = shuffled_ids[:max_candidates]
+
+    stale_candidates: List[int] = []
+    for model_id in shuffled_ids:
+        if _is_preview_cache_stale(
+            model_id,
+            version_id=None,
+            image_index=0,
+            stale_after_seconds=stale_after_seconds,
+        ):
+            stale_candidates.append(model_id)
+        if len(stale_candidates) >= batch_size:
+            break
+
+    return stale_candidates
+
+
+async def fetch_civitai_preview(
+    model_id: int,
+    version_id: int = None,
+    image_index: int = 0,
+    force_refresh: bool = False,
+) -> tuple:
+    """Fetch preview image from CivitAI API and cache it using non-blocking I/O."""
     cache_path = get_cache_path(model_id, version_id, image_index)
     cache_meta_path = _get_cache_meta_path(cache_path)
+    failure_marker_path = _get_failure_marker_path(cache_path)
 
-    # Check cache first
-    if os.path.exists(cache_path):
-        with open(cache_path, 'rb') as f:
-            cached_content = f.read()
-        cached_content_type = "image/jpeg"
-        if os.path.exists(cache_meta_path):
-            try:
-                with open(cache_meta_path, 'r', encoding='utf-8') as meta_file:
-                    cached_content_type = meta_file.read().strip() or cached_content_type
-            except Exception:
-                pass
-        return cached_content, cached_content_type
+    has_recent_failure = await asyncio.to_thread(
+        _has_recent_failure,
+        failure_marker_path,
+        PREVIEW_FAILURE_TTL_SECONDS,
+    )
+    if has_recent_failure:
+        logger.debug(
+            "civitai_preview_recent_failure_skip",
+            model_id=model_id,
+            version_id=version_id,
+            image_index=image_index,
+            ttl_seconds=PREVIEW_FAILURE_TTL_SECONDS,
+        )
+        return None, None, False
 
-    # Fetch from CivitAI API
+    if not force_refresh:
+        cached_content, cached_content_type = await asyncio.to_thread(
+            _load_preview_from_cache,
+            cache_path,
+            cache_meta_path,
+        )
+        if cached_content is not None:
+            return cached_content, cached_content_type, True
+
     try:
+        client = get_http_client()
         api_url = f"https://civitai.com/api/v1/models/{model_id}"
-        response = requests.get(api_url, timeout=10)
+        response = await client.get(api_url, timeout=PREVIEW_METADATA_TIMEOUT_SECONDS)
         response.raise_for_status()
         model_data = response.json()
 
-        # Get model versions
-        model_versions = model_data.get('modelVersions', [])
-        if not model_versions:
-            return None, None
-
-        # Find target version
-        target_version = None
-        if version_id is not None:
-            target_version = next((v for v in model_versions if v.get('id') == version_id), None)
-        if not target_version:
-            target_version = model_versions[0]
-
-        # Keep only image entries and ignore video previews.
-        raw_images = target_version.get('images', [])
-        image_candidates = [
-            img for img in raw_images
-            if isinstance(img, dict)
-            and img.get('url')
-            and img.get('type', 'image').lower() != 'video'
-        ]
-
-        # Fallback: keep any URL if no explicit image candidates were found.
-        if not image_candidates:
-            image_candidates = [
-                img for img in raw_images
-                if isinstance(img, dict) and img.get('url')
-            ]
-
-        if not image_candidates:
-            return None, None
-
-        safe_image_index = min(max(image_index, 0), len(image_candidates) - 1)
-        image_url = image_candidates[safe_image_index].get('url')
+        image_url = _select_preview_url(model_data, version_id, image_index)
         if not image_url:
-            return None, None
+            return None, None, False
 
-        # Fetch the image
-        img_response = requests.get(image_url, timeout=30)
+        img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
         img_response.raise_for_status()
         image_data = img_response.content
         content_type = img_response.headers.get('Content-Type', 'image/jpeg')
 
-        # Cache bytes and content type
-        with open(cache_path, 'wb') as f:
-            f.write(image_data)
-        with open(cache_meta_path, 'w', encoding='utf-8') as meta_file:
-            meta_file.write(content_type)
-
-        return image_data, content_type
+        await asyncio.to_thread(
+            _save_preview_to_cache,
+            cache_path,
+            cache_meta_path,
+            image_data,
+            content_type,
+        )
+        await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+        return image_data, content_type, False
 
     except Exception as e:
+        await asyncio.to_thread(_mark_failure, failure_marker_path)
         logger.warning(
             "civitai_preview_fetch_failed",
             model_id=model_id,
@@ -1011,7 +1406,74 @@ def fetch_civitai_preview(model_id: int, version_id: int = None, image_index: in
             image_index=image_index,
             error=str(e),
         )
-        return None, None
+        return None, None, False
+
+
+async def prefetch_stale_model_previews() -> Dict[str, Any]:
+    """Warm stale model preview cache entries with jittered, sampled background fetches."""
+    if not PREVIEW_PREFETCH_ENABLED:
+        logger.debug("preview_prefetch_disabled")
+        return {"status": "disabled"}
+
+    jitter_seconds = 0.0
+    if PREVIEW_PREFETCH_JITTER_SECONDS > 0:
+        jitter_seconds = random.uniform(0.0, PREVIEW_PREFETCH_JITTER_SECONDS)
+        if jitter_seconds > 0:
+            await asyncio.sleep(jitter_seconds)
+
+    model_ids = await asyncio.to_thread(_list_civitai_model_ids_for_prefetch)
+    total_models = len(model_ids)
+    if total_models == 0:
+        logger.debug("preview_prefetch_no_models")
+        return {"status": "no_models"}
+
+    stale_candidates = await asyncio.to_thread(
+        _select_stale_prefetch_candidates,
+        model_ids,
+        PREVIEW_PREFETCH_MAX_CANDIDATES,
+        PREVIEW_PREFETCH_BATCH_SIZE,
+        PREVIEW_PREFETCH_STALE_AFTER_SECONDS,
+    )
+
+    if not stale_candidates:
+        logger.debug("preview_prefetch_no_stale", total_models=total_models)
+        return {
+            "status": "no_stale",
+            "total_models": total_models,
+        }
+
+    warmed = 0
+    misses = 0
+    for index, model_id in enumerate(stale_candidates):
+        image_data, _content_type, _cache_hit = await fetch_civitai_preview(
+            model_id,
+            version_id=None,
+            image_index=0,
+            force_refresh=True,
+        )
+        if image_data:
+            warmed += 1
+        else:
+            misses += 1
+
+        if PREVIEW_PREFETCH_ITEM_DELAY_SECONDS > 0 and index < len(stale_candidates) - 1:
+            await asyncio.sleep(random.uniform(0.0, PREVIEW_PREFETCH_ITEM_DELAY_SECONDS))
+
+    logger.info(
+        "preview_prefetch_cycle_complete",
+        total_models=total_models,
+        selected=len(stale_candidates),
+        warmed=warmed,
+        misses=misses,
+        jitter_seconds=round(jitter_seconds, 3),
+    )
+    return {
+        "status": "ok",
+        "total_models": total_models,
+        "selected": len(stale_candidates),
+        "warmed": warmed,
+        "misses": misses,
+    }
 
 
 @router.get("/preview/{model_id}")
@@ -1023,7 +1485,16 @@ async def get_model_preview_image(model_id: int, version_id: int = None, image_i
     if image_index < 0:
         raise HTTPException(status_code=400, detail="image_index must be >= 0")
 
-    image_data, content_type = fetch_civitai_preview(model_id, version_id, image_index)
+    dedup_key = make_key(
+        "civitai_preview",
+        model_id,
+        version_id if version_id is not None else "default",
+        image_index,
+    )
+    image_data, content_type, cache_hit = await deduplicated(
+        dedup_key,
+        lambda: fetch_civitai_preview(model_id, version_id, image_index),
+    )
     
     if not image_data:
         raise HTTPException(status_code=404, detail="Preview image not found")
@@ -1033,7 +1504,8 @@ async def get_model_preview_image(model_id: int, version_id: int = None, image_i
         media_type=content_type,
         headers={
             "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400",
-            "X-Cache-Source": "civitai-proxy"
+            "X-Cache-Source": "civitai-proxy",
+            "X-Cache-Status": "hit" if cache_hit else "miss",
         }
     )
 

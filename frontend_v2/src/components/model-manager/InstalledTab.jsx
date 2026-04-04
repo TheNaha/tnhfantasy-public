@@ -392,20 +392,33 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                 className="group relative bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-all aspect-[2/3] cursor-pointer"
                             >
                                 <div className="absolute inset-0">
-                                    {file.civitai_id ? (
-                                        <img
-                                            src={`/api/v2/models/preview/${file.civitai_id}`}
-                                            alt={file.display_name || file.name}
-                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                            loading="lazy"
-                                            onError={(e) => { e.target.style.display = 'none'; }}
-                                        />
-                                    ) : file.preview ? (
+                                    {file.preview ? (
                                         <img
                                             src={file.preview}
                                             alt={file.display_name || file.name}
                                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                                             loading="lazy"
+                                            decoding="async"
+                                            fetchPriority="low"
+                                            onError={(e) => {
+                                                if (file.civitai_id) {
+                                                    const proxyPreview = `/api/v2/models/preview/${file.civitai_id}?image_index=0`;
+                                                    if (e.currentTarget.src !== proxyPreview) {
+                                                        e.currentTarget.src = proxyPreview;
+                                                        return;
+                                                    }
+                                                }
+                                                e.target.style.display = 'none';
+                                            }}
+                                        />
+                                    ) : file.civitai_id ? (
+                                        <img
+                                            src={`/api/v2/models/preview/${file.civitai_id}?image_index=0`}
+                                            alt={file.display_name || file.name}
+                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                            loading="lazy"
+                                            decoding="async"
+                                            fetchPriority="low"
                                             onError={(e) => { e.target.style.display = 'none'; }}
                                         />
                                     ) : (

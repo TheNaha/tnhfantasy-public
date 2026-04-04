@@ -14,6 +14,7 @@ from infrastructure.scheduler import (
     schedule_reconciliation,
     schedule_model_sync,
     schedule_cleanup,
+    schedule_preview_prefetch,
     schedule_stats_refresh,
     schedule_vacuum,
 )
@@ -267,3 +268,13 @@ class TestScheduleConvenienceFunctions:
         schedule_vacuum(dummy, interval_seconds=86400)
         scheduler = get_scheduler()
         assert scheduler.get_job("database_vacuum") is not None
+
+    async def test_schedule_preview_prefetch(self):
+        start_scheduler()
+
+        async def dummy():
+            pass
+
+        schedule_preview_prefetch(dummy, interval_seconds=900)
+        scheduler = get_scheduler()
+        assert scheduler.get_job("preview_prefetch") is not None

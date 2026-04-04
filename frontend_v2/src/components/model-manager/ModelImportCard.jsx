@@ -21,9 +21,11 @@ export default function ModelImportCard({ model, onCancel }) {
     const selectedVersion = model.modelVersions?.find(v => v.id === parseInt(selectedVersionId)) || model.modelVersions?.[0];
     const primaryFile = selectedVersion?.files?.find(f => f.primary) || selectedVersion?.files?.[0];
     const selectedVersionPreviewId = selectedVersion?.civitai_version_id || selectedVersion?.id;
-    const previewImage = model.id ?
-        `/api/v2/models/preview/${model.id}${selectedVersionPreviewId ? `?version_id=${selectedVersionPreviewId}&image_index=0` : '?image_index=0'}` :
-        selectedVersion?.images?.[0]?.url;
+    const directPreviewImage = selectedVersion?.images?.[0]?.url || null;
+    const cachedPreviewImage = model.id
+        ? `/api/v2/models/preview/${model.id}${selectedVersionPreviewId ? `?version_id=${selectedVersionPreviewId}&image_index=0` : '?image_index=0'}`
+        : null;
+    const previewImage = directPreviewImage || cachedPreviewImage;
     const isSelectedVersionInstalled = installedVersions.includes(parseInt(selectedVersionId));
 
     const handleAddToLibrary = async () => {
@@ -64,7 +66,20 @@ export default function ModelImportCard({ model, onCancel }) {
             {/* Preview Image */}
             <div className="w-full md:w-1/3 aspect-[2/3] md:aspect-auto relative bg-gray-800">
                 {previewImage ? (
-                    <img src={previewImage} alt={model.name} className="absolute inset-0 w-full h-full object-cover" />
+                    <img
+                        src={previewImage}
+                        alt={model.name}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        decoding="async"
+                        fetchPriority="low"
+                        onError={(e) => {
+                            if (cachedPreviewImage && e.currentTarget.src !== cachedPreviewImage) {
+                                e.currentTarget.src = cachedPreviewImage;
+                                return;
+                            }
+                            e.currentTarget.style.display = 'none';
+                        }}
+                    />
                 ) : (
                     <div className="flex items-center justify-center h-full text-gray-600">No Preview</div>
                 )}

@@ -101,8 +101,10 @@ async def test_startup_application_refreshes_provider_images_before_autostart():
             patch("api.lifecycle.cleanup_provider_state_artifacts", side_effect=lambda: events.append("cleanup")), \
          patch("api.lifecycle.configure_worker_pool"), \
          patch("api.lifecycle.start_scheduler"), \
+         patch("api.lifecycle.schedule_preview_prefetch"), \
          patch("api.lifecycle.schedule_vacuum"), \
          patch("api.lifecycle.recover_pending_jobs", new_callable=AsyncMock) as recover_pending_jobs, \
+         patch("api.lifecycle.recover_post_processing_jobs", new_callable=AsyncMock) as recover_post_processing_jobs, \
          patch("api.lifecycle.build_provider_worker_images", side_effect=lambda: events.append("build")), \
          patch("api.lifecycle.autostart_provider_containers", side_effect=lambda: events.append("autostart")), \
          patch("api.lifecycle.monitor_provider_changes", new_callable=AsyncMock), \
@@ -110,6 +112,7 @@ async def test_startup_application_refreshes_provider_images_before_autostart():
          patch("services.gallery_indexer.gallery_indexer.start"), \
          patch("api.lifecycle.job_queue") as job_queue:
         recover_pending_jobs.return_value = None
+        recover_post_processing_jobs.return_value = None
         job_queue.start = AsyncMock()
         job_queue.set_processor = MagicMock()
 

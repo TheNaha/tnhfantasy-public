@@ -2,17 +2,11 @@ import { Download, Image as ImageIcon, Check } from 'lucide-react';
 
 export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
 
-    const getPreviewImage = () => {
-        if (source === 'civitai' && model.id) {
-            return `/api/v2/models/preview/${model.id}`;
-        }
-        if (model.modelVersions?.[0]?.images?.length > 0) {
-            return model.modelVersions[0].images[0].url;
-        }
-        return null;
-    };
-
-    const previewImage = getPreviewImage();
+    const directPreviewImage = model.modelVersions?.[0]?.images?.[0]?.url || null;
+    const cachedPreviewImage = (source === 'civitai' && model.id)
+        ? `/api/v2/models/preview/${model.id}?image_index=0`
+        : null;
+    const previewImage = directPreviewImage || cachedPreviewImage;
     const isInstalled = installedInfo?.model_installed;
 
     return (
@@ -30,7 +24,13 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
                         alt={model.name}
                         className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
                         onError={(e) => {
+                            if (cachedPreviewImage && e.currentTarget.src !== cachedPreviewImage) {
+                                e.currentTarget.src = cachedPreviewImage;
+                                return;
+                            }
                             e.target.style.display = 'none';
                         }}
                     />

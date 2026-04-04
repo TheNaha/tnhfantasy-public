@@ -230,3 +230,14 @@ def schedule_vacuum(func: Callable, interval_seconds: int = 86400):
         misfire_grace_time=3600,
     )
 
+
+def schedule_preview_prefetch(func: Callable, interval_seconds: int = 900):
+    """Schedule preview cache prefetch with jitter handled by the job implementation."""
+    add_interval_job(
+        func,
+        interval_seconds=interval_seconds,
+        job_id="preview_prefetch",
+        start_immediately=True,
+        misfire_grace_time=300,
+    )
+

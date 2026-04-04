@@ -243,6 +243,7 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                     src={getPreviewImage()}
                                     alt="Model Preview"
                                     className="w-full h-full object-contain"
+                                    decoding="async"
                                     onError={(e) => { e.target.style.display = 'none'; }}
                                 />
                             </div>
@@ -257,7 +258,14 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                         onClick={() => setActiveImage(img.url)}
                                         className={`aspect-square rounded overflow-hidden border ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
                                     >
-                                        <img src={img.url} alt={`Preview ${i}`} className="w-full h-full object-cover" loading="lazy" />
+                                        <img
+                                            src={img.url}
+                                            alt={`Preview ${i}`}
+                                            className="w-full h-full object-cover"
+                                            loading="lazy"
+                                            decoding="async"
+                                            fetchPriority="low"
+                                        />
                                     </button>
                                 ))}
                             </div>
