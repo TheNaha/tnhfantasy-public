@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import { ImageIcon, Wand2, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
@@ -42,7 +42,7 @@ export default function Img2ImgGenerator() {
         setSourceImage, setDenoise, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
-    } = useGeneratorStore((state) => ({
+    } = useGeneratorStore(useShallow((state) => ({
         prompt: state.prompt,
         negativePrompt: state.negativePrompt,
         seed: state.seed,
@@ -71,7 +71,7 @@ export default function Img2ImgGenerator() {
         addLora: state.addLora,
         removeLora: state.removeLora,
         updateLora: state.updateLora,
-    }), shallow);
+    })));
 
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];

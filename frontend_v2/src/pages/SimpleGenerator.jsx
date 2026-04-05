@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
@@ -46,7 +46,7 @@ export default function SimpleGenerator() {
         setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
         randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords, applySDXLSettings,
         aspectRatioLocked
-    } = useGeneratorStore((state) => ({
+    } = useGeneratorStore(useShallow((state) => ({
         prompt: state.prompt,
         negativePrompt: state.negativePrompt,
         seed: state.seed,
@@ -111,7 +111,7 @@ export default function SimpleGenerator() {
         addTriggerWords: state.addTriggerWords,
         applySDXLSettings: state.applySDXLSettings,
         aspectRatioLocked: state.aspectRatioLocked,
-    }), shallow);
+    })));
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];

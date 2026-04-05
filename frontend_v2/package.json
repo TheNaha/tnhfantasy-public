@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "npm@9.2.0",
   "scripts": {
+    "preinstall": "node ./scripts/enforce-npm.cjs",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",

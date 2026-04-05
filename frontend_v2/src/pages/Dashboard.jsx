@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { shallow } from 'zustand/shallow';
 
 // API Layer
 import { filesApi } from '../api';
@@ -55,27 +54,15 @@ export default function Dashboard() {
     const storeDeleteJob = useJobStore((state) => state.deleteJob);
     const retryJob = useJobStore((state) => state.retryJob);
     const cancelJob = useJobStore((state) => state.cancelJob);
-    const {
-        favorites,
-        toggleFavorite,
-        collections,
-        activeCollection,
-        addToCollection,
-        removeFromCollection,
-        setActiveCollection,
-        initCollections,
-        loadCollectionImages,
-    } = useStore((state) => ({
-        favorites: state.favorites,
-        toggleFavorite: state.toggleFavorite,
-        collections: state.collections,
-        activeCollection: state.activeCollection,
-        addToCollection: state.addToCollection,
-        removeFromCollection: state.removeFromCollection,
-        setActiveCollection: state.setActiveCollection,
-        initCollections: state.initCollections,
-        loadCollectionImages: state.loadCollectionImages,
-    }), shallow);
+    const favorites = useStore((state) => state.favorites);
+    const toggleFavorite = useStore((state) => state.toggleFavorite);
+    const collections = useStore((state) => state.collections);
+    const activeCollection = useStore((state) => state.activeCollection);
+    const addToCollection = useStore((state) => state.addToCollection);
+    const removeFromCollection = useStore((state) => state.removeFromCollection);
+    const setActiveCollection = useStore((state) => state.setActiveCollection);
+    const initCollections = useStore((state) => state.initCollections);
+    const loadCollectionImages = useStore((state) => state.loadCollectionImages);
 
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);

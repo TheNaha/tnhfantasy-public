@@ -26,5 +26,10 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
    ```
 3. Access the Web UI via the configured frontend port (default: 5174).
 
+## Package Manager
+The frontend workspace in `frontend_v2` is `npm`-only.
+Use `npm install`, `npm run dev`, `npm test`, and `npm run build`.
+`pnpm` and `yarn` are intentionally rejected by the frontend `preinstall` guard.
+
 ## Project Maintenance
 Built to scale seamlessly using serverless providers. Output images and localized SQLite states (`backend_v2/data/comfy.db`) are ignored from the version control for security.

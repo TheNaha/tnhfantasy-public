@@ -55,6 +55,7 @@ This avoids requiring eager image hydration just to display collection counts or
 
 ## Development Setup
 1. Ensure `node` and `npm` are installed.
+   This workspace is intentionally `npm`-only. `pnpm` and `yarn` are not supported.
 2. Navigate to `frontend_v2`:
    ```bash
    cd frontend_v2

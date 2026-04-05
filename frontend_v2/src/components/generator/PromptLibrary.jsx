@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Search, Plus, Download, Upload, Star, TrendingUp, FolderOpen } from 'lucide-react';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { usePromptStore } from '../../store/promptStore';
 import PromptCard from './PromptCard';
 import PromptForm from './PromptForm';
@@ -25,7 +25,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         getMostUsed,
         exportPrompts,
         importPrompts,
-    } = usePromptStore((state) => ({
+    } = usePromptStore(useShallow((state) => ({
         prompts: state.prompts,
         categories: state.categories,
         initialize: state.initialize,
@@ -38,7 +38,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         getMostUsed: state.getMostUsed,
         exportPrompts: state.exportPrompts,
         importPrompts: state.importPrompts,
-    }), shallow);
+    })));
 
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('All');

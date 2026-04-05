@@ -8,7 +8,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
@@ -47,7 +47,7 @@ export default function InpaintGenerator() {
         setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
-    } = useGeneratorStore((state) => ({
+    } = useGeneratorStore(useShallow((state) => ({
         prompt: state.prompt,
         negativePrompt: state.negativePrompt,
         seed: state.seed,
@@ -80,7 +80,7 @@ export default function InpaintGenerator() {
         addLora: state.addLora,
         removeLora: state.removeLora,
         updateLora: state.updateLora,
-    }), shallow);
+    })));
 
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
