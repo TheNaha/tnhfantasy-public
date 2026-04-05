@@ -154,6 +154,67 @@ class TestProviderServiceEnvironment:
         assert env_vars["RECONCILIATION_STARTUP_DELAY_SECONDS"] == "45"
         assert env_vars["MAX_CONCURRENT_DOWNLOADS"] == "9"
 
+    async def test_build_provider_environment_sets_beta9_defaults_for_beam(self, service):
+        provider = await service.create_provider(
+            {
+                "id": "beam-env-defaults",
+                "type": "beam",
+                "enabled": True,
+                "priority": 1,
+                "credentials": {
+                    "api_key": "beam-cloud-token",
+                    "workspace_id": "ws-123",
+                },
+                "config": {
+                    "deploy_config": {
+                        "deploy_mode": "managed",
+                    }
+                },
+            }
+        )
+
+        env_vars = service.build_provider_environment(provider)
+
+        assert env_vars["BETA9_TOKEN"] == "beam-cloud-token"
+        assert env_vars["BEAM_TOKEN"] == "beam-cloud-token"
+        assert env_vars["BETA9_GATEWAY_HOST"] == "gateway.beam.cloud"
+        assert env_vars["BETA9_GATEWAY_PORT"] == "443"
+        assert env_vars["GATEWAY_HOST"] == "gateway.beam.cloud"
+        assert env_vars["GATEWAY_PORT"] == "443"
+        assert env_vars["API_HOST"] == "app.beam.cloud"
+        assert env_vars["API_PORT"] == "443"
+
+    async def test_build_provider_environment_allows_beta9_self_host_overrides(self, service):
+        provider = await service.create_provider(
+            {
+                "id": "beam-env-selfhost",
+                "type": "beam",
+                "enabled": True,
+                "priority": 1,
+                "credentials": {
+                    "api_key": "beam-cloud-token",
+                    "beta9_token": "selfhost-token",
+                },
+                "config": {
+                    "deploy_config": {
+                        "deploy_mode": "managed",
+                        "gateway_host": "beta9.internal",
+                        "gateway_port": 1993,
+                        "api_host": "beta9-api.internal",
+                        "api_port": 1994,
+                    }
+                },
+            }
+        )
+
+        env_vars = service.build_provider_environment(provider)
+
+        assert env_vars["BETA9_TOKEN"] == "selfhost-token"
+        assert env_vars["BETA9_GATEWAY_HOST"] == "beta9.internal"
+        assert env_vars["BETA9_GATEWAY_PORT"] == "1993"
+        assert env_vars["API_HOST"] == "beta9-api.internal"
+        assert env_vars["API_PORT"] == "1994"
+
 
 class TestProviderServiceDelete:
     async def test_delete_provider(self, service, sample_provider_data):
@@ -276,6 +337,7 @@ class _DummyContainersClient:
         if container is not None and getattr(container, "name", None):
             self._existing_names.add(container.name)
         self._listed_containers = listed_containers
+        self.last_run_kwargs = None
 
     def get(self, _name):
         if _name in self._existing_names:
@@ -290,6 +352,7 @@ class _DummyContainersClient:
         return [self._container]
 
     def run(self, **_kwargs):
+        self.last_run_kwargs = dict(_kwargs)
         return self._container
 
 
@@ -384,6 +447,46 @@ class TestProviderServiceDeploy:
         assert result["status"] == "success"
         assert container.commands
         assert container.commands[0][0] == "beta9"
+        assert container.commands[0][1] == "deploy"
+        assert container.commands[0][2] == "beam_app.py:comfy_gpu"
+
+    async def test_beam_deploy_sets_ci_env_for_non_interactive_cli(self, service):
+        provider_data = {
+            "id": "beam-ci-mode",
+            "type": "beam",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {
+                "api_key": "beam-token",
+            },
+            "config": {
+                "deploy_config": {
+                    "deploy_mode": "managed",
+                }
+            },
+        }
+        await service.create_provider(provider_data)
+
+        container = _DummyContainer(
+            [
+                _DummyExecResult(0, "gpu deployed"),
+                _DummyExecResult(0, "storage deployed"),
+                _DummyExecResult(0, "download deployed"),
+            ]
+        )
+        containers_client = _DummyContainersClient(container)
+        container_manager = _DummyContainerManager(
+            "beam-ci-mode",
+            container,
+            containers_client=containers_client,
+        )
+
+        result = await service.deploy_provider_app("beam-ci-mode", container_manager)
+
+        assert result["status"] == "success"
+        assert containers_client.last_run_kwargs is not None
+        environment = containers_client.last_run_kwargs.get("environment") or {}
+        assert environment.get("CI") == "1"
 
     async def test_deploy_returns_already_running_when_in_flight(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)

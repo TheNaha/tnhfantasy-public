@@ -11,6 +11,14 @@ logger = provider_logger()
 
 # Modal image builds can legitimately exceed 5 minutes on cold dependency paths.
 DEFAULT_STEP_TIMEOUT_SECONDS = 3600.0
+DEFAULT_FORCE_REBUILD_IMAGE = True
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _resolve_step_timeout_seconds(raw_timeout: Optional[float]) -> float:
@@ -40,6 +48,10 @@ class ProviderDeployOrchestrator:
     def __init__(self, container_manager: Any, *, step_timeout_seconds: Optional[float] = None):
         self.container_manager = container_manager
         self.step_timeout_seconds = _resolve_step_timeout_seconds(step_timeout_seconds)
+        self.force_rebuild_image = _env_bool(
+            "COMFY_PROVIDER_DEPLOY_REBUILD_IMAGE",
+            DEFAULT_FORCE_REBUILD_IMAGE,
+        )
 
     def start_attempt_container(
         self,
@@ -124,6 +136,10 @@ class ProviderDeployOrchestrator:
             )
 
     def _ensure_image(self, provider_type: str, image_tag: str) -> None:
+        if self.force_rebuild_image:
+            self.container_manager.build_worker_image(provider_type)
+            return
+
         images_client = getattr(self.container_manager.client, "images", None)
         if images_client is None:
             return

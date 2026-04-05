@@ -6,11 +6,20 @@ Three deployments:
   - comfy_download: ASGI for model downloads (separate scaling)
 
 Deploy:
-  beam deploy beam_app.py:comfy_gpu
-  beam deploy beam_app.py:comfy_storage
-  beam deploy beam_app.py:comfy_download
+    beam deploy beam_app.py:comfy_gpu
+    beam deploy beam_app.py:comfy_storage
+    beam deploy beam_app.py:comfy_download
+
+    beta9 deploy beam_app.py:comfy_gpu
+    beta9 deploy beam_app.py:comfy_storage
+    beta9 deploy beam_app.py:comfy_download
 """
-from beam import asgi, realtime, Image, Volume, QueueDepthAutoscaler
+try:
+    # Beam Cloud SDK module name
+    from beam import asgi, realtime, Image, Volume, QueueDepthAutoscaler
+except ModuleNotFoundError:
+    # Self-hosted/newer installations expose the same API under beta9
+    from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 import os

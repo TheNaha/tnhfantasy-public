@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Copy package files first for better layer caching
 COPY package*.json ./
+COPY scripts/enforce-npm.cjs ./scripts/enforce-npm.cjs
 RUN npm ci
 
 # Copy source code

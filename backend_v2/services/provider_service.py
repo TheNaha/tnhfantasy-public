@@ -39,6 +39,12 @@ LEGACY_DEPLOY_CONFIG_FIELDS = {
     "storage_url",
     "download_url",
     "gpu_type",
+    "gateway_host",
+    "gateway_port",
+    "api_host",
+    "api_port",
+    "beta9_gateway_host",
+    "beta9_gateway_port",
 }
 
 
@@ -97,27 +103,54 @@ class ProviderService:
                 {
                     "name": "comfy_gpu",
                     "entrypoint": "/app/beam_app.py:comfy_gpu",
-                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_gpu"],
+                    "command": ["beta9", "deploy", "beam_app.py:comfy_gpu"],
                 },
                 {
                     "name": "comfy_storage",
                     "entrypoint": "/app/beam_app.py:comfy_storage",
-                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_storage"],
+                    "command": ["beta9", "deploy", "beam_app.py:comfy_storage"],
                 },
                 {
                     "name": "comfy_download",
                     "entrypoint": "/app/beam_app.py:comfy_download",
-                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_download"],
+                    "command": ["beta9", "deploy", "beam_app.py:comfy_download"],
                 },
             ]
         return []
 
     @staticmethod
+    def _normalize_beam_handler_spec(handler: str) -> str:
+        if ":" not in handler:
+            return handler
+
+        module_path, object_name = handler.split(":", 1)
+        if module_path.startswith("/app/"):
+            module_path = module_path[len("/app/") :]
+        elif module_path.startswith("./app/"):
+            module_path = module_path[len("./app/") :]
+        elif module_path.startswith("/"):
+            module_path = module_path.lstrip("/")
+
+        return f"{module_path}:{object_name}"
+
+    @staticmethod
     def _normalize_deploy_step_command(provider_type: str, command: List[str]) -> List[str]:
         """Keep compatibility with older Beam configs that still reference `beam` CLI."""
-        if provider_type == "beam" and command and command[0] == "beam":
-            return ["beta9", *command[1:]]
-        return command
+        if provider_type != "beam" or not command:
+            return command
+
+        normalized_command = ["beta9", *command[1:]] if command[0] == "beam" else list(command)
+        if len(normalized_command) < 3:
+            return normalized_command
+
+        if normalized_command[0] == "beta9" and normalized_command[1] == "deploy":
+            for index in range(2, len(normalized_command)):
+                token = normalized_command[index]
+                if isinstance(token, str) and ":" in token and token.split(":", 1)[0].endswith(".py"):
+                    normalized_command[index] = ProviderService._normalize_beam_handler_spec(token)
+                    break
+
+        return normalized_command
 
     def _extract_runtime_config(self, provider_type: str, container_config: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         runtime_config = self._clean_dict(config.get(RUNTIME_CONFIG_KEY))
@@ -382,6 +415,34 @@ class ProviderService:
                 env_vars["BEAM_API_KEY"] = credentials["api_key"]
             if "workspace_id" in credentials:
                 env_vars["BEAM_WORKSPACE_ID"] = credentials["workspace_id"]
+
+            beta9_token = credentials.get("beta9_token") or credentials.get("api_key")
+            if beta9_token:
+                env_vars["BETA9_TOKEN"] = beta9_token
+                env_vars["BEAM_TOKEN"] = beta9_token
+
+            # Use Beam Cloud defaults unless explicitly overridden for self-hosted Beta9.
+            beta9_gateway_host = (
+                deploy_config.get("beta9_gateway_host")
+                or deploy_config.get("gateway_host")
+                or "gateway.beam.cloud"
+            )
+            beta9_gateway_port = (
+                deploy_config.get("beta9_gateway_port")
+                or deploy_config.get("gateway_port")
+                or 443
+            )
+            env_vars["BETA9_GATEWAY_HOST"] = str(beta9_gateway_host)
+            env_vars["BETA9_GATEWAY_PORT"] = str(beta9_gateway_port)
+            # Keep Beam-compatible aliases for SDKs/wrappers that still reference these names.
+            env_vars["GATEWAY_HOST"] = str(beta9_gateway_host)
+            env_vars["GATEWAY_PORT"] = str(beta9_gateway_port)
+
+            beta9_api_host = deploy_config.get("api_host") or "app.beam.cloud"
+            beta9_api_port = deploy_config.get("api_port") or 443
+            env_vars["API_HOST"] = str(beta9_api_host)
+            env_vars["API_PORT"] = str(beta9_api_port)
+
             if "gpu_url" in deploy_config:
                 env_vars["BEAM_GPU_URL"] = deploy_config["gpu_url"]
             if "storage_url" in deploy_config:
@@ -797,11 +858,16 @@ class ProviderService:
         orchestrator = ProviderDeployOrchestrator(container_manager)
         deploy_container = None
         try:
+            deploy_env_vars = self.build_provider_environment(provider)
+            if provider.type == "beam":
+                # beta9 CLI prompts for first-time auth unless CI mode is set.
+                deploy_env_vars.setdefault("CI", "1")
+
             deploy_container = orchestrator.start_attempt_container(
                 provider_id=provider.id,
                 provider_type=provider.type,
                 attempt_id=attempt_id,
-                env_vars=self.build_provider_environment(provider),
+                env_vars=deploy_env_vars,
             )
             deployments = deploy_config.get("targets") or self._default_deploy_targets(provider.type)
             completed_steps = set(resumed_steps)
