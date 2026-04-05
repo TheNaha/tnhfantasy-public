@@ -86,7 +86,7 @@ export default function Img2ImgGenerator() {
         runWithPreflight,
     } = useGenerationPreflight();
 
-    const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
+    const activeJobCount = useJobStore(state => state.activeJobs.length);
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {

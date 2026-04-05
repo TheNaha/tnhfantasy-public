@@ -12,7 +12,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const contentId = useId();
 
     // Use global WebSocket job store
-    const { jobs: activeJobs } = useJobStore();
+    const activeJobs = useJobStore(state => state.activeJobs);
     const { queue, stats } = useMemo(() => {
         // Filter for active items only and sort
         const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');

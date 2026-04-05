@@ -24,22 +24,28 @@ describe('QueueVisualization', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         // Setup default mock return value
-        useJobStore.mockReturnValue({
-            jobs: [
-                {
-                    id: '1',
-                    status: 'running',
-                    prompt: 'Running Job',
-                    progress: 50,
-                    started_at: new Date().toISOString()
-                },
-                {
-                    id: '2',
-                    status: 'pending',
-                    prompt: 'Pending Job',
-                    queue_position: 1
-                },
-            ]
+        useJobStore.mockImplementation((selector) => {
+            if (selector) {
+                return [
+                    {
+                        id: '1',
+                        status: 'running',
+                        prompt: 'Running Job',
+                        progress: 50,
+                        started_at: new Date().toISOString()
+                    },
+                    {
+                        id: '2',
+                        status: 'pending',
+                        prompt: 'Pending Job',
+                        queue_position: 1
+                    },
+                ];
+            }
+            return {
+                jobs: [],
+                activeJobs: []
+            };
         });
     });
 
