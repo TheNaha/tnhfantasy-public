@@ -51,7 +51,7 @@ export default function MissingModelsDialog({
             <div className="missing-models-dialog" onClick={e => e.stopPropagation()}>
                 <div className="missing-models-header">
                     <h2>⚠️ Missing Models</h2>
-                    <button className="close-button" onClick={onClose}>×</button>
+                    <button className="close-button" onClick={onClose} aria-label="Close dialog">×</button>
                 </div>
 
                 <div className="missing-models-content">
