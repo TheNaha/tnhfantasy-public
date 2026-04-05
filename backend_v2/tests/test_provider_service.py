@@ -250,8 +250,10 @@ class _DummyContainer:
     def __init__(self, results, delays=None):
         self._results = list(results)
         self._delays = list(delays or [])
+        self.commands = []
 
     def exec_run(self, cmd, stream=False, demux=True):
+        self.commands.append(cmd)
         if self._delays:
             delay = self._delays.pop(0)
             if delay > 0:
@@ -351,6 +353,37 @@ class TestProviderServiceDeploy:
         skipped = [step for step in deployments if step.get("name") == "comfy_gpu" and step.get("skipped")]
         assert skipped
         assert {step["name"] for step in deployments} == {"comfy_gpu", "comfy_storage", "comfy_download"}
+
+    async def test_beam_deploy_rewrites_legacy_beam_cli(self, service):
+        provider_data = {
+            "id": "beam-legacy-cli",
+            "type": "beam",
+            "enabled": True,
+            "priority": 1,
+            "credentials": {},
+            "config": {
+                "deploy_config": {
+                    "deploy_mode": "managed",
+                    "targets": [
+                        {
+                            "name": "comfy_gpu",
+                            "entrypoint": "/app/beam_app.py:comfy_gpu",
+                            "command": ["beam", "deploy", "/app/beam_app.py:comfy_gpu"],
+                        }
+                    ],
+                }
+            },
+        }
+        await service.create_provider(provider_data)
+
+        container = _DummyContainer([_DummyExecResult(0, "beam deploy ok")])
+        container_manager = _DummyContainerManager("beam-legacy-cli", container)
+
+        result = await service.deploy_provider_app("beam-legacy-cli", container_manager)
+
+        assert result["status"] == "success"
+        assert container.commands
+        assert container.commands[0][0] == "beta9"
 
     async def test_deploy_returns_already_running_when_in_flight(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)

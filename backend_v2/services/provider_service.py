@@ -97,20 +97,27 @@ class ProviderService:
                 {
                     "name": "comfy_gpu",
                     "entrypoint": "/app/beam_app.py:comfy_gpu",
-                    "command": ["beam", "deploy", "/app/beam_app.py:comfy_gpu"],
+                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_gpu"],
                 },
                 {
                     "name": "comfy_storage",
                     "entrypoint": "/app/beam_app.py:comfy_storage",
-                    "command": ["beam", "deploy", "/app/beam_app.py:comfy_storage"],
+                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_storage"],
                 },
                 {
                     "name": "comfy_download",
                     "entrypoint": "/app/beam_app.py:comfy_download",
-                    "command": ["beam", "deploy", "/app/beam_app.py:comfy_download"],
+                    "command": ["beta9", "deploy", "/app/beam_app.py:comfy_download"],
                 },
             ]
         return []
+
+    @staticmethod
+    def _normalize_deploy_step_command(provider_type: str, command: List[str]) -> List[str]:
+        """Keep compatibility with older Beam configs that still reference `beam` CLI."""
+        if provider_type == "beam" and command and command[0] == "beam":
+            return ["beta9", *command[1:]]
+        return command
 
     def _extract_runtime_config(self, provider_type: str, container_config: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         runtime_config = self._clean_dict(config.get(RUNTIME_CONFIG_KEY))
@@ -802,7 +809,7 @@ class ProviderService:
 
             for step in deployments:
                 name = step.get("name") or "deploy-step"
-                command = step.get("command") or []
+                command = self._normalize_deploy_step_command(provider.type, step.get("command") or [])
                 if not command:
                     continue
                 if name in completed_steps:
