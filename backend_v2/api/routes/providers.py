@@ -625,7 +625,7 @@ async def get_provider_container_status(provider_id: str, session: Session = Dep
     """Get status of a provider's container."""
     lifecycle = _get_provider_lifecycle_service(session)
     try:
-        return lifecycle.get_container_status(provider_id)
+        return await lifecycle.get_container_status(provider_id)
     except ProviderError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

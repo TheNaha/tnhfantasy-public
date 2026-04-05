@@ -54,7 +54,6 @@ export default function ProviderListItem({
     const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
     const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
     const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
-    const deploy = provider.deploy_state ?? EMPTY_OBJECT;
 
     const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
     const deployBadge = useMemo(() => deployBadgeText(capabilities), [capabilities]);

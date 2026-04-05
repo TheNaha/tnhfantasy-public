@@ -38,6 +38,9 @@ async def test_start_container_emits_event_and_invalidates_cache():
         result = await service.start_container("provider-1")
 
     assert result["container_id"] == "container-123"
+    provider_service.build_provider_environment.assert_called_once_with(
+        provider_service.get_provider.return_value
+    )
     container_manager.start_container.assert_called_once()
     invalidate.assert_called_once_with("provider-1")
     mock_emit.assert_awaited_once_with(
@@ -161,3 +164,46 @@ async def test_setup_provider_wraps_timeout_with_provider_error():
     ), patch("services.provider_lifecycle_service.get_http_client", return_value=http_client):
         with pytest.raises(ProviderError, match="Setup request to worker timed out"):
             await service.setup_provider("provider-1")
+
+
+@pytest.mark.asyncio
+async def test_get_container_status_uses_async_health_probe_when_container_is_running():
+    provider_service = MagicMock()
+    provider_service.get_provider = AsyncMock(
+        return_value=SimpleNamespace(id="provider-1", type="modal", container_config={"port": 8000})
+    )
+
+    container = MagicMock()
+    container.status = "running"
+    container.short_id = "container-123"
+    container.ports = {"8000/tcp": [{"HostPort": "18000"}]}
+    container.attrs = {"State": {"Health": {}}}
+    container.reload.return_value = None
+
+    container_manager = MagicMock()
+    container_manager.client.containers.get.return_value = container
+    container_manager.running_containers = {}
+
+    response = MagicMock()
+    response.status_code = 200
+
+    async_client = MagicMock()
+    async_client.get = AsyncMock(return_value=response)
+
+    async_context = MagicMock()
+    async_context.__aenter__ = AsyncMock(return_value=async_client)
+    async_context.__aexit__ = AsyncMock(return_value=None)
+
+    service = ProviderLifecycleService(
+        session=MagicMock(),
+        provider_service=provider_service,
+        container_manager=container_manager,
+    )
+
+    with patch("services.provider_lifecycle_service.httpx.AsyncClient", return_value=async_context):
+        result = await service.get_container_status("provider-1")
+
+    assert result["status"] == "running"
+    assert result["running"] is True
+    assert result["healthy"] is True
+    async_client.get.assert_awaited_once_with("http://localhost:18000/health")

@@ -69,4 +69,3 @@ BEAM_PROVIDER_CONFIG = ProviderTypeConfig(
 
 # Auto-register Beam provider type on import
 ProviderRegistry.register(BEAM_PROVIDER_CONFIG)
-

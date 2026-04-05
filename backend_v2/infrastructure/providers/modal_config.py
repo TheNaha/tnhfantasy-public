@@ -54,7 +54,7 @@ MODAL_PROVIDER_CONFIG = ProviderTypeConfig(
     env_builder=build_modal_env_vars,
     
     # Worker image name
-    worker_image="comfy-provider",
+    worker_image="comfy-provider-modal",
     
     # Default port
     default_port=8000,

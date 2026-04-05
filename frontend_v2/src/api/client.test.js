@@ -97,6 +97,26 @@ describe('ApiClient', () => {
             await expect(api.get('/error')).rejects.toThrow('Detail error message');
         });
 
+        it('should extract nested structured error messages', async () => {
+            const errorData = {
+                detail: {
+                    error: 'missing_models',
+                    message: 'No provider has all required models installed',
+                    global_missing: {
+                        checkpoints: ['pony-v7.safetensors'],
+                    },
+                },
+            };
+            fetch.mockResolvedValue({
+                ok: false,
+                status: 400,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => errorData,
+            });
+
+            await expect(api.get('/error')).rejects.toThrow('No provider has all required models installed');
+        });
+
         it('should handle network failures', async () => {
             fetch.mockRejectedValue(new Error('Network failure'));
 

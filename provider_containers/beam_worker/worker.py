@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import base64
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -49,7 +50,6 @@ from provider_core import (
     build_deploy_compatibility_response,
 )
 from provider_core.models import MODEL_DIRECTORIES
-from provider_core.sync_progress import init_sync_reporter
 
 app = FastAPI(title="Beam Provider Worker")
 
@@ -71,6 +71,8 @@ VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"
 DOWNLOAD_TIMEOUT_SECONDS = float(os.getenv("DOWNLOAD_TIMEOUT_SECONDS", "1800"))
 WS_MAX_SIZE_MB = int(os.getenv("WS_MAX_SIZE_MB", "20"))
 WS_OPEN_TIMEOUT = int(os.getenv("WS_OPEN_TIMEOUT", "120"))
+RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "7200"))
+RECONCILIATION_STARTUP_DELAY_SECONDS = int(os.getenv("RECONCILIATION_STARTUP_DELAY_SECONDS", "130"))
 INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
 # Runtime config (can be updated via /config endpoint without restart)
@@ -80,12 +82,16 @@ runtime_config = {
     "download_timeout_seconds": DOWNLOAD_TIMEOUT_SECONDS,
     "ws_max_size_mb": WS_MAX_SIZE_MB,
     "ws_open_timeout": WS_OPEN_TIMEOUT,
+    "reconciliation_interval_seconds": RECONCILIATION_INTERVAL_SECONDS,
+    "reconciliation_startup_delay_seconds": RECONCILIATION_STARTUP_DELAY_SECONDS,
     "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
 }
 
 # Initialize state and job tracker
 reconciliation_state = get_reconciliation_state(PROVIDER_ID)
 job_tracker = get_job_tracker()
+
+_background_tasks: list[asyncio.Task] = []
 
 
 def get_beam_headers() -> Dict[str, str]:
@@ -94,6 +100,44 @@ def get_beam_headers() -> Dict[str, str]:
     if BEAM_WORKSPACE_ID:
         headers["X-Beam-Workspace-Id"] = BEAM_WORKSPACE_ID
     return headers
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup and shutdown hooks for the worker."""
+    log_startup_info(
+        provider_id=PROVIDER_ID,
+        provider_type="beam",
+        backend_url=BACKEND_URL,
+        extra_vars={
+            "BEAM_GPU_URL": BEAM_GPU_URL,
+            "BEAM_STORAGE_URL": BEAM_STORAGE_URL,
+            "BEAM_GPU_TYPE": BEAM_GPU_TYPE,
+        },
+    )
+
+    _background_tasks.append(
+        asyncio.create_task(
+            reconciliation_loop(
+                PROVIDER_ID,
+                BACKEND_URL,
+                interval_seconds=int(runtime_config.get("reconciliation_interval_seconds") or RECONCILIATION_INTERVAL_SECONDS),
+                startup_delay_seconds=int(runtime_config.get("reconciliation_startup_delay_seconds") or RECONCILIATION_STARTUP_DELAY_SECONDS),
+            )
+        )
+    )
+
+    try:
+        yield
+    finally:
+        for task in _background_tasks:
+            task.cancel()
+        if _background_tasks:
+            await asyncio.gather(*_background_tasks, return_exceptions=True)
+        _background_tasks.clear()
+
+
+app.router.lifespan_context = lifespan
 
 
 # ============================================
@@ -715,31 +759,6 @@ async def perform_reconciliation_v2():
         download_file=download_file,
         delete_file=delete_file,
     )
-
-
-# ============================================
-# Startup & Background Tasks
-# ============================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on worker startup."""
-    log_startup_info(
-        provider_id=PROVIDER_ID,
-        provider_type="beam",
-        backend_url=BACKEND_URL,
-        extra_vars={
-            "BEAM_GPU_URL": BEAM_GPU_URL,
-            "BEAM_STORAGE_URL": BEAM_STORAGE_URL,
-            "BEAM_GPU_TYPE": BEAM_GPU_TYPE,
-        },
-    )
-    
-    # Initialize sync progress reporter
-    init_sync_reporter(PROVIDER_ID, BACKEND_URL)
-    
-    # Start reconciliation loop
-    asyncio.create_task(reconciliation_loop(PROVIDER_ID, BACKEND_URL))
 
 
 if __name__ == "__main__":

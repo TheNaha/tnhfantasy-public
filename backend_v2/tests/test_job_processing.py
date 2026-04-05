@@ -55,6 +55,32 @@ async def _get_job_from_fresh_session(session: Session, job_id: str, attempts: i
         return await fresh_job_service.get_job(job_id)
 
 
+@pytest.fixture(autouse=True)
+def _stub_container_runtime(monkeypatch):
+    def fake_resolve_provider_runtime(provider):
+        container_config = getattr(provider, "container_config", None) or {}
+        if not container_config:
+            return SimpleNamespace(
+                provider_id=provider.id,
+                mode="unavailable",
+                connected=False,
+                worker_url=None,
+                status="unavailable",
+                healthy=False,
+            )
+
+        return SimpleNamespace(
+            provider_id=provider.id,
+            mode="container_http",
+            connected=True,
+            worker_url=f"http://comfy-provider-{provider.id}:8000",
+            status="running",
+            healthy=True,
+        )
+
+    monkeypatch.setattr("api.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
+
+
 @pytest.mark.asyncio
 async def test_process_job_falls_back_when_provider_missing_container_config(session: Session, sample_workflow, monkeypatch):
     LoadBalancer.reset_state()
@@ -68,8 +94,24 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
         assert kwargs["worker_url"] == "http://comfy-provider-provider-2:8000"
         return {"images": []}
 
+    def fake_resolve_provider_runtime(provider):
+        if provider.id == "provider-1":
+            return SimpleNamespace(
+                provider_id=provider.id,
+                mode="unavailable",
+                connected=False,
+                worker_url=None,
+            )
+        return SimpleNamespace(
+            provider_id=provider.id,
+            mode="container_http",
+            connected=True,
+            worker_url="http://comfy-provider-provider-2:8000",
+        )
+
     monkeypatch.setattr("api.main.get_session", _session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
     monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)

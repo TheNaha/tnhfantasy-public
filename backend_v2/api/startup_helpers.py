@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 
 from api.deps import get_session_sync
 from infrastructure.logging import get_logger
@@ -40,7 +41,11 @@ async def recover_pending_jobs() -> None:
 
 
 def build_provider_worker_images() -> None:
-    """Attempt to refresh built provider worker images before container startup."""
+    """Optionally refresh built provider worker images before container startup."""
+    if os.getenv("COMFY_BUILD_PROVIDER_IMAGES_ON_STARTUP", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        logger.info("provider_image_refresh_skipped", reason="startup_build_disabled")
+        return
+
     try:
         from services.container_manager import get_container_manager
 
@@ -56,13 +61,14 @@ def build_provider_worker_images() -> None:
 def autostart_provider_containers() -> None:
     """Start enabled provider containers configured for local management."""
     try:
-        from infrastructure.providers import ProviderRegistry
         from infrastructure.repositories import ProviderRepository
+        from services.provider_service import ProviderService
         from services.container_manager import get_container_manager
 
         session = get_session_sync()
         try:
             provider_repo = ProviderRepository(session)
+            provider_service = ProviderService(session)
             providers = provider_repo.get_all()
             container_manager = get_container_manager()
             if not container_manager:
@@ -73,7 +79,7 @@ def autostart_provider_containers() -> None:
                     try:
                         logger.info("container_starting", provider=provider.id)
                         port = provider.container_config.get("port", 8000)
-                        env_vars = ProviderRegistry.build_container_env(provider)
+                        env_vars = provider_service.build_provider_environment(provider)
                         container_manager.start_container(
                             provider_id=provider.id,
                             provider_type=provider.type,

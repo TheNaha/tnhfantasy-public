@@ -86,8 +86,8 @@ VALIDATE_MAX_CONTAINERS = int(os.getenv("MODAL_VALIDATE_MAX_CONTAINERS", "1"))
 # Volume name (allows different volumes per provider)
 VOLUME_NAME = os.getenv("MODAL_VOLUME_NAME", "comfy-storage")
 
-# Define the Modal Stub
-app = modal.App("comfy-modal-stack")
+# Define the Modal app (allow per-provider app names via deploy environment)
+app = modal.App(os.getenv("MODAL_APP_NAME", "comfy-modal-stack"))
 
 # Define the Volume for persistent storage
 vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
@@ -97,9 +97,9 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 # Uses comfy-cli for ALL operations: installation, custom nodes, launching
 # =============================================================================
 image_base = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0")
-    .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy",)
+    modal.Image.debian_slim(python_version="3.13")
+    .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0", gpu="L4")
+    .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", gpu="L4")
     # Ensure shared provider_core utilities are present in cloud runtime.
     .add_local_dir(
         local_path=PROVIDER_CORE_LOCAL_PATH,
@@ -107,7 +107,30 @@ image_base = (
         copy=True,
     )
     # Install ComfyUI using comfy-cli
-    .run_commands("comfy --skip-prompt install --fast-deps --nvidia")
+    .run_commands("comfy --skip-prompt install --fast-deps --nvidia --cuda-version 12.8",gpu="L4")
+    # Ensure torch sees the complete CUDA user-space library set expected by modern nodes.
+    .uv_pip_install(
+        "nvidia-cuda-runtime-cu12",
+        "nvidia-cuda-nvrtc-cu12",
+        "nvidia-cuda-cupti-cu12",
+        "nvidia-cublas-cu12",
+        "nvidia-cudnn-cu12",
+        "nvidia-cufft-cu12",
+        "nvidia-curand-cu12",
+        "nvidia-cusolver-cu12",
+        "nvidia-cusparse-cu12",
+        "nvidia-cusparselt-cu12",
+        "nvidia-nccl-cu12",
+        "nvidia-nvjitlink-cu12",
+        "nvidia-nvtx-cu12",
+        "nvidia-cufile-cu12",
+        gpu="L4",
+    )
+    # Ensure torch sees CUDA runtime/nvrtc libs expected by its preload path.
+    .run_commands(
+        "python -c \"import torch; print('torch import OK before nodes:', torch.__version__)\"",
+        gpu="L4",
+    )
     # Install Custom Nodes via comfy-cli registry
     # See: https://registry.comfy.org/
     .run_commands(
@@ -115,7 +138,8 @@ image_base = (
         "comfy node install --fast-deps comfyui-impact-pack",
         "comfy node install --fast-deps comfyui_controlnet_aux",
         "comfy node install --fast-deps comfyui-animatediff-evolved",
-        "comfy --help"
+        "comfy --help",
+        gpu="L4",
     )
     # Create symlinks to volume for models, output, and input
     .run_commands(
@@ -412,9 +436,9 @@ class ComfyUISnapshot:
     
     @modal.enter(snap=True)
     def launch_for_snapshot(self):
-        logger.info("[ComfyUISnapshot] Snapshotting: Starting ComfyUI via comfy-cli...")
-        _start_comfy_server(self.port)
-        _wait_for_comfy_ready(self.port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, "ComfyUISnapshot")
+        # Snapshot capture can run without fully initialized CUDA runtime.
+        # Defer ComfyUI launch to snap=False restore phase to avoid hard startup failure.
+        logger.info("[ComfyUISnapshot] Snapshotting: deferring ComfyUI launch until restore phase")
         self._completed_runs = 0
     
     @modal.enter(snap=False)
@@ -433,19 +457,9 @@ class ComfyUISnapshot:
         except Exception as e:
             logger.info(f"[ComfyUISnapshot] Failed to re-enable CUDA: {e}")
             # Server might not be running, try to restart it via comfy-cli
-            logger.info("[ComfyUISnapshot] Attempting to restart ComfyUI via comfy-cli...")
-            cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port)]
-            subprocess.Popen(cmd)
-            
-            for i in range(60):
-                try:
-                    response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
-                    if response.status_code == 200:
-                        logger.info("[ComfyUISnapshot] ComfyUI restarted successfully")
-                        break
-                except:
-                    pass
-                time.sleep(1)
+            logger.info("[ComfyUISnapshot] Attempting to start ComfyUI via comfy-cli...")
+            _start_comfy_server(self.port)
+            _wait_for_comfy_ready(self.port, COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS, "ComfyUISnapshot")
         
         # Ensure output directory is linked to volume
         output_dir = "/root/comfy/ComfyUI/output"

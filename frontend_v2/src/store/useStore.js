@@ -126,7 +126,7 @@ const useStore = create(
                     });
                 } catch (error) {
                     console.error('[Store] Failed to init collections:', error);
-                    set({ collectionsLoading: false, collectionsInitialized: true });
+                    set({ collectionsLoading: false, collectionsInitialized: false });
                 }
             },
 

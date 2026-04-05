@@ -36,9 +36,9 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
 
     if container_config:
         container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
-        connected = True
+        connected = False
         healthy = None
-        status = "configured"
+        status = "unknown"
         try:
             from services.container_manager import get_container_manager
 
@@ -56,7 +56,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                         container.reload()
                     except Exception:
                         pass
-                    status = getattr(container, "status", "unknown")
+                    status = getattr(container, "status", "unknown") or "unknown"
                     health_status = getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
                     healthy = health_status == "healthy" if health_status else None
                     connected = status == "running" and healthy is not False

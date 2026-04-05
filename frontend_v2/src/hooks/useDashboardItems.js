@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer } from 'react';
 
 import { buildDashboardItems } from '../utils/dashboardItems';
 import { getItemTimelineDate, getLocalDateKey } from '../utils/dateTime';
@@ -7,6 +7,44 @@ const MAX_JOB_TIMELINE_ANCHORS = 1000;
 
 function getJobTimelineAnchor(job) {
     return job?.created_at || job?.updated_at || 0;
+}
+
+function buildJobTimelineOverrides(previousAnchors, activeJobs) {
+    const nextAnchors = new Map(previousAnchors);
+
+    activeJobs.forEach((job) => {
+        if (!job?.id || nextAnchors.has(job.id)) {
+            return;
+        }
+
+        nextAnchors.set(job.id, getJobTimelineAnchor(job));
+    });
+
+    if (nextAnchors.size > MAX_JOB_TIMELINE_ANCHORS) {
+        const toTrim = nextAnchors.size - MAX_JOB_TIMELINE_ANCHORS;
+        const iterator = nextAnchors.keys();
+        for (let index = 0; index < toTrim; index += 1) {
+            const nextKey = iterator.next();
+            if (nextKey.done) break;
+            nextAnchors.delete(nextKey.value);
+        }
+    }
+
+    return nextAnchors;
+}
+
+function areMapsEqual(left, right) {
+    if (left.size !== right.size) {
+        return false;
+    }
+
+    for (const [key, value] of left.entries()) {
+        if (right.get(key) !== value) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export function useDashboardItems({
@@ -18,31 +56,17 @@ export function useDashboardItems({
     showFavorites,
     favorites,
 }) {
-    const jobTimelineAnchorsRef = useRef(new Map());
+    const [jobTimelineOverrides, updateJobTimelineOverrides] = useReducer(
+        (currentAnchors, nextJobs) => {
+            const nextAnchors = buildJobTimelineOverrides(currentAnchors, nextJobs);
+            return areMapsEqual(currentAnchors, nextAnchors) ? currentAnchors : nextAnchors;
+        },
+        activeJobs,
+        (initialJobs) => buildJobTimelineOverrides(new Map(), initialJobs),
+    );
 
-    const jobTimelineOverrides = useMemo(() => {
-        const nextAnchors = new Map(jobTimelineAnchorsRef.current);
-
-        activeJobs.forEach((job) => {
-            if (!job?.id || nextAnchors.has(job.id)) {
-                return;
-            }
-
-            nextAnchors.set(job.id, getJobTimelineAnchor(job));
-        });
-
-        if (nextAnchors.size > MAX_JOB_TIMELINE_ANCHORS) {
-            const toTrim = nextAnchors.size - MAX_JOB_TIMELINE_ANCHORS;
-            const iterator = nextAnchors.keys();
-            for (let i = 0; i < toTrim; i += 1) {
-                const nextKey = iterator.next();
-                if (nextKey.done) break;
-                nextAnchors.delete(nextKey.value);
-            }
-        }
-
-        jobTimelineAnchorsRef.current = nextAnchors;
-        return nextAnchors;
+    useEffect(() => {
+        updateJobTimelineOverrides(activeJobs);
     }, [activeJobs]);
 
     const { items: allItems, jobsById } = useMemo(() => {

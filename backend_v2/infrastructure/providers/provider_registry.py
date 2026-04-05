@@ -162,8 +162,11 @@ class ProviderRegistry:
         """Get the worker image name for a provider type."""
         type_config = cls.get(provider_type)
         if type_config:
-            return f"{type_config.worker_image}-{provider_type}"
-        return f"comfy-provider-{provider_type}"
+            worker_image = type_config.worker_image
+            if worker_image.endswith(":latest"):
+                return worker_image
+            return f"{worker_image}:latest"
+        return f"comfy-provider-{provider_type}:latest"
     
     @classmethod
     def get_default_port(cls, provider_type: str) -> int:

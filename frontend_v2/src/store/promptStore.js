@@ -33,8 +33,8 @@ export const usePromptStore = create((set, get) => ({
     initialized: false,
 
     // Initialize - fetch from server and migrate if needed
-    initialize: async () => {
-        if (get().initialized) return;
+    initialize: async ({ force = false } = {}) => {
+        if (get().initialized && !force) return;
 
         set({ isLoading: true, error: null });
 
@@ -89,7 +89,7 @@ export const usePromptStore = create((set, get) => ({
             });
         } catch (error) {
             console.error('[PromptStore] Failed to initialize:', error);
-            set({ error: error.message, isLoading: false, initialized: true });
+            set({ error: error.message, isLoading: false, initialized: false });
         }
     },
 

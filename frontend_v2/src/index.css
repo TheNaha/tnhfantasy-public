@@ -84,11 +84,6 @@ body {
     gap: 0.5rem;
   }
 
-  /* Prevent flex items from overflowing */
-  .flex {
-    flex-wrap: wrap;
-  }
-
   /* Reduce main content padding on mobile */
   main {
     padding: 0.75rem !important;

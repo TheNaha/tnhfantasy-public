@@ -10,25 +10,16 @@
  * - Offers download triggers for models in the library
  */
 
-import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './MissingModelsDialog.css';
-
-// API for triggering downloads
-const downloadModel = async (filename, directory) => {
-    // This would call an API to trigger download
-    // For now, we'll just open the model manager
-    console.log('Download requested:', filename, directory);
-    return { success: true };
-};
 
 export default function MissingModelsDialog({
     isOpen,
     onClose,
     validationResult,
-    onDownloadTriggered
+    onOpenModelManager,
 }) {
-    const [downloading, setDownloading] = useState({});
-    const [downloadStatus, setDownloadStatus] = useState({});
+    const navigate = useNavigate();
 
     if (!isOpen || !validationResult) return null;
 
@@ -36,7 +27,6 @@ export default function MissingModelsDialog({
         required_models = {},
         global_missing = {},
         missing_models = {},
-        can_trigger_download = false
     } = validationResult;
 
     // Check if there are any missing models
@@ -47,52 +37,13 @@ export default function MissingModelsDialog({
         return null;
     }
 
-    const handleDownloadAll = async () => {
-        for (const [directory, filenames] of Object.entries(global_missing)) {
-            for (const filename of filenames) {
-                const key = `${directory}/${filename}`;
-                if (!downloading[key]) {
-                    setDownloading(prev => ({ ...prev, [key]: true }));
-                    try {
-                        await downloadModel(filename, directory);
-                        setDownloadStatus(prev => ({ ...prev, [key]: 'queued' }));
-                    } catch {
-                        setDownloadStatus(prev => ({ ...prev, [key]: 'error' }));
-                    } finally {
-                        setDownloading(prev => ({ ...prev, [key]: false }));
-                    }
-                }
-            }
+    const handleOpenModelManager = () => {
+        onClose();
+        if (onOpenModelManager) {
+            onOpenModelManager();
+            return;
         }
-        if (onDownloadTriggered) {
-            onDownloadTriggered();
-        }
-    };
-
-    const handleDownloadSingle = async (directory, filename) => {
-        const key = `${directory}/${filename}`;
-        if (downloading[key]) return;
-
-        setDownloading(prev => ({ ...prev, [key]: true }));
-        try {
-            await downloadModel(filename, directory);
-            setDownloadStatus(prev => ({ ...prev, [key]: 'queued' }));
-            if (onDownloadTriggered) {
-                onDownloadTriggered();
-            }
-        } catch {
-            setDownloadStatus(prev => ({ ...prev, [key]: 'error' }));
-        } finally {
-            setDownloading(prev => ({ ...prev, [key]: false }));
-        }
-    };
-
-    const getStatusIcon = (directory, filename) => {
-        const key = `${directory}/${filename}`;
-        if (downloading[key]) return '⏳';
-        if (downloadStatus[key] === 'queued') return '✓';
-        if (downloadStatus[key] === 'error') return '⚠️';
-        return null;
+        navigate('/models');
     };
 
     return (
@@ -120,25 +71,11 @@ export default function MissingModelsDialog({
                                 <div key={directory} className="directory-group">
                                     <h4>{directory}</h4>
                                     <ul className="model-list">
-                                        {filenames.map(filename => {
-                                            const key = `${directory}/${filename}`;
-                                            const statusIcon = getStatusIcon(directory, filename);
-                                            return (
-                                                <li key={filename} className="model-item">
-                                                    <span className="model-name">{filename}</span>
-                                                    {statusIcon && <span className="status-icon">{statusIcon}</span>}
-                                                    {can_trigger_download && !downloadStatus[key] && (
-                                                        <button
-                                                            className="download-btn"
-                                                            onClick={() => handleDownloadSingle(directory, filename)}
-                                                            disabled={downloading[key]}
-                                                        >
-                                                            Download
-                                                        </button>
-                                                    )}
-                                                </li>
-                                            );
-                                        })}
+                                        {filenames.map((filename) => (
+                                            <li key={filename} className="model-item">
+                                                <span className="model-name">{filename}</span>
+                                            </li>
+                                        ))}
                                     </ul>
                                 </div>
                             ))}
@@ -187,18 +124,7 @@ export default function MissingModelsDialog({
                 </div>
 
                 <div className="missing-models-footer">
-                    {can_trigger_download && hasGlobalMissing && (
-                        <button
-                            className="download-all-btn"
-                            onClick={handleDownloadAll}
-                        >
-                            Download All Missing Models
-                        </button>
-                    )}
-                    <button className="open-model-manager-btn" onClick={() => {
-                        window.location.hash = '#/models';
-                        onClose();
-                    }}>
+                    <button className="open-model-manager-btn" onClick={handleOpenModelManager}>
                         Open Model Manager
                     </button>
                     <button className="cancel-btn" onClick={onClose}>

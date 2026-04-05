@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react';
 import { ImageIcon, Wand2, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { shallow } from 'zustand/shallow';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
@@ -17,9 +18,13 @@ import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
 import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
+import MissingModelsDialog from '../components/generator/MissingModelsDialog';
+import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
+import useGenerationPreflight from '../hooks/useGenerationPreflight';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 
 export default function Img2ImgGenerator() {
     const navigate = useNavigate();
@@ -37,11 +42,49 @@ export default function Img2ImgGenerator() {
         setSourceImage, setDenoise, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
-    } = useGeneratorStore();
+    } = useGeneratorStore((state) => ({
+        prompt: state.prompt,
+        negativePrompt: state.negativePrompt,
+        seed: state.seed,
+        steps: state.steps,
+        cfg: state.cfg,
+        sampler: state.sampler,
+        scheduler: state.scheduler,
+        sourceImage: state.sourceImage,
+        denoise: state.denoise,
+        selectedCheckpoint: state.selectedCheckpoint,
+        selectedVae: state.selectedVae,
+        selectedLoras: state.selectedLoras,
+        setPrompt: state.setPrompt,
+        setNegativePrompt: state.setNegativePrompt,
+        setSeed: state.setSeed,
+        setSteps: state.setSteps,
+        setCfg: state.setCfg,
+        setSampler: state.setSampler,
+        setScheduler: state.setScheduler,
+        setSourceImage: state.setSourceImage,
+        setDenoise: state.setDenoise,
+        clearSourceImage: state.clearSourceImage,
+        setSelectedCheckpoint: state.setSelectedCheckpoint,
+        setSelectedVae: state.setSelectedVae,
+        randomizeSeed: state.randomizeSeed,
+        addLora: state.addLora,
+        removeLora: state.removeLora,
+        updateLora: state.updateLora,
+    }), shallow);
 
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
     const vaeModels = modelsByKey.vaeModels || [];
+    const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const {
+        isChecking: preflightChecking,
+        validationResult,
+        summary: validationSummary,
+        isMissingModelsOpen,
+        setIsMissingModelsOpen,
+        runWithPreflight,
+    } = useGenerationPreflight();
 
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
 
@@ -100,9 +143,14 @@ export default function Img2ImgGenerator() {
                 loras: selectedLoras
             };
 
-            await generateApi.workflow(workflow, metadata, {
-                idempotencyKey: createIdempotencyKey('generate-img2img')
+            const submission = await runWithPreflight(workflow, {
+                onValid: async () => generateApi.workflow(workflow, metadata, {
+                    idempotencyKey: createIdempotencyKey('generate-img2img')
+                }),
             });
+            if (!submission.ok) {
+                return;
+            }
 
             if (settings.generator.redirectAfterGenerate) {
                 toast.success('Job queued! Redirecting to gallery...');
@@ -284,6 +332,15 @@ export default function Img2ImgGenerator() {
 
                 {/* Right Column: Parameters */}
                 <div className="space-y-4 lg:space-y-6">
+                    <GeneratorReadinessPanel
+                        providers={providers}
+                        providersLoading={providersLoading}
+                        validationSummary={validationSummary}
+                        isChecking={preflightChecking}
+                        title="Img2Img Runway"
+                        hint="Check provider health and model availability before transforming the source image."
+                    />
+
                     {/* Denoise Strength - KEY Img2Img Parameter */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">
                         <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2 text-orange-400">
@@ -429,6 +486,12 @@ export default function Img2ImgGenerator() {
                     )}
                 </div>
             </div>
+
+            <MissingModelsDialog
+                isOpen={isMissingModelsOpen}
+                onClose={() => setIsMissingModelsOpen(false)}
+                validationResult={validationResult}
+            />
         </div>
     );
 }

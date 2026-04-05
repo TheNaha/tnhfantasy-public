@@ -11,14 +11,24 @@ from api.startup_helpers import (
 )
 
 
-def test_build_provider_worker_images_attempts_default_builds():
+def test_build_provider_worker_images_skips_when_startup_build_disabled():
+    container_manager = MagicMock()
+
+    with patch("services.container_manager.get_container_manager", return_value=container_manager):
+        build_provider_worker_images()
+
+    container_manager.build_worker_images.assert_not_called()
+
+
+def test_build_provider_worker_images_attempts_builds_when_enabled():
     container_manager = MagicMock()
     container_manager.build_worker_images.return_value = {
         "modal": "comfy-provider-modal:latest",
         "beam": "comfy-provider-beam:latest",
     }
 
-    with patch("services.container_manager.get_container_manager", return_value=container_manager):
+    with patch.dict("os.environ", {"COMFY_BUILD_PROVIDER_IMAGES_ON_STARTUP": "true"}, clear=False), \
+         patch("services.container_manager.get_container_manager", return_value=container_manager):
         build_provider_worker_images()
 
     container_manager.build_worker_images.assert_called_once_with()
@@ -27,6 +37,7 @@ def test_build_provider_worker_images_attempts_default_builds():
 def test_autostart_provider_containers_starts_enabled_containerized_providers():
     session = MagicMock()
     container_manager = MagicMock()
+    provider_service = MagicMock()
 
     provider = MagicMock()
     provider.id = "modal-primary"
@@ -40,7 +51,8 @@ def test_autostart_provider_containers_starts_enabled_containerized_providers():
     with patch("api.startup_helpers.get_session_sync", return_value=session), \
          patch("infrastructure.repositories.ProviderRepository", return_value=provider_repo), \
          patch("services.container_manager.get_container_manager", return_value=container_manager), \
-         patch("infrastructure.providers.ProviderRegistry.build_container_env", return_value={"TOKEN": "abc"}):
+         patch("services.provider_service.ProviderService", return_value=provider_service):
+        provider_service.build_provider_environment.return_value = {"TOKEN": "abc"}
         autostart_provider_containers()
 
     container_manager.start_container.assert_called_once_with(
@@ -49,6 +61,7 @@ def test_autostart_provider_containers_starts_enabled_containerized_providers():
         port=8001,
         env_vars={"TOKEN": "abc"},
     )
+    provider_service.build_provider_environment.assert_called_once_with(provider)
     session.close.assert_called_once_with()
 
 
@@ -80,7 +93,7 @@ def test_cleanup_provider_state_artifacts_cleans_orphans_and_stale_downloads():
 
 
 @pytest.mark.asyncio
-async def test_startup_application_refreshes_provider_images_before_autostart():
+async def test_startup_application_autostarts_providers_after_cleanup():
     process_job = MagicMock()
     ws_manager = MagicMock()
     ws_manager.start_broadcasting = AsyncMock(return_value=None)
@@ -98,14 +111,13 @@ async def test_startup_application_refreshes_provider_images_before_autostart():
         return broadcast_task
 
     with patch("api.lifecycle.create_db_and_tables"), \
-            patch("api.lifecycle.cleanup_provider_state_artifacts", side_effect=lambda: events.append("cleanup")), \
+         patch("api.lifecycle.cleanup_provider_state_artifacts", side_effect=lambda: events.append("cleanup")), \
          patch("api.lifecycle.configure_worker_pool"), \
          patch("api.lifecycle.start_scheduler"), \
          patch("api.lifecycle.schedule_preview_prefetch"), \
          patch("api.lifecycle.schedule_vacuum"), \
          patch("api.lifecycle.recover_pending_jobs", new_callable=AsyncMock) as recover_pending_jobs, \
          patch("api.lifecycle.recover_post_processing_jobs", new_callable=AsyncMock) as recover_post_processing_jobs, \
-         patch("api.lifecycle.build_provider_worker_images", side_effect=lambda: events.append("build")), \
          patch("api.lifecycle.autostart_provider_containers", side_effect=lambda: events.append("autostart")), \
          patch("api.lifecycle.monitor_provider_changes", new_callable=AsyncMock), \
          patch("api.lifecycle.start_background_task", side_effect=start_background_task_side_effect), \
@@ -120,7 +132,7 @@ async def test_startup_application_refreshes_provider_images_before_autostart():
 
     job_queue.set_processor.assert_called_once_with(process_job)
     job_queue.start.assert_awaited_once_with()
-    assert events == ["cleanup", "build", "autostart"]
+    assert events == ["cleanup", "autostart"]
     assert tasks == {
         "provider_monitor_task": provider_monitor_task,
         "broadcast_task": broadcast_task,

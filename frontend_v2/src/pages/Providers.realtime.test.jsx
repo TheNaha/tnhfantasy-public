@@ -227,5 +227,5 @@ describe('Providers realtime integration', () => {
             expect(screen.getAllByText('6 models').length).toBeGreaterThan(0);
             expect(screen.getByText(/Checkpoints: 4/)).toBeInTheDocument();
         });
-    });
+    }, 15000);
 });

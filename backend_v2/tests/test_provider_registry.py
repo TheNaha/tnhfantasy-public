@@ -172,9 +172,9 @@ class TestProviderRegistry:
     
     def test_get_worker_image(self):
         """Test getting worker image name."""
-        image = ProviderRegistry.get_worker_image("modal")
-        
-        assert "modal" in image
+        assert ProviderRegistry.get_worker_image("modal") == "comfy-provider-modal:latest"
+        assert ProviderRegistry.get_worker_image("beam") == "comfy-provider-beam:latest"
+        assert ProviderRegistry.get_worker_image("unknown-provider") == "comfy-provider-unknown-provider:latest"
     
     def test_get_default_port(self):
         """Test getting default port."""
@@ -272,4 +272,3 @@ class TestProviderRegistry:
         port = ProviderRegistry.get_default_port("beam")
         
         assert port == 8000
-

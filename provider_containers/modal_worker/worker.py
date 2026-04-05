@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import base64
+from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -48,7 +49,6 @@ from provider_core import (
     build_deploy_compatibility_response,
 )
 from provider_core.models import MODEL_DIRECTORIES
-from provider_core.sync_progress import init_sync_reporter, report_sync_progress, flush_sync_progress
 
 app = FastAPI(title="Modal Provider Worker")
 
@@ -65,6 +65,7 @@ MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "5"))
 VALIDATION_TIMEOUT_SECONDS = float(os.getenv("VALIDATION_TIMEOUT_SECONDS", "300"))
 RECONCILIATION_LIST_TIMEOUT_SECONDS = float(os.getenv("RECONCILIATION_LIST_TIMEOUT_SECONDS", "45"))
 RECONCILIATION_INTERVAL_SECONDS = int(os.getenv("RECONCILIATION_INTERVAL_SECONDS", "7200"))
+RECONCILIATION_STARTUP_DELAY_SECONDS = int(os.getenv("RECONCILIATION_STARTUP_DELAY_SECONDS", "130"))
 INFERENCE_TIMEOUT_SECONDS = float(os.getenv("INFERENCE_TIMEOUT_SECONDS", "3600"))
 
 # Runtime config (can be updated via /config endpoint without restart)
@@ -72,11 +73,15 @@ runtime_config = {
     "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
     "validation_timeout_seconds": VALIDATION_TIMEOUT_SECONDS,
     "reconciliation_list_timeout_seconds": RECONCILIATION_LIST_TIMEOUT_SECONDS,
+    "reconciliation_interval_seconds": RECONCILIATION_INTERVAL_SECONDS,
+    "reconciliation_startup_delay_seconds": RECONCILIATION_STARTUP_DELAY_SECONDS,
     "inference_timeout_seconds": INFERENCE_TIMEOUT_SECONDS,
 }
 
 # Function cache for Modal functions
 _function_cache = {}
+
+_background_tasks: list[asyncio.Task] = []
 
 # Initialize state and job tracker
 reconciliation_state = get_reconciliation_state(PROVIDER_ID)
@@ -90,6 +95,40 @@ def get_modal_function(func_name: str):
         print(f"[{PROVIDER_ID}] Caching Modal function: {key}")
         _function_cache[key] = modal.Function.from_name(MODAL_APP_NAME, func_name)
     return _function_cache[key]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup and shutdown hooks for the worker."""
+    log_startup_info(
+        provider_id=PROVIDER_ID,
+        provider_type="modal",
+        backend_url=BACKEND_URL,
+        extra_vars={"MODAL_USERNAME": MODAL_USERNAME, "MODAL_APP_NAME": MODAL_APP_NAME},
+    )
+
+    _background_tasks.append(
+        asyncio.create_task(
+            reconciliation_loop(
+                PROVIDER_ID,
+                BACKEND_URL,
+                interval_seconds=int(runtime_config.get("reconciliation_interval_seconds") or RECONCILIATION_INTERVAL_SECONDS),
+                startup_delay_seconds=int(runtime_config.get("reconciliation_startup_delay_seconds") or RECONCILIATION_STARTUP_DELAY_SECONDS),
+            )
+        )
+    )
+
+    try:
+        yield
+    finally:
+        for task in _background_tasks:
+            task.cancel()
+        if _background_tasks:
+            await asyncio.gather(*_background_tasks, return_exceptions=True)
+        _background_tasks.clear()
+
+
+app.router.lifespan_context = lifespan
 
 
 # ============================================
@@ -605,27 +644,6 @@ async def perform_reconciliation_v2():
         download_file=download_file,
         delete_file=delete_file,
     )
-
-
-# ============================================
-# Startup & Background Tasks
-# ============================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on worker startup."""
-    log_startup_info(
-        provider_id=PROVIDER_ID,
-        provider_type="modal",
-        backend_url=BACKEND_URL,
-        extra_vars={"MODAL_USERNAME": MODAL_USERNAME, "MODAL_APP_NAME": MODAL_APP_NAME},
-    )
-    
-    # Initialize sync progress reporter
-    init_sync_reporter(PROVIDER_ID, BACKEND_URL)
-    
-    # Start reconciliation loop
-    asyncio.create_task(reconciliation_loop(PROVIDER_ID, BACKEND_URL))
 
 
 if __name__ == "__main__":

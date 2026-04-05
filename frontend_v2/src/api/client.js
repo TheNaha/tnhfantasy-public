@@ -24,6 +24,39 @@ class ApiError extends Error {
     }
 }
 
+function extractErrorMessage(payload) {
+    if (!payload) {
+        return null;
+    }
+
+    if (typeof payload === 'string') {
+        const trimmed = payload.trim();
+        return trimmed || null;
+    }
+
+    if (Array.isArray(payload)) {
+        for (const entry of payload) {
+            const message = extractErrorMessage(entry);
+            if (message) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    if (typeof payload === 'object') {
+        const directKeys = ['message', 'error', 'detail', 'reason', 'description'];
+        for (const key of directKeys) {
+            const message = extractErrorMessage(payload[key]);
+            if (message) {
+                return message;
+            }
+        }
+    }
+
+    return null;
+}
+
 export function createIdempotencyKey(scope = 'request') {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return `${scope}-${crypto.randomUUID()}`;
@@ -72,7 +105,7 @@ async function request(endpoint, options = {}) {
 
         if (!response.ok) {
             throw new ApiError(
-                data.error || data.detail || 'Request failed',
+                extractErrorMessage(data) || 'Request failed',
                 response.status,
                 data
             );

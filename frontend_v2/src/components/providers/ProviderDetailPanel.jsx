@@ -59,12 +59,6 @@ function capitalize(v) {
     return v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
 }
 
-function formatDir(byDir = {}) {
-    const entries = Object.entries(byDir || {});
-    if (entries.length === 0) return 'No data yet';
-    return entries.map(([d, c]) => `${capitalize(d)}: ${c}`).join(' · ');
-}
-
 export default function ProviderDetailPanel({
     provider,
     onClose,

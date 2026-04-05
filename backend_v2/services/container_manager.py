@@ -11,6 +11,7 @@ from pathlib import Path
 
 from config import get_worker_backend_url
 from infrastructure.logging import get_logger
+from infrastructure.providers.provider_registry import ProviderRegistry
 
 logger = get_logger("container_manager")
 _container_manager_singleton = None
@@ -128,7 +129,7 @@ class ContainerManager:
             raise ValueError(f"Worker directory not found: {worker_dir}")
         
         logger.info("image_build_start", provider_type=provider_type)
-        image_tag = f"comfy-provider-{provider_type}:latest"
+        image_tag = ProviderRegistry.get_worker_image(provider_type)
         
         try:
             # Use provider_containers as build context to access shared provider_core
@@ -178,7 +179,7 @@ class ContainerManager:
         """Start a provider worker container."""
         logger.info("container_start_request", provider_id=provider_id, port=port)
         
-        image_tag = f"comfy-provider-{provider_type}:latest"
+        image_tag = ProviderRegistry.get_worker_image(provider_type)
         
         # Check if image exists
         image_exists = False

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
+import { shallow } from 'zustand/shallow';
 
 // API Layer
 import { filesApi } from '../api';
@@ -64,7 +65,17 @@ export default function Dashboard() {
         setActiveCollection,
         initCollections,
         loadCollectionImages,
-    } = useStore();
+    } = useStore((state) => ({
+        favorites: state.favorites,
+        toggleFavorite: state.toggleFavorite,
+        collections: state.collections,
+        activeCollection: state.activeCollection,
+        addToCollection: state.addToCollection,
+        removeFromCollection: state.removeFromCollection,
+        setActiveCollection: state.setActiveCollection,
+        initCollections: state.initCollections,
+        loadCollectionImages: state.loadCollectionImages,
+    }), shallow);
 
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);

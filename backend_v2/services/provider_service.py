@@ -304,8 +304,16 @@ class ProviderService:
         worker_config = self._clean_dict(runtime_config.get("worker"))
         if "max_concurrent_downloads" in worker_config:
             env_vars["MAX_CONCURRENT_DOWNLOADS"] = str(worker_config["max_concurrent_downloads"])
-        if "reconciliation_interval_hours" in worker_config:
-            env_vars["RECONCILIATION_INTERVAL_SECONDS"] = str(int(worker_config["reconciliation_interval_hours"]) * 3600)
+        if "reconciliation_interval_seconds" in worker_config:
+            env_vars["RECONCILIATION_INTERVAL_SECONDS"] = str(int(float(worker_config["reconciliation_interval_seconds"])))
+        elif "reconciliation_interval_hours" in worker_config:
+            env_vars["RECONCILIATION_INTERVAL_SECONDS"] = str(
+                int(float(worker_config["reconciliation_interval_hours"]) * 3600)
+            )
+        if "reconciliation_startup_delay_seconds" in worker_config:
+            env_vars["RECONCILIATION_STARTUP_DELAY_SECONDS"] = str(
+                int(float(worker_config["reconciliation_startup_delay_seconds"]))
+            )
         if "validation_timeout_seconds" in worker_config:
             env_vars["VALIDATION_TIMEOUT_SECONDS"] = str(worker_config["validation_timeout_seconds"])
 

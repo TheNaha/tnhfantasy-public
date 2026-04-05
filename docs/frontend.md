@@ -54,15 +54,15 @@ This avoids requiring eager image hydration just to display collection counts or
 - **Optimistic Updates:** Immediate UI feedback for actions like deleting a job before the server confirms.
 
 ## Development Setup
-1. Ensure `node` and `pnpm` are installed. (The repository strictly mandates using `pnpm`).
+1. Ensure `node` and `npm` are installed.
 2. Navigate to `frontend_v2`:
    ```bash
    cd frontend_v2
-   pnpm install
+   npm install
    ```
 3. Start the development server:
    ```bash
-   pnpm dev
+   npm run dev
    ```
 
 ## Styling

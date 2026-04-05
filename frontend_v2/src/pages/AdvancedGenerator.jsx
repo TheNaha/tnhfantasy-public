@@ -1,31 +1,50 @@
 import { useState } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import MissingModelsDialog from '../components/generator/MissingModelsDialog';
+import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
+import useGenerationPreflight from '../hooks/useGenerationPreflight';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 import { generateApi, createIdempotencyKey } from '../api';
 
 export default function AdvancedGenerator() {
     const [workflowJson, setWorkflowJson] = useState("");
     const [generating, setGenerating] = useState(false);
+    const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const {
+        isChecking: preflightChecking,
+        validationResult,
+        summary: validationSummary,
+        isMissingModelsOpen,
+        setIsMissingModelsOpen,
+        runWithPreflight,
+    } = useGenerationPreflight();
 
     const handleGenerate = async () => {
         try {
             const workflow = JSON.parse(workflowJson);
             setGenerating(true);
 
-            await generateApi.workflow(workflow, {}, {
-                idempotencyKey: createIdempotencyKey('generate-advanced')
+            const submission = await runWithPreflight(workflow, {
+                onValid: async () => generateApi.workflow(workflow, {}, {
+                    idempotencyKey: createIdempotencyKey('generate-advanced')
+                }),
             });
+            if (!submission.ok) {
+                return;
+            }
+
             toast.success("Job queued!");
         } catch (e) {
-            console.error(e);
-            toast.error("Error: Invalid JSON or generation failed");
+            toast.error(e instanceof SyntaxError ? "Error: Invalid JSON" : `Error: ${e.message}`);
         } finally {
             setGenerating(false);
         }
     };
 
     return (
-        <div className="h-[calc(100vh-140px)] flex flex-col">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="h-[calc(100vh-140px)] flex flex-col">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h2 className="text-2xl font-bold">Advanced Workflow</h2>
                 <button
@@ -48,6 +67,27 @@ export default function AdvancedGenerator() {
                     value={workflowJson}
                     onChange={(e) => setWorkflowJson(e.target.value)}
                 />
+            </div>
+
+            <MissingModelsDialog
+                isOpen={isMissingModelsOpen}
+                onClose={() => setIsMissingModelsOpen(false)}
+                validationResult={validationResult}
+            />
+            </div>
+
+            <div className="space-y-4">
+                <GeneratorReadinessPanel
+                    providers={providers}
+                    providersLoading={providersLoading}
+                    validationSummary={validationSummary}
+                    isChecking={preflightChecking}
+                    title="Advanced Runway"
+                    hint="Use the same preflight checks as the guided generators before running raw workflow JSON."
+                />
+                <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-sm text-gray-400">
+                    Advanced mode preserves the raw ComfyUI workflow path, but validation still checks whether the referenced models exist on any enabled provider before queueing the job.
+                </div>
             </div>
         </div>
     );

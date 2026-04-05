@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
+import { shallow } from 'zustand/shallow';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useJobStore } from '../store/jobStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import ModelSelector from '../components/ModelSelector';
 import ModelMetadataModal from '../components/ModelMetadataModal';
+import MissingModelsDialog from '../components/generator/MissingModelsDialog';
+import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import PromptLibrary from '../components/generator/PromptLibrary';
 import PresetManager from '../components/generator/PresetManager';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
@@ -13,6 +16,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import toast from 'react-hot-toast';
@@ -42,7 +46,72 @@ export default function SimpleGenerator() {
         setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
         randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords, applySDXLSettings,
         aspectRatioLocked
-    } = useGeneratorStore();
+    } = useGeneratorStore((state) => ({
+        prompt: state.prompt,
+        negativePrompt: state.negativePrompt,
+        seed: state.seed,
+        steps: state.steps,
+        cfg: state.cfg,
+        sampler: state.sampler,
+        scheduler: state.scheduler,
+        width: state.width,
+        height: state.height,
+        batchSize: state.batchSize,
+        selectedCheckpoint: state.selectedCheckpoint,
+        selectedVae: state.selectedVae,
+        selectedClip: state.selectedClip,
+        selectedClip2: state.selectedClip2,
+        selectedLoras: state.selectedLoras,
+        controlnets: state.controlnets,
+        hiresFix: state.hiresFix,
+        hiresUpscaler: state.hiresUpscaler,
+        hiresDenoise: state.hiresDenoise,
+        hiresUpscale: state.hiresUpscale,
+        hiresSteps: state.hiresSteps,
+        adetailer: state.adetailer,
+        adetailerModel: state.adetailerModel,
+        adetailerPrompt: state.adetailerPrompt,
+        adetailerNegative: state.adetailerNegative,
+        adetailerSteps: state.adetailerSteps,
+        adetailerDenoise: state.adetailerDenoise,
+        adetailerInpaintMasked: state.adetailerInpaintMasked,
+        setPrompt: state.setPrompt,
+        setNegativePrompt: state.setNegativePrompt,
+        setSeed: state.setSeed,
+        setSteps: state.setSteps,
+        setCfg: state.setCfg,
+        setSampler: state.setSampler,
+        setScheduler: state.setScheduler,
+        setWidth: state.setWidth,
+        setHeight: state.setHeight,
+        setBatchSize: state.setBatchSize,
+        setAspectRatioLocked: state.setAspectRatioLocked,
+        setSelectedCheckpoint: state.setSelectedCheckpoint,
+        setSelectedVae: state.setSelectedVae,
+        setSelectedClip: state.setSelectedClip,
+        setSelectedClip2: state.setSelectedClip2,
+        setHiresFix: state.setHiresFix,
+        setHiresUpscaler: state.setHiresUpscaler,
+        setHiresDenoise: state.setHiresDenoise,
+        setHiresUpscale: state.setHiresUpscale,
+        setHiresSteps: state.setHiresSteps,
+        setAdetailer: state.setAdetailer,
+        setAdetailerModel: state.setAdetailerModel,
+        setAdetailerPrompt: state.setAdetailerPrompt,
+        setAdetailerSteps: state.setAdetailerSteps,
+        setAdetailerDenoise: state.setAdetailerDenoise,
+        setAdetailerInpaintMasked: state.setAdetailerInpaintMasked,
+        randomizeSeed: state.randomizeSeed,
+        addLora: state.addLora,
+        removeLora: state.removeLora,
+        updateLora: state.updateLora,
+        addControlNet: state.addControlNet,
+        removeControlNet: state.removeControlNet,
+        updateControlNet: state.updateControlNet,
+        addTriggerWords: state.addTriggerWords,
+        applySDXLSettings: state.applySDXLSettings,
+        aspectRatioLocked: state.aspectRatioLocked,
+    }), shallow);
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
@@ -67,6 +136,14 @@ export default function SimpleGenerator() {
     const [showPromptLibrary, setShowPromptLibrary] = useState(false);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null); // Index of LoRA selector to auto-open
     const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const {
+        isChecking: preflightChecking,
+        validationResult,
+        summary: validationSummary,
+        isMissingModelsOpen,
+        setIsMissingModelsOpen,
+        runWithPreflight,
+    } = useGenerationPreflight();
 
     // Keyboard shortcuts
     useKeyboardShortcuts();
@@ -239,91 +316,98 @@ export default function SimpleGenerator() {
 
     const isUnetModel = (model) => isFluxModel(model) || isAuraFlowModel(model);
 
+    const buildSimpleWorkflowPayload = (jobSeed = seed) => {
+        const builder = new WorkflowBuilder();
+        const isUnet = isUnetModel(selectedCheckpoint);
+
+        let effectiveVae = selectedVae;
+        if (effectiveVae === "Baked in" && isUnet) {
+            if (isFluxModel(selectedCheckpoint)) effectiveVae = "ae.safetensors";
+            else if (isAuraFlowModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) effectiveVae = "sdxl_vae.safetensors";
+        }
+
+        const workflow = builder.build({
+            prompt,
+            negativePrompt,
+            seed: jobSeed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            width,
+            height,
+            batchSize,
+            checkpoint: isUnet ? null : selectedCheckpoint?.name,
+            unet: isUnet ? selectedCheckpoint?.name : null,
+            clip: isUnet ? selectedClip : null,
+            clip2: (isUnet && (isFluxModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint))) ? selectedClip2 : null,
+            vae: effectiveVae,
+            loras: selectedLoras,
+            controlnets,
+            hiresFix,
+            hiresUpscaler,
+            hiresDenoise,
+            hiresUpscale,
+            hiresSteps,
+            adetailer,
+            adetailerModel,
+            adetailerPrompt,
+            adetailerNegative,
+            adetailerSteps,
+            adetailerDenoise,
+            adetailerInpaintMasked,
+            modelType: isFluxModel(selectedCheckpoint) ? 'flux' : (isPonyModel(selectedCheckpoint) || isAuraFlowModel(selectedCheckpoint)) ? 'sdxl' : 'sd15'
+        });
+
+        const metadata = {
+            prompt,
+            negativePrompt,
+            seed: jobSeed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            width,
+            height,
+            batchSize,
+            checkpoint: selectedCheckpoint,
+            vae: selectedVae,
+            loras: selectedLoras,
+            embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
+            hiresFix,
+            hiresUpscaler,
+            adetailer,
+            adetailerModel
+        };
+
+        return { workflow, metadata };
+    };
+
 // ...
 
     const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
-        console.log('[Generate] Starting generation...');
         if (trackQueuedJob) {
             setGenerating(true);
             setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
         }
 
         try {
-            const builder = new WorkflowBuilder();
-            
-            // Detect if this is a UNET model (Flux or AuraFlow/Pony V7)
-            const isUnet = isUnetModel(selectedCheckpoint);
-            
-            // Determine VAE: UNET models need explicit VAE.
-            // If "Baked in" is selected, we MUST provide a default file because UNETs have no baked VAE.
-            let effectiveVae = selectedVae;
-            if (effectiveVae === "Baked in" && isUnet) {
-                if (isFluxModel(selectedCheckpoint)) effectiveVae = "ae.safetensors";
-                else if (isAuraFlowModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) effectiveVae = "sdxl_vae.safetensors";
+            const { workflow, metadata } = buildSimpleWorkflowPayload();
+            const submission = await runWithPreflight(workflow, {
+                onValid: async () => generateApi.workflow(workflow, metadata, {
+                    idempotencyKey: createIdempotencyKey('generate-simple')
+                }),
+            });
+
+            if (!submission.ok) {
+                if (trackQueuedJob) {
+                    setGenerating(false);
+                    setProgress(null);
+                }
+                return;
             }
 
-            const workflow = builder.build({
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                width,
-                height,
-                batchSize,
-                // For UNET models: pass as unet; for standard: pass as checkpoint
-                checkpoint: isUnet ? null : selectedCheckpoint?.name,
-                unet: isUnet ? selectedCheckpoint?.name : null,
-                clip: isUnet ? selectedClip : null,
-                clip2: (isUnet && (isFluxModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint))) ? selectedClip2 : null, // Flux and Pony use 2nd clip
-                vae: effectiveVae,
-                loras: selectedLoras,
-                controlnets: controlnets,
-                hiresFix,
-                hiresUpscaler,
-                hiresDenoise,
-                hiresUpscale,
-                hiresSteps,
-                adetailer,
-                adetailerModel,
-                adetailerPrompt,
-                adetailerNegative,
-                adetailerSteps,
-                adetailerDenoise,
-                adetailerInpaintMasked,
-                modelType: isFluxModel(selectedCheckpoint) ? 'flux' : (isPonyModel(selectedCheckpoint) || isAuraFlowModel(selectedCheckpoint)) ? 'sdxl' : 'sd15'
-            });
-
-
-            // Metadata to save with the image
-            const metadata = {
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                width,
-                height,
-                batchSize,
-                checkpoint: selectedCheckpoint,
-                vae: selectedVae,
-                loras: selectedLoras,
-                embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
-                hiresFix,
-                hiresUpscaler,
-                adetailer,
-                adetailerModel
-            };
-
-            console.log('[Generate] Sending POST to /api/generate...');
-            const data = await generateApi.workflow(workflow, metadata, {
-                idempotencyKey: createIdempotencyKey('generate-simple')
-            });
-            console.log('[Generate] Response received:', data);
+            const data = submission.submissionResult;
 
             // Job queued successfully - keep the page in queued/running state until completion.
             if (data && data.id) {
@@ -353,7 +437,6 @@ export default function SimpleGenerator() {
             }
 
         } catch (e) {
-            console.error('[Generate] Error:', e);
             toast.error("Error: " + e.message);
             if (trackQueuedJob) {
                 setGenerating(false);
@@ -394,66 +477,27 @@ export default function SimpleGenerator() {
         setGenerating(true);
 
         try {
-            const builder = new WorkflowBuilder();
-            const jobs = [];
+            const payloads = [];
 
             for (let i = 0; i < count; i++) {
                 const variationSeed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-
-                const workflow = builder.build({
-                    prompt,
-                    negativePrompt,
-                    seed: variationSeed,
-                    steps,
-                    cfg,
-                    sampler,
-                    scheduler,
-                    width,
-                    height,
-                    batchSize,
-                    checkpoint: selectedCheckpoint?.name,
-                    vae: selectedVae,
-                    loras: selectedLoras,
-                    controlnets: controlnets,
-                    hiresFix,
-                    hiresUpscaler,
-                    hiresDenoise,
-                    hiresUpscale,
-                    hiresSteps,
-                    adetailer,
-                    adetailerModel,
-                    adetailerPrompt,
-                    adetailerNegative,
-                    adetailerSteps,
-                    adetailerDenoise,
-                    adetailerInpaintMasked
+                payloads.push({
+                    ...buildSimpleWorkflowPayload(variationSeed),
+                    variationSeed,
+                    index: i,
                 });
-
-                const metadata = {
-                    prompt,
-                    negativePrompt,
-                    seed: variationSeed,
-                    steps,
-                    cfg,
-                    sampler,
-                    scheduler,
-                    width,
-                    height,
-                    batchSize,
-                    checkpoint: selectedCheckpoint,
-                    vae: selectedVae,
-                    loras: selectedLoras,
-                    embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
-                    hiresFix,
-                    hiresUpscaler,
-                    adetailer,
-                    adetailerModel
-                };
-
-                jobs.push(generateApi.workflow(workflow, metadata, {
-                    idempotencyKey: createIdempotencyKey(`generate-variation-${i}`)
-                }));
             }
+
+            const validation = await runWithPreflight(payloads[0]?.workflow);
+            if (!validation.ok) {
+                return;
+            }
+
+            const jobs = payloads.map(({ workflow, metadata, index }) => (
+                generateApi.workflow(workflow, metadata, {
+                    idempotencyKey: createIdempotencyKey(`generate-variation-${index}`)
+                })
+            ));
 
             await Promise.all(jobs);
 
@@ -468,7 +512,6 @@ export default function SimpleGenerator() {
             navigate('/');
 
         } catch (e) {
-            console.error(e);
             toast.error("Error: " + e.message);
         } finally {
             setGenerating(false);
@@ -1113,6 +1156,15 @@ export default function SimpleGenerator() {
 
                 {/* Right Column: Parameters - ORDER FIRST on mobile for easy access */}
                 <div className="order-first lg:order-none space-y-4 lg:space-y-6">
+                    <GeneratorReadinessPanel
+                        providers={providers}
+                        providersLoading={providersLoading}
+                        validationSummary={validationSummary}
+                        isChecking={preflightChecking}
+                        title="Generation Runway"
+                        hint="Provider health and model checks before you commit a generation."
+                    />
+
                     <div className="space-y-4 lg:space-y-6 pb-4 border-b border-gray-800 lg:border-0">
                         <div className="flex justify-between items-center">
                             <h3 className="text-base lg:text-lg font-semibold">Parameters</h3>
@@ -1473,6 +1525,12 @@ export default function SimpleGenerator() {
                 isOpen={showPromptLibrary}
                 onClose={() => setShowPromptLibrary(false)}
                 onSelectPrompt={handleSelectPromptFromLibrary}
+            />
+
+            <MissingModelsDialog
+                isOpen={isMissingModelsOpen}
+                onClose={() => setIsMissingModelsOpen(false)}
+                validationResult={validationResult}
             />
 
             {/* Quick Nav to Gallery (Mobile) */}

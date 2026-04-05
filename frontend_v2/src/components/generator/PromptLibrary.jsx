@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X, Search, Plus, Download, Upload, Star, TrendingUp, FolderOpen } from 'lucide-react';
+import { shallow } from 'zustand/shallow';
 import { usePromptStore } from '../../store/promptStore';
 import PromptCard from './PromptCard';
 import PromptForm from './PromptForm';
@@ -14,6 +15,9 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     const {
         prompts,
         categories,
+        initialize,
+        initialized,
+        isLoading,
         deletePrompt,
         toggleFavorite,
         incrementUsage,
@@ -21,14 +25,37 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         getMostUsed,
         exportPrompts,
         importPrompts,
-    } = usePromptStore();
+    } = usePromptStore((state) => ({
+        prompts: state.prompts,
+        categories: state.categories,
+        initialize: state.initialize,
+        initialized: state.initialized,
+        isLoading: state.isLoading,
+        deletePrompt: state.deletePrompt,
+        toggleFavorite: state.toggleFavorite,
+        incrementUsage: state.incrementUsage,
+        getFavorites: state.getFavorites,
+        getMostUsed: state.getMostUsed,
+        exportPrompts: state.exportPrompts,
+        importPrompts: state.importPrompts,
+    }), shallow);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [view, setView] = useState('all'); // 'all', 'favorites', 'popular'
     const [editingPrompt, setEditingPrompt] = useState(null);
     const [showAddForm, setShowAddForm] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
     const { confirm } = useConfirmation();
+
+    useEffect(() => {
+        if (!isOpen || initialized || isLoading) {
+            return;
+        }
+
+        void initialize();
+    }, [initialize, initialized, isLoading, isOpen]);
 
     // Filter and search prompts
     const displayedPrompts = useMemo(() => {
@@ -52,7 +79,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
             filtered = filtered.filter(p =>
                 p.name.toLowerCase().includes(lowerQuery) ||
                 p.text.toLowerCase().includes(lowerQuery) ||
-                p.description.toLowerCase().includes(lowerQuery) ||
+                p.description?.toLowerCase().includes(lowerQuery) ||
                 p.tags?.some(tag => tag.toLowerCase().includes(lowerQuery))
             );
         }
@@ -62,7 +89,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
 
     // Handle using a prompt
     const handleUsePrompt = (prompt) => {
-        incrementUsage(prompt.id);
+        void incrementUsage(prompt.id);
         onSelectPrompt(prompt);
         toast.success(`Applied "${prompt.name}"`, { icon: '✨' });
         onClose();
@@ -78,22 +105,29 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
             isDangerous: true
         });
         if (confirmed) {
-            deletePrompt(id);
+            await deletePrompt(id);
             toast.success('Prompt deleted', { icon: '🗑️' });
         }
     };
 
     // Handle export
-    const handleExport = () => {
-        const json = exportPrompts();
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `prompt-library-${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast.success('Exported prompt library', { icon: '📥' });
+    const handleExport = async () => {
+        setIsExporting(true);
+        try {
+            const json = await exportPrompts();
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `prompt-library-${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            toast.success('Exported prompt library', { icon: '📥' });
+        } catch (error) {
+            toast.error(`Export failed: ${error.message}`);
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     // Handle import
@@ -102,13 +136,15 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = (event) => {
-            const result = importPrompts(event.target.result);
+        reader.onload = async (event) => {
+            setIsImporting(true);
+            const result = await importPrompts(event.target.result);
             if (result.success) {
                 toast.success(`Imported ${result.count} prompts`, { icon: '📤' });
             } else {
                 toast.error(`Import failed: ${result.error}`, { icon: '❌' });
             }
+            setIsImporting(false);
         };
         reader.readAsText(file);
         e.target.value = ''; // Reset input
@@ -137,19 +173,20 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
                             onClick={handleExport}
                             className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors"
                             title="Export library"
-                            disabled={prompts.length === 0}
+                            disabled={prompts.length === 0 || isExporting}
                         >
                             <Download size={20} />
                         </button>
 
                         {/* Import */}
-                        <label className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors cursor-pointer">
+                        <label className={`p-2 rounded transition-colors ${isImporting ? 'text-gray-600' : 'text-gray-400 hover:text-white hover:bg-gray-800 cursor-pointer'}`}>
                             <Upload size={20} />
                             <input
                                 type="file"
                                 accept=".json"
                                 onChange={handleImport}
                                 className="hidden"
+                                disabled={isImporting}
                             />
                         </label>
 
@@ -238,7 +275,11 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
 
                 {/* Prompts Grid */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    {displayedPrompts.length === 0 ? (
+                    {isLoading && prompts.length === 0 ? (
+                        <div className="text-center py-20 text-gray-500">
+                            <p className="text-lg mb-2">Loading prompt library...</p>
+                        </div>
+                    ) : displayedPrompts.length === 0 ? (
                         <div className="text-center py-20 text-gray-500">
                             <FolderOpen size={48} className="mx-auto mb-4 opacity-50" />
                             <p className="text-lg mb-2">No prompts found</p>

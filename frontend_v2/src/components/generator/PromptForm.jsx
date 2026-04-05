@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Save, Tag } from 'lucide-react';
+import { shallow } from 'zustand/shallow';
 import { usePromptStore } from '../../store/promptStore';
 import toast from 'react-hot-toast';
 
@@ -7,7 +8,11 @@ import toast from 'react-hot-toast';
  * Form for adding or editing prompts
  */
 export const PromptForm = ({ prompt, onClose, onSave }) => {
-    const { categories, addPrompt, updatePrompt } = usePromptStore();
+    const { categories, addPrompt, updatePrompt } = usePromptStore((state) => ({
+        categories: state.categories,
+        addPrompt: state.addPrompt,
+        updatePrompt: state.updatePrompt,
+    }), shallow);
     const isEditing = !!prompt;
 
     const [formData, setFormData] = useState({
@@ -45,7 +50,7 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
         }));
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
 
         if (!formData.name.trim()) {
@@ -58,16 +63,20 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
             return;
         }
 
-        if (isEditing) {
-            updatePrompt(prompt.id, formData);
-            toast.success('Prompt updated successfully', { icon: '✏️' });
-        } else {
-            addPrompt(formData);
-            toast.success('Prompt added to library', { icon: '✨' });
-        }
+        try {
+            if (isEditing) {
+                await updatePrompt(prompt.id, formData);
+                toast.success('Prompt updated successfully', { icon: '✏️' });
+            } else {
+                await addPrompt(formData);
+                toast.success('Prompt added to library', { icon: '✨' });
+            }
 
-        onSave?.();
-        onClose();
+            onSave?.();
+            onClose();
+        } catch (error) {
+            toast.error(error.message || 'Failed to save prompt');
+        }
     };
 
     return (

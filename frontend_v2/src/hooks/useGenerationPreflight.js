@@ -1,0 +1,71 @@
+import { useCallback, useMemo, useState } from 'react';
+import { jobsApi } from '../api';
+
+function countModelEntries(modelGroups = {}) {
+    return Object.values(modelGroups).reduce((total, filenames) => (
+        total + (Array.isArray(filenames) ? filenames.length : 0)
+    ), 0);
+}
+
+export function useGenerationPreflight() {
+    const [isChecking, setIsChecking] = useState(false);
+    const [validationResult, setValidationResult] = useState(null);
+    const [isMissingModelsOpen, setIsMissingModelsOpen] = useState(false);
+
+    const validateWorkflow = useCallback(async (workflow, preferredProviderId = null) => {
+        setIsChecking(true);
+        try {
+            const result = await jobsApi.validate(workflow, preferredProviderId);
+            setValidationResult(result);
+            if (!result.valid) {
+                setIsMissingModelsOpen(true);
+            }
+            return result;
+        } finally {
+            setIsChecking(false);
+        }
+    }, []);
+
+    const runWithPreflight = useCallback(async (
+        workflow,
+        {
+            preferredProviderId = null,
+            onValid = null,
+            onInvalid = null,
+        } = {},
+    ) => {
+        const result = await validateWorkflow(workflow, preferredProviderId);
+        if (!result.valid) {
+            await onInvalid?.(result);
+            return { ok: false, result };
+        }
+
+        setIsMissingModelsOpen(false);
+        const submissionResult = await onValid?.(result);
+        return { ok: true, result, submissionResult };
+    }, [validateWorkflow]);
+
+    const summary = useMemo(() => {
+        if (!validationResult) {
+            return null;
+        }
+
+        return {
+            valid: Boolean(validationResult.valid),
+            eligibleProviderCount: validationResult.eligible_providers?.length || 0,
+            missingModelCount: countModelEntries(validationResult.global_missing),
+        };
+    }, [validationResult]);
+
+    return {
+        isChecking,
+        validationResult,
+        summary,
+        isMissingModelsOpen,
+        setIsMissingModelsOpen,
+        validateWorkflow,
+        runWithPreflight,
+    };
+}
+
+export default useGenerationPreflight;

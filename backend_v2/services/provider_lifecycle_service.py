@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 import httpx
-import requests
 from sqlmodel import Session
 
 from api.provider_runtime import resolve_provider_runtime
@@ -94,7 +93,7 @@ class ProviderLifecycleService:
             "logs": logs,
         }
 
-    def get_container_status(self, provider_id: str) -> Dict[str, Any]:
+    async def get_container_status(self, provider_id: str) -> Dict[str, Any]:
         container_manager = self._require_container_manager()
         container_name = f"comfy-provider-{provider_id}"
 
@@ -117,9 +116,11 @@ class ProviderLifecycleService:
             else:
                 port = container.ports.get("8000/tcp")
                 if port:
-                    host_port = port[0]["HostPort"]
-                    response = requests.get(f"http://localhost:{host_port}/health", timeout=2)
-                    healthy = response.status_code == 200
+                    host_port = port[0].get("HostPort")
+                    if host_port:
+                        async with httpx.AsyncClient(timeout=2.0) as client:
+                            response = await client.get(f"http://localhost:{host_port}/health")
+                            healthy = response.status_code == 200
         except Exception:
             pass
 

@@ -136,6 +136,25 @@ class TestProviderServiceUpdate:
             await service.update_provider("nonexistent", {"enabled": False})
 
 
+class TestProviderServiceEnvironment:
+    async def test_build_provider_environment_propagates_worker_reconciliation_settings(self, service, sample_provider_data):
+        sample_provider_data = dict(sample_provider_data)
+        sample_provider_data["runtime_config"] = {
+            "worker": {
+                "reconciliation_interval_hours": 2,
+                "reconciliation_startup_delay_seconds": 45,
+                "max_concurrent_downloads": 9,
+            }
+        }
+        provider = await service.create_provider(sample_provider_data)
+
+        env_vars = service.build_provider_environment(provider)
+
+        assert env_vars["RECONCILIATION_INTERVAL_SECONDS"] == "7200"
+        assert env_vars["RECONCILIATION_STARTUP_DELAY_SECONDS"] == "45"
+        assert env_vars["MAX_CONCURRENT_DOWNLOADS"] == "9"
+
+
 class TestProviderServiceDelete:
     async def test_delete_provider(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)

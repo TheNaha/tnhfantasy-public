@@ -8,6 +8,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { shallow } from 'zustand/shallow';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
@@ -18,10 +19,14 @@ import { useJobStore } from '../store/jobStore';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
+import MissingModelsDialog from '../components/generator/MissingModelsDialog';
+import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
+import useGenerationPreflight from '../hooks/useGenerationPreflight';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 
 const EMPTY_MODELS = [];
 
@@ -42,12 +47,54 @@ export default function InpaintGenerator() {
         setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
-    } = useGeneratorStore();
+    } = useGeneratorStore((state) => ({
+        prompt: state.prompt,
+        negativePrompt: state.negativePrompt,
+        seed: state.seed,
+        steps: state.steps,
+        cfg: state.cfg,
+        sampler: state.sampler,
+        scheduler: state.scheduler,
+        sourceImage: state.sourceImage,
+        denoise: state.denoise,
+        maskImage: state.maskImage,
+        maskBlur: state.maskBlur,
+        selectedCheckpoint: state.selectedCheckpoint,
+        selectedVae: state.selectedVae,
+        selectedLoras: state.selectedLoras,
+        setPrompt: state.setPrompt,
+        setNegativePrompt: state.setNegativePrompt,
+        setSeed: state.setSeed,
+        setSteps: state.setSteps,
+        setCfg: state.setCfg,
+        setSampler: state.setSampler,
+        setScheduler: state.setScheduler,
+        setSourceImage: state.setSourceImage,
+        setDenoise: state.setDenoise,
+        setMaskImage: state.setMaskImage,
+        setMaskBlur: state.setMaskBlur,
+        clearSourceImage: state.clearSourceImage,
+        setSelectedCheckpoint: state.setSelectedCheckpoint,
+        setSelectedVae: state.setSelectedVae,
+        randomizeSeed: state.randomizeSeed,
+        addLora: state.addLora,
+        removeLora: state.removeLora,
+        updateLora: state.updateLora,
+    }), shallow);
 
     const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
+    const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const {
+        isChecking: preflightChecking,
+        validationResult,
+        summary: validationSummary,
+        isMissingModelsOpen,
+        setIsMissingModelsOpen,
+        runWithPreflight,
+    } = useGenerationPreflight();
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
@@ -149,9 +196,14 @@ export default function InpaintGenerator() {
                 usedInpaintModel: !!inpaintCheckpoint
             };
 
-            await generateApi.workflow(workflow, metadata, {
-                idempotencyKey: createIdempotencyKey('generate-inpaint')
+            const submission = await runWithPreflight(workflow, {
+                onValid: async () => generateApi.workflow(workflow, metadata, {
+                    idempotencyKey: createIdempotencyKey('generate-inpaint')
+                }),
             });
+            if (!submission.ok) {
+                return;
+            }
 
             if (settings.generator.redirectAfterGenerate) {
                 toast.success('Job queued! Redirecting to gallery...');
@@ -383,6 +435,15 @@ export default function InpaintGenerator() {
 
                 {/* Right Column: Parameters */}
                 <div className="space-y-4 lg:space-y-6">
+                    <GeneratorReadinessPanel
+                        providers={providers}
+                        providersLoading={providersLoading}
+                        validationSummary={validationSummary}
+                        isChecking={preflightChecking}
+                        title="Inpaint Runway"
+                        hint="Check runtime health and workflow availability before regenerating the masked region."
+                    />
+
                     {/* Denoise Strength */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">
                         <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2 text-purple-400">
@@ -549,6 +610,12 @@ export default function InpaintGenerator() {
                     )}
                 </div>
             </div>
+
+            <MissingModelsDialog
+                isOpen={isMissingModelsOpen}
+                onClose={() => setIsMissingModelsOpen(false)}
+                validationResult={validationResult}
+            />
         </div>
     );
 }

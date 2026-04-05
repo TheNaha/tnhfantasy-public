@@ -97,4 +97,14 @@ describe('useStore collections integration', () => {
         expect(collection.images).toEqual(['one.png', 'two.png']);
         expect(collection.imageCount).toBe(2);
     });
+
+    it('keeps collectionsInitialized false when initialization fails so it can retry later', async () => {
+        collectionsApi.listCollections.mockRejectedValue(new Error('temporary outage'));
+
+        await useStore.getState().initCollections();
+
+        const state = useStore.getState();
+        expect(state.collectionsInitialized).toBe(false);
+        expect(state.collectionsLoading).toBe(false);
+    });
 });

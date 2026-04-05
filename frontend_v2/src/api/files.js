@@ -4,8 +4,6 @@
  */
 
 import api from './client';
-import { getApiUrl } from './config';
-
 export const filesApi = {
     // List files with pagination
     list: (params = {}, options = {}) => {
@@ -21,20 +19,6 @@ export const filesApi = {
         directory: 'output',
         files: filenames
     }),
-
-    // Get file URL (for images)
-    getUrl: (filename) => `${getApiUrl()}/api/files/${encodeURIComponent(filename)}`,
-
-    // Get thumbnail URL
-    getThumbnailUrl: (filename, size = 256) =>
-        `${getApiUrl()}/api/files/thumbnail/${encodeURIComponent(filename)}?size=${size}`,
-
-    // Upload file
-    upload: async (file) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        return api.post('/api/files/upload', formData);
-    },
 
     /**
      * Upload image for Img2Img or Inpainting.

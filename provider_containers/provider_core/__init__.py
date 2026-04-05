@@ -19,7 +19,6 @@ from .models import (
     build_status_response,
 )
 from .state import ReconciliationState, get_reconciliation_state
-from .sync_progress import SyncProgressReporter
 from .http_client import get_http_client, HttpClientConfig
 from .reconciliation import (
     report_file_status_v2,
@@ -63,8 +62,6 @@ __all__ = [
     # State
     "ReconciliationState",
     "get_reconciliation_state",
-    # Sync Progress
-    "SyncProgressReporter",
     # HTTP Client
     "get_http_client",
     "HttpClientConfig",
