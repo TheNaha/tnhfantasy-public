@@ -123,7 +123,7 @@ export default function SimpleGenerator() {
     const embeddingModels = modelsByKey.embeddingModels || [];
     const adetailerModels = modelsByKey.adetailerModels || [];
 
-    const activeJobCount = useJobStore(state => state.jobs.filter(j => j.status === 'pending' || j.status === 'running').length);
+    const activeJobCount = useJobStore(state => state.activeJobs.length);
     const activeJobs = useJobStore(state => state.activeJobs);
     const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
     const lastFailedJob = useJobStore(state => state.lastFailedJob);
