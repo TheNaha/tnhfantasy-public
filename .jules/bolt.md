@@ -32,3 +32,7 @@
 ## 2024-06-18 - Avoid O(N) Array Operations Inside Render Loops
 **Learning:** Calling array methods like `.filter()` multiple times inside the map function of a render loop (e.g. calculating stats for grouped timeline items) creates hidden array allocations and O(N) execution paths that run every single time the component renders, degrading performance when interacting with large datasets.
 **Action:** Pre-compute metadata or statistics during the initial data transformation pass (like inside a `useMemo` that groups data) by keeping running totals in the accumulator object. This changes O(N * renders) complexity into a single O(1) increment per item during the memoized data preparation phase.
+
+## 2026-04-06 - O(N*M) Bottleneck in Array Filtering
+**Learning:** Using `Array.prototype.includes()` inside a `.filter()` operation (e.g., removing multiple images from a collection) introduces an O(N*M) performance bottleneck, as it scans the target array on every iteration.
+**Action:** Always pre-compute a `Set` of the items to be checked against before the filtering loop. This transforms the O(N*M) comparison into an efficient O(N) operation via O(1) `Set.has()` lookups.
