@@ -263,7 +263,9 @@ const useStore = create(
                     set((state) => {
                         const collection = state.collections[collectionId];
                         if (!collection) return state;
-                        const newImages = collection.images.filter(img => !images.includes(img));
+                        // ⚡ Bolt: Pre-compute Set for O(1) lookups to prevent O(N*M) complexity when removing multiple items
+                        const imagesToRemoveSet = new Set(images);
+                        const newImages = collection.images.filter(img => !imagesToRemoveSet.has(img));
                         return {
                             collections: {
                                 ...state.collections,
