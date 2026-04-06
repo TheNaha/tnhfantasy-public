@@ -274,6 +274,8 @@ export default function InpaintCanvas({
                         onClick={() => setTool('brush')}
                         className={`p-2 rounded ${tool === 'brush' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}
                         title="Brush (paint mask)"
+                        aria-label="Brush tool (paint mask)"
+                        aria-pressed={tool === 'brush'}
                     >
                         <Brush size={18} />
                     </button>
@@ -281,6 +283,8 @@ export default function InpaintCanvas({
                         onClick={() => setTool('eraser')}
                         className={`p-2 rounded ${tool === 'eraser' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}
                         title="Eraser (remove mask)"
+                        aria-label="Eraser tool (remove mask)"
+                        aria-pressed={tool === 'eraser'}
                     >
                         <Eraser size={18} />
                     </button>
@@ -308,6 +312,7 @@ export default function InpaintCanvas({
                         disabled={historyIndex <= 0}
                         className={`p-2 rounded ${historyIndex <= 0 ? 'text-gray-600' : 'text-gray-400 hover:text-white'}`}
                         title="Undo"
+                        aria-label="Undo mask change"
                     >
                         <Undo2 size={18} />
                     </button>
@@ -316,6 +321,7 @@ export default function InpaintCanvas({
                         disabled={historyIndex >= history.length - 1}
                         className={`p-2 rounded ${historyIndex >= history.length - 1 ? 'text-gray-600' : 'text-gray-400 hover:text-white'}`}
                         title="Redo"
+                        aria-label="Redo mask change"
                     >
                         <Redo2 size={18} />
                     </button>
@@ -326,6 +332,7 @@ export default function InpaintCanvas({
                     onClick={handleClear}
                     className="p-2 bg-gray-800 rounded-lg text-red-400 hover:text-red-300 hover:bg-gray-700"
                     title="Clear mask"
+                    aria-label="Clear mask"
                 >
                     <Trash2 size={18} />
                 </button>
