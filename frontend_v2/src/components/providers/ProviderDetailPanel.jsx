@@ -388,7 +388,7 @@ function RuntimeTab({
                 <div className="rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
                     <div className="flex items-center justify-between border-b border-gray-800 px-4 py-2">
                         <span className="text-xs font-medium text-gray-400">Container Logs</span>
-                        <button onClick={() => setShowLogs(false)} className="text-gray-500 hover:text-white">
+                        <button onClick={() => setShowLogs(false)} className="text-gray-500 hover:text-white" aria-label="Close container logs">
                             <X size={14} />
                         </button>
                     </div>
