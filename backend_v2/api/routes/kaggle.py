@@ -329,8 +329,10 @@ async def get_worker_script():
     
     Usage in Kaggle:
     ```python
-    exec(__import__('urllib.request').urlopen('http://backend/api/kaggle/worker.py').read())
-    KaggleWorker("http://backend", "token").run()
+    import urllib.request, runpy
+    urllib.request.urlretrieve('http://backend/api/kaggle/worker.py', 'worker.py')
+    worker_vars = runpy.run_path('worker.py')
+    worker_vars['KaggleWorker']("http://backend", "token").run()
     ```
     """
     return WORKER_SCRIPT
@@ -371,7 +373,13 @@ print("Tailscale connected!")'''
         "name": "Run Worker",
         "code": f'''# Connect to ComfyUI backend
 BACKEND = {safe_backend_url}
-exec(__import__('urllib.request').urlopen(f'{{BACKEND}}/api/kaggle/worker.py').read())
+
+import urllib.request
+import runpy
+
+urllib.request.urlretrieve(f'{{BACKEND}}/api/kaggle/worker.py', 'worker.py')
+worker_vars = runpy.run_path('worker.py')
+KaggleWorker = worker_vars['KaggleWorker']
 
 worker = KaggleWorker(
     backend_url=BACKEND,

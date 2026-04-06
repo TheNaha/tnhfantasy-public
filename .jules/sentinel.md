@@ -58,3 +58,7 @@
 **Vulnerability:** Found path traversal vulnerability in `download_model` and `download_model_endpoint` endpoints of `provider_containers/beam_worker/beam_app.py`.
 **Learning:** `os.path.join(base_path, path)` was used to combine a trusted directory with user-controlled input. If `path` is an absolute path or contains `../`, `os.path.join` creates a final path outside `base_path` resulting in path traversal.
 **Prevention:** Always use `get_safe_path` to sanitize user inputs combined with a trusted base path. Catch errors raised by `get_safe_path` (like `ValueError` or `Exception`) to return clear errors indicating the path traversal was blocked.
+## 2024-05-20 - Unsafe execution of remotely downloaded scripts via exec()
+**Vulnerability:** Kaggle API routes previously served worker setup scripts using inline `exec(__import__('urllib.request').urlopen(...).read())`, making Kaggle notebook sessions susceptible to arbitrary code execution if the worker script payload was compromised or MITM'd (less likely but possible over HTTP or through compromised endpoints).
+**Learning:** `exec()` executes code directly into the caller's scope, leading to potential namespace pollution, scope hijacking, and broad flagging by standard SAST analyzers like Bandit.
+**Prevention:** Always replace `exec()` dynamically downloaded content with a secure download to the filesystem (e.g., `urllib.request.urlretrieve`) followed by `runpy.run_path()` to isolate execution to its own namespace, or better yet, package workers properly.
