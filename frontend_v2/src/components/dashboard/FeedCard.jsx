@@ -1,4 +1,4 @@
-import { useState, useRef, memo, useCallback } from "react";
+import { useState, useRef, memo, useCallback, useId } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,6 +44,7 @@ const FeedCard = memo(function FeedCard({
   const encodedName = encodeURIComponent(item.name);
   const metadataEndpoint = `/api/view/output/${encodedName}.json`;
   const imageEndpoint = `/api/view/output/${encodedName}`;
+  const detailsId = useId();
 
   const loadMetadata = useCallback(async () => {
     try {
@@ -306,6 +307,8 @@ const FeedCard = memo(function FeedCard({
             title={showDetails ? "Hide Details" : "Show Details"}
             aria-label={showDetails ? "Hide Details" : "Show Details"}
             aria-pressed={showDetails}
+            aria-expanded={showDetails}
+            aria-controls={detailsId}
           >
             {showDetails ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
           </button>
@@ -483,7 +486,7 @@ const FeedCard = memo(function FeedCard({
 
       {/* Details */}
       {showDetails && (
-        <div className="p-6 space-y-6 bg-gray-900/30 border-t border-gray-800">
+        <div id={detailsId} className="p-6 space-y-6 bg-gray-900/30 border-t border-gray-800">
           {loading ? (
             <div className="flex gap-2 items-center text-gray-500 text-sm">
               <Loader2 className="animate-spin" size={14} /> Loading details...
