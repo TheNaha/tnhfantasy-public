@@ -272,17 +272,15 @@ const ModelSelector = memo(function ModelSelector({
   const filteredAndSortedModels = useMemo(() => {
     let result = [...models];
 
-    // Apply filters
-    if (filterBaseModel !== "all") {
-      result = result.filter((m) => m.base_model === filterBaseModel);
-    }
-
-    if (filterType !== "all") {
-      result = result.filter((m) => m.type === filterType);
-    }
-
-    if (!showNSFW) {
-      result = result.filter((m) => !m.nsfw);
+    // ⚡ Bolt: Combine multiple chained `.filter()` operations into a single pass
+    // to avoid redundant O(N) iterations and unnecessary intermediate array allocations
+    if (filterBaseModel !== "all" || filterType !== "all" || !showNSFW) {
+      result = result.filter((m) => {
+        if (filterBaseModel !== "all" && m.base_model !== filterBaseModel) return false;
+        if (filterType !== "all" && m.type !== filterType) return false;
+        if (!showNSFW && m.nsfw) return false;
+        return true;
+      });
     }
 
     // Apply sorting
