@@ -36,3 +36,6 @@
 ## 2026-04-06 - O(N*M) Bottleneck in Array Filtering
 **Learning:** Using `Array.prototype.includes()` inside a `.filter()` operation (e.g., removing multiple images from a collection) introduces an O(N*M) performance bottleneck, as it scans the target array on every iteration.
 **Action:** Always pre-compute a `Set` of the items to be checked against before the filtering loop. This transforms the O(N*M) comparison into an efficient O(N) operation via O(1) `Set.has()` lookups.
+## 2024-04-08 - React.memo Component Props Optimization
+**Learning:** In React components wrapped in `React.memo` (like `QueueVisualization`), passing inline arrow functions as props (e.g., `onJobClick={(id) => ...}`) breaks the memoization because a new function reference is created on every render of the parent component.
+**Action:** Always extract inline callback functions passed to memoized components into stable references using `useCallback` or reference existing stable handlers (like `handleJobClick`) to preserve the performance benefits of `React.memo`.

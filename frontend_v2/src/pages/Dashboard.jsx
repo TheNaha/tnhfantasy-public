@@ -431,10 +431,8 @@ export default function Dashboard() {
                 threshold={80}
             />
             <div className="max-w-7xl mx-auto space-y-8">
-                <QueueVisualization onJobClick={(jobId) => {
-                    const job = activeJobs.find(j => j.id === jobId);
-                    if (job) setSelectedJobId(job.id);
-                }} />
+                {/* ⚡ Bolt: Pass stable reference handleJobClick to preserve QueueVisualization's React.memo */}
+                <QueueVisualization onJobClick={handleJobClick} />
 
                 <div className="flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
