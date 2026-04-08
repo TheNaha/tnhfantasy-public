@@ -33,6 +33,13 @@ def configure_app(app: FastAPI):
     )
 
     @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+    @app.middleware("http")
     async def log_requests(request: Request, call_next):
         """Log all HTTP requests with timing and request ID for tracing."""
         request_id = str(uuid4())[:8]
