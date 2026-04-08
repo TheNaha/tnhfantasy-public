@@ -66,8 +66,11 @@ const ImageGroup = memo(function ImageGroup({
 
             {/* Selection checkbox */}
             {showSelectionCheckbox && (
-                <div
-                    className="absolute top-2 right-2 z-10"
+                <button
+                    type="button"
+                    aria-label={isSelected ? "Deselect image group" : "Select image group"}
+                    aria-pressed={isSelected}
+                    className="absolute top-2 right-2 z-10 outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 rounded-md"
                     onClick={(e) => {
                         e.stopPropagation();
                         onSelectionToggle?.(images);
@@ -84,7 +87,7 @@ const ImageGroup = memo(function ImageGroup({
                             </svg>
                         )}
                     </div>
-                </div>
+                </button>
             )}
 
             {/* Hover overlay showing thumbnails grid preview */}

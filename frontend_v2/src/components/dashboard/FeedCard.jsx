@@ -393,9 +393,11 @@ const FeedCard = memo(function FeedCard({
               {/* Mobile overflow menu - visible only on small screens */}
               <div className="md:hidden relative group">
                 <button
-                  className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white"
+                  type="button"
+                  className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   title="More actions"
                   aria-label="More actions"
+                  aria-haspopup="menu"
                 >
                   <MoreHorizontal size={18} aria-hidden="true" />
                 </button>
