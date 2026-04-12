@@ -13,7 +13,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
 
     // Use global WebSocket job store
     const activeJobs = useJobStore(state => state.activeJobs);
-    const { queue, stats } = useMemo(() => {
+    const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {
         // Filter for active items only and sort
         const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');
         const pending = activeJobs.filter(j => j.status === 'pending' || j.status === 'queued')
@@ -23,18 +23,19 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
         // This is a simplified estimation - ideally backend sends this, but WS handles status
         const avgTime = 30; // Default or fetch once on mount if needed
 
+        const runningProcessed = running.map(j => ({
+            ...j,
+            eta_seconds: Math.max(0, avgTime - ((j.progress || 0) / 100) * avgTime)
+        }));
+
+        const pendingProcessed = pending.map((j, index) => ({
+            ...j,
+            position: index + 1,
+            eta_seconds: avgTime * (index + 1) + (running.length > 0 ? avgTime / 2 : 0)
+        }));
+
         // Calculate approximate ETAs
-        const calculatedQueue = [
-            ...running.map(j => ({
-                ...j,
-                eta_seconds: Math.max(0, avgTime - ((j.progress || 0) / 100) * avgTime)
-            })),
-            ...pending.map((j, index) => ({
-                ...j,
-                position: index + 1,
-                eta_seconds: avgTime * (index + 1) + (running.length > 0 ? avgTime / 2 : 0)
-            }))
-        ];
+        const calculatedQueue = [...runningProcessed, ...pendingProcessed];
 
         const derivedStats = {
             avg_duration_seconds: avgTime,
@@ -43,7 +44,13 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
             total_running: running.length
         };
 
-        return { queue: calculatedQueue, stats: derivedStats };
+        return {
+            queue: calculatedQueue,
+            stats: derivedStats,
+            // ⚡ Bolt: Return pre-filtered arrays to avoid O(N) filtering in render
+            runningJobs: runningProcessed,
+            pendingJobs: pendingProcessed
+        };
     }, [activeJobs]);
 
     // Don't render if queue is empty
@@ -55,9 +62,6 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
         if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
         return `${Math.round(seconds / 3600)}h`;
     };
-
-    const runningJobs = queue.filter(j => j.status === 'running');
-    const pendingJobs = queue.filter(j => j.status === 'pending');
 
     return (
         <div className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-xl overflow-hidden mb-4">
