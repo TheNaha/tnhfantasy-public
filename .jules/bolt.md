@@ -42,3 +42,6 @@
 ## 2024-04-12 - Prevent O(N) array filtering in render loops
 **Learning:** Performing multiple chained or sequential `.filter()` operations on arrays directly inside the React component body causes redundant O(N) iterations on every render cycle.
 **Action:** When filtering derived arrays (e.g. `runningJobs` vs `pendingJobs` from a `queue` list), perform these operations inside an existing `useMemo` block and return the pre-filtered arrays to prevent unnecessary recalculations and rendering overhead.
+## 2026-04-09 - Refactor Chained `.filter()` Calls into a Single Pass
+**Learning:** Using chained `.filter()` calls on a large array (e.g., in a `useMemo` hook) creates multiple O(N) iterations and hidden intermediate array allocations, introducing significant O(N * X) overhead and potential memory pressure.
+**Action:** Always combine sequential `.filter()` operations over the same data source into a single pass to achieve O(N) execution and eliminate redundant intermediate array allocations.

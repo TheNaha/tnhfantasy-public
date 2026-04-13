@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useId } from 'react';
 import { X, Save, Tag } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePromptStore } from '../../store/promptStore';
@@ -8,6 +8,12 @@ import toast from 'react-hot-toast';
  * Form for adding or editing prompts
  */
 export const PromptForm = ({ prompt, onClose, onSave }) => {
+    const nameId = useId();
+    const descriptionId = useId();
+    const categoryId = useId();
+    const textId = useId();
+    const negativeId = useId();
+    const tagId = useId();
     const { categories, addPrompt, updatePrompt } = usePromptStore(useShallow((state) => ({
         categories: state.categories,
         addPrompt: state.addPrompt,
@@ -100,10 +106,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     {/* Name */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={nameId} className="block text-sm font-medium text-gray-300 mb-2">
                             Name <span className="text-red-400">*</span>
                         </label>
                         <input
+                            id={nameId}
                             type="text"
                             value={formData.name}
                             onChange={(e) => handleChange('name', e.target.value)}
@@ -115,10 +122,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
                     {/* Description */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={descriptionId} className="block text-sm font-medium text-gray-300 mb-2">
                             Description
                         </label>
                         <input
+                            id={descriptionId}
                             type="text"
                             value={formData.description}
                             onChange={(e) => handleChange('description', e.target.value)}
@@ -129,10 +137,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
                     {/* Category */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={categoryId} className="block text-sm font-medium text-gray-300 mb-2">
                             Category
                         </label>
                         <select
+                            id={categoryId}
                             value={formData.category}
                             onChange={(e) => handleChange('category', e.target.value)}
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
@@ -145,10 +154,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
                     {/* Prompt Text */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={textId} className="block text-sm font-medium text-gray-300 mb-2">
                             Prompt <span className="text-red-400">*</span>
                         </label>
                         <textarea
+                            id={textId}
                             value={formData.text}
                             onChange={(e) => handleChange('text', e.target.value)}
                             placeholder="Enter your prompt here..."
@@ -163,10 +173,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
                     {/* Negative Prompt */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={negativeId} className="block text-sm font-medium text-gray-300 mb-2">
                             Negative Prompt
                         </label>
                         <textarea
+                            id={negativeId}
                             value={formData.negative}
                             onChange={(e) => handleChange('negative', e.target.value)}
                             placeholder="Things to avoid in the generation (optional)"
@@ -177,11 +188,12 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
                     {/* Tags */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                        <label htmlFor={tagId} className="block text-sm font-medium text-gray-300 mb-2">
                             Tags
                         </label>
                         <div className="flex gap-2 mb-2">
                             <input
+                                id={tagId}
                                 type="text"
                                 value={tagInput}
                                 onChange={(e) => setTagInput(e.target.value)}
