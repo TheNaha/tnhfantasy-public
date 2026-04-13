@@ -39,3 +39,6 @@
 ## 2024-04-08 - React.memo Component Props Optimization
 **Learning:** In React components wrapped in `React.memo` (like `QueueVisualization`), passing inline arrow functions as props (e.g., `onJobClick={(id) => ...}`) breaks the memoization because a new function reference is created on every render of the parent component.
 **Action:** Always extract inline callback functions passed to memoized components into stable references using `useCallback` or reference existing stable handlers (like `handleJobClick`) to preserve the performance benefits of `React.memo`.
+## 2026-04-09 - Refactor Chained `.filter()` Calls into a Single Pass
+**Learning:** Using chained `.filter()` calls on a large array (e.g., in a `useMemo` hook) creates multiple O(N) iterations and hidden intermediate array allocations, introducing significant O(N * X) overhead and potential memory pressure.
+**Action:** Always combine sequential `.filter()` operations over the same data source into a single pass to achieve O(N) execution and eliminate redundant intermediate array allocations.

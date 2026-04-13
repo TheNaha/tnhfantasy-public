@@ -135,22 +135,16 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     const filteredFiles = useMemo(() => {
         let result = files.filter(file => {
+            // ⚡ Bolt: Combined filters into a single pass to prevent O(N * 4) iteration overhead
             const matchesTags = selectedTags.length === 0 ||
                 selectedTags.every(tag => file.tags?.includes(tag));
-            return matchesTags;
+
+            const matchesBaseModel = filterBaseModel === 'all' || file.base_model === filterBaseModel;
+            const matchesType = filterType === 'all' || file.type === filterType;
+            const matchesNSFW = showNSFW || !file.nsfw;
+
+            return matchesTags && matchesBaseModel && matchesType && matchesNSFW;
         });
-
-        if (filterBaseModel !== 'all') {
-            result = result.filter(f => f.base_model === filterBaseModel);
-        }
-
-        if (filterType !== 'all') {
-            result = result.filter(f => f.type === filterType);
-        }
-
-        if (!showNSFW) {
-            result = result.filter(f => !f.nsfw);
-        }
 
         result.sort((a, b) => {
             switch (sortBy) {
