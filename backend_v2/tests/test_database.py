@@ -1,10 +1,12 @@
 """Tests for infrastructure/database.py"""
+
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from sqlmodel import SQLModel, Session, create_engine
-from sqlmodel.pool import StaticPool
 from sqlalchemy import text
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
 
 import infrastructure.database as db_module
 
@@ -40,6 +42,7 @@ class TestGetDatabaseUrl:
         with patch.dict(os.environ, {"COMFY_DATABASE_URL": custom_url}):
             # Import Settings here to get a fresh instance with the new env var
             from config import Settings
+
             fresh_settings = Settings()
             assert fresh_settings.database_url == custom_url
 
@@ -61,7 +64,9 @@ class TestGetDatabaseUrl:
                 url = db_module.get_database_url()
 
                 # Should have stripped ./ and called makedirs with testdata_relative
-                mock_makedirs.assert_called_once_with("testdata_relative", exist_ok=True)
+                mock_makedirs.assert_called_once_with(
+                    "testdata_relative", exist_ok=True
+                )
 
         assert url == mock_settings.database_url
 
@@ -125,9 +130,10 @@ class TestGetSession:
             assert isinstance(session, Session)
             # Session should be active
             assert session.is_active
+
     def test_session_closes_on_exhaustion(self):
         """Test that get_session context manager closes the session properly."""
-        with patch('infrastructure.database.Session') as MockSession:
+        with patch("infrastructure.database.Session") as MockSession:
             gen = db_module.get_session()
             session = next(gen)
 
@@ -207,7 +213,9 @@ class TestRunMigrations:
         with engine.connect() as conn:
             columns = db_module._get_table_columns(conn, "provider_version_status")
             migrated = conn.execute(
-                text("SELECT provider_id, provider_name FROM provider_version_status WHERE file_id = 1")
+                text(
+                    "SELECT provider_id, provider_name FROM provider_version_status WHERE file_id = 1"
+                )
             ).first()
             applied = db_module._get_applied_migrations(conn)
 
@@ -223,7 +231,11 @@ class TestRunMigrations:
 
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
-            conn.execute(text("CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"))
+            conn.execute(
+                text(
+                    "CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"
+                )
+            )
 
         with patch.object(db_module, "engine", engine):
             db_module._run_migrations()
@@ -241,14 +253,20 @@ class TestRunMigrations:
 
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
-            conn.execute(text("CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"))
+            conn.execute(
+                text(
+                    "CREATE TABLE prompts (id INTEGER PRIMARY KEY, name TEXT, text TEXT, negative TEXT, description TEXT, tags TEXT)"
+                )
+            )
 
         with patch.object(db_module, "engine", engine):
             db_module._run_migrations()
             db_module._run_migrations()
 
         with engine.connect() as conn:
-            rows = conn.execute(text(f"SELECT version FROM {db_module.SCHEMA_MIGRATIONS_TABLE} ORDER BY version")).all()
+            rows = conn.execute(
+                text("SELECT version FROM schema_migrations ORDER BY version")
+            ).all()
 
         assert [row[0] for row in rows] == [
             "001_jobs_started_completed",
@@ -262,9 +280,17 @@ class TestRunMigrations:
 
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
-            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-queued', 'queued')"))
-            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-processing', 'processing')"))
-            conn.execute(text("INSERT INTO jobs (id, status) VALUES ('job-running', 'running')"))
+            conn.execute(
+                text("INSERT INTO jobs (id, status) VALUES ('job-queued', 'queued')")
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, status) VALUES ('job-processing', 'processing')"
+                )
+            )
+            conn.execute(
+                text("INSERT INTO jobs (id, status) VALUES ('job-running', 'running')")
+            )
 
         with patch.object(db_module, "engine", engine):
             db_module._run_migrations()
