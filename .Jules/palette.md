@@ -47,3 +47,6 @@ This journal tracks critical UX and accessibility learnings for the application.
 1. Ensure all icon-only buttons (including modal close buttons and action toggles) have descriptive `aria-label` attributes.
 2. Hide purely decorative icons from screen readers using `aria-hidden="true"`.
 3. For selection grids, use `aria-label` to describe the option and `aria-pressed` to indicate selection state, instead of relying purely on visual cues like styling differences.
+## 2024-05-14 - Explicit Label Associations in Forms
+**Learning:** React components containing multiple form fields (like `PromptForm.jsx`) often lack explicit `htmlFor` and `id` bindings between `<label>` and their corresponding `<input>`, `<select>`, or `<textarea>` elements. While visually adjacent, screen readers cannot reliably associate them without these attributes, and mouse users lose the ability to click the label to focus the input.
+**Action:** Always use the `useId()` hook to generate unique, stable IDs for form fields and explicitly link them to their corresponding `<label>` elements using the `htmlFor` attribute.
