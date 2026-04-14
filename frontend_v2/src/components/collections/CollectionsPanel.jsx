@@ -7,14 +7,14 @@ import ConfirmationModal from '../ConfirmationModal';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
-    const {
-        collections,
-        activeCollection,
-        createCollection,
-        deleteCollection,
-        renameCollection,
-        setActiveCollection,
-    } = useStore();
+    // ⚡ Bolt: Using granular selectors to prevent unnecessary O(N) re-renders
+    // Reduces re-renders by only subscribing to the specific state slices used in this component
+    const collections = useStore((state) => state.collections);
+    const activeCollection = useStore((state) => state.activeCollection);
+    const createCollection = useStore((state) => state.createCollection);
+    const deleteCollection = useStore((state) => state.deleteCollection);
+    const renameCollection = useStore((state) => state.renameCollection);
+    const setActiveCollection = useStore((state) => state.setActiveCollection);
 
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(null); // Store collection ID to delete

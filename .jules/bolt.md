@@ -45,3 +45,6 @@
 ## 2026-04-09 - Refactor Chained `.filter()` Calls into a Single Pass
 **Learning:** Using chained `.filter()` calls on a large array (e.g., in a `useMemo` hook) creates multiple O(N) iterations and hidden intermediate array allocations, introducing significant O(N * X) overhead and potential memory pressure.
 **Action:** Always combine sequential `.filter()` operations over the same data source into a single pass to achieve O(N) execution and eliminate redundant intermediate array allocations.
+## 2024-05-24 - React Zustand Whole-Store Subscriptions
+**Learning:** Destructuring the entire store from Zustand's `useStore` or `useGeneratorStore` (e.g., `const { prompt } = useGeneratorStore()` or `const { collections } = useStore()` in `PromptPanel.jsx` and `CollectionsPanel.jsx`) acts as an anti-pattern that subscribes the component to *every* piece of state within that store. This causes unnecessary re-renders when entirely unrelated state changes occur, compounding performance issues in complex, interactive UIs.
+**Action:** Always use granular selectors (e.g., `const prompt = useGeneratorStore(state => state.prompt)`) when accessing Zustand stores in React components to tightly control component subscriptions and prevent expensive re-renders.
