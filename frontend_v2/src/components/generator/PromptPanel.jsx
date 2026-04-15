@@ -3,7 +3,12 @@ import { Wand2 } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 
 export default function PromptPanel() {
-    const { prompt, setPrompt, negativePrompt, setNegativePrompt } = useGeneratorStore();
+    // ⚡ Bolt: Using granular selectors to prevent unnecessary re-renders
+    // Reduces re-renders by only subscribing to prompt-related state changes
+    const prompt = useGeneratorStore((state) => state.prompt);
+    const setPrompt = useGeneratorStore((state) => state.setPrompt);
+    const negativePrompt = useGeneratorStore((state) => state.negativePrompt);
+    const setNegativePrompt = useGeneratorStore((state) => state.setNegativePrompt);
     const promptRef = useRef(null);
     const negPromptRef = useRef(null);
 
