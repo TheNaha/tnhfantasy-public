@@ -20,14 +20,15 @@ const NavItem = ({ to, icon: Icon, label }) => {
     return (
         <Link
             to={to}
+            aria-current={isActive ? 'page' : undefined}
             className={clsx(
-                "flex items-center gap-3 px-4 py-3 rounded-lg transition-all",
+                "flex items-center gap-3 px-4 py-3 rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
                 isActive
                     ? "nav-active text-white font-medium"
                     : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
             )}
         >
-            <Icon size={20} className={isActive ? "text-blue-400" : ""} />
+            <Icon size={20} className={isActive ? "text-blue-400" : ""} aria-hidden="true" />
             <span className="font-medium">{label}</span>
         </Link>
     );
@@ -71,9 +72,12 @@ export default function Layout({ children }) {
             <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-gray-950/90 backdrop-blur-md border-b border-gray-800 flex items-center px-4 z-40">
                 <button
                     onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                    className="p-2 text-gray-400 hover:text-white"
+                    className="p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"
+                    aria-label="Toggle mobile menu"
+                    aria-expanded={isMobileMenuOpen}
+                    aria-controls="mobile-sidebar"
                 >
-                    <Menu size={24} />
+                    <Menu size={24} aria-hidden="true" />
                 </button>
                 <div className="ml-4 flex items-center gap-2">
                     <img src={branding.logoUrl} alt="Logo" className="w-6 h-6" />
@@ -92,7 +96,7 @@ export default function Layout({ children }) {
             )}
 
             {/* Sidebar */}
-            <div className={clsx(
+            <div id="mobile-sidebar" className={clsx(
                 "fixed inset-y-0 left-0 z-50 w-64 bg-gray-950 border-r border-gray-800 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0",
                 isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
             )}>
@@ -108,11 +112,12 @@ export default function Layout({ children }) {
                     <button
                         onClick={() => setIsMobileMenuOpen(false)}
                         className={clsx(
-                            "lg:hidden text-gray-400 hover:text-white",
+                            "lg:hidden text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg p-1",
                             !isMobileMenuOpen && "hidden" // Ensure it's hidden when not in mobile menu mode if standard media queries fail
                         )}
+                        aria-label="Close mobile menu"
                     >
-                        <X size={24} />
+                        <X size={24} aria-hidden="true" />
                     </button>
                 </div>
 

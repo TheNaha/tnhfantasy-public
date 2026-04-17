@@ -50,3 +50,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-14 - Explicit Label Associations in Forms
 **Learning:** React components containing multiple form fields (like `PromptForm.jsx`) often lack explicit `htmlFor` and `id` bindings between `<label>` and their corresponding `<input>`, `<select>`, or `<textarea>` elements. While visually adjacent, screen readers cannot reliably associate them without these attributes, and mouse users lose the ability to click the label to focus the input.
 **Action:** Always use the `useId()` hook to generate unique, stable IDs for form fields and explicitly link them to their corresponding `<label>` elements using the `htmlFor` attribute.
+
+## 2026-04-17 - Accessible Layout Navigation Elements
+**Learning:** The main application layout (`Layout.jsx`) lacked comprehensive accessibility attributes on its primary navigation elements and mobile toggles, including missing `aria-current` for active links, no text alternative for the icon, and missing `aria-expanded`, `aria-controls`, and `aria-label` attributes on the mobile menu buttons, as well as an invisible keyboard focus.
+**Action:** Always ensure that layout navigation elements use `aria-current="page"` for the active state, explicit `focus-visible:ring-2` classes for keyboard users, `aria-hidden="true"` on decorative icons, and proper ARIA states (`aria-expanded`, `aria-controls`) for interactive mobile layout menus.
