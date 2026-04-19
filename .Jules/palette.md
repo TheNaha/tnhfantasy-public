@@ -50,3 +50,10 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-14 - Explicit Label Associations in Forms
 **Learning:** React components containing multiple form fields (like `PromptForm.jsx`) often lack explicit `htmlFor` and `id` bindings between `<label>` and their corresponding `<input>`, `<select>`, or `<textarea>` elements. While visually adjacent, screen readers cannot reliably associate them without these attributes, and mouse users lose the ability to click the label to focus the input.
 **Action:** Always use the `useId()` hook to generate unique, stable IDs for form fields and explicitly link them to their corresponding `<label>` elements using the `htmlFor` attribute.
+## 2024-05-27 - Accessibility in Metadata Modals
+**Learning:** Metadata modals often contain complex interactive elements like gallery thumbnails, interactive badges (like trigger words), and icon-only close buttons. These are frequently overlooked for accessibility, missing `aria-label`, `aria-pressed`, and clear keyboard focus states.
+**Action:** When implementing or updating complex modals (like `ModelMetadataModal`):
+1. Ensure icon-only buttons (like Close) have `aria-label` and `aria-hidden="true"` on the icon itself.
+2. For image galleries/thumbnails, treat them as toggleable selection buttons with `aria-label` and `aria-pressed`.
+3. For interactive badges (e.g., clickable trigger words that copy to clipboard), explicitly describe the action via `aria-label` (e.g., "Copy trigger word X") and hide decorative icons.
+4. Always ensure these interactive elements have clear `focus-visible` styles for keyboard users.
