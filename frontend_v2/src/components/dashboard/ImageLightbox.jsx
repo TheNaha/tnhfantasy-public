@@ -175,12 +175,14 @@ export default memo(function ImageLightbox({
                             <a
                                 href={`/api/view/output/${displayImage.name}`}
                                 download
+                                aria-label="Download image"
                                 className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                             >
                                 <Download size={16} /> Download
                             </a>
                             <button
                                 onClick={() => onDelete(displayImage.name)}
+                                aria-label="Delete image"
                                 className="flex-1 bg-red-900/20 hover:bg-red-900/40 text-red-400 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
                             >
                                 <Trash2 size={16} /> Delete
@@ -269,6 +271,7 @@ export default memo(function ImageLightbox({
                                 <button
                                     onClick={onReuseParameters}
                                     disabled={reuseInProgress}
+                                    aria-label="Reuse parameters from this image"
                                     className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-900/20"
                                 >
                                     {reuseInProgress ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}

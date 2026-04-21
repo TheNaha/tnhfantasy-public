@@ -50,3 +50,7 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-05-14 - Explicit Label Associations in Forms
 **Learning:** React components containing multiple form fields (like `PromptForm.jsx`) often lack explicit `htmlFor` and `id` bindings between `<label>` and their corresponding `<input>`, `<select>`, or `<textarea>` elements. While visually adjacent, screen readers cannot reliably associate them without these attributes, and mouse users lose the ability to click the label to focus the input.
 **Action:** Always use the `useId()` hook to generate unique, stable IDs for form fields and explicitly link them to their corresponding `<label>` elements using the `htmlFor` attribute.
+
+## 2024-05-27 - Action Buttons Context Accessibility
+**Learning:** Common action buttons placed in the footer of modals (like `JobDetailsModal.jsx`) or within image lightboxes (`ImageLightbox.jsx`) often lack adequate context for screen reader users when their visible text is brief or non-existent (e.g., "Cancel Job" might not be descriptive enough depending on the modal's context, or a button might only have an icon). Furthermore, buttons grouped closely together might lose context without an explicit `aria-label`.
+**Action:** Always provide explicit `aria-label` attributes to action buttons (like Delete, Cancel, Retry, Download, Reuse Parameters) within complex components or modals to ensure they describe the action within the specific context of the element they affect.
