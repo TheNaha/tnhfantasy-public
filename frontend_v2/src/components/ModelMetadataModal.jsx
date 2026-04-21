@@ -81,9 +81,10 @@ function ModelMetadataHeader({
             </div>
             <button
                 onClick={onClose}
-                className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors flex-shrink-0"
+                className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors flex-shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
+                aria-label="Close details"
             >
-                <X size={24} />
+                <X size={24} aria-hidden="true" />
             </button>
         </div>
     );
@@ -256,7 +257,9 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                     <button
                                         key={i}
                                         onClick={() => setActiveImage(img.url)}
-                                        className={`aspect-square rounded overflow-hidden border ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
+                                        aria-label={`View image ${i + 1}`}
+                                        aria-pressed={activeImage === img.url}
+                                        className={`aspect-square rounded overflow-hidden border focus-visible:ring-2 focus-visible:ring-blue-500 outline-none ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
                                     >
                                         <img
                                             src={img.url}
@@ -360,10 +363,11 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                         <button
                                             key={word}
                                             onClick={() => handleCopy(word, `word-${word}`)}
-                                            className="group flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-300 rounded-lg text-sm border border-blue-500/20 hover:bg-blue-500/20 transition-all"
+                                            aria-label={`Copy trigger word ${word}`}
+                                            className="group flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-300 rounded-lg text-sm border border-blue-500/20 hover:bg-blue-500/20 transition-all focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
                                         >
                                             {word}
-                                            {copied === `word-${word}` ? <Check size={12} /> : <Copy size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
+                                            {copied === `word-${word}` ? <Check size={12} aria-hidden="true" /> : <Copy size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />}
                                         </button>
                                     ))}
                                 </div>

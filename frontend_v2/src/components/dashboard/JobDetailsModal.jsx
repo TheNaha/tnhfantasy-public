@@ -270,6 +270,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     {(isPending || isProcessing) && (
                         <button
                             onClick={() => handleActionClick('cancel')}
+                            aria-label="Cancel this job"
                             className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
                         >
                             <X size={16} /> Cancel Job
@@ -278,6 +279,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     {(isCompleted || isFailed || isCancelled) && onDelete && (
                         <button
                             onClick={() => handleActionClick('delete')}
+                            aria-label="Remove this job from history"
                             className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
                         >
                             <Trash2 size={16} /> Remove from History
@@ -294,6 +296,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                                     toast.error(e.message || 'Failed to retry job');
                                 }
                             }}
+                            aria-label="Retry this job"
                             className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2"
                         >
                             <RefreshCw size={16} /> Retry Job
@@ -301,6 +304,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     )}
                     <button
                         onClick={onClose}
+                        aria-label="Close job details modal"
                         className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 rounded-lg text-sm font-medium"
                     >
                         Close
