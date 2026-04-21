@@ -436,6 +436,7 @@ const ModelSelector = memo(function ModelSelector({
                         setShowVersionDropdown(false);
                       }}
                       className="text-gray-500 hover:text-white"
+                      aria-label="Close version selector"
                     >
                       ✕
                     </button>
@@ -563,6 +564,7 @@ const ModelSelector = memo(function ModelSelector({
                                 }}
                                 className="p-1 hover:bg-gray-600 rounded text-gray-500 hover:text-yellow-400 transition-colors"
                                 title="Set as default version"
+                                aria-label="Set as default version"
                               >
                                 <Star size={14} />
                               </button>
@@ -953,6 +955,7 @@ const ModelSelector = memo(function ModelSelector({
                                   setExpandedModel(null);
                                 }}
                                 className="text-gray-500 hover:text-white text-xs"
+                                aria-label="Close version selector"
                               >
                                 ✕
                               </button>
