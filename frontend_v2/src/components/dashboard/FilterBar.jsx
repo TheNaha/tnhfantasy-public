@@ -6,6 +6,13 @@ import { useDebounce } from '../../hooks/useDebounce';
 export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
     const [isOpen, setIsOpen] = useState(false);
     const [localFilters, setLocalFilters] = useState(filters);
+    const [prevFilters, setPrevFilters] = useState(filters);
+
+    // ⚡ Bolt: Derived state during render to avoid cascading re-renders and react-hooks/set-state-in-effect error
+    if (filters !== prevFilters) {
+        setPrevFilters(filters);
+        setLocalFilters(filters);
+    }
 
     const searchId = useId();
     const modelId = useId();
@@ -15,11 +22,6 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
 
     // Debounced search value - waits 400ms after user stops typing
     const debouncedSearch = useDebounce(localFilters.search, 400);
-
-    // Sync local filters with prop
-    useEffect(() => {
-        setLocalFilters(filters);
-    }, [filters]);
 
     // Apply debounced search to parent
     useEffect(() => {

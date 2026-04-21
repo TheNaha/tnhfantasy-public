@@ -53,3 +53,17 @@ This journal tracks critical UX and accessibility learnings for the application.
 ## 2024-04-20 - Missing ARIA Labels on Icon-Only Buttons
 **Learning:** Found multiple instances where interactive elements like "close" buttons (using an "X" or "✕" text character without proper icons) and "star" icons for marking defaults were completely inaccessible to screen reader users because they lacked an `aria-label` attribute describing their function. This is a common pattern in the application's complex dropdown and modal logic.
 **Action:** When working on complex React components (e.g., custom dropdowns, nested toolbars), explicitly audit all elements with `role="button"` or `<button>` tags that rely entirely on generic symbols (like `✕` or `Icon`) to verify they have descriptive, context-aware `aria-label`s.
+## 2024-05-27 - Accessibility in Metadata Modals
+**Learning:** Metadata modals often contain complex interactive elements like gallery thumbnails, interactive badges (like trigger words), and icon-only close buttons. These are frequently overlooked for accessibility, missing `aria-label`, `aria-pressed`, and clear keyboard focus states.
+**Action:** When implementing or updating complex modals (like `ModelMetadataModal`):
+1. Ensure icon-only buttons (like Close) have `aria-label` and `aria-hidden="true"` on the icon itself.
+2. For image galleries/thumbnails, treat them as toggleable selection buttons with `aria-label` and `aria-pressed`.
+3. For interactive badges (e.g., clickable trigger words that copy to clipboard), explicitly describe the action via `aria-label` (e.g., "Copy trigger word X") and hide decorative icons.
+4. Always ensure these interactive elements have clear `focus-visible` styles for keyboard users.
+
+## 2026-04-17 - Accessible Layout Navigation Elements
+**Learning:** The main application layout (`Layout.jsx`) lacked comprehensive accessibility attributes on its primary navigation elements and mobile toggles, including missing `aria-current` for active links, no text alternative for the icon, and missing `aria-expanded`, `aria-controls`, and `aria-label` attributes on the mobile menu buttons, as well as an invisible keyboard focus.
+**Action:** Always ensure that layout navigation elements use `aria-current="page"` for the active state, explicit `focus-visible:ring-2` classes for keyboard users, `aria-hidden="true"` on decorative icons, and proper ARIA states (`aria-expanded`, `aria-controls`) for interactive mobile layout menus.
+## 2024-05-27 - Action Buttons Context Accessibility
+**Learning:** Common action buttons placed in the footer of modals (like `JobDetailsModal.jsx`) or within image lightboxes (`ImageLightbox.jsx`) often lack adequate context for screen reader users when their visible text is brief or non-existent (e.g., "Cancel Job" might not be descriptive enough depending on the modal's context, or a button might only have an icon). Furthermore, buttons grouped closely together might lose context without an explicit `aria-label`.
+**Action:** Always provide explicit `aria-label` attributes to action buttons (like Delete, Cancel, Retry, Download, Reuse Parameters) within complex components or modals to ensure they describe the action within the specific context of the element they affect.
