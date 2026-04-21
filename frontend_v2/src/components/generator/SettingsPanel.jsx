@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { Sparkles, Sliders } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useGeneratorStore } from '../../store/generatorStore';
 import NumberInput from '../common/NumberInput';
 
@@ -28,7 +29,31 @@ export default function SettingsPanel({ upscalerModels, adetailerModels }) {
         adetailerSteps, setAdetailerSteps,
         adetailerDenoise, setAdetailerDenoise,
         adetailerInpaintMasked, setAdetailerInpaintMasked
-    } = useGeneratorStore();
+    } = useGeneratorStore(useShallow(state => ({
+        seed: state.seed, setSeed: state.setSeed,
+        steps: state.steps, setSteps: state.setSteps,
+        cfg: state.cfg, setCfg: state.setCfg,
+        sampler: state.sampler, setSampler: state.setSampler,
+        scheduler: state.scheduler, setScheduler: state.setScheduler,
+        width: state.width, setWidth: state.setWidth,
+        height: state.height, setHeight: state.setHeight,
+        batchSize: state.batchSize, setBatchSize: state.setBatchSize,
+        aspectRatioLocked: state.aspectRatioLocked, setAspectRatioLocked: state.setAspectRatioLocked,
+
+        hiresFix: state.hiresFix, setHiresFix: state.setHiresFix,
+        hiresUpscaler: state.hiresUpscaler, setHiresUpscaler: state.setHiresUpscaler,
+        hiresDenoise: state.hiresDenoise, setHiresDenoise: state.setHiresDenoise,
+        hiresUpscale: state.hiresUpscale, setHiresUpscale: state.setHiresUpscale,
+        hiresSteps: state.hiresSteps, setHiresSteps: state.setHiresSteps,
+
+        adetailer: state.adetailer, setAdetailer: state.setAdetailer,
+        adetailerModel: state.adetailerModel, setAdetailerModel: state.setAdetailerModel,
+        adetailerPrompt: state.adetailerPrompt, setAdetailerPrompt: state.setAdetailerPrompt,
+        adetailerNegative: state.adetailerNegative, setAdetailerNegative: state.setAdetailerNegative,
+        adetailerSteps: state.adetailerSteps, setAdetailerSteps: state.setAdetailerSteps,
+        adetailerDenoise: state.adetailerDenoise, setAdetailerDenoise: state.setAdetailerDenoise,
+        adetailerInpaintMasked: state.adetailerInpaintMasked, setAdetailerInpaintMasked: state.setAdetailerInpaintMasked
+    })));
 
     const seedId = useId();
     const samplerId = useId();

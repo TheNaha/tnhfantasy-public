@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Save, Trash2, Settings, ChevronDown, Check, Plus, X } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useGeneratorStore } from '../../store/generatorStore';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../../store/confirmationStore';
@@ -16,7 +17,23 @@ export const PresetManager = () => {
         // Current params to save
         steps, cfg, sampler, scheduler, width, height,
         hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps
-    } = useGeneratorStore();
+    } = useGeneratorStore(useShallow(state => ({
+        savedPresets: state.savedPresets,
+        addPreset: state.addPreset,
+        removePreset: state.removePreset,
+        setAll: state.setAll,
+        steps: state.steps,
+        cfg: state.cfg,
+        sampler: state.sampler,
+        scheduler: state.scheduler,
+        width: state.width,
+        height: state.height,
+        hiresFix: state.hiresFix,
+        hiresUpscaler: state.hiresUpscaler,
+        hiresDenoise: state.hiresDenoise,
+        hiresUpscale: state.hiresUpscale,
+        hiresSteps: state.hiresSteps
+    })));
 
     const [isOpen, setIsOpen] = useState(false);
     const [showSaveForm, setShowSaveForm] = useState(false);
