@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, memo } from 'react';
+import { useState, useEffect, useId, memo, useMemo } from 'react';
 import { Filter, Calendar, Image as ImageIcon, Box, X, ChevronDown, Search } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 
@@ -52,7 +52,10 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
         setLocalFilters(prev => ({ ...prev, [key]: value }));
     };
 
-    const activeFilterCount = Object.keys(filters).filter(k => filters[k] && k !== 'search').length;
+    // ⚡ Bolt: Memoize active filter count calculation to prevent O(N) object key iteration and array filtering on every keystroke in the search bar
+    const activeFilterCount = useMemo(() => {
+        return Object.keys(filters).filter(k => filters[k] && k !== 'search').length;
+    }, [filters]);
 
     return (
         <div className="relative mb-6">
