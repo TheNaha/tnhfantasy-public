@@ -86,6 +86,20 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             healthy=True,
         )
 
+    provider_config = getattr(provider, "config", None) or {}
+    discovery_url = provider_config.get("discovery_url") if isinstance(provider_config, dict) else None
+    if discovery_url:
+        return ProviderRuntimeTarget(
+            provider_id=provider_id,
+            mode="discovery",
+            worker_url=discovery_url,
+            supports_setup=False,
+            supports_reconciliation=True,
+            connected=True,
+            status="discovered",
+            healthy=True,
+        )
+
     return ProviderRuntimeTarget(
         provider_id=provider_id,
         mode="unavailable",
@@ -114,7 +128,7 @@ async def run_reconciliation_for_all_providers():
                 continue
 
             runtime = resolve_provider_runtime(SimpleNamespace(**provider))
-            if runtime.mode != "container_http":
+            if runtime.mode not in ("container_http", "discovery"):
                 continue
 
             provider_id = provider.get("id")

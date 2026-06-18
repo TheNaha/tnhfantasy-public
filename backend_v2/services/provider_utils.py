@@ -11,7 +11,12 @@ RECONCILIATION_IN_PROGRESS_STATUSES = {"queued", "reconciling"}
 RECONCILIATION_TERMINAL_STATUSES = {"completed", "failed", "idle"}
 RUNTIME_CONFIG_KEY = "runtime_config"
 DEPLOY_CONFIG_KEY = "deploy_config"
-SUPPORTED_MANAGED_DEPLOY_TYPES = {"modal", "beam"}
+
+
+def _get_supported_managed_deploy_types():
+    """Lazily resolve supported deploy types from the provider registry."""
+    from infrastructure.providers.provider_registry import ProviderRegistry
+    return set(ProviderRegistry.get_all().keys())
 LEGACY_DEPLOY_CONFIG_FIELDS = {
     "app_name",
     "enable_memory_snapshot",
@@ -57,7 +62,7 @@ def mask_secret(value: Optional[str]) -> Optional[str]:
 
 
 def default_deploy_mode(provider_type: str) -> str:
-    return "managed" if provider_type in SUPPORTED_MANAGED_DEPLOY_TYPES else "manual"
+    return "managed" if provider_type in _get_supported_managed_deploy_types() else "manual"
 
 
 def default_deploy_targets(provider_type: str) -> List[Dict[str, Any]]:
@@ -135,7 +140,7 @@ def extract_runtime_config(provider_type: str, container_config: Any, config: Di
         runtime_config["worker"] = worker_config
 
     runtime_config.setdefault("mode", "container")
-    if provider_type in SUPPORTED_MANAGED_DEPLOY_TYPES:
+    if provider_type in _get_supported_managed_deploy_types():
         runtime_config.setdefault("port", runtime_config.get("port", 8000))
     return runtime_config
 

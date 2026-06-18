@@ -178,10 +178,10 @@ class ProviderStatusService:
 
         provider = provider or await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
-        if runtime.mode != "container_http":
+        if runtime.mode not in ("container_http", "discovery"):
             return self.empty_storage_payload(
                 provider_id,
-                "Stats are only available for container-backed providers",
+                "Stats are only available for container-backed or discovered providers",
             )
 
         container_manager = get_container_manager()
@@ -245,7 +245,7 @@ class ProviderStatusService:
         provider = provider or await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
 
-        if runtime.mode != "container_http":
+        if runtime.mode not in ("container_http", "discovery"):
             return self.normalize_reconciliation_for_card(persisted_state)
 
         http_client = get_http_client()

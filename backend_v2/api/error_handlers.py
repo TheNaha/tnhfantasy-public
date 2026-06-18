@@ -7,6 +7,7 @@ from core.exceptions import (
     ContainerError,
     DownloadError,
     JobError,
+    MissingModelsError,
     NotFoundError,
     ProviderError,
     ValidationError,
@@ -73,6 +74,21 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=500,
             content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(MissingModelsError)
+    async def missing_models_error_handler(request: Request, exc: MissingModelsError):
+        logger.error("missing_models_error", path=request.url.path, error=exc.message, code=exc.code)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": exc.message,
+                "code": exc.code,
+                "required_models": exc.required_models,
+                "global_missing": exc.global_missing,
+                "missing_by_provider": exc.missing_by_provider,
+                "can_trigger_download": exc.can_trigger_download,
+            },
         )
 
     @app.exception_handler(ComfyError)

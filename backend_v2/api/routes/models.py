@@ -436,6 +436,30 @@ async def update_file_provider_status(
     return result
 
 
+class RegisterDiscoveredRequest(BaseModel):
+    provider_id: str
+    files: List[Dict[str, Any]]
+
+
+@router.post("/register-discovered")
+async def register_discovered_models(
+    request: RegisterDiscoveredRequest,
+    session: Session = Depends(get_session)
+):
+    """Register files discovered on a provider's storage as database models.
+    
+    Called by workers during reconciliation when files exist on provider
+    storage but have no corresponding database entries. Creates ModelV2,
+    ModelVersion, ModelFile, and ProviderVersionStatus entries so the
+    files are recognized as installed models on subsequent reconciliation runs.
+    """
+    service = get_model_service(session)
+    return await service.register_discovered_files(
+        provider_id=request.provider_id,
+        files=request.files,
+    )
+
+
 # ============================================================================
 # RECONCILIATION ENDPOINTS
 # ============================================================================
@@ -811,7 +835,6 @@ async def receive_sync_progress(
     Backend emits WebSocket event to frontend.
     """
     from core.events import event_bus, Event, EventType
-    from core.entities import ModelStatus
     
     # Determine event type based on status
     if request.status == "downloading":
@@ -962,7 +985,25 @@ async def backfill_provider_statuses(
     }
     
     http_client = get_http_client()
-    from provider_core.models import MODEL_DIRECTORIES
+    
+    # Model directories matching provider_core/models.py MODEL_DIRECTORIES
+    MODEL_DIRECTORIES = [
+        "models/checkpoints",
+        "models/loras",
+        "models/vae",
+        "models/controlnet",
+        "models/unet",
+        "models/clip",
+        "models/upscale_models",
+        "models/embeddings",
+        "models/hypernetworks",
+        "models/aesthetics",
+        "models/poses",
+        "models/wildcards",
+        "models/ultralytics/bbox",
+        "models/motion_modules",
+    ]
+    
     import asyncio
     
     tasks = []
@@ -997,7 +1038,7 @@ async def backfill_provider_statuses(
     
     for provider in providers:
         runtime = resolve_provider_runtime(provider)
-        if runtime.mode != "container_http":
+        if runtime.mode not in ("container_http", "discovery"):
             continue
 
         worker_url = runtime.worker_url

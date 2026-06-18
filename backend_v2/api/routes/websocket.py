@@ -203,7 +203,7 @@ async def cancel_job(sid, data):
                     provider = await provider_service.get_provider(job.provider_id)
                     runtime = resolve_provider_runtime(provider)
 
-                    if runtime.mode == "container_http":
+                    if runtime.mode in ("container_http", "discovery"):
                         try:
                             http_client = get_http_client()
                             response = await http_client.post(

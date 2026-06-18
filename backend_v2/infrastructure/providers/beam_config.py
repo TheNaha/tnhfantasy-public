@@ -7,19 +7,29 @@ from .provider_registry import ProviderTypeConfig, ProviderRegistry
 from .beam_provider import BeamProvider
 
 
+def _clean_dict(d):
+    """Return a new dict with only string keys and non-None values."""
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str)}
+
+
 def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
     """
     Build environment variables for Beam worker container.
-    
+
+    This is the single source of truth for Beam env vars.
+    Called by provider_env_builder for container startup and by the registry for validation.
+
     Args:
         credentials: Provider credentials (api_key, workspace_id, hf_token, civitai_token)
-        config: Provider config (gpu_url, storage_url, gpu_type)
-        
+        config: Provider config dict (may include nested runtime_config / deploy_config keys)
+
     Returns:
         Environment variables dict
     """
-    env_vars = {}
-    
+    env_vars: Dict[str, str] = {}
+
     # Core config
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
@@ -31,23 +41,84 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
         env_vars["BEAM_API_KEY"] = credentials["api_key"]
     if credentials.get("workspace_id"):
         env_vars["BEAM_WORKSPACE_ID"] = credentials["workspace_id"]
-    
-    # Beam endpoint URLs (new dual-endpoint architecture)
-    if config.get("gpu_url"):
-        env_vars["BEAM_GPU_URL"] = config["gpu_url"]
-    if config.get("storage_url"):
-        env_vars["BEAM_STORAGE_URL"] = config["storage_url"]
-    
-    # GPU type for reference
-    if config.get("gpu_type"):
-        env_vars["BEAM_GPU_TYPE"] = config["gpu_type"]
-    
+
+    beta9_token = credentials.get("beta9_token") or credentials.get("api_key")
+    if beta9_token:
+        env_vars["BETA9_TOKEN"] = beta9_token
+        env_vars["BEAM_TOKEN"] = beta9_token
+
     # Download tokens
     if credentials.get("hf_token"):
         env_vars["HF_TOKEN"] = credentials["hf_token"]
     if credentials.get("civitai_token"):
         env_vars["CIVITAI_TOKEN"] = credentials["civitai_token"]
-    
+
+    deploy = _clean_dict(config.get("deploy_config") or config)
+
+    beta9_gateway_host = (
+        deploy.get("beta9_gateway_host")
+        or deploy.get("gateway_host")
+        or "gateway.beam.cloud"
+    )
+    beta9_gateway_port = (
+        deploy.get("beta9_gateway_port")
+        or deploy.get("gateway_port")
+        or 443
+    )
+    env_vars["BETA9_GATEWAY_HOST"] = str(beta9_gateway_host)
+    env_vars["BETA9_GATEWAY_PORT"] = str(beta9_gateway_port)
+    env_vars["GATEWAY_HOST"] = str(beta9_gateway_host)
+    env_vars["GATEWAY_PORT"] = str(beta9_gateway_port)
+
+    beta9_api_host = deploy.get("api_host") or "app.beam.cloud"
+    beta9_api_port = deploy.get("api_port") or 443
+    env_vars["API_HOST"] = str(beta9_api_host)
+    env_vars["API_PORT"] = str(beta9_api_port)
+
+    if "gpu_url" in deploy:
+        env_vars["BEAM_GPU_URL"] = deploy["gpu_url"]
+    if "storage_url" in deploy:
+        env_vars["BEAM_STORAGE_URL"] = deploy["storage_url"]
+    if "download_url" in deploy:
+        env_vars["BEAM_DOWNLOAD_URL"] = deploy["download_url"]
+    if "gpu_type" in deploy:
+        env_vars["BEAM_GPU_TYPE"] = deploy["gpu_type"]
+
+    beam_functions = _clean_dict(deploy.get("functions"))
+    gpu_func = _clean_dict(beam_functions.get("comfyui"))
+    if "gpu_type" in gpu_func:
+        env_vars["BEAM_GPU_TYPE"] = gpu_func["gpu_type"]
+    if "cpu" in gpu_func:
+        env_vars["BEAM_GPU_CPU"] = str(gpu_func["cpu"])
+    if "memory" in gpu_func:
+        env_vars["BEAM_GPU_MEMORY"] = str(gpu_func["memory"])
+    if "timeout_seconds" in gpu_func:
+        env_vars["BEAM_GPU_TIMEOUT"] = str(gpu_func["timeout_seconds"])
+    if "keep_warm_seconds" in gpu_func:
+        env_vars["BEAM_GPU_KEEP_WARM"] = str(gpu_func["keep_warm_seconds"])
+    if "concurrent_requests" in gpu_func:
+        env_vars["BEAM_GPU_CONCURRENT"] = str(gpu_func["concurrent_requests"])
+
+    download = _clean_dict(beam_functions.get("download"))
+    if "cpu" in download:
+        env_vars["BEAM_DOWNLOAD_CPU"] = str(download["cpu"])
+    if "memory" in download:
+        env_vars["BEAM_DOWNLOAD_MEMORY"] = str(download["memory"])
+    if "timeout_seconds" in download:
+        env_vars["BEAM_DOWNLOAD_TIMEOUT"] = str(download["timeout_seconds"])
+    if "max_containers" in download:
+        env_vars["BEAM_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
+
+    storage = _clean_dict(beam_functions.get("storage"))
+    if "cpu" in storage:
+        env_vars["BEAM_STORAGE_CPU"] = str(storage["cpu"])
+    if "memory" in storage:
+        env_vars["BEAM_STORAGE_MEMORY"] = str(storage["memory"])
+    if "timeout_seconds" in storage:
+        env_vars["BEAM_STORAGE_TIMEOUT"] = str(storage["timeout_seconds"])
+    if "concurrent_requests" in storage:
+        env_vars["BEAM_STORAGE_CONCURRENT"] = str(storage["concurrent_requests"])
+
     return env_vars
 
 

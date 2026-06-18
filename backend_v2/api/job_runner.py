@@ -33,7 +33,7 @@ async def _get_job_status(job_service, job_id: str):
 async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
     """Best-effort cancellation request to the active provider runtime."""
     try:
-        if runtime.mode == "container_http" and runtime.worker_url:
+        if runtime.mode in ("container_http", "discovery") and runtime.worker_url:
             http_client = get_http_client()
             response = await http_client.post(
                 f"{runtime.worker_url}/cancel-job",
@@ -175,7 +175,7 @@ async def execute_job(
             use_snapshot = provider_config.get("enable_memory_snapshot", False)
 
             try:
-                if runtime.mode == "container_http":
+                if runtime.mode in ("container_http", "discovery"):
                     # call_provider_fn already enforces stream/client timeout semantics.
                     # Avoid double-wrapping with asyncio.wait_for to keep timeout ownership clear.
                     final_result = await call_provider_fn(

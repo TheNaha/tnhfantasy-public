@@ -28,7 +28,8 @@ export const useBrandingStore = create((set, get) => ({
             };
             set({ branding: nextBranding, isLoading: false, initialized: true });
             return nextBranding;
-        } catch {
+        } catch (error) {
+            console.warn('Failed to load branding settings:', error);
             set({ isLoading: false, initialized: true });
             return get().branding;
         }

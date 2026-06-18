@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from sqlmodel import Session
 from typing import Optional
 
+from api.deps import get_session
+from services.provider_service import ProviderService
 from infrastructure.logging import get_logger
 
 logger = get_logger("discovery_router")
@@ -16,17 +19,28 @@ class DiscoveryPayload(BaseModel):
     hostname: str
 
 @router.post("/discovery")
-async def handle_provider_discovery(payload: DiscoveryPayload, request: Request):
+async def handle_provider_discovery(
+    payload: DiscoveryPayload,
+    request: Request,
+    session: Session = Depends(get_session),
+):
     """
     Receive heartbeat/registration from self-discovering providers.
+    
+    Upserts the provider record in the database so that live provider
+    containers are automatically registered. Providers that are never
+    discovered are excluded from the active provider list.
     """
-    logger.info("provider_discovered", 
-                provider_id=payload.provider_id, 
-                provider_type=payload.provider_type, 
+    logger.info("provider_discovered",
+                provider_id=payload.provider_id,
+                provider_type=payload.provider_type,
                 url=payload.internal_url)
-    
-    # In a full implementation, this would upsert the provider into the database
-    # and mark it as ONLINE in the ProviderStatusService.
-    # For now, we log it, and the backend relies on internal DNS to reach it.
-    
+
+    service = ProviderService(session)
+    await service.upsert_provider_from_discovery(
+        provider_id=payload.provider_id,
+        provider_type=payload.provider_type,
+        internal_url=payload.internal_url,
+    )
+
     return {"status": "registered", "provider_id": payload.provider_id}

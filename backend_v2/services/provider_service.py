@@ -21,7 +21,7 @@ from services.provider_utils import (
     mask_secret,
     default_deploy_mode,
     default_deploy_targets,
-    SUPPORTED_MANAGED_DEPLOY_TYPES,
+    _get_supported_managed_deploy_types,
     read_deploy_state,
     read_reconciliation_state,
     normalize_reconciliation_status,
@@ -127,7 +127,7 @@ class ProviderService:
         deploy_config: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Optional[str]]]:
         deploy_mode = deploy_config.get("deploy_mode", default_deploy_mode(provider.type))
-        managed_deploy = deploy_mode == "managed" and provider.type in SUPPORTED_MANAGED_DEPLOY_TYPES
+        managed_deploy = deploy_mode == "managed" and provider.type in _get_supported_managed_deploy_types()
         runtime_available = runtime_config is not None
 
         capabilities = {
@@ -222,7 +222,14 @@ class ProviderService:
     
     async def list_providers(self) -> List[Dict[str, Any]]:
         providers = self.repo.get_all()
-        return [self._provider_to_dict(ensure_provider_v2_shape(p)) for p in providers]
+        result = [self._provider_to_dict(ensure_provider_v2_shape(p)) for p in providers]
+        # Sort: discovered (live) providers first, then by priority
+        result.sort(key=lambda d: (
+            0 if d.get("runtime_state", {}).get("discovered") else 1,
+            d.get("runtime_state", {}).get("last_seen_at", "") or "",
+            d.get("priority", 1),
+        ))
+        return result
     
     def get_enabled_providers(self) -> List[Provider]:
         return self.repo.get_enabled()
@@ -285,6 +292,44 @@ class ProviderService:
         
         return True
     
+    async def upsert_provider_from_discovery(
+        self,
+        provider_id: str,
+        provider_type: str,
+        internal_url: str,
+    ) -> Provider:
+        """Create or update a provider record from a live discovery heartbeat.
+        
+        This is the mechanism by which external provider containers register
+        themselves with the backend. Providers that are never discovered are
+        excluded from the active provider list.
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+
+        existing = self.repo.get(provider_id)
+        if existing:
+            config = dict(existing.config or {})
+            config["last_seen_at"] = now
+            config["discovery_url"] = internal_url
+            self.repo.update(provider_id, {"config": config})
+            logger.info("provider_discovery_updated", provider_id=provider_id, url=internal_url)
+            return ensure_provider_v2_shape(existing)
+
+        provider = self.repo.create({
+            "id": provider_id,
+            "type": provider_type,
+            "enabled": True,
+            "priority": 1,
+            "config": {
+                "last_seen_at": now,
+                "discovery_url": internal_url,
+                "discovered": True,
+            },
+        })
+        logger.info("provider_discovery_created", provider_id=provider_id, type=provider_type, url=internal_url)
+        return ensure_provider_v2_shape(provider)
+
     def get_load_balancing_config(self) -> LoadBalancingConfig:
         return self.lb_repo.get()
     
@@ -304,6 +349,7 @@ class ProviderService:
             runtime_config=runtime_config,
             deploy_config=deploy_config,
         )
+        provider_config = clean_dict(provider.config or {})
         return {
             "id": provider.id,
             "type": provider.type,
@@ -322,6 +368,9 @@ class ProviderService:
                 "supports_reconciliation": runtime.supports_reconciliation,
                 "worker_url": runtime.worker_url,
                 "container_name": runtime.container_name,
+                "discovered": bool(provider_config.get("discovered") or provider_config.get("last_seen_at")),
+                "last_seen_at": provider_config.get("last_seen_at"),
+                "discovery_url": provider_config.get("discovery_url"),
             },
             "capabilities": capabilities,
             "capability_reasons": capability_reasons,
@@ -346,4 +395,4 @@ class ProviderService:
             self.session,
             strategy=config.strategy if config else None,
         )
-        return load_balancer.get_stats()
+        return await load_balancer.get_stats()

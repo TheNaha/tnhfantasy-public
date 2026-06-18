@@ -64,7 +64,13 @@ def autostart_provider_containers() -> None:
 
 
 def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120) -> None:
-    """Remove orphaned provider statuses and reset stale downloading entries."""
+    """Reset stale downloading entries and clean orphaned provider statuses.
+    
+    Does NOT purge provider records — let the discovery heartbeat system
+    (POST /api/v2/providers/discovery) upsert live provider records.
+    Providers from old backups are harmless; they get overwritten when
+    the live container sends its first discovery heartbeat.
+    """
     try:
         from infrastructure.repositories import ProviderRepository
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
@@ -72,7 +78,8 @@ def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120)
         session = get_session_sync()
         try:
             provider_repo = ProviderRepository(session)
-            active_provider_ids = [provider.id for provider in provider_repo.get_all()]
+            all_providers = provider_repo.get_all()
+            active_provider_ids = [p.id for p in all_providers]
 
             model_repo = ModelRepositoryV2(session)
             orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)

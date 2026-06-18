@@ -781,28 +781,29 @@ async def upload_mask_image(
             active_providers.append({"id": p_id, "worker_url": worker_url})
         
         if active_providers:
-            async with aiohttp.ClientSession() as http:
-                payload = {
-                    "filename": mask_filename,
-                    "content_base64": base64.b64encode(content).decode(),
-                    "directory": "input"
-                }
+            from infrastructure.http_client import get_http_client
+            http = get_http_client()
+            payload = {
+                "filename": mask_filename,
+                "content_base64": base64.b64encode(content).decode(),
+                "directory": "input"
+            }
+            
+            for provider in active_providers:
+                worker_url = provider["worker_url"]
+                provider_id = provider["id"]
                 
-                for provider in active_providers:
-                    worker_url = provider["worker_url"]
-                    provider_id = provider["id"]
-                    
-                    try:
-                        async with http.post(
-                            f"{worker_url}/upload-file",
-                            json=payload,
-                            timeout=aiohttp.ClientTimeout(total=30)
-                        ) as response:
-                            if response.status == 200:
-                                synced_count += 1
-                                logger.info("upload_mask_synced", filename=mask_filename, provider_id=provider_id)
-                    except Exception as e:
-                        logger.warning("upload_mask_sync_error", provider_id=provider_id, error=str(e))
+                try:
+                    response = await http.post(
+                        f"{worker_url}/upload-file",
+                        json=payload,
+                        timeout=30
+                    )
+                    if response.status_code == 200:
+                        synced_count += 1
+                        logger.info("upload_mask_synced", filename=mask_filename, provider_id=provider_id)
+                except Exception as e:
+                    logger.warning("upload_mask_sync_error", provider_id=provider_id, error=str(e))
             
             if synced_count > 0:
                 sync_status = "synced"

@@ -45,7 +45,7 @@ export default function InpaintGenerator() {
         prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
         sourceImage, denoise, maskImage, maskBlur,
         selectedCheckpoint, selectedVae, selectedLoras,
-        setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler,
+        setSeed, setSteps, setCfg, setSampler, setScheduler,
         setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
@@ -64,8 +64,6 @@ export default function InpaintGenerator() {
         selectedCheckpoint: state.selectedCheckpoint,
         selectedVae: state.selectedVae,
         selectedLoras: state.selectedLoras,
-        setPrompt: state.setPrompt,
-        setNegativePrompt: state.setNegativePrompt,
         setSeed: state.setSeed,
         setSteps: state.setSteps,
         setCfg: state.setCfg,

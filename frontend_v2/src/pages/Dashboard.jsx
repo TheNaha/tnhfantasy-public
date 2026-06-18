@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Image as ImageIcon, Loader2, Trash2, RefreshCw, Check, LayoutGrid, List, Square, Star, FolderOpen, BarChart3, LineChart } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Image as ImageIcon, Loader2, Trash2, RefreshCw, Check, LayoutGrid, List, Square, Star, FolderOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -50,7 +50,6 @@ export default function Dashboard() {
     const autoRefreshOnJobComplete = useSettingsStore((state) => state.settings.gallery.autoRefreshOnJobComplete);
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
-    const updateSetting = useSettingsStore((state) => state.updateSetting);
     // Global State - now uses WebSocket for real-time updates
     const activeJobs = useJobStore((state) => state.jobs);
     const cancelJob = useJobStore((state) => state.cancelJob);
@@ -156,7 +155,7 @@ export default function Dashboard() {
 
     const handleJobDetailsClose = useCallback(() => setSelectedJobId(null), [setSelectedJobId]);
 
-    const lightboxImages = React.useMemo(() => {
+    const lightboxImages = useMemo(() => {
         if (!selectedImage) return [];
         return selectedImage.siblingImages || [selectedImage];
     }, [selectedImage]);

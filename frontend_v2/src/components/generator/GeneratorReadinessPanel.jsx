@@ -1,10 +1,8 @@
 import { AlertTriangle, CheckCircle2, Loader2, Server } from 'lucide-react';
+import { summarizeProviderStatus } from '../../utils/providerStatus';
 
 function countOnlineProviders(providers = []) {
-    return providers.filter((provider) => {
-        const status = provider.runtime_state?.status;
-        return provider.enabled && ['running', 'active', 'connected'].includes(status);
-    }).length;
+    return providers.filter((provider) => summarizeProviderStatus(provider).isOnline).length;
 }
 
 export default function GeneratorReadinessPanel({

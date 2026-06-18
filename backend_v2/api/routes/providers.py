@@ -105,11 +105,11 @@ def get_model_cache_for_directory(
 # ============================================================================
 
 @router.get("/config/load-balancing")
-def get_load_balancing_config(session: Session = Depends(get_session)):
+async def get_load_balancing_config(session: Session = Depends(get_session)):
     """Get load balancing configuration with stats."""
     service = get_provider_service(session)
     config = service.get_load_balancing_config()
-    stats = service.get_load_balancer_stats()
+    stats = await service.get_load_balancer_stats()
     return {
         "config": {
             "strategy": config.strategy,
@@ -139,15 +139,15 @@ async def update_load_balancing_config(
 async def get_load_balancer_stats(session: Session = Depends(get_session)):
     """Get load balancer statistics."""
     service = get_provider_service(session)
-    stats = service.get_load_balancer_stats()
+    stats = await service.get_load_balancer_stats()
     return stats
 
 
 # Alias paths for frontend compatibility
 @router.get("/load-balancing")
-def get_load_balancing_alias(session: Session = Depends(get_session)):
+async def get_load_balancing_alias(session: Session = Depends(get_session)):
     """Alias for /config/load-balancing."""
-    return get_load_balancing_config(session)
+    return await get_load_balancing_config(session)
 
 
 @router.put("/load-balancing")
