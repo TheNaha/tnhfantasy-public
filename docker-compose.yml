@@ -10,20 +10,13 @@ services:
       - ./output:/app/output
       - ./backend_v2:/app
       - ./provider_containers:/app/provider_containers
-      # Docker socket mount:
-      # - Windows: Use //var/run/docker.sock:/var/run/docker.sock
-      # - Linux with Docker: /var/run/docker.sock:/var/run/docker.sock
-      # - Linux with Podman: /var/run/docker.sock:/run/podman/podman.sock
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Docker socket mount removed for security. Backend no longer spawns containers.
     env_file:
       - .env # Create .env file with HF_TOKEN, CIVITAI_TOKEN
     environment:
       - OUTPUT_DIR=/app/output
       - INPUT_DIR=/app/input
       - COMFY_UVICORN_RELOAD=1
-    privileged: true
-    security_opt:
-      - label=disable
     networks:
       - comfy-network
       - metrics
@@ -57,6 +50,40 @@ services:
       - comfy-network
       - proxy
     restart: unless-stopped
+
+  provider-modal:
+    build:
+      context: ./provider_containers
+      dockerfile: modal_worker/Dockerfile
+    container_name: comfy-provider-modal
+    env_file:
+      - .env
+    environment:
+      - PROVIDER_ID=modal-primary-test
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+    networks:
+      - comfy-network
+    restart: unless-stopped
+    volumes:
+      - ./backend_v2:/backend:ro
+
+  provider-beam:
+    build:
+      context: ./provider_containers
+      dockerfile: beam_worker/Dockerfile
+    container_name: comfy-provider-beam
+    env_file:
+      - .env
+    environment:
+      - PROVIDER_ID=beam-worker-test
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+    networks:
+      - comfy-network
+    restart: unless-stopped
+    volumes:
+      - ./backend_v2:/backend:ro
 
 volumes:
   frontend_v2_node_modules:

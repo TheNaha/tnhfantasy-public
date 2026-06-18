@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, or_
 from sqlalchemy import text
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from api.deps import get_session
@@ -218,7 +218,7 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
     for key, value in update_data.items():
         setattr(prompt, key, value)
     
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = datetime.now(timezone.utc)
     session.add(prompt)
     session.commit()
     session.refresh(prompt)
@@ -272,7 +272,7 @@ async def increment_usage(prompt_id: int, session: Session = Depends(get_session
         raise HTTPException(status_code=404, detail="Prompt not found")
     
     prompt.usage_count += 1
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = datetime.now(timezone.utc)
     session.add(prompt)
     session.commit()
     

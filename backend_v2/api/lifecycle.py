@@ -135,7 +135,7 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
     schedule_vacuum(vacuum_database, interval_seconds=86400)
-    from api.routes.models_v2 import (
+    from api.routes.models import (
         PREVIEW_PREFETCH_INTERVAL_SECONDS,
         prefetch_stale_model_previews,
     )

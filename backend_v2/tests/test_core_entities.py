@@ -5,7 +5,6 @@ from sqlmodel import SQLModel
 from core.entities import (
     Job, JobStatus,
     Provider,
-    Model, ModelStatus,
     Download,
     LoadBalancingConfig,
     LoadBalancerState,
@@ -83,34 +82,6 @@ def test_provider_defaults():
     assert provider.credentials == {}
     assert provider.config == {}
     assert provider.container_config is None
-
-
-# ============================================================================
-# Model Tests
-# ============================================================================
-
-def test_model_status_enum():
-    """Test ModelStatus enum values."""
-    assert ModelStatus.PENDING == "pending"
-    assert ModelStatus.DOWNLOADING == "downloading"
-    assert ModelStatus.INSTALLED == "installed"
-    assert ModelStatus.FAILED == "failed"
-    assert ModelStatus.DELETING == "deleting"
-
-
-def test_model_defaults():
-    """Test default values for Model entity."""
-    # Model requires name and directory
-    model = Model(name="test.safetensors", directory="checkpoints")
-
-    assert model.name == "test.safetensors"
-    assert model.directory == "checkpoints"
-    assert model.url is None
-    assert model.source == "custom"
-    assert model.metadata_ == {}
-    assert model.provider_statuses == {}
-    assert isinstance(model.created_at, datetime)
-    assert isinstance(model.updated_at, datetime)
 
 
 # ============================================================================

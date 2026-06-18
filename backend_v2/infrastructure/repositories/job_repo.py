@@ -3,7 +3,7 @@ from sqlmodel import Session, select, col
 from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import aliased
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.entities import Job, JobStatus
 from core.dtos import JobQueueItem
@@ -163,7 +163,7 @@ class JobRepository:
             if hasattr(job, key):
                 setattr(job, key, value)
         
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(timezone.utc)
         self.session.commit()
         self.session.refresh(job)
         return job

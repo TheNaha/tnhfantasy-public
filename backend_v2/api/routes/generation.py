@@ -43,6 +43,58 @@ class GenerateBatchRequest(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class SaveImageRequest(BaseModel):
+    """Request to save a generated image from worker."""
+    image_base64: str
+    job_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    filename: Optional[str] = None
+    batch_index: int = 0
+
+
+@router.post("/providers/save-image")
+async def save_generated_image(request: SaveImageRequest):
+    """
+    Receive generated image from worker and save with metadata.
+    
+    Called by worker containers after ComfyUI generates an image.
+    Uses ImageService to:
+    - Save to date-based folder structure (output/YYYY/MM/DD/)
+    - Embed metadata in PNG chunks
+    - Generate WebP thumbnail
+    - Generate blurhash for placeholder
+    
+    Returns saved image info for frontend display.
+    """
+    import base64
+    from fastapi import HTTPException
+    import asyncio
+    from services.image_service import get_image_service
+    
+    try:
+        image_data = base64.b64decode(request.image_base64, validate=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
+
+    service = get_image_service()
+    
+    result = await service.save_generated_image(
+        image_data=image_data,
+        metadata=request.metadata,
+        job_id=request.job_id,
+        filename=request.filename,
+        batch_index=request.batch_index
+    )
+    
+    try:
+        from services.gallery_indexer import gallery_indexer
+        await asyncio.to_thread(gallery_indexer.add_file, result['path'])
+    except Exception as e:
+        logger.error(f"Error updating gallery indexer: {e}")
+
+    return result
+
+
 @router.post("/generate")
 async def generate(
     request: GenerateRequest,

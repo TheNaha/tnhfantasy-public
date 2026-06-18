@@ -3,7 +3,7 @@ from sqlmodel import Session, select, col, and_, or_
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from typing import Optional, List, Dict, Any, Tuple, Union
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from core.entities_v2 import (
@@ -670,7 +670,7 @@ class ModelRepositoryV2:
                 existing.provider_name = provider_name
             existing.status = status
             if status == "downloading":
-                existing.queued_at = datetime.utcnow()
+                existing.queued_at = datetime.now(timezone.utc)
             if storage_path:
                 existing.storage_path = storage_path
             if size_bytes:
@@ -680,7 +680,7 @@ class ModelRepositoryV2:
             elif status != "failed":
                 existing.error_message = None
             if status == "ready":
-                existing.downloaded_at = datetime.utcnow()
+                existing.downloaded_at = datetime.now(timezone.utc)
             elif status == "failed":
                 existing.retry_count += 1
             self.session.commit()
@@ -695,8 +695,8 @@ class ModelRepositoryV2:
                 storage_path=storage_path,
                 size_bytes=size_bytes,
                 error_message=error_message,
-                queued_at=datetime.utcnow(),
-                downloaded_at=datetime.utcnow() if status == "ready" else None,
+                queued_at=datetime.now(timezone.utc),
+                downloaded_at=datetime.now(timezone.utc) if status == "ready" else None,
                 retry_count=0
             )
             self.session.add(new_status)
@@ -825,7 +825,7 @@ class ModelRepositoryV2:
         if not stale_statuses:
             return 0
 
-        reset_at = datetime.utcnow()
+        reset_at = datetime.now(timezone.utc)
         for status in stale_statuses:
             status.status = "pending"
             status.queued_at = reset_at

@@ -11,9 +11,15 @@ def start_background_task(
     coro: Awaitable[Any],
     *,
     task_name: str,
+    timeout: float = 300.0,
 ):
-    """Start a background task with exception logging and lifecycle tracking."""
-    task = asyncio.create_task(coro, name=task_name)
+    """Start a background task with exception logging, tracking, and timeouts."""
+    async def _run_with_timeout():
+        if timeout:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        return await coro
+
+    task = asyncio.create_task(_run_with_timeout(), name=task_name)
     _background_tasks.add(task)
 
     def _on_done(done_task: asyncio.Task[Any]) -> None:
@@ -22,6 +28,8 @@ def start_background_task(
             done_task.result()
         except asyncio.CancelledError:
             logger.debug("background_task_cancelled", task_name=task_name)
+        except asyncio.TimeoutError:
+            logger.error("background_task_timeout", task_name=task_name, timeout=timeout)
         except Exception as exc:
             logger.error("background_task_failed", task_name=task_name, error=str(exc))
 

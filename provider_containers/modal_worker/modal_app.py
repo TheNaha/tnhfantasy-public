@@ -529,8 +529,6 @@ class ComfyUISnapshot:
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, info: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
-    import time
-
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
@@ -539,7 +537,6 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
         return {"status": "error", "error": "Invalid path"}
 
     # Progress tracking
-    import json
     progress_dir = "/mnt/data/downloads"
     os.makedirs(progress_dir, exist_ok=True)
     safe_name = os.path.basename(path)
@@ -635,9 +632,6 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 def list_models_with_metadata(directory: str):
-    import os
-    import json
-    
     base_path = "/mnt/data"
 
     try:
@@ -708,10 +702,6 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
     Checks: minimum size, magic bytes, partial downloads.
     Returns: aggregated results for all directories.
     """
-    import os
-    import concurrent.futures
-    import functools
-    
     # ensure directories is a list
     if isinstance(directories, str):
         directories = [directories]

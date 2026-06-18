@@ -40,6 +40,16 @@ class ValidationError(ComfyError):
         super().__init__(message=message, code="VALIDATION_ERROR")
         self.field = field
 
+class MissingModelsError(ComfyError):
+    """Workflow requires models that are not available."""
+    def __init__(self, required_models: dict, global_missing: dict, missing_by_provider: dict, can_trigger_download: bool):
+        super().__init__(message="No provider has all required models installed", code="MISSING_MODELS")
+        self.required_models = required_models
+        self.global_missing = global_missing
+        self.missing_by_provider = missing_by_provider
+        self.can_trigger_download = can_trigger_download
+
+
 
 class ProviderError(ComfyError):
     """Provider-related error."""

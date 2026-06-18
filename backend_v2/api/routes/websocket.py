@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, Set, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.events import event_bus, Event, EventType
 from config import settings
@@ -113,7 +113,7 @@ async def connect(sid, environ):
     # Send welcome message with connection info
     await sio.emit('connected', {
         'sid': sid,
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'message': 'Connected to ComfyUI WebSocket'
     }, room=sid)
 
@@ -262,7 +262,7 @@ async def cancel_job(sid, data):
 @sio.event
 async def ping(sid, data):
     """Handle ping for connection keepalive."""
-    await sio.emit('pong', {'timestamp': datetime.utcnow().isoformat()}, room=sid)
+    await sio.emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()}, room=sid)
 
 
 # ============================================================================

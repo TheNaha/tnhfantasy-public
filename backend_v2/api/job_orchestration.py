@@ -45,8 +45,9 @@ async def select_next_provider(
     required_models: Optional[dict] = None,
 ) -> Optional[Provider]:
     """Select the next provider or fail the job when no providers remain."""
-    provider = load_balancer.get_next_provider(
-        preferred_provider_id,
+    provider = await asyncio.to_thread(
+        load_balancer.get_next_provider,
+        preferred_provider_id=preferred_provider_id,
         required_models=required_models,
         exclude_provider_ids=exhausted_providers,
     )

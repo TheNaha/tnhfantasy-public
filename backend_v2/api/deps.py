@@ -65,7 +65,7 @@ def get_provider_service(session: Session) -> ProviderService:
 
 def get_model_service_v2(session: Session):
     """Get model service V2 instance."""
-    from services.model_service_v2 import ModelServiceV2
+    from services.model_service import ModelServiceV2
     return ModelServiceV2(session)
 
 

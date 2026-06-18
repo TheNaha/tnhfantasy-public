@@ -44,6 +44,7 @@ from provider_core import (
     run_reconciliation_v2,
     # Background
     reconciliation_loop,
+    auto_discovery_loop,
     log_startup_info,
     get_job_tracker,
     build_deploy_compatibility_response,
@@ -114,6 +115,16 @@ async def lifespan(app: FastAPI):
                 BACKEND_URL,
                 interval_seconds=int(runtime_config.get("reconciliation_interval_seconds") or RECONCILIATION_INTERVAL_SECONDS),
                 startup_delay_seconds=int(runtime_config.get("reconciliation_startup_delay_seconds") or RECONCILIATION_STARTUP_DELAY_SECONDS),
+            )
+        )
+    )
+    
+    _background_tasks.append(
+        asyncio.create_task(
+            auto_discovery_loop(
+                provider_id=PROVIDER_ID,
+                provider_type="modal",
+                backend_url=BACKEND_URL,
             )
         )
     )

@@ -9,7 +9,6 @@ import { useBrandingStore } from '../store/brandingStore';
 
 
 export default function Settings() {
-    const _motion = motion;
     const settings = useSettings();
     const { updateSetting, resetCategory, resetSettings } = useUpdateSettings();
     const { confirm } = useConfirmation();

@@ -1,7 +1,7 @@
 # Job Queue - Async job processing with worker pool
 import asyncio
 from typing import Optional, Callable, Awaitable, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.entities import JobStatus
 from core.events import emit_job_event, EventType
@@ -267,7 +267,7 @@ class JobQueue:
         recoverable_running = []
         for job in running:
             if job.started_at:
-                elapsed = (datetime.utcnow() - job.started_at).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - job.started_at).total_seconds()
                 if elapsed > timeout_seconds:
                     stale_running.append((job, elapsed))
                     continue
@@ -301,7 +301,7 @@ class JobQueue:
             raise RuntimeError("Job recovery requires a JobService with an active session")
 
         error_message = "Server restart during processing - job timed out"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         try:
             for job, _elapsed in stale_running:

@@ -32,7 +32,7 @@ export function useJobNotifications() {
             }
             
             // Detect queue empty (all active jobs done)
-            if (prevState.activeJobs.length > 0 && state.activeJobs.length === 0) {
+            if (prevState.activeJobs.length > 0 && state.jobs.length === 0) {
                 toast.success('All jobs completed! Queue is empty.', {
                     duration: 3000,
                     icon: '🎉',

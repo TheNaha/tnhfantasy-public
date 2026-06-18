@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import os
 
 from api.deps import get_session_sync
@@ -108,7 +108,7 @@ def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120)
 
             model_repo = ModelRepositoryV2(session)
             orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
-            stale_before = datetime.utcnow() - timedelta(minutes=stale_downloading_after_minutes)
+            stale_before = datetime.now(timezone.utc) - timedelta(minutes=stale_downloading_after_minutes)
             stale_resets = model_repo.reset_stale_downloading_statuses(
                 stale_before=stale_before,
                 provider_names=active_provider_ids,

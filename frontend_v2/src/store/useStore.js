@@ -32,12 +32,6 @@ const OLD_STORAGE_KEY = 'comfy-storage';
 const useStore = create(
     persist(
         (set, get) => ({
-            // Models state (cached model lists by directory)
-            models: {},
-            setModels: (directory, models) => set((state) => ({
-                models: { ...state.models, [directory]: models },
-            })),
-
             // UI state
             viewMode: 'grid', // 'grid' | 'list' | 'feed' | 'timeline'
             setViewMode: (mode) => set({ viewMode: mode }),
@@ -287,12 +281,6 @@ const useStore = create(
 
             setActiveCollection: (id) => set({ activeCollection: id }),
 
-            // Pagination state (for infinite scroll tracking)
-            page: 0,
-            hasMore: true,
-            setPage: (page) => set({ page }),
-            setHasMore: (hasMore) => set({ hasMore }),
-            resetPagination: () => set({ page: 0, hasMore: true }),
         }),
         {
             name: 'comfy-storage',

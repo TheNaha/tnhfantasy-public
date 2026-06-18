@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from sqlalchemy import text, func
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from api.deps import get_session
@@ -135,7 +135,7 @@ async def update_collection(
     for key, value in update_data.items():
         setattr(collection, key, value)
     
-    collection.updated_at = datetime.utcnow()
+    collection.updated_at = datetime.now(timezone.utc)
     session.add(collection)
     session.commit()
     session.refresh(collection)
@@ -195,7 +195,7 @@ async def add_images_to_collection(
     # Update collection thumbnail to newest image
     if added:
         collection.thumbnail = added[0]
-        collection.updated_at = datetime.utcnow()
+        collection.updated_at = datetime.now(timezone.utc)
         session.add(collection)
     
     session.commit()
@@ -233,7 +233,7 @@ async def remove_images_from_collection(
     ).first()
     
     collection.thumbnail = remaining.image_filename if remaining else None
-    collection.updated_at = datetime.utcnow()
+    collection.updated_at = datetime.now(timezone.utc)
     session.add(collection)
     session.commit()
     

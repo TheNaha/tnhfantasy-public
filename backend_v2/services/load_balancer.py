@@ -1,11 +1,10 @@
 # Load Balancer - Distributes jobs across multiple providers.
 import os
 import random
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
@@ -52,46 +51,40 @@ class LoadBalancerRuntimeState:
     model_availability_cache: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
-    lock: threading.RLock = field(default_factory=threading.RLock)
 
     def snapshot(self) -> Dict[str, Any]:
-        with self.lock:
-            return {
-                "round_robin_index": self.round_robin_index,
-                "provider_failures": dict(self.provider_failures),
-                "provider_job_counts": dict(self.provider_job_counts),
-                "model_availability_cache": {
-                    key: {
-                        "eligible_provider_ids": list(value.get("eligible_provider_ids", [])),
-                        "expires_at": value.get("expires_at"),
-                    }
-                    for key, value in self.model_availability_cache.items()
-                },
-                "initialized": self.initialized,
-            }
+        return {
+            "round_robin_index": self.round_robin_index,
+            "provider_failures": dict(self.provider_failures),
+            "provider_job_counts": dict(self.provider_job_counts),
+            "model_availability_cache": {
+                key: {
+                    "eligible_provider_ids": list(value.get("eligible_provider_ids", [])),
+                    "expires_at": value.get("expires_at"),
+                }
+                for key, value in self.model_availability_cache.items()
+            },
+            "initialized": self.initialized,
+        }
 
     def reset(self) -> None:
-        with self.lock:
-            self.round_robin_index = 0
-            self.provider_failures = {}
-            self.provider_job_counts = {}
-            self.model_availability_cache = {}
-            self.initialized = False
-            self.initializing = False
+        self.round_robin_index = 0
+        self.provider_failures = {}
+        self.provider_job_counts = {}
+        self.model_availability_cache = {}
+        self.initialized = False
+        self.initializing = False
 
 
-_runtime_state = LoadBalancerRuntimeState()
 
+# Global runtime state for the process
+_global_runtime_state = LoadBalancerRuntimeState()
+
+def get_global_runtime_state() -> LoadBalancerRuntimeState:
+    return _global_runtime_state
 
 class LoadBalancer:
     """Load balances jobs across multiple serverless providers."""
-
-    _runtime_state = _runtime_state
-
-    @classmethod
-    def default_runtime_state(cls) -> LoadBalancerRuntimeState:
-        """Return the default process-wide runtime state."""
-        return cls._runtime_state
 
     @classmethod
     def invalidate_model_availability_cache(
@@ -100,10 +93,9 @@ class LoadBalancer:
         runtime_state: Optional[LoadBalancerRuntimeState] = None,
     ) -> None:
         """Clear cached model-availability lookups after model status changes."""
-        state = runtime_state or cls._runtime_state
-        with state.lock:
-            cleared_entries = len(state.model_availability_cache)
-            state.model_availability_cache.clear()
+        state = runtime_state or _global_runtime_state
+        cleared_entries = len(state.model_availability_cache)
+        state.model_availability_cache.clear()
 
         if cleared_entries:
             logger.debug(
@@ -115,7 +107,7 @@ class LoadBalancer:
     @classmethod
     def _get_state_snapshot(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None) -> Dict[str, Any]:
         """Return a copy of current in-memory balancer state."""
-        snapshot = (runtime_state or cls._runtime_state).snapshot()
+        snapshot = (runtime_state or _global_runtime_state).snapshot()
         snapshot.pop("model_availability_cache", None)
         snapshot.pop("initialized", None)
         return snapshot
@@ -133,40 +125,38 @@ class LoadBalancer:
         cache_key = self._build_model_availability_cache_key(required_models)
         now = time.monotonic()
 
-        with self.runtime_state.lock:
-            cache_entry = self.runtime_state.model_availability_cache.get(cache_key)
-            if not cache_entry:
-                return None
+        cache_entry = self.runtime_state.model_availability_cache.get(cache_key)
+        if not cache_entry:
+            return None
 
-            expires_at = cache_entry.get("expires_at", 0.0)
-            if expires_at <= now:
-                self.runtime_state.model_availability_cache.pop(cache_key, None)
-                return None
+        expires_at = cache_entry.get("expires_at", 0.0)
+        if expires_at <= now:
+            self.runtime_state.model_availability_cache.pop(cache_key, None)
+            return None
 
-            return list(cache_entry.get("eligible_provider_ids", []))
+        return list(cache_entry.get("eligible_provider_ids", []))
 
     def _set_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]], eligible_provider_ids: List[str]) -> None:
         cache_key = self._build_model_availability_cache_key(required_models)
         now = time.monotonic()
 
-        with self.runtime_state.lock:
-            cache = self.runtime_state.model_availability_cache
-            if cache_key not in cache and len(cache) >= MODEL_AVAILABILITY_CACHE_MAX_ENTRIES:
-                oldest_key = min(
-                    cache,
-                    key=lambda key: cache[key].get("expires_at", 0.0),
-                )
-                cache.pop(oldest_key, None)
+        cache = self.runtime_state.model_availability_cache
+        if cache_key not in cache and len(cache) >= MODEL_AVAILABILITY_CACHE_MAX_ENTRIES:
+            oldest_key = min(
+                cache,
+                key=lambda key: cache[key].get("expires_at", 0.0),
+            )
+            cache.pop(oldest_key, None)
 
-            cache[cache_key] = {
-                "eligible_provider_ids": tuple(eligible_provider_ids),
-                "expires_at": now + MODEL_AVAILABILITY_CACHE_TTL_SECONDS,
-            }
+        cache[cache_key] = {
+            "eligible_provider_ids": tuple(eligible_provider_ids),
+            "expires_at": now + MODEL_AVAILABILITY_CACHE_TTL_SECONDS,
+        }
 
     @classmethod
     def reset_state(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None):
         """Reset in-memory state. Intended for tests and controlled startup flows."""
-        (runtime_state or cls._runtime_state).reset()
+        (runtime_state or _global_runtime_state).reset()
     
     @classmethod
     def load_state_from_db(
@@ -177,12 +167,11 @@ class LoadBalancer:
         force: bool = False,
     ):
         """Load persisted state from database on startup."""
-        state_store = runtime_state or cls._runtime_state
+        state_store = runtime_state or _global_runtime_state
 
-        with state_store.lock:
-            if not force and (state_store.initialized or state_store.initializing):
-                return
-            state_store.initializing = True
+        if not force and (state_store.initialized or state_store.initializing):
+            return
+        state_store.initializing = True
 
         try:
             state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == 1)).first()
@@ -199,14 +188,13 @@ class LoadBalancer:
                 if job.provider_id:
                     active_job_counts[job.provider_id] = active_job_counts.get(job.provider_id, 0) + 1
 
-            with state_store.lock:
-                state_store.round_robin_index = state.round_robin_index if state else 0
-                state_store.provider_failures = dict(state.provider_failures or {}) if state else {}
-                # DON'T load persisted job counts - they represent historical totals.
-                # On startup, reset to the actual currently running jobs only.
-                state_store.provider_job_counts = active_job_counts
-                state_store.initialized = True
-                state_store.initializing = False
+            state_store.round_robin_index = state.round_robin_index if state else 0
+            state_store.provider_failures = dict(state.provider_failures or {}) if state else {}
+            # DON'T load persisted job counts - they represent historical totals.
+            # On startup, reset to the actual currently running jobs only.
+            state_store.provider_job_counts = active_job_counts
+            state_store.initialized = True
+            state_store.initializing = False
 
             logger.info(
                 "lb_state_loaded",
@@ -215,10 +203,9 @@ class LoadBalancer:
                 running_jobs=len(running_jobs),
             )
         except Exception as e:
-            with state_store.lock:
-                state_store.provider_job_counts = {}
-                state_store.initialized = True
-                state_store.initializing = False
+            state_store.provider_job_counts = {}
+            state_store.initialized = True
+            state_store.initializing = False
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
@@ -234,7 +221,7 @@ class LoadBalancer:
             state.round_robin_index = snapshot["round_robin_index"]
             state.provider_failures = snapshot["provider_failures"]
             state.provider_job_counts = snapshot["provider_job_counts"]
-            state.updated_at = datetime.utcnow()
+            state.updated_at = datetime.now(timezone.utc)
             session.commit()
         except Exception as e:
             session.rollback()
@@ -252,7 +239,7 @@ class LoadBalancer:
         self.session = session
         self.repo = ProviderRepository(session)
         self.strategy = strategy
-        self.runtime_state = runtime_state or LoadBalancer.default_runtime_state()
+        self.runtime_state = runtime_state or get_global_runtime_state()
 
         # Load shared state once per process/runtime container.
         LoadBalancer.load_state_from_db(session, self.runtime_state)
@@ -335,23 +322,21 @@ class LoadBalancer:
     
     def _track_job(self, provider_id: str):
         """Track that a job was assigned to a provider."""
-        with self.runtime_state.lock:
-            if provider_id not in self.runtime_state.provider_job_counts:
-                self.runtime_state.provider_job_counts[provider_id] = 0
-            self.runtime_state.provider_job_counts[provider_id] += 1
+        if provider_id not in self.runtime_state.provider_job_counts:
+            self.runtime_state.provider_job_counts[provider_id] = 0
+        self.runtime_state.provider_job_counts[provider_id] += 1
             
-            # Persist state periodically (every 5 jobs)
-            total_jobs = sum(self.runtime_state.provider_job_counts.values())
+        # Persist state periodically (every 5 jobs)
+        total_jobs = sum(self.runtime_state.provider_job_counts.values())
 
         if total_jobs % 5 == 0:
             LoadBalancer.save_state_to_db(self.session, self.runtime_state)
     
     def _round_robin(self, providers: List[Provider]) -> Provider:
         """Round-robin selection."""
-        with self.runtime_state.lock:
-            provider = providers[self.runtime_state.round_robin_index % len(providers)]
-            self.runtime_state.round_robin_index += 1
-            index = self.runtime_state.round_robin_index
+        provider = providers[self.runtime_state.round_robin_index % len(providers)]
+        self.runtime_state.round_robin_index += 1
+        index = self.runtime_state.round_robin_index
         logger.debug("lb_round_robin_selected", provider_id=provider.id, index=index)
         return provider
     
@@ -374,9 +359,8 @@ class LoadBalancer:
         When tied, uses round-robin among tied providers for fair distribution.
         """
         # Get job counts
-        with self.runtime_state.lock:
-            counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in providers}
-            min_count = min(counts.values())
+        counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in providers}
+        min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in providers if counts[p.id] == min_count]
@@ -385,9 +369,8 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers for fair distribution
-            with self.runtime_state.lock:
-                selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
-                self.runtime_state.round_robin_index += 1
+            selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
+            self.runtime_state.round_robin_index += 1
 
         logger.debug("lb_least_conn_selected", provider_id=selected.id, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
@@ -409,9 +392,8 @@ class LoadBalancer:
             return best_tier[0]
         
         # Round-robin within the best priority tier
-        with self.runtime_state.lock:
-            provider = best_tier[self.runtime_state.round_robin_index % len(best_tier)]
-            self.runtime_state.round_robin_index += 1
+        provider = best_tier[self.runtime_state.round_robin_index % len(best_tier)]
+        self.runtime_state.round_robin_index += 1
         logger.debug("lb_priority_rr_selected", provider_id=provider.id, priority=provider.priority, tier_size=len(best_tier))
         return provider
     
@@ -425,9 +407,8 @@ class LoadBalancer:
             return best_tier[0]
         
         # Get job counts for best tier
-        with self.runtime_state.lock:
-            counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in best_tier}
-            min_count = min(counts.values())
+        counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in best_tier}
+        min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in best_tier if counts[p.id] == min_count]
@@ -436,27 +417,24 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers
-            with self.runtime_state.lock:
-                selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
-                self.runtime_state.round_robin_index += 1
+            selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
+            self.runtime_state.round_robin_index += 1
 
         logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
     def report_success(self, provider_id: str):
         """Report successful job completion for a provider."""
-        with self.runtime_state.lock:
-            if provider_id in self.runtime_state.provider_failures:
-                self.runtime_state.provider_failures[provider_id] = 0
+        if provider_id in self.runtime_state.provider_failures:
+            self.runtime_state.provider_failures[provider_id] = 0
     
     def report_failure(self, provider_id: str):
         """Report job failure for a provider."""
-        with self.runtime_state.lock:
-            if provider_id not in self.runtime_state.provider_failures:
-                self.runtime_state.provider_failures[provider_id] = 0
+        if provider_id not in self.runtime_state.provider_failures:
+            self.runtime_state.provider_failures[provider_id] = 0
             
-            self.runtime_state.provider_failures[provider_id] += 1
-            failures = self.runtime_state.provider_failures[provider_id]
+        self.runtime_state.provider_failures[provider_id] += 1
+        failures = self.runtime_state.provider_failures[provider_id]
         logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
     
     def release_job(self, provider_id: str):
@@ -466,16 +444,15 @@ class LoadBalancer:
         Should be called after every job completion (success or failure).
         """
         persist_needed = False
-        with self.runtime_state.lock:
-            if provider_id in self.runtime_state.provider_job_counts:
-                previous_count = self.runtime_state.provider_job_counts[provider_id]
-                self.runtime_state.provider_job_counts[provider_id] = max(
-                    0, self.runtime_state.provider_job_counts[provider_id] - 1
-                )
-                active_jobs = self.runtime_state.provider_job_counts[provider_id]
-                persist_needed = active_jobs != previous_count
-            else:
-                active_jobs = 0
+        if provider_id in self.runtime_state.provider_job_counts:
+            previous_count = self.runtime_state.provider_job_counts[provider_id]
+            self.runtime_state.provider_job_counts[provider_id] = max(
+                0, self.runtime_state.provider_job_counts[provider_id] - 1
+            )
+            active_jobs = self.runtime_state.provider_job_counts[provider_id]
+            persist_needed = active_jobs != previous_count
+        else:
+            active_jobs = 0
 
         if persist_needed:
             LoadBalancer.save_state_to_db(self.session, self.runtime_state)
@@ -502,22 +479,20 @@ class LoadBalancer:
             return None
         
         # Return provider with fewest failures
-        with self.runtime_state.lock:
-            best = min(
-                available,
-                key=lambda p: (self.runtime_state.provider_failures.get(p.id, 0), p.priority, p.id)
-            )
+        best = min(
+            available,
+            key=lambda p: (self.runtime_state.provider_failures.get(p.id, 0), p.priority, p.id)
+        )
         
         return best
     
     def get_stats(self) -> Dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""
         providers = self.repo.get_enabled()
-        with self.runtime_state.lock:
-            current_index = self.runtime_state.round_robin_index
-            total_jobs_assigned = sum(self.runtime_state.provider_job_counts.values())
-            failure_counts = dict(self.runtime_state.provider_failures)
-            job_counts = dict(self.runtime_state.provider_job_counts)
+        current_index = self.runtime_state.round_robin_index
+        total_jobs_assigned = sum(self.runtime_state.provider_job_counts.values())
+        failure_counts = dict(self.runtime_state.provider_failures)
+        job_counts = dict(self.runtime_state.provider_job_counts)
         
         # Build detailed per-provider stats
         provider_stats = []

@@ -3,7 +3,7 @@
 from sqlmodel import SQLModel, Field, Column, Relationship
 from sqlalchemy import JSON, Index, UniqueConstraint, Text
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 if TYPE_CHECKING:
@@ -78,8 +78,8 @@ class ModelV2(SQLModel, table=True):
     source_url: Optional[str] = None  # Original URL for reference
     
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships (for eager loading)
     # versions: List["ModelVersion"] = Relationship(back_populates="model")
@@ -123,7 +123,7 @@ class ModelVersion(SQLModel, table=True):
     civitai_published_at: Optional[datetime] = None
     
     # Local timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
     # model: Optional["ModelV2"] = Relationship(back_populates="versions")
@@ -238,7 +238,7 @@ class ProviderVersionStatus(SQLModel, table=True):
     size_bytes: Optional[int] = None  # Actual size after download
     
     # Timestamps
-    queued_at: datetime = Field(default_factory=datetime.utcnow)
+    queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     downloaded_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None  # Last integrity check
     

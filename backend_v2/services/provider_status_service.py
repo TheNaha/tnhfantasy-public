@@ -12,7 +12,7 @@ from core.entities_v2 import ModelFile, ModelVersion, ModelV2
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.container_manager import get_container_manager
-from services.model_service_v2 import ModelServiceV2
+from services.model_service import ModelServiceV2
 from services.provider_service import ProviderService
 
 logger = get_logger("provider_status_service")

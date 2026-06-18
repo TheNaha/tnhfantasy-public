@@ -82,7 +82,7 @@ export default function InpaintGenerator() {
         updateLora: state.updateLora,
     })));
 
-    const activeJobCount = useJobStore(state => state.activeJobs.length);
+    const activeJobCount = useJobStore(state => state.jobs.length);
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;

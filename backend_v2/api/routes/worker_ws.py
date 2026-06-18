@@ -15,7 +15,7 @@ Protocol:
 import asyncio
 import logging
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from api.deps import get_session_context
 from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
@@ -37,8 +37,8 @@ class ConnectedWorker:
     def __init__(self, ws: WebSocket, provider_id: str):
         self.ws = ws
         self.provider_id = provider_id
-        self.connected_at = datetime.utcnow()
-        self.last_heartbeat = datetime.utcnow()
+        self.connected_at = datetime.now(timezone.utc)
+        self.last_heartbeat = datetime.now(timezone.utc)
         self.current_job: Optional[str] = None
         self.jobs_completed: int = 0
     
@@ -74,7 +74,7 @@ def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
         connected_workers.pop(provider_id, None)
         return None
 
-    heartbeat_age = (datetime.utcnow() - worker.last_heartbeat).total_seconds()
+    heartbeat_age = (datetime.now(timezone.utc) - worker.last_heartbeat).total_seconds()
     if heartbeat_age > WORKER_HEARTBEAT_TIMEOUT_SECONDS:
         logger.warning(
             "[Worker WS] Worker heartbeat stale: %s age=%.1fs",
@@ -233,7 +233,7 @@ async def worker_websocket(
             msg_type = data.get("type")
             
             if msg_type == "heartbeat":
-                worker.last_heartbeat = datetime.utcnow()
+                worker.last_heartbeat = datetime.now(timezone.utc)
                 await websocket.send_json({"type": "heartbeat_ack"})
             
             elif msg_type == "job_started":
@@ -338,7 +338,7 @@ async def worker_websocket(
             elif msg_type == "get_pending_models":
                 # Return models that need to be synced
                 async with get_session_context() as session:
-                    from services.model_service_v2 import ModelServiceV2
+                    from services.model_service import ModelServiceV2
                     service = ModelServiceV2(session)
                     pending = service.get_pending_downloads(provider_id)
                     await websocket.send_json({

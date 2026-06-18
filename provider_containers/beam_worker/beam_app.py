@@ -144,7 +144,7 @@ def _ensure_comfyui_running():
         if response.status_code == 200:
             print("[ComfyUI] Server already running")
             return True
-    except:
+    except Exception:
         pass
     
     print("[ComfyUI] Starting server via comfy-cli...")
@@ -158,7 +158,7 @@ def _ensure_comfyui_running():
             if response.status_code == 200:
                 print("[ComfyUI] Server is ready!")
                 return True
-        except:
+        except Exception:
             pass
         time.sleep(1)
     
@@ -324,7 +324,7 @@ async def list_models(request: Request):
             try:
                 with open(os.path.join(target_dir, meta_name), 'r') as f:
                     file_data["metadata"] = json.load(f)
-            except:
+            except Exception:
                 pass
                 
         files.append(file_data)

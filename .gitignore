@@ -33,3 +33,7 @@ backend_v2/cache/
 transcode_results.json
 transcode_test.py
 transcode_test2.py
+
+# Provider envs
+provider_containers/**/.env.*
+!provider_containers/**/.env.example

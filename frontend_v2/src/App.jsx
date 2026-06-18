@@ -30,6 +30,7 @@ import { useJobStore } from './store/jobStore';
 import useStore from './store/useStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobNotifications } from './hooks/useJobNotifications.jsx';
+import { useWebsocket } from './hooks/useWebsocket';
 import { api } from './api';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -49,7 +50,6 @@ function AnimatedRoutes() {
             <Routes location={location} key={location.pathname}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/generate" element={<SimpleGenerator />} />
-                <Route path="/create" element={<SimpleGenerator />} />
                 <Route path="/img2img" element={<Img2ImgGenerator />} />
                 <Route path="/inpaint" element={<InpaintGenerator />} />
                 <Route path="/advanced" element={<AdvancedGenerator />} />
@@ -67,11 +67,8 @@ let hasRequestedProviderWake = false;
 
 function App() {
     const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
-    const connectJobs = useJobStore((state) => state.connect);
-    const disconnectJobs = useJobStore((state) => state.disconnect);
     const fetchJobs = useJobStore((state) => state.fetchJobs);
-    const setupBrowserLifecycle = useJobStore((state) => state.setupBrowserLifecycle);
-    const teardownBrowserLifecycle = useJobStore((state) => state.teardownBrowserLifecycle);
+    const { connect, disconnect } = useWebsocket();
     const loadBranding = useBrandingStore((state) => state.loadBranding);
     const initCollections = useStore((state) => state.initCollections);
 
@@ -128,24 +125,13 @@ function App() {
     // Initialize all global stores on app startup.
     // No cleanup on unmount to avoid StrictMode connect/disconnect churn in development.
     useEffect(() => {
-        // Connect global realtime stores
-        connectJobs();
-        setupBrowserLifecycle();
-        
-        // Fetch initial data
+        connect();
         fetchJobs();
 
         return () => {
-            teardownBrowserLifecycle();
-            disconnectJobs();
+            disconnect();
         };
-    }, [
-        connectJobs,
-        disconnectJobs,
-        fetchJobs,
-        setupBrowserLifecycle,
-        teardownBrowserLifecycle,
-    ]);
+    }, [connect, disconnect, fetchJobs]);
 
     useEffect(() => {
         if (hasRequestedProviderWake) {

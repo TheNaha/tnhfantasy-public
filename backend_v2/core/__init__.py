@@ -10,7 +10,6 @@
 from .entities import (
     Job, JobStatus,
     Provider,
-    Model, ModelStatus,
     Download,
     LoadBalancingConfig
 )
@@ -34,7 +33,6 @@ __all__ = [
     # Entities
     "Job", "JobStatus",
     "Provider",
-    "Model", "ModelStatus",
     "Download",
     "LoadBalancingConfig",
     # Events

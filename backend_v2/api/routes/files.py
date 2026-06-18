@@ -148,7 +148,7 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
                     try:
                         with open(meta_path, 'r') as f:
                             metadata = json.load(f)
-                    except:
+                    except Exception:
                         pass
 
                 valid_files.append({
@@ -1005,7 +1005,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
                         "metadata": metadata,
                         "blurhash": metadata.get("blurhash")
                     }
-                except:
+                except Exception:
                     return {"error": "metadata_read_failed"}
             else:
                 return {"error": "metadata_not_found"}

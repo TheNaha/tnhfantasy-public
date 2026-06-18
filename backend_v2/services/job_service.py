@@ -1,6 +1,6 @@
 # Job Service - Business logic for job management
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Session
 
@@ -98,9 +98,9 @@ class JobService:
         # Track timing based on status changes
         status = updates.get("status")
         if status == JobStatus.RUNNING:
-            updates["started_at"] = datetime.utcnow()
+            updates["started_at"] = datetime.now(timezone.utc)
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-            updates["completed_at"] = datetime.utcnow()
+            updates["completed_at"] = datetime.now(timezone.utc)
         
         job = self.repo.update(job_id, **updates)
         if not job:

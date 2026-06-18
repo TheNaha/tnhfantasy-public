@@ -12,7 +12,7 @@
 #   GET/POST /api/providers/{id}/container/* – Container lifecycle management
 from typing import Dict, Any, Optional, List
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
@@ -68,15 +68,6 @@ class LoadBalancingConfigRequest(BaseModel):
     fallback_enabled: Optional[bool] = None
 
 
-class SaveImageRequest(BaseModel):
-    """Request to save a generated image from worker."""
-    image_base64: str
-    job_id: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    filename: Optional[str] = None
-    batch_index: int = 0
-
-
 class AddCustomProviderModelRequest(BaseModel):
     directory: str
     model_data: Dict[str, Any]
@@ -84,63 +75,18 @@ class AddCustomProviderModelRequest(BaseModel):
 
 
 # ============================================================================
-# IMAGE SAVING ENDPOINT (must be before /{provider_id} route)
-# ============================================================================
-
-@router.post("/save-image")
-async def save_generated_image(request: SaveImageRequest):
-    """
-    Receive generated image from worker and save with metadata.
-    
-    Called by worker containers after ComfyUI generates an image.
-    Uses ImageService to:
-    - Save to date-based folder structure (output/YYYY/MM/DD/)
-    - Embed metadata in PNG chunks
-    - Generate WebP thumbnail
-    - Generate blurhash for placeholder
-    
-    Returns saved image info for frontend display.
-    """
-    import base64
-    from services.image_service import get_image_service
-    
-    try:
-        image_data = base64.b64decode(request.image_base64, validate=True)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
-
-    service = get_image_service()
-    
-    result = await service.save_generated_image(
-        image_data=image_data,
-        metadata=request.metadata,
-        job_id=request.job_id,
-        filename=request.filename,
-        batch_index=request.batch_index
-    )
-    
-    try:
-        from services.gallery_indexer import gallery_indexer
-        await asyncio.to_thread(gallery_indexer.add_file, result['path'])
-    except Exception as e:
-        logger.error(f"Error updating gallery indexer: {e}")
-
-    return result
-
-
-# ============================================================================
 # MODEL CACHE ENDPOINTS (must be before /{provider_id} route)
 # ============================================================================
 
 @router.get("/model-cache")
-async def get_full_model_cache(session: Session = Depends(get_session)):
+def get_full_model_cache(session: Session = Depends(get_session)):
     """Get all model metadata from the backend cache."""
     service = get_provider_service(session)
     return {"models": service.get_model_cache()}
 
 
 @router.get("/model-cache/{directory:path}")
-async def get_model_cache_for_directory(
+def get_model_cache_for_directory(
     directory: str,
     session: Session = Depends(get_session)
 ):
@@ -159,7 +105,7 @@ async def get_model_cache_for_directory(
 # ============================================================================
 
 @router.get("/config/load-balancing")
-async def get_load_balancing_config(session: Session = Depends(get_session)):
+def get_load_balancing_config(session: Session = Depends(get_session)):
     """Get load balancing configuration with stats."""
     service = get_provider_service(session)
     config = service.get_load_balancing_config()
@@ -190,7 +136,7 @@ async def update_load_balancing_config(
 
 
 @router.get("/load-balancer/stats")
-async def get_load_balancer_stats(session: Session = Depends(get_session)):
+def get_load_balancer_stats(session: Session = Depends(get_session)):
     """Get load balancer statistics."""
     service = get_provider_service(session)
     stats = service.get_load_balancer_stats()
@@ -199,9 +145,9 @@ async def get_load_balancer_stats(session: Session = Depends(get_session)):
 
 # Alias paths for frontend compatibility
 @router.get("/load-balancing")
-async def get_load_balancing_alias(session: Session = Depends(get_session)):
+def get_load_balancing_alias(session: Session = Depends(get_session)):
     """Alias for /config/load-balancing."""
-    return await get_load_balancing_config(session)
+    return get_load_balancing_config(session)
 
 
 @router.put("/load-balancing")
@@ -218,7 +164,7 @@ async def update_load_balancing_alias(
 # ============================================================================
 
 @router.get("/containers/list")
-async def list_all_containers():
+def list_all_containers():
     """List all provider containers."""
     container_manager = get_container_manager()
     if not container_manager:
@@ -387,7 +333,7 @@ async def remove_model_from_provider(
     session: Session = Depends(get_session)
 ):
     """Delete a model file from one provider and mark it pending again in V2."""
-    from services.model_service_v2 import ModelServiceV2
+    from services.model_service import ModelServiceV2
     from infrastructure.providers import create_provider_client
 
     normalized_directory = directory.replace("models/", "", 1)
@@ -434,7 +380,7 @@ async def add_custom_model_to_providers(
     session: Session = Depends(get_session)
 ):
     """Create a V2 custom model entry and trigger downloads for the selected providers."""
-    from services.model_service_v2 import ModelServiceV2
+    from services.model_service import ModelServiceV2
 
     model_name = request.model_data.get("name", "").strip()
     model_url = request.model_data.get("url", "").strip()
@@ -611,7 +557,7 @@ async def restart_provider_container(
 
 
 @router.get("/{provider_id}/container/logs")
-async def get_provider_container_logs(provider_id: str, tail: int = 100, session: Session = Depends(get_session)):
+def get_provider_container_logs(provider_id: str, tail: int = 100, session: Session = Depends(get_session)):
     """Get logs from a provider's container."""
     lifecycle = _get_provider_lifecycle_service(session)
     try:
@@ -828,7 +774,7 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
     model_repo = ModelRepositoryV2(session)
     result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
     stale_reset_count = model_repo.reset_stale_downloading_statuses(
-        stale_before=datetime.utcnow() - timedelta(minutes=120),
+        stale_before=datetime.now(timezone.utc) - timedelta(minutes=120),
         provider_names=active_provider_ids,
     )
     _invalidate_provider_runtime_caches()

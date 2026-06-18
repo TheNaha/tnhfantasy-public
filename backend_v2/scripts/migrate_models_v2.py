@@ -107,7 +107,7 @@ def migrate_models_to_v2():
                         conn.execute(text(
                             "INSERT INTO model_tags (model_id, tag) VALUES (:model_id, :tag)"
                         ), {"model_id": model_v2_id, "tag": tag})
-                    except:
+                    except Exception:
                         pass
                 
                 # Versions - take first only

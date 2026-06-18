@@ -18,7 +18,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_session_sync
-from services.model_service_v2 import ModelServiceV2
+from services.model_service import ModelServiceV2
 from core.exceptions import NotFoundError
 from infrastructure.logging import model_logger
 
@@ -83,7 +83,7 @@ async def list_all_models(session: Session = Depends(get_session)):
 
 
 @router.get("/all-storage-paths")
-async def get_all_storage_paths(session: Session = Depends(get_session)):
+def get_all_storage_paths(session: Session = Depends(get_session)):
     """
     Get all expected storage paths from the V2 database.
     Used by worker to determine what files should exist vs what to delete.
@@ -108,7 +108,7 @@ async def get_all_storage_paths(session: Session = Depends(get_session)):
 
 
 @router.get("/check-installed/{civitai_model_id}")
-async def check_installed_versions(
+def check_installed_versions(
     civitai_model_id: int,
     session: Session = Depends(get_session)
 ):
@@ -153,7 +153,7 @@ async def check_installed_versions(
 
 
 @router.post("/check-installed/batch")
-async def check_installed_versions_batch(
+def check_installed_versions_batch(
     request: CheckInstalledBatchRequest,
     session: Session = Depends(get_session),
 ):
@@ -440,7 +440,7 @@ async def update_file_provider_status(
 # ============================================================================
 
 @router.get("/providers/{provider_name}/pending-downloads")
-async def get_pending_downloads(
+def get_pending_downloads(
     provider_name: str,
     session: Session = Depends(get_session)
 ):
@@ -454,7 +454,7 @@ async def get_pending_downloads(
 
 
 @router.get("/cache")
-async def get_model_cache(session: Session = Depends(get_session)):
+def get_model_cache(session: Session = Depends(get_session)):
     """Get full model cache for reconciliation."""
     service = get_model_service(session)
     return {"models": service.get_full_cache()}
@@ -574,7 +574,7 @@ async def batch_update_status(
 
 
 @router.delete("/providers/{provider_name}/reset-status")
-async def reset_provider_status(
+def reset_provider_status(
     provider_name: str,
     session: Session = Depends(get_session)
 ):
@@ -600,7 +600,7 @@ async def reset_provider_status(
 # ============================================================================
 
 @router.post("/cleanup-orphans")
-async def cleanup_orphan_models(session: Session = Depends(get_session)):
+def cleanup_orphan_models(session: Session = Depends(get_session)):
     """
     Remove models that have no versions (orphaned during failed imports or migration).
     These models cannot be used and should be cleaned up.

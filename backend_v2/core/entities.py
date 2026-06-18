@@ -2,7 +2,7 @@
 from sqlmodel import SQLModel, Field, Column
 from sqlalchemy import JSON, Index
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import uuid
 
@@ -32,8 +32,8 @@ class Job(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     status: JobStatus = Field(default=JobStatus.PENDING)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Timing for ETA calculation
     started_at: Optional[datetime] = Field(default=None)  # When job started processing
@@ -83,47 +83,6 @@ class Provider(SQLModel, table=True):
     container_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 
-class ModelStatus(str, Enum):
-    """Model installation status per provider."""
-    PENDING = "pending"
-    DOWNLOADING = "downloading"
-    INSTALLED = "installed"
-    FAILED = "failed"
-    DELETING = "deleting"
-
-
-class Model(SQLModel, table=True):
-    """
-    Represents a model file (checkpoint, LoRA, etc.) with per-provider status.
-    Replaces the JSON-based model cache.
-    """
-    __tablename__ = "models"
-    __table_args__ = (
-        # Composite index for listing models by directory
-        Index('idx_model_directory_name', 'directory', 'name'),
-        # Index for filtering by source
-        Index('idx_model_source', 'source'),
-    )
-    
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)  # Filename
-    directory: str = Field(index=True)  # e.g., "checkpoints", "loras"
-    
-    # Download source
-    url: Optional[str] = Field(default=None)
-    source: str = Field(default="custom")  # "civitai", "huggingface", "custom"
-    
-    # Metadata (size, hash, preview image, etc.)
-    metadata_: Dict[str, Any] = Field(default={}, sa_column=Column(JSON), alias="metadata")
-    
-    # Per-provider installation status
-    # Format: {"provider_id": {"status": "installed", "installed_at": "..."}}
-    provider_statuses: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
 class Download(SQLModel, table=True):
     """
     Represents an active model download.
@@ -145,7 +104,7 @@ class Download(SQLModel, table=True):
     total_size: Optional[str] = Field(default=None)
     message: Optional[str] = Field(default=None)
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class LoadBalancingConfig(SQLModel, table=True):
@@ -168,7 +127,7 @@ class LoadBalancerState(SQLModel, table=True):
     round_robin_index: int = Field(default=0)
     provider_job_counts: Dict[str, int] = Field(default={}, sa_column=Column(JSON))
     provider_failures: Dict[str, int] = Field(default={}, sa_column=Column(JSON))
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ============================================================================
@@ -199,8 +158,8 @@ class Prompt(SQLModel, table=True):
     # Full generation settings (optional, includes model, LoRAs, etc.)
     settings: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ============================================================================
@@ -217,8 +176,8 @@ class Collection(SQLModel, table=True):
     description: Optional[str] = Field(default=None)
     thumbnail: Optional[str] = Field(default=None)  # First image filename
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CollectionImage(SQLModel, table=True):
@@ -231,5 +190,5 @@ class CollectionImage(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     collection_id: int = Field(foreign_key="collections.id", index=True)
     image_filename: str = Field(index=True)  # References output filename
-    added_at: datetime = Field(default_factory=datetime.utcnow)
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

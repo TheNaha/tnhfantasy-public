@@ -5,7 +5,60 @@ Includes reconciliation loop and startup helpers.
 
 import asyncio
 import os
+import platform
+import socket
 from typing import Callable, Awaitable, Optional
+
+
+async def auto_discovery_loop(
+    provider_id: str,
+    provider_type: str,
+    backend_url: str,
+    interval_seconds: int = 60,
+    http_client=None,
+):
+    """
+    Background task to register this provider with the backend.
+    Sends a heartbeat to self-discover and maintain availability.
+    """
+    import httpx
+    
+    if not provider_id:
+        print("[Auto-Discovery] PROVIDER_ID not set, skipping discovery loop")
+        return
+        
+    print(f"[Auto-Discovery] Starting loop for provider: {provider_id} ({provider_type})")
+    discovery_url = f"{backend_url}/api/v2/providers/discovery"
+    
+    # Try to determine internal hostname or IP for the backend to reach us
+    hostname = socket.gethostname()
+    port = os.getenv("PORT", "8000")
+    internal_url = f"http://{hostname}:{port}"
+    
+    while True:
+        try:
+            payload = {
+                "provider_id": provider_id,
+                "provider_type": provider_type,
+                "status": "online",
+                "internal_url": internal_url,
+                "hostname": hostname
+            }
+            
+            if http_client:
+                response = await http_client.post(discovery_url, json=payload, timeout=10.0)
+            else:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(discovery_url, json=payload)
+                    
+            if response.status_code in (200, 201):
+                pass # Silent success
+            else:
+                print(f"[Auto-Discovery] Failed to register. Status: {response.status_code}")
+        except Exception as e:
+            print(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}")
+            
+        await asyncio.sleep(interval_seconds)
 
 
 async def reconciliation_loop(
