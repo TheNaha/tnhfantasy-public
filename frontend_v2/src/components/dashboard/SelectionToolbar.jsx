@@ -33,7 +33,7 @@ export default memo(function SelectionToolbar({
 
                 <button
                     onClick={onDownload}
-                    className="px-3 py-1.5 bg-blue-600 rounded-lg text-sm font-medium hover:bg-blue-500 flex items-center gap-2 transition-colors"
+                    className="px-3 py-1.5 bg-blue-600 rounded-lg text-sm font-medium hover:bg-blue-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-blue-500"
                     disabled={!hasSelection}
                 >
                     <Download size={14} aria-hidden="true" />
@@ -42,7 +42,7 @@ export default memo(function SelectionToolbar({
 
                 <button
                     onClick={onFavorite}
-                    className="px-3 py-1.5 bg-yellow-600 rounded-lg text-sm font-medium hover:bg-yellow-500 flex items-center gap-2 transition-colors"
+                    className="px-3 py-1.5 bg-yellow-600 rounded-lg text-sm font-medium hover:bg-yellow-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-yellow-500"
                     disabled={!hasSelection}
                 >
                     <Star size={14} aria-hidden="true" />
@@ -52,7 +52,7 @@ export default memo(function SelectionToolbar({
 
                 <button
                     onClick={onAddToCollection}
-                    className="px-3 py-1.5 bg-purple-600 rounded-lg text-sm font-medium hover:bg-purple-500 flex items-center gap-2 transition-colors"
+                    className="px-3 py-1.5 bg-purple-600 rounded-lg text-sm font-medium hover:bg-purple-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-purple-500"
                     disabled={!hasSelection}
                 >
                     <Plus size={14} aria-hidden="true" />
@@ -63,7 +63,7 @@ export default memo(function SelectionToolbar({
                 {activeCollection && (
                     <button
                         onClick={onRemoveFromCollection}
-                        className="px-3 py-1.5 bg-orange-600 rounded-lg text-sm font-medium hover:bg-orange-500 flex items-center gap-2 transition-colors"
+                        className="px-3 py-1.5 bg-orange-600 rounded-lg text-sm font-medium hover:bg-orange-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-orange-500"
                         disabled={!hasSelection}
                     >
                         <X size={14} aria-hidden="true" />
@@ -74,7 +74,7 @@ export default memo(function SelectionToolbar({
 
                 <button
                     onClick={onDelete}
-                    className="px-3 py-1.5 bg-red-600 rounded-lg text-sm font-medium hover:bg-red-500 flex items-center gap-2 transition-colors"
+                    className="px-3 py-1.5 bg-red-600 rounded-lg text-sm font-medium hover:bg-red-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-red-500"
                     disabled={!hasSelection}
                 >
                     <Trash2 size={14} aria-hidden="true" />
@@ -85,7 +85,7 @@ export default memo(function SelectionToolbar({
 
                 <button
                     onClick={onCancel}
-                    className="px-3 py-1.5 bg-gray-700 rounded-lg text-sm font-medium hover:bg-gray-600 text-gray-300 transition-colors"
+                    className="px-3 py-1.5 bg-gray-700 rounded-lg text-sm font-medium hover:bg-gray-600 text-gray-300 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-gray-500"
                 >
                     Cancel
                 </button>
