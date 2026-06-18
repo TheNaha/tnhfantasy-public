@@ -46,6 +46,7 @@ from .validation import (
     validate_downloaded_file,
 )
 from .models_utils import list_models_with_metadata_internal
+from .router import attach_provider_routes, ProviderClient
 
 __all__ = [
     "get_safe_path",
@@ -90,4 +91,7 @@ __all__ = [
     "VALID_FILE_HEADERS",
     "validate_downloaded_file",
     "list_models_with_metadata_internal",
+    # Router
+    "attach_provider_routes",
+    "ProviderClient",
 ]

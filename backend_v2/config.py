@@ -1,6 +1,16 @@
 # Pydantic Settings Configuration + Full Config Management
 # Combines v2's Pydantic approach with v1's file-based config persistence
 #
+# CONFIG SYSTEM SPLIT:
+# .env (via Pydantic Settings) — infrastructure/secrets, rarely changes:
+#   COMFY_DATABASE_URL, OUTPUT_DIR, INPUT_DIR, COMFY_PREVIEW_CACHE_DIR
+#   HF_TOKEN, CIVITAI_TOKEN, MODAL_TOKEN_*, BEAM_API_KEY
+#   COMFY_CORS_ORIGINS, COMFY_WORKER_BACKEND_URL
+# config.json — runtime app behavior, UI-editable without restart:
+#   Job concurrency, timeouts, retry settings
+#   Image processing / thumbnail settings
+#   Scheduler intervals
+#
 # CONFIGURATION PRECEDENCE (highest to lowest):
 # 1. Environment variables (COMFY_* prefix)
 # 2. File-based config (config.json) - runtime editable via API
@@ -56,9 +66,8 @@ DEFAULT_CONFIG = {
         "scaledown_window": 5
     },
     "api": {
-        "cors_origins": ["http://localhost:5173", "http://localhost:5174", "http://localhost:8000"],
         "gzip_minimum_size": 1000,
-        "worker_backend_url": "http://backend_v2:8002"
+        "cors_origins": ["*"]
     },
     "jobs_cleanup": {
         "max_age_hours": 24,
@@ -521,7 +530,8 @@ def get_cors_origins() -> List[str]:
     """Get CORS origins list."""
     if _env_var_is_set("CORS_ORIGINS"):
         return settings.cors_origins
-    return get_config()["api"]["cors_origins"]
+    api_config = get_config().get("api", {})
+    return api_config.get("cors_origins", settings.cors_origins)
 
 
 def get_gzip_minimum_size() -> int:

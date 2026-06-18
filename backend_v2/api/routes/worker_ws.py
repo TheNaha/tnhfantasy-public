@@ -17,7 +17,7 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from api.deps import get_session_context
+from api.deps import get_session_context, get_job_service, get_provider_service
 from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
 from core.exceptions import NotFoundError
 from api.provider_client import ProviderCallError
@@ -180,7 +180,7 @@ async def worker_websocket(
     # Authenticate
     try:
         async with get_session_context() as session:
-            provider_service = ProviderService(session)
+            provider_service = get_provider_service(session)
             provider = await provider_service.get_provider(provider_id)
             
             # Verify token matches provider's configured token
@@ -211,8 +211,8 @@ async def worker_websocket(
     # Push pending downloads immediately on connect
     try:
         async with get_session_context() as session:
-            from services.model_service import ModelServiceV2
-            service = ModelServiceV2(session)
+            from api.deps import get_model_service_v2
+            service = get_model_service_v2(session)
             pending = service.get_pending_downloads(provider_id)
             if pending:
                 await websocket.send_json({
@@ -262,7 +262,7 @@ async def worker_websocket(
                         async with get_session_context() as session:
                             from services.job_service import JobService
 
-                            job_service = JobService(session)
+                            job_service = get_job_service(session)
                             await job_service.update_job(job_id, **updates)
             
             elif msg_type == "job_completed":
@@ -275,7 +275,7 @@ async def worker_websocket(
                         from services.job_service import JobService
                         from core.entities import JobStatus
 
-                        job_service = JobService(session)
+                        job_service = get_job_service(session)
                         await job_service.update_job(
                             job_id,
                             status=JobStatus.FAILED,
@@ -289,7 +289,7 @@ async def worker_websocket(
                 try:
                     async with get_session_context() as session:
                         from services.job_service import JobService
-                        job_service = JobService(session)
+                        job_service = get_job_service(session)
                         await finalize_persisted_job_outputs(
                             job_service=job_service,
                             job_id=job_id,
@@ -315,7 +315,7 @@ async def worker_websocket(
                     async with get_session_context() as session:
                         from services.job_service import JobService
                         from core.entities import JobStatus
-                        job_service = JobService(session)
+                        job_service = get_job_service(session)
                         await job_service.update_job(
                             job_id,
                             status=JobStatus.FAILED,
@@ -337,8 +337,8 @@ async def worker_websocket(
             elif msg_type == "get_pending_models":
                 # Return models that need to be synced
                 async with get_session_context() as session:
-                    from services.model_service import ModelServiceV2
-                    service = ModelServiceV2(session)
+                    from api.deps import get_model_service_v2
+                    service = get_model_service_v2(session)
                     pending = service.get_pending_downloads(provider_id)
                     await websocket.send_json({
                         "type": "pending_models",

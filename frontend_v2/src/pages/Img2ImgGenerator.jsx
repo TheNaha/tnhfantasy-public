@@ -20,6 +20,8 @@ import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
+import PromptPanel from '../components/generator/PromptPanel';
+import PresetManager from '../components/generator/PresetManager';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
@@ -159,7 +161,7 @@ export default function Img2ImgGenerator() {
                 toast.success('Job added to queue!');
                 // Randomize seed
                 if (settings.generator.autoRandomizeSeed) {
-                    setSeed(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
+                    randomizeSeed();
                 }
             }
 
@@ -212,30 +214,7 @@ export default function Img2ImgGenerator() {
                     </div>
 
                     {/* Prompt Section */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                            <Wand2 size={18} className="text-blue-400" />
-                            Prompts
-                        </h3>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Positive Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white min-h-[6rem] focus:ring-2 focus:ring-blue-500 outline-none resize-y"
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
-                                placeholder="Describe what you want to create..."
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Negative Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white min-h-[4rem] focus:ring-2 focus:ring-red-500 outline-none resize-y"
-                                value={negativePrompt}
-                                onChange={(e) => setNegativePrompt(e.target.value)}
-                                placeholder="What to avoid..."
-                            />
-                        </div>
-                    </div>
+                    <PromptPanel />
 
                     {/* Model Selection */}
                     <div className="space-y-4 pb-4 border-b border-gray-800">
@@ -340,6 +319,8 @@ export default function Img2ImgGenerator() {
                         title="Img2Img Runway"
                         hint="Check provider health and model availability before transforming the source image."
                     />
+
+                    <PresetManager />
 
                     {/* Denoise Strength - KEY Img2Img Parameter */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">

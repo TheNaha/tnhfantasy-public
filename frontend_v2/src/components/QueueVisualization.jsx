@@ -169,7 +169,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                             <div className="text-xs text-gray-500 text-center pt-1">
                                 Avg. job time: {formatETA(stats.avg_duration_seconds)}
                                 {pendingJobs.length > 0 && (
-                                    <> • Total wait: ~{formatETA(pendingJobs.reduce((sum, j) => sum + j.eta_seconds, 0))}</>
+                                    <> • Total wait: ~{formatETA(pendingJobs[pendingJobs.length - 1].eta_seconds)}</>
                                 )}
                             </div>
                         </div>

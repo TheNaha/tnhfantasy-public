@@ -128,45 +128,6 @@ export const useJobStore = create((set, get) => ({
         }
     },
 
-    clearJobs: async () => {
-        const previousJobs = get().jobs;
-        set({ jobs: [] });
-
-        try {
-            await jobsApi.clear();
-        } catch (error) {
-            console.error('Failed to clear jobs:', error);
-            set({ jobs: previousJobs });
-            throw error;
-        }
-    },
-
-    deleteJob: async (jobId) => {
-        const previousJobs = get().jobs;
-        set((state) => ({
-            jobs: state.jobs.filter(j => j.id !== jobId),
-        }));
-
-        try {
-            await jobsApi.delete(jobId);
-        } catch (error) {
-            console.error('Failed to delete job:', error);
-            set({ jobs: previousJobs });
-            throw error;
-        }
-    },
-
-    retryJob: async (jobId) => {
-        try {
-            const result = await jobsApi.retry(jobId);
-            await get().fetchJobs();
-            return result;
-        } catch (error) {
-            console.error('Failed to retry job:', error);
-            throw error;
-        }
-    },
-
     createJobOptimistic: async (workflow, metadata, generateFn) => {
         const tempId = `temp-${Date.now()}`;
         const tempJob = {

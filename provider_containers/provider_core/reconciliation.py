@@ -5,6 +5,7 @@ event pushes, and the shared reconciliation orchestration used by workers.
 """
 
 import asyncio
+import os
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Set
 from datetime import datetime
 
@@ -270,7 +271,7 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     """
     Calculate safe deletion limit to prevent accidental mass deletion.
     
-    Limits deletions to 50% of total files as a safety measure.
+    Limits deletions to 10% of total files as a safety measure.
     
     Args:
         total_files: Total number of files in storage
@@ -279,9 +280,9 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     Returns:
         Maximum number of files to delete
     """
-    max_deletions = total_files // 2
+    max_deletions = max(1, total_files // 10)
     if orphaned_count > max_deletions and max_deletions > 0:
-        print(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 50% of files!")
+        print(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 10% of files!")
         print(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
         return max_deletions
     return orphaned_count
@@ -499,17 +500,22 @@ async def run_reconciliation_v2(
             orphaned_files = orphaned_files[:max_deletions]
 
             if orphaned_files:
-                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files to delete")
-                for orphan_path in orphaned_files:
-                    try:
-                        deleted = await delete_file(orphan_path)
-                        if deleted is False:
-                            print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
-                            continue
-                        reconciliation_state.increment_deletions_completed()
-                        print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
-                    except Exception as exc:
-                        print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files")
+                delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
+                if delete_enabled:
+                    for orphan_path in orphaned_files:
+                        try:
+                            deleted = await delete_file(orphan_path)
+                            if deleted is False:
+                                print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
+                                continue
+                            reconciliation_state.increment_deletions_completed()
+                            print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
+                        except Exception as exc:
+                            print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                else:
+                    print(f"[V2 Reconciliation] Dry-run: would delete {len(orphaned_files)} orphaned files")
+                    print(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
             else:
                 print("[V2 Reconciliation] No orphaned files to delete")
 

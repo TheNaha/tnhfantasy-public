@@ -877,10 +877,110 @@ class ModelRepositoryV2:
     # SERIALIZATION
     # =========================================================================
     
-    def model_to_dict(self, model: ModelV2, include_versions: bool = True) -> Dict[str, Any]:
-        """Convert model to dictionary for API response."""
+    # =========================================================================
+    # BULK LOADING (eliminates N+1 queries)
+    # =========================================================================
+
+    def _bulk_load_tags(self, model_ids: List[int]) -> Dict[int, List[str]]:
+        """Load all tags for multiple models in one query."""
+        if not model_ids:
+            return {}
+        stmt = select(ModelTag).where(ModelTag.model_id.in_(model_ids))
+        result: Dict[int, List[str]] = {mid: [] for mid in model_ids}
+        for tag in self.session.exec(stmt).all():
+            result.setdefault(tag.model_id, []).append(tag.tag)
+        return result
+
+    def _bulk_load_versions(self, model_ids: List[int]) -> Dict[int, List[ModelVersion]]:
+        """Load all versions for multiple models in one query."""
+        if not model_ids:
+            return {}
+        stmt = select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
+        result: Dict[int, List[ModelVersion]] = {mid: [] for mid in model_ids}
+        for version in self.session.exec(stmt).all():
+            result.setdefault(version.model_id, []).append(version)
+        return result
+
+    def _bulk_load_files(self, version_ids: List[int]) -> Dict[int, List[ModelFile]]:
+        """Load all files for multiple versions in one query."""
+        if not version_ids:
+            return {}
+        stmt = select(ModelFile).where(ModelFile.version_id.in_(version_ids))
+        from collections import defaultdict
+        result: Dict[int, List[ModelFile]] = defaultdict(list)
+        for file in self.session.exec(stmt).all():
+            result[file.version_id].append(file)
+        return dict(result)
+
+    def _bulk_load_images(self, version_ids: List[int]) -> Dict[int, List[ModelImage]]:
+        """Load all images for multiple versions in one query, ordered by sort_order."""
+        if not version_ids:
+            return {}
+        stmt = select(ModelImage).where(ModelImage.version_id.in_(version_ids)).order_by(ModelImage.sort_order)
+        from collections import defaultdict
+        result: Dict[int, List[ModelImage]] = defaultdict(list)
+        for image in self.session.exec(stmt).all():
+            result[image.version_id].append(image)
+        return dict(result)
+
+    def _bulk_load_provider_statuses_by_model(
+        self, model_ids: List[int]
+    ) -> Dict[int, Dict[str, Dict[str, Any]]]:
+        """Load all provider statuses for multiple models in one query."""
+        if not model_ids:
+            return {}
+        stmt = select(ProviderVersionStatus, ModelFile, ModelVersion).join(
+            ModelFile, ProviderVersionStatus.file_id == ModelFile.id
+        ).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).where(ModelVersion.model_id.in_(model_ids))
+
+        from collections import defaultdict
+        result: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        for status, file, version in self.session.exec(stmt).all():
+            model_id = version.model_id
+            if model_id not in result:
+                result[model_id] = {}
+            provider_key = self._status_provider_key(status)
+            if not provider_key:
+                continue
+            if provider_key not in result[model_id]:
+                result[model_id][provider_key] = {
+                    "status": status.status,
+                    "files": [],
+                    "total_size": 0,
+                }
+            result[model_id][provider_key]["files"].append({
+                "file_id": file.id,
+                "filename": file.storage_filename,
+                "status": status.status,
+                "size_bytes": status.size_bytes,
+            })
+            if status.size_bytes:
+                result[model_id][provider_key]["total_size"] += status.size_bytes
+        return result
+
+    def model_to_dict(
+        self,
+        model: ModelV2,
+        include_versions: bool = True,
+        *,
+        _tags_map: Optional[Dict[int, List[str]]] = None,
+        _versions_map: Optional[Dict[int, List[ModelVersion]]] = None,
+        _files_map: Optional[Dict[int, List[ModelFile]]] = None,
+        _images_map: Optional[Dict[int, List[ModelImage]]] = None,
+        _statuses_map: Optional[Dict[int, Dict[str, Dict[str, Any]]]] = None,
+    ) -> Dict[str, Any]:
+        """Convert model to dictionary for API response.
+        
+        Accepts optional pre-loaded bulk data to avoid N+1 queries.
+        """
+        mid = model.id
+        tags = _tags_map.get(mid, []) if _tags_map is not None else self.get_tags_for_model(mid)
+        versions = _versions_map.get(mid, []) if _versions_map is not None else self.get_versions_for_model(mid)
+
         result = {
-            "id": model.id,
+            "id": mid,
             "civitai_model_id": model.civitai_model_id,
             "name": model.name,
             "type": model.type,
@@ -900,19 +1000,28 @@ class ModelRepositoryV2:
             },
             "source": model.source,
             "source_url": model.source_url,
-            "tags": self.get_tags_for_model(model.id),
+            "tags": tags,
             "created_at": model.created_at.isoformat() if model.created_at else None,
             "updated_at": model.updated_at.isoformat() if model.updated_at else None
         }
-        
+
         if include_versions:
             result["versions"] = [
-                self.version_to_dict(v) 
-                for v in self.get_versions_for_model(model.id)
+                self._version_to_dict(v, _files_map=_files_map, _images_map=_images_map)
+                for v in versions
             ]
-        
-        # Add primary image
-        primary_image = self.get_primary_image_for_model(model.id)
+
+        # Primary image: first image of the default version
+        primary_image = None
+        default_version = next((v for v in versions if v.is_default), versions[0] if versions else None)
+        if default_version:
+            version_images = (
+                _images_map.get(default_version.id, [])
+                if _images_map is not None
+                else self.get_images_for_version(default_version.id)
+            )
+            if version_images:
+                primary_image = version_images[0]
         if primary_image:
             result["preview_image"] = {
                 "url": primary_image.url,
@@ -920,19 +1029,67 @@ class ModelRepositoryV2:
                 "height": primary_image.height,
                 "blurhash": primary_image.blurhash
             }
-        
-        # Add provider statuses
-        result["provider_statuses"] = self.get_provider_statuses_for_model(model.id)
-        
+
+        # Provider statuses
+        if _statuses_map is not None:
+            result["provider_statuses"] = _statuses_map.get(mid, {})
+        else:
+            result["provider_statuses"] = self.get_provider_statuses_for_model(mid)
+
         return result
-    
-    def version_to_dict(self, version: ModelVersion) -> Dict[str, Any]:
-        """Convert version to dictionary for API response."""
-        primary_file = self.get_primary_file_for_version(version.id)
-        images = self.get_images_for_version(version.id)
+
+    def models_to_dict(
+        self,
+        models: List[ModelV2],
+        include_versions: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Convert multiple models to dicts with bulk-loaded related data.
         
+        Eliminates the N+1 query problem by loading all tags, versions,
+        files, images, and provider statuses in 5 total queries regardless
+        of how many models are passed in.
+        """
+        if not models:
+            return []
+
+        model_ids = [m.id for m in models]
+        tags_map = self._bulk_load_tags(model_ids)
+        versions_map = self._bulk_load_versions(model_ids)
+
+        all_version_ids = [v.id for versions in versions_map.values() for v in versions]
+        files_map = self._bulk_load_files(all_version_ids)
+        images_map = self._bulk_load_images(all_version_ids)
+        statuses_map = self._bulk_load_provider_statuses_by_model(model_ids)
+
+        return [
+            self.model_to_dict(
+                m,
+                include_versions=include_versions,
+                _tags_map=tags_map,
+                _versions_map=versions_map,
+                _files_map=files_map,
+                _images_map=images_map,
+                _statuses_map=statuses_map,
+            )
+            for m in models
+        ]
+
+    def _version_to_dict(
+        self,
+        version: ModelVersion,
+        *,
+        _files_map: Optional[Dict[int, List[ModelFile]]] = None,
+        _images_map: Optional[Dict[int, List[ModelImage]]] = None,
+    ) -> Dict[str, Any]:
+        """Convert version to dictionary, accepting optional pre-loaded data."""
+        vid = version.id
+        files = _files_map.get(vid, []) if _files_map is not None else self.get_files_for_version(vid)
+        images = _images_map.get(vid, []) if _images_map is not None else self.get_images_for_version(vid)
+
+        primary_file = next((f for f in files if f.is_primary), files[0] if files else None)
+
         return {
-            "id": version.id,
+            "id": vid,
             "civitai_version_id": version.civitai_version_id,
             "name": version.name,
             "base_model": version.base_model,
@@ -963,13 +1120,15 @@ class ModelRepositoryV2:
         }
     
     def get_grouped_by_directory(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Get all models grouped by directory."""
+        """Get all models grouped by directory (bulk-loaded, no N+1)."""
         models = self.get_all_models()
+        dicts = self.models_to_dict(models, include_versions=False)
         result: Dict[str, List[Dict[str, Any]]] = {}
-        for model in models:
-            if model.directory not in result:
-                result[model.directory] = []
-            result[model.directory].append(self.model_to_dict(model, include_versions=False))
+        for d in dicts:
+            directory = d.get("directory", "other")
+            if directory not in result:
+                result[directory] = []
+            result[directory].append(d)
         return result
     
     def migrate_unet_only_models(self) -> Dict[str, Any]:

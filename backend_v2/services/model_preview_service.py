@@ -9,7 +9,7 @@ from infrastructure.logging import get_logger
 from infrastructure.http_client import get_http_client
 from infrastructure.config_helpers import resolve_env_bool, resolve_env_int, resolve_env_float
 from infrastructure.request_dedup import deduplicated, make_key
-from core.database import get_session_sync
+from infrastructure.database import get_session_sync
 
 logger = get_logger("model_preview_service")
 
@@ -262,16 +262,15 @@ async def fetch_civitai_preview(
             return cached_content, cached_content_type, True
 
     try:
-        client = get_http_client()
-        api_url = f"https://civitai.com/api/v1/models/{model_id}"
-        response = await client.get(api_url, timeout=PREVIEW_METADATA_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        model_data = response.json()
+        from services.external_model_service import ExternalModelService, ExternalModelServiceError
+        external_service = ExternalModelService()
+        model_data = await external_service.get_civitai_model(model_id)
 
         image_url = _select_preview_url(model_data, version_id, image_index)
         if not image_url:
             return None, None, False
 
+        client = get_http_client()
         img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
         img_response.raise_for_status()
         image_data = img_response.content
@@ -288,6 +287,28 @@ async def fetch_civitai_preview(
         await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
         return image_data, content_type, False
 
+    except ExternalModelServiceError as e:
+        if e.status_code == 404:
+            await asyncio.to_thread(_mark_failure, not_found_marker_path)
+            await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+            logger.info(
+                "civitai_preview_model_not_found",
+                model_id=model_id,
+                version_id=version_id,
+                image_index=image_index,
+                error=str(e),
+            )
+            return None, None, False
+
+        await asyncio.to_thread(_mark_failure, failure_marker_path)
+        logger.warning(
+            "civitai_preview_fetch_failed",
+            model_id=model_id,
+            version_id=version_id,
+            image_index=image_index,
+            error=str(e),
+        )
+        return None, None, False
     except httpx.HTTPStatusError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         if status_code == 404:

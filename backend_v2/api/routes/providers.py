@@ -136,7 +136,7 @@ async def update_load_balancing_config(
 
 
 @router.get("/load-balancer/stats")
-def get_load_balancer_stats(session: Session = Depends(get_session)):
+async def get_load_balancer_stats(session: Session = Depends(get_session)):
     """Get load balancer statistics."""
     service = get_provider_service(session)
     stats = service.get_load_balancer_stats()
@@ -521,24 +521,20 @@ async def start_provider_container(
     provider_id: str,
     session: Session = Depends(get_session)
 ):
-    """Start a provider's container."""
-    lifecycle = _get_provider_lifecycle_service(session)
-    try:
-        return await lifecycle.start_container(provider_id)
-    except ProviderError as exc:
-        detail = str(exc)
-        status_code = 400 if "not configured for containerized mode" in detail else 500
-        raise HTTPException(status_code=status_code, detail=detail) from exc
+    """Provider containers are compose-managed."""
+    raise HTTPException(
+        status_code=501,
+        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
+    )
 
 
 @router.post("/{provider_id}/container/stop")
 async def stop_provider_container(provider_id: str, session: Session = Depends(get_session)):
-    """Stop a provider's container."""
-    lifecycle = _get_provider_lifecycle_service(session)
-    try:
-        return await lifecycle.stop_container(provider_id)
-    except ProviderError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    """Provider containers are compose-managed."""
+    raise HTTPException(
+        status_code=501,
+        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
+    )
 
 
 @router.post("/{provider_id}/container/restart")
@@ -546,14 +542,11 @@ async def restart_provider_container(
     provider_id: str,
     session: Session = Depends(get_session)
 ):
-    """Restart a provider's container."""
-    lifecycle = _get_provider_lifecycle_service(session)
-    try:
-        return await lifecycle.restart_container(provider_id)
-    except ProviderError as exc:
-        detail = str(exc)
-        status_code = 400 if "not configured for containerized mode" in detail else 500
-        raise HTTPException(status_code=status_code, detail=detail) from exc
+    """Provider containers are compose-managed."""
+    raise HTTPException(
+        status_code=501,
+        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
+    )
 
 
 @router.get("/{provider_id}/container/logs")

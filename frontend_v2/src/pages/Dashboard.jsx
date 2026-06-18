@@ -34,6 +34,9 @@ import EmptyState from '../components/EmptyState';
 import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
 import { useGalleryAutoRefresh } from '../hooks/useGalleryAutoRefresh';
+import { DashboardHeader } from '../components/dashboard/DashboardHeader';
+import { DashboardToolbar } from '../components/dashboard/DashboardToolbar';
+import { jobsApi } from '../api/jobs';
 import {
     buildGeneratorStateFromMetadata,
     hydrateGeneratorStateModelVisuals,
@@ -50,9 +53,6 @@ export default function Dashboard() {
     const updateSetting = useSettingsStore((state) => state.updateSetting);
     // Global State - now uses WebSocket for real-time updates
     const activeJobs = useJobStore((state) => state.jobs);
-    const clearJobs = useJobStore((state) => state.clearJobs);
-    const storeDeleteJob = useJobStore((state) => state.deleteJob);
-    const retryJob = useJobStore((state) => state.retryJob);
     const cancelJob = useJobStore((state) => state.cancelJob);
     const favorites = useStore((state) => state.favorites);
     const toggleFavorite = useStore((state) => state.toggleFavorite);
@@ -88,9 +88,28 @@ export default function Dashboard() {
 
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
-        await storeDeleteJob(jobId);
-        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
-    }, [storeDeleteJob, queryClient, filters]);
+        try {
+            await jobsApi.delete(jobId);
+            useJobStore.setState(state => ({
+                jobs: state.jobs.filter(j => j.id !== jobId)
+            }));
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
+        } catch (error) {
+            console.error('Failed to delete job:', error);
+            throw error;
+        }
+    }, [queryClient, filters]);
+
+    const retryJob = useCallback(async (jobId) => {
+        try {
+            const result = await jobsApi.retry(jobId);
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
+            return result;
+        } catch (error) {
+            console.error('Failed to retry job:', error);
+            throw error;
+        }
+    }, [queryClient, filters]);
 
     // Wrapped deleteJob with confirmation modal for card dismiss button
     const handleJobDelete = useCallback((jobId) => {
@@ -435,155 +454,43 @@ export default function Dashboard() {
                 <QueueVisualization onJobClick={handleJobClick} />
 
                 <div className="flex flex-col gap-4">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                        <div>
-                            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-                                Gallery
-                            </h1>
-                            <p className="text-gray-400 mt-1 text-sm">Your generations and active jobs</p>
-                        </div>
+                    <DashboardHeader
+                        viewMode={viewMode}
+                        setViewMode={setViewMode}
+                        gridCols={gridCols}
+                        setGridCols={setGridCols}
+                        selectionMode={selectionMode}
+                        setSelectionMode={(mode) => {
+                            setSelectionMode(mode);
+                            if (mode) setSelectedFiles(new Set());
+                        }}
+                        selectedFilesCount={selectedFiles.size}
+                        onRefetch={() => refetch()}
+                    />
 
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <div className="bg-gray-800 rounded-lg p-1 flex gap-1">
-                                {['grid', 'list', 'feed', 'timeline'].map(mode => (
-                                    <button
-                                        key={mode}
-                                        onClick={() => {
-                                            setViewMode(mode);
-                                            updateSetting('ui', 'defaultViewMode', mode);
-                                        }}
-                                        aria-label={`${mode.charAt(0).toUpperCase() + mode.slice(1)} View`}
-                                        className={`p-2 rounded-md transition-all ${viewMode === mode ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
-                                        type="button"
-                                        title={mode === 'timeline' ? 'Timeline View - Chronological history' : `${mode.charAt(0).toUpperCase() + mode.slice(1)} View`}
-                                    >
-                                        {mode === 'grid' ? <LayoutGrid size={18} aria-hidden="true" /> :
-                                            mode === 'list' ? <List size={18} aria-hidden="true" /> :
-                                                mode === 'feed' ? <Square size={18} aria-hidden="true" /> :
-                                                    <LineChart size={18} aria-hidden="true" />}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {viewMode === 'grid' && (
-                                <div className="hidden sm:flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700">
-                                    <span className="text-xs text-gray-400 font-medium">Cols</span>
-                                    <input
-                                        type="range"
-                                        min="2"
-                                        max="8"
-                                        value={gridCols}
-                                        onChange={(e) => setGridCols(parseInt(e.target.value))}
-                                        className="w-20 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                        title="Adjust Grid Size"
-                                        aria-label={`Grid columns: ${gridCols}. Adjust to change number of columns`}
-                                        aria-valuemin="2"
-                                        aria-valuemax="8"
-                                        aria-valuenow={gridCols}
-                                    />
-                                    <span className="text-xs text-gray-400 font-medium">{gridCols}</span>
-                                </div>
-                            )}
-
-                            <div className="hidden sm:block h-6 w-px bg-gray-700" />
-
-                            <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                    setSelectionMode(!selectionMode);
-                                    if (selectionMode) {
-                                        setSelectedFiles(new Set());
-                                    }
-                                }}
-                                className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${selectionMode ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
-                                type="button"
-                                aria-pressed={selectionMode}
-                                aria-label={selectionMode ? 'Exit selection mode' : 'Enter selection mode to select multiple images'}
-                            >
-                                <Check size={16} aria-hidden="true" />
-                                <span className="hidden sm:inline">{selectionMode ? `Selected (${selectedFiles.size})` : 'Select'}</span>
-                                <span className="sm:hidden">{selectedFiles.size > 0 ? selectedFiles.size : 'Select'}</span>
-                            </motion.button>
-
-                            <button
-                                onClick={() => refetch()}
-                                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
-                                title="Refresh gallery"
-                                aria-label="Refresh gallery to load latest images"
-                                type="button"
-                            >
-                                <RefreshCw size={20} aria-hidden="true" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                            onClick={() => setShowFavorites(!showFavorites)}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${showFavorites ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-yellow-400 border border-gray-700'}`}
-                            title={showFavorites ? 'Show All Images' : 'Show Favorites Only'}
-                            aria-label={showFavorites ? `Showing ${favorites.length} favorites. Click to show all images` : `Show favorites only. ${favorites.length} images favorited`}
-                            aria-pressed={showFavorites}
-                            type="button"
-                        >
-                            <Star size={16} className={showFavorites ? 'fill-current' : ''} aria-hidden="true" />
-                            <span>Favorites</span>
-                            {favorites.length > 0 && (
-                                <span className="px-1.5 py-0.5 bg-yellow-500/30 rounded text-xs font-medium">{favorites.length}</span>
-                            )}
-                        </button>
-
-                        <button
-                            onClick={() => setShowCollectionsPanel(true)}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${activeCollection ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-purple-400 border border-gray-700'}`}
-                            title={activeCollection && collections[activeCollection] ? `Viewing collection: ${collections[activeCollection].name}` : 'Browse collections'}
-                            aria-label={activeCollection && collections[activeCollection] ? `Currently viewing ${collections[activeCollection].name} collection. Click to manage collections` : 'Open collections panel to organize images'}
-                            aria-pressed={!!activeCollection}
-                            type="button"
-                        >
-                            <FolderOpen size={16} aria-hidden="true" />
-                            <span className="hidden sm:inline">
-                                {activeCollection && collections[activeCollection] ? collections[activeCollection].name : 'Collections'}
-                            </span>
-                            <span className="sm:hidden">Collections</span>
-                        </button>
-
-                        <div className="flex-1" />
-
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setShowStatsPanel(true)}
-                                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
-                                title="View Statistics"
-                                aria-label="View generation statistics and analytics"
-                                type="button"
-                            >
-                                <BarChart3 size={20} aria-hidden="true" />
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setConfirmModal({
-                                        isOpen: true,
-                                        title: 'Clear Job History',
-                                        message: 'Are you sure you want to clear all job history? This will remove all job records but keep the generated images.',
-                                        isDangerous: true,
-                                        confirmText: 'Clear History',
-                                        onConfirm: async () => {
-                                            await clearJobs();
-                                            refetch();
-                                        }
-                                    });
-                                }}
-                                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
-                                title="Clear Job History"
-                                aria-label="Clear Job History"
-                                type="button"
-                            >
-                                <Trash2 size={20} aria-hidden="true" />
-                            </button>
-                        </div>
-                    </div>
+                    <DashboardToolbar
+                        showFavorites={showFavorites}
+                        setShowFavorites={setShowFavorites}
+                        favoritesCount={favorites.length}
+                        activeCollection={activeCollection}
+                        activeCollectionName={activeCollection && collections[activeCollection] ? collections[activeCollection].name : null}
+                        setShowCollectionsPanel={setShowCollectionsPanel}
+                        setShowStatsPanel={setShowStatsPanel}
+                        onClearHistory={() => {
+                            setConfirmModal({
+                                isOpen: true,
+                                title: 'Clear Job History',
+                                message: 'Are you sure you want to clear all job history? This will remove all job records but keep the generated images.',
+                                isDangerous: true,
+                                confirmText: 'Clear History',
+                                onConfirm: async () => {
+                                    await jobsApi.clear();
+                                    useJobStore.setState({ jobs: [] });
+                                    refetch();
+                                }
+                            });
+                        }}
+                    />
 
                     <AnimatePresence>
                         {selectionMode && (

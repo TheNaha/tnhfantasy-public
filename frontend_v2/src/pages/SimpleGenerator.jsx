@@ -9,7 +9,7 @@ import ModelSelector from '../components/ModelSelector';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
-import PromptLibrary from '../components/generator/PromptLibrary';
+import PromptPanel from '../components/generator/PromptPanel';
 import PresetManager from '../components/generator/PresetManager';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import CollapsibleSection from '../components/CollapsibleSection';
@@ -134,7 +134,7 @@ export default function SimpleGenerator() {
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     const { updateSetting } = useUpdateSettings();
 
-    const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null); // Index of LoRA selector to auto-open
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const {
@@ -167,13 +167,6 @@ export default function SimpleGenerator() {
     };
     // Obsolete saved prompts functionality removed - using Prompt Library instead
 
-    // Handler for Prompt Library
-    const handleSelectPromptFromLibrary = (prompt) => {
-        setPrompt(prompt.text);
-        if (prompt.negative) {
-            setNegativePrompt(prompt.negative);
-        }
-    };
 
     useEffect(() => {
         if (!currentJobId) {
@@ -541,60 +534,7 @@ export default function SimpleGenerator() {
 
 
                     {/* Prompt Section */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <div className="flex justify-between items-center">
-                            <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                                <Wand2 size={18} className="text-blue-400" />
-                                Prompts
-                            </h3>
-                            <button
-                                onClick={() => setShowPromptLibrary(true)}
-                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs lg:text-sm rounded-lg flex items-center gap-1.5 transition-colors"
-                                aria-label="Open prompt library"
-                                type="button"
-                            >
-                                <BookOpen size={14} aria-hidden="true" />
-                                <span className="hidden sm:inline">Library</span>
-                                <span className="sm:hidden">Library</span>
-                            </button>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1">Positive Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 lg:p-3 text-sm text-white min-h-[4rem] lg:min-h-[8rem] focus:ring-2 focus:ring-blue-500 outline-none resize-y overflow-hidden"
-                                value={prompt}
-                                onChange={(e) => {
-                                    setPrompt(e.target.value);
-                                    e.target.style.height = 'auto';
-                                    e.target.style.height = e.target.scrollHeight + 'px';
-                                }}
-                                ref={(el) => {
-                                    if (el) {
-                                        el.style.height = 'auto';
-                                        el.style.height = el.scrollHeight + 'px';
-                                    }
-                                }}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1">Negative Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 lg:p-3 text-sm text-white min-h-[3rem] lg:min-h-[5rem] focus:ring-2 focus:ring-red-500 outline-none resize-y overflow-hidden"
-                                value={negativePrompt}
-                                onChange={(e) => {
-                                    setNegativePrompt(e.target.value);
-                                    e.target.style.height = 'auto';
-                                    e.target.style.height = e.target.scrollHeight + 'px';
-                                }}
-                                ref={(el) => {
-                                    if (el) {
-                                        el.style.height = 'auto';
-                                        el.style.height = el.scrollHeight + 'px';
-                                    }
-                                }}
-                            />
-                        </div>
-                    </div>
+                    <PromptPanel />
 
                     {/* Model Selection */}
                     <div className="space-y-3 lg:space-y-4 pb-4 border-b border-gray-800">
@@ -1517,12 +1457,6 @@ export default function SimpleGenerator() {
                 />
             )}
 
-            {/* Prompt Library Modal */}
-            <PromptLibrary
-                isOpen={showPromptLibrary}
-                onClose={() => setShowPromptLibrary(false)}
-                onSelectPrompt={handleSelectPromptFromLibrary}
-            />
 
             <MissingModelsDialog
                 isOpen={isMissingModelsOpen}

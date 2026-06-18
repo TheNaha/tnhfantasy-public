@@ -471,12 +471,16 @@ class ProviderStatusService:
             provider_id = provider.get("id")
             if not provider_id:
                 continue
-            records.append(
-                await self.build_provider_record(
-                    provider_id,
-                    provider_payload=provider,
+            try:
+                records.append(
+                    await self.build_provider_record(
+                        provider_id,
+                        provider_payload=provider,
+                    )
                 )
-            )
+            except Exception as exc:
+                logger.warning("provider_record_failed", provider_id=provider_id, error=str(exc))
+                records.append(self.build_provider_status_card_fallback(provider, error=str(exc)))
         return records
 
     async def build_provider_status_cards(

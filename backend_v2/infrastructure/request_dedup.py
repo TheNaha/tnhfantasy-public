@@ -3,6 +3,7 @@
 
 from cachetools import TTLCache
 import asyncio
+import threading
 import os
 from typing import Callable, Any, TypeVar, Coroutine
 
@@ -14,13 +15,7 @@ T = TypeVar('T')
 
 # Track in-flight requests to deduplicate concurrent identical requests
 _in_flight: dict[str, asyncio.Task] = {}
-_in_flight_lock = None
-
-async def _get_lock() -> asyncio.Lock:
-    global _in_flight_lock
-    if _in_flight_lock is None:
-        _in_flight_lock = asyncio.Lock()
-    return _in_flight_lock
+_in_flight_lock = threading.Lock()
 
 
 def _resolve_result_cache_ttl_seconds() -> float:
@@ -74,8 +69,7 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
             lambda: service.list_jobs(limit, offset)
         )
     """
-    lock = await _get_lock()
-    async with lock:
+    with _in_flight_lock:
         # Check result cache first
         if key in _result_cache:
             logger.debug("dedup_cache_hit", key=key)
@@ -96,14 +90,12 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
         # cancel the underlying request for every other waiter.
         result = await asyncio.shield(task)
         if created_task:
-            lock = await _get_lock()
-            async with lock:
+            with _in_flight_lock:
                 _result_cache[key] = result
         return result
     finally:
         if created_task:
-            lock = await _get_lock()
-            async with lock:
+            with _in_flight_lock:
                 if _in_flight.get(key) is task:
                     _in_flight.pop(key, None)
 
@@ -123,7 +115,8 @@ def make_key(*args) -> str:
 
 def clear_dedup_cache():
     """Clear the deduplication cache. Useful for testing."""
-    _result_cache.clear()
+    with _in_flight_lock:
+        _result_cache.clear()
     done_keys = [key for key, task in _in_flight.items() if task.done()]
     for key in done_keys:
         _in_flight.pop(key, None)
@@ -131,7 +124,8 @@ def clear_dedup_cache():
 
 def get_dedup_stats() -> dict:
     """Get statistics about the deduplication cache."""
-    return {
+    with _in_flight_lock:
+        return {
         "cache_size": len(_result_cache),
         "cache_maxsize": _result_cache.maxsize,
         "cache_ttl": _result_cache.ttl,
@@ -141,5 +135,6 @@ def get_dedup_stats() -> dict:
 
 def is_in_flight(key: str) -> bool:
     """Return True when a dedup key currently has a running task."""
-    task = _in_flight.get(key)
+    with _in_flight_lock:
+        task = _in_flight.get(key)
     return task is not None and not task.done()

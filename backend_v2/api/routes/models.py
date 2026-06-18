@@ -21,6 +21,7 @@ from api.deps import get_session, get_session_sync
 from services.model_service import ModelServiceV2
 from core.exceptions import NotFoundError
 from infrastructure.logging import model_logger
+from services.model_preview_service import get_preview_deduplicated, prefetch_stale_model_previews
 
 logger = model_logger()
 
@@ -757,8 +758,6 @@ from fastapi import Response
 from infrastructure.http_client import get_http_client
 from infrastructure.request_dedup import deduplicated, make_key
 
-from services.model_preview_service import get_preview_deduplicated, prefetch_stale_model_previews
-
 @router.get("/preview/{model_id}")
 async def get_model_preview_image(model_id: int, version_id: int = None, image_index: int = 0):
     """
@@ -962,6 +961,40 @@ async def backfill_provider_statuses(
         "errors": []
     }
     
+    http_client = get_http_client()
+    from provider_core.models import MODEL_DIRECTORIES
+    import asyncio
+    
+    tasks = []
+
+    async def check_directory(provider_id, directory, worker_url):
+        try:
+            response = await http_client.post(
+                f"{worker_url}/list-models",
+                json={"directory": directory},
+                timeout=60.0
+            )
+            if response.status_code != 200:
+                return []
+            
+            data = response.json()
+            updates = []
+            for provider_file in data.get("files", []):
+                storage_path = provider_file.get("path") or provider_file.get("storage_path")
+                if not storage_path:
+                    name = provider_file.get("name")
+                    if not name:
+                        continue
+                    storage_path = f"{directory}/{name}"
+
+                file_id = all_files_by_path.get(storage_path)
+                if file_id:
+                    updates.append((provider_id, file_id))
+            return updates
+        except Exception as e:
+            results["errors"].append(f"Failed to query {provider_id} at {directory}: {str(e)}")
+            return []
+    
     for provider in providers:
         runtime = resolve_provider_runtime(provider)
         if runtime.mode != "container_http":
@@ -971,41 +1004,21 @@ async def backfill_provider_statuses(
         
         results["providers_checked"] += 1
         
-        # Query each directory from the worker
-        from provider_core.models import MODEL_DIRECTORIES
-        
         for directory in MODEL_DIRECTORIES:
+            tasks.append(check_directory(provider.id, directory, worker_url))
+            
+    all_updates = await asyncio.gather(*tasks)
+    
+    for directory_updates in all_updates:
+        for provider_id, file_id in directory_updates:
             try:
-                response = await http_client.post(
-                    f"{worker_url}/list-models",
-                    json={"directory": directory},
-                    timeout=60.0
+                await service.update_provider_file_status(
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    status="downloaded"
                 )
-                if response.status_code != 200:
-                    continue
-                
-                data = response.json()
-                for provider_file in data.get("files", []):
-                    storage_path = provider_file.get("path") or provider_file.get("storage_path")
-                    if not storage_path:
-                        name = provider_file.get("name")
-                        if not name:
-                            continue
-                        storage_path = f"{directory}/{name}"
-
-                    file_id = all_files_by_path.get(storage_path)
-                    if file_id:
-                        try:
-                            await service.update_provider_file_status(
-                                provider_id=provider.id,
-                                file_id=file_id,
-                                status="downloaded"
-                            )
-                            results["models_updated"] += 1
-                        except Exception as e:
-                            results["errors"].append(str(e))
-                                    
+                results["models_updated"] += 1
             except Exception as e:
-                results["errors"].append(f"Failed to query {provider.name} at {directory}: {str(e)}")
+                results["errors"].append(str(e))
     
     return results

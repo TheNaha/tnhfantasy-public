@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import struct
+import json
 from typing import Any, Dict, Optional
 
 # Minimum model size in bytes (10KB).
@@ -87,8 +89,6 @@ def validate_downloaded_file(
     if "safetensors" in detected_format or path.endswith(".safetensors"):
         if actual_size >= MIN_MODEL_SIZE and not validation_errors:
             try:
-                import struct
-                import json
                 with open(path, 'rb') as f:
                     header_size_bytes = f.read(8)
                     if len(header_size_bytes) < 8:

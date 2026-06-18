@@ -105,14 +105,14 @@ class ModelServiceV2:
         return self.repo.model_to_dict(model)
     
     async def list_models(self, include_versions: bool = False) -> List[Dict[str, Any]]:
-        """List all models."""
+        """List all models (bulk-loaded, no N+1)."""
         models = self.repo.get_all_models()
-        return [self.repo.model_to_dict(m, include_versions=include_versions) for m in models]
+        return self.repo.models_to_dict(models, include_versions=include_versions)
     
     async def list_models_by_directory(self, directory: str) -> List[Dict[str, Any]]:
-        """List models in a specific directory."""
+        """List models in a specific directory (bulk-loaded, no N+1)."""
         models = self.repo.get_models_by_directory(directory)
-        return [self.repo.model_to_dict(m, include_versions=True) for m in models]
+        return self.repo.models_to_dict(models, include_versions=True)
     
     async def get_models_grouped(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get all models grouped by directory."""
@@ -494,7 +494,7 @@ class ModelServiceV2:
     async def get_versions(self, model_id: int) -> List[Dict[str, Any]]:
         """Get all versions for a model."""
         versions = self.repo.get_versions_for_model(model_id)
-        return [self.repo.version_to_dict(v) for v in versions]
+        return [self.repo._version_to_dict(v) for v in versions]
     
     async def set_default_version(self, model_id: int, version_id: int) -> bool:
         """Set a version as the default for generation."""
@@ -504,7 +504,7 @@ class ModelServiceV2:
         """Toggle whether a version is enabled."""
         version = self.repo.toggle_version_enabled(version_id)
         if version:
-            return self.repo.version_to_dict(version)
+            return self.repo._version_to_dict(version)
         return None
     
     async def get_version_for_generation(
@@ -601,9 +601,9 @@ class ModelServiceV2:
     # =========================================================================
     
     async def search_by_tag(self, tag: str) -> List[Dict[str, Any]]:
-        """Search models by tag."""
+        """Search models by tag (bulk-loaded, no N+1)."""
         models = self.repo.search_by_tag(tag)
-        return [self.repo.model_to_dict(m, include_versions=False) for m in models]
+        return self.repo.models_to_dict(models, include_versions=False)
     
     async def search_models(
         self, 
@@ -640,4 +640,4 @@ class ModelServiceV2:
                     filtered.append(model)
             models = filtered
         
-        return [self.repo.model_to_dict(m, include_versions=False) for m in models]
+        return self.repo.models_to_dict(models, include_versions=False)

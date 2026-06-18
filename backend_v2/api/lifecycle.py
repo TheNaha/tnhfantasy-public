@@ -3,7 +3,6 @@ import asyncio
 from api.deps import get_session_sync
 from api.provider_runtime import monitor_provider_changes
 from api.startup_helpers import (
-    autostart_provider_containers,
     cleanup_provider_state_artifacts,
     configure_worker_pool,
     recover_pending_jobs,
@@ -128,9 +127,6 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="job_recovery")
     await recover_pending_jobs()
     await recover_post_processing_jobs()
-
-    logger.info("startup_init", phase="containers")
-    autostart_provider_containers()
 
     logger.info("startup_init", phase="scheduler")
     start_scheduler()

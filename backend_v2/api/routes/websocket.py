@@ -185,7 +185,7 @@ async def cancel_job(sid, data):
     from services.job_service import JobService
     from services.provider_service import ProviderService
     from core.entities import JobStatus
-    from api.deps import get_session_context
+    from api.deps import get_session_context, get_job_service, get_provider_service
     from infrastructure.http_client import get_http_client
     from api.provider_runtime import resolve_provider_runtime
     
@@ -194,12 +194,12 @@ async def cancel_job(sid, data):
         if job_queue.is_job_active(job_id):
             # Job is currently being processed - signal cancellation to worker
             async with get_session_context() as session:
-                job_service = JobService(session)
+                job_service = get_job_service(session)
                 job = await job_service.get_job(job_id)
                 
                 # Try to cancel on the provider worker
                 if job.provider_id:
-                    provider_service = ProviderService(session)
+                    provider_service = get_provider_service(session)
                     provider = await provider_service.get_provider(job.provider_id)
                     runtime = resolve_provider_runtime(provider)
 
@@ -234,7 +234,7 @@ async def cancel_job(sid, data):
         else:
             # Job is pending in queue - can cancel immediately
             async with get_session_context() as session:
-                job_service = JobService(session)
+                job_service = get_job_service(session)
                 job = await job_service.get_job(job_id)
                 
                 if job.status.value == 'pending':

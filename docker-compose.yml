@@ -9,9 +9,11 @@ services:
     environment:
       - OUTPUT_DIR=/data/output
       - INPUT_DIR=/data/input
+      - COMFY_DATABASE_URL=sqlite:////data/db/comfy.db
+      - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
       - COMFY_UVICORN_RELOAD=0
     networks:
-      - comfy-network
+      - tnhcomfy
       - metrics
     restart: unless-stopped
 
@@ -33,43 +35,48 @@ services:
       - homepage.href=http://comfy.lan.thenaha.my.id/
       - homepage.description=Image generation service
     networks:
-      - comfy-network
+      - tnhcomfy
       - proxy
     restart: unless-stopped
 
+  # Provider containers - managed by compose (backend autostart is disabled).
+  # To add a provider: copy this block, set a unique PROVIDER_ID and container_name.
+  # container_name MUST be "comfy-provider-{PROVIDER_ID}" so the backend can detect it.
   provider-modal:
     build:
       context: ./provider_containers
       dockerfile: modal_worker/Dockerfile
-    container_name: comfy-provider-modal
+    container_name: comfy-provider-modal-zetsuke
     env_file:
       - .env
     environment:
-      - PROVIDER_ID=modal-primary
+      - PROVIDER_ID=modal-zetsuke
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+    # Mount /data so provider workers can access models, input, output
+    volumes:
+      - ./data:/data
     networks:
-      - comfy-network
+      - tnhcomfy
     restart: unless-stopped
 
-  provider-beam:
-    build:
-      context: ./provider_containers
-      dockerfile: beam_worker/Dockerfile
-    container_name: comfy-provider-beam
-    env_file:
-      - .env
-    environment:
-      - PROVIDER_ID=beam-primary
-      - PORT=8000
-      - BACKEND_URL=http://backend_v2:8002
-    networks:
-      - comfy-network
-    restart: unless-stopped
+  # provider-beam:
+  #   build:
+  #     context: ./provider_containers
+  #     dockerfile: beam_worker/Dockerfile
+  #   container_name: comfy-provider-beam-primary
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - PROVIDER_ID=beam-primary
+  #     - PORT=8000
+  #     - BACKEND_URL=http://backend_v2:8002
+  #   networks:
+  #     - tnhcomfy
 
 networks:
-  comfy-network:
-    name: comfy-network
+  tnhcomfy:
+    name: tnhcomfy
     driver: bridge
   metrics:
     external: true

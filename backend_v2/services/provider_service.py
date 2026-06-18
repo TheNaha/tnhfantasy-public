@@ -339,7 +339,7 @@ class ProviderService:
         cache = model_service.get_full_cache()
         return cache.get(directory, [])
     
-    def get_load_balancer_stats(self) -> Dict[str, Any]:
+    async def get_load_balancer_stats(self) -> Dict[str, Any]:
         from services.load_balancer_factory import create_load_balancer
         config = self.get_load_balancing_config()
         load_balancer = create_load_balancer(

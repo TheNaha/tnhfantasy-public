@@ -3,6 +3,7 @@ import os
 import random
 import time
 from dataclasses import dataclass, field
+import asyncio
 from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, timezone
 
@@ -51,6 +52,12 @@ class LoadBalancerRuntimeState:
     model_availability_cache: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
+    _lock: Optional[asyncio.Lock] = None
+
+    def get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -244,7 +251,7 @@ class LoadBalancer:
         # Load shared state once per process/runtime container.
         LoadBalancer.load_state_from_db(session, self.runtime_state)
     
-    def get_next_provider(
+    async def get_next_provider(
         self, 
         preferred_provider_id: Optional[str] = None,
         required_models: Optional[Dict[str, List[str]]] = None,
@@ -295,56 +302,58 @@ class LoadBalancer:
                 if required_models and provider.id not in [p.id for p in providers]:
                     # Preferred provider doesn't have required models
                     return None
-                self._track_job(provider.id)
+                await self._track_job(provider.id)
                 return provider
         
         # Apply load balancing strategy
         if self.strategy == "round-robin":
-            provider = self._round_robin(providers)
+            provider = await self._round_robin(providers)
         elif self.strategy == "random":
-            provider = self._random(providers)
+            provider = await self._random(providers)
         elif self.strategy == "priority":
-            provider = self._priority(providers)
+            provider = await self._priority(providers)
         elif self.strategy == "least-connections":
-            provider = self._least_connections(providers)
+            provider = await self._least_connections(providers)
         elif self.strategy == "priority-round-robin":
-            provider = self._priority_round_robin(providers)
+            provider = await self._priority_round_robin(providers)
         elif self.strategy == "priority-least-connections":
-            provider = self._priority_least_connections(providers)
+            provider = await self._priority_least_connections(providers)
         else:
-            provider = self._round_robin(providers)
+            provider = await self._round_robin(providers)
         
         # Track job assigned to this provider
-        self._track_job(provider.id)
+        await self._track_job(provider.id)
         
         return provider
 
     
-    def _track_job(self, provider_id: str):
+    async def _track_job(self, provider_id: str):
         """Track that a job was assigned to a provider."""
-        if provider_id not in self.runtime_state.provider_job_counts:
-            self.runtime_state.provider_job_counts[provider_id] = 0
-        self.runtime_state.provider_job_counts[provider_id] += 1
-            
-        # Persist state periodically (every 5 jobs)
-        total_jobs = sum(self.runtime_state.provider_job_counts.values())
+        async with self.runtime_state.get_lock():
+            if provider_id not in self.runtime_state.provider_job_counts:
+                self.runtime_state.provider_job_counts[provider_id] = 0
+            self.runtime_state.provider_job_counts[provider_id] += 1
+                
+            # Persist state periodically (every 5 jobs)
+            total_jobs = sum(self.runtime_state.provider_job_counts.values())
 
         if total_jobs % 5 == 0:
             LoadBalancer.save_state_to_db(self.session, self.runtime_state)
     
-    def _round_robin(self, providers: List[Provider]) -> Provider:
+    async def _round_robin(self, providers: List[Provider]) -> Provider:
         """Round-robin selection."""
-        provider = providers[self.runtime_state.round_robin_index % len(providers)]
-        self.runtime_state.round_robin_index += 1
-        index = self.runtime_state.round_robin_index
+        async with self.runtime_state.get_lock():
+            provider = providers[self.runtime_state.round_robin_index % len(providers)]
+            self.runtime_state.round_robin_index += 1
+            index = self.runtime_state.round_robin_index
         logger.debug("lb_round_robin_selected", provider_id=provider.id, index=index)
         return provider
     
-    def _random(self, providers: List[Provider]) -> Provider:
+    async def _random(self, providers: List[Provider]) -> Provider:
         """Random selection."""
         return random.choice(providers)
     
-    def _priority(self, providers: List[Provider]) -> Provider:
+    async def _priority(self, providers: List[Provider]) -> Provider:
         """
         Priority-based selection.
         Lower priority number = higher priority.
@@ -352,15 +361,16 @@ class LoadBalancer:
         sorted_providers = sorted(providers, key=lambda p: p.priority)
         return sorted_providers[0]
     
-    def _least_connections(self, providers: List[Provider]) -> Provider:
+    async def _least_connections(self, providers: List[Provider]) -> Provider:
         """
         Least-connections selection.
         Selects the provider with fewest active jobs.
         When tied, uses round-robin among tied providers for fair distribution.
         """
         # Get job counts
-        counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in providers}
-        min_count = min(counts.values())
+        async with self.runtime_state.get_lock():
+            counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in providers}
+            min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in providers if counts[p.id] == min_count]
@@ -369,8 +379,9 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers for fair distribution
-            selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
-            self.runtime_state.round_robin_index += 1
+            async with self.runtime_state.get_lock():
+                selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
+                self.runtime_state.round_robin_index += 1
 
         logger.debug("lb_least_conn_selected", provider_id=selected.id, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
@@ -382,7 +393,7 @@ class LoadBalancer:
         best_priority = min(p.priority for p in providers)
         return [p for p in providers if p.priority == best_priority]
     
-    def _priority_round_robin(self, providers: List[Provider]) -> Provider:
+    async def _priority_round_robin(self, providers: List[Provider]) -> Provider:
         """
         Priority + Round-Robin: Among providers with the best priority,
         use round-robin selection.
@@ -392,12 +403,13 @@ class LoadBalancer:
             return best_tier[0]
         
         # Round-robin within the best priority tier
-        provider = best_tier[self.runtime_state.round_robin_index % len(best_tier)]
-        self.runtime_state.round_robin_index += 1
+        async with self.runtime_state.get_lock():
+            provider = best_tier[self.runtime_state.round_robin_index % len(best_tier)]
+            self.runtime_state.round_robin_index += 1
         logger.debug("lb_priority_rr_selected", provider_id=provider.id, priority=provider.priority, tier_size=len(best_tier))
         return provider
     
-    def _priority_least_connections(self, providers: List[Provider]) -> Provider:
+    async def _priority_least_connections(self, providers: List[Provider]) -> Provider:
         """
         Priority + Least-Connections: Among providers with the best priority,
         select the one with fewest active jobs. Uses round-robin for ties.
@@ -407,8 +419,9 @@ class LoadBalancer:
             return best_tier[0]
         
         # Get job counts for best tier
-        counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in best_tier}
-        min_count = min(counts.values())
+        async with self.runtime_state.get_lock():
+            counts = {p.id: self.runtime_state.provider_job_counts.get(p.id, 0) for p in best_tier}
+            min_count = min(counts.values())
         
         # Find all providers with minimum count (tied)
         tied_providers = [p for p in best_tier if counts[p.id] == min_count]
@@ -417,48 +430,52 @@ class LoadBalancer:
             selected = tied_providers[0]
         else:
             # Use round-robin among tied providers
-            selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
-            self.runtime_state.round_robin_index += 1
+            async with self.runtime_state.get_lock():
+                selected = tied_providers[self.runtime_state.round_robin_index % len(tied_providers)]
+                self.runtime_state.round_robin_index += 1
 
         logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
-    def report_success(self, provider_id: str):
+    async def report_success(self, provider_id: str):
         """Report successful job completion for a provider."""
-        if provider_id in self.runtime_state.provider_failures:
-            self.runtime_state.provider_failures[provider_id] = 0
+        async with self.runtime_state.get_lock():
+            if provider_id in self.runtime_state.provider_failures:
+                self.runtime_state.provider_failures[provider_id] = 0
     
-    def report_failure(self, provider_id: str):
+    async def report_failure(self, provider_id: str):
         """Report job failure for a provider."""
-        if provider_id not in self.runtime_state.provider_failures:
-            self.runtime_state.provider_failures[provider_id] = 0
-            
-        self.runtime_state.provider_failures[provider_id] += 1
-        failures = self.runtime_state.provider_failures[provider_id]
+        async with self.runtime_state.get_lock():
+            if provider_id not in self.runtime_state.provider_failures:
+                self.runtime_state.provider_failures[provider_id] = 0
+                
+            self.runtime_state.provider_failures[provider_id] += 1
+            failures = self.runtime_state.provider_failures[provider_id]
         logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
     
-    def release_job(self, provider_id: str):
+    async def release_job(self, provider_id: str):
         """
         Release a job slot for a provider when job completes.
         This decrements the active job count for least-connections tracking.
         Should be called after every job completion (success or failure).
         """
         persist_needed = False
-        if provider_id in self.runtime_state.provider_job_counts:
-            previous_count = self.runtime_state.provider_job_counts[provider_id]
-            self.runtime_state.provider_job_counts[provider_id] = max(
-                0, self.runtime_state.provider_job_counts[provider_id] - 1
-            )
-            active_jobs = self.runtime_state.provider_job_counts[provider_id]
-            persist_needed = active_jobs != previous_count
-        else:
-            active_jobs = 0
+        async with self.runtime_state.get_lock():
+            if provider_id in self.runtime_state.provider_job_counts:
+                previous_count = self.runtime_state.provider_job_counts[provider_id]
+                self.runtime_state.provider_job_counts[provider_id] = max(
+                    0, self.runtime_state.provider_job_counts[provider_id] - 1
+                )
+                active_jobs = self.runtime_state.provider_job_counts[provider_id]
+                persist_needed = active_jobs != previous_count
+            else:
+                active_jobs = 0
 
         if persist_needed:
             LoadBalancer.save_state_to_db(self.session, self.runtime_state)
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
-    def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:
+    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:
         """
         Get a fallback provider when one fails.
         
@@ -479,20 +496,22 @@ class LoadBalancer:
             return None
         
         # Return provider with fewest failures
-        best = min(
-            available,
-            key=lambda p: (self.runtime_state.provider_failures.get(p.id, 0), p.priority, p.id)
-        )
+        async with self.runtime_state.get_lock():
+            best = min(
+                available,
+                key=lambda p: (self.runtime_state.provider_failures.get(p.id, 0), p.priority, p.id)
+            )
         
         return best
     
-    def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> Dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""
         providers = self.repo.get_enabled()
-        current_index = self.runtime_state.round_robin_index
-        total_jobs_assigned = sum(self.runtime_state.provider_job_counts.values())
-        failure_counts = dict(self.runtime_state.provider_failures)
-        job_counts = dict(self.runtime_state.provider_job_counts)
+        async with self.runtime_state.get_lock():
+            current_index = self.runtime_state.round_robin_index
+            total_jobs_assigned = sum(self.runtime_state.provider_job_counts.values())
+            failure_counts = dict(self.runtime_state.provider_failures)
+            job_counts = dict(self.runtime_state.provider_job_counts)
         
         # Build detailed per-provider stats
         provider_stats = []

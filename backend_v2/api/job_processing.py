@@ -224,8 +224,8 @@ async def complete_job(
     )
 
     if load_balancer and provider_id:
-        load_balancer.report_success(provider_id)
-        load_balancer.release_job(provider_id)
+        await load_balancer.report_success(provider_id)
+        await load_balancer.release_job(provider_id)
 
 
 async def wait_for_gallery_outputs(
@@ -337,7 +337,7 @@ async def finalize_persisted_job_outputs(
                 provider_id=provider_id,
             )
             if load_balancer and provider_id:
-                load_balancer.release_job(provider_id)
+                await load_balancer.release_job(provider_id)
         finally:
             await _release_finalization(job_id)
 

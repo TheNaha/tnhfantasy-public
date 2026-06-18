@@ -24,6 +24,9 @@ COPY provider_core/ /app/provider_core/
 # Copy worker script
 COPY beam_worker/worker.py .
 
+# Copy client script
+COPY beam_worker/client.py .
+
 # Copy beam_app.py for deployment
 COPY beam_worker/beam_app.py .
 

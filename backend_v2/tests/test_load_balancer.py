@@ -41,14 +41,14 @@ class TestLoadBalancer:
         yield
         LoadBalancer.reset_state()
     
-    def test_round_robin_distribution(self, session: Session, providers):
+    async def test_round_robin_distribution(self, session: Session, providers):
         """Test round-robin distributes across all enabled providers."""
         lb = LoadBalancer(session, strategy="round-robin")
         
         # Get providers in sequence
-        provider1 = lb.get_next_provider()
-        provider2 = lb.get_next_provider()
-        provider3 = lb.get_next_provider()  # Should wrap to first
+        provider1 = await lb.get_next_provider()
+        provider2 = await lb.get_next_provider()
+        provider3 = await lb.get_next_provider()  # Should wrap to first
         
         assert provider1 is not None
         assert provider2 is not None
@@ -58,22 +58,22 @@ class TestLoadBalancer:
         assert provider1.id != provider2.id
         assert provider3.id == provider1.id  # Wrapped around
     
-    def test_priority_selection(self, session: Session, providers):
+    async def test_priority_selection(self, session: Session, providers):
         """Test priority selects highest priority (lowest number)."""
         lb = LoadBalancer(session, strategy="priority")
         
-        provider = lb.get_next_provider()
+        provider = await lb.get_next_provider()
         
         assert provider is not None
         assert provider.priority == 1  # Lowest priority number = highest priority
     
-    def test_random_selection(self, session: Session, providers):
+    async def test_random_selection(self, session: Session, providers):
         """Test random selects from enabled providers."""
         lb = LoadBalancer(session, strategy="random")
         
         results = set()
         for _ in range(10):
-            provider = lb.get_next_provider()
+            provider = await lb.get_next_provider()
             if provider:
                 results.add(provider.id)
         
@@ -81,85 +81,85 @@ class TestLoadBalancer:
         assert "provider-3" not in results  # Disabled
         assert len(results) >= 1  # At least one provider selected
     
-    def test_preferred_provider(self, session: Session, providers):
+    async def test_preferred_provider(self, session: Session, providers):
         """Test preferred provider is returned when specified and available."""
         lb = LoadBalancer(session, strategy="round-robin")
         
-        provider = lb.get_next_provider(preferred_provider_id="provider-2")
+        provider = await lb.get_next_provider(preferred_provider_id="provider-2")
         
         assert provider is not None
         assert provider.id == "provider-2"
 
-        stats = lb.get_stats()
+        stats = await lb.get_stats()
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
         assert provider_stats["provider-2"]["jobs_assigned"] == 1
     
-    def test_fallback_on_failure(self, session: Session, providers):
+    async def test_fallback_on_failure(self, session: Session, providers):
         """Test fallback provides alternative when provider fails."""
         lb = LoadBalancer(session, strategy="priority")
         
         # Simulate failure
-        lb.report_failure("provider-1")
-        lb.report_failure("provider-1")  # Multiple failures
+        await lb.report_failure("provider-1")
+        await lb.report_failure("provider-1")  # Multiple failures
         
-        fallback = lb.get_fallback_provider("provider-1")
+        fallback = await lb.get_fallback_provider("provider-1")
         
         assert fallback is not None
         assert fallback.id != "provider-1"
 
-    def test_get_next_provider_excludes_exhausted(self, session: Session, providers):
+    async def test_get_next_provider_excludes_exhausted(self, session: Session, providers):
         lb = LoadBalancer(session, strategy="round-robin")
 
-        provider = lb.get_next_provider(exclude_provider_ids={"provider-1"})
+        provider = await lb.get_next_provider(exclude_provider_ids={"provider-1"})
 
         assert provider is not None
         assert provider.id == "provider-2"
 
-    def test_fallback_excludes_multiple_providers(self, session: Session, providers):
+    async def test_fallback_excludes_multiple_providers(self, session: Session, providers):
         lb = LoadBalancer(session, strategy="priority")
 
-        fallback = lb.get_fallback_provider("provider-1", exclude_provider_ids={"provider-2"})
+        fallback = await lb.get_fallback_provider("provider-1", exclude_provider_ids={"provider-2"})
 
         assert fallback is None
     
-    def test_no_enabled_providers(self, session: Session):
+    async def test_no_enabled_providers(self, session: Session):
         """Test returns None when no providers are enabled."""
         lb = LoadBalancer(session, strategy="round-robin")
         
-        provider = lb.get_next_provider()
+        provider = await lb.get_next_provider()
         
         assert provider is None
     
-    def test_success_resets_failure_count(self, session: Session, providers):
+    async def test_success_resets_failure_count(self, session: Session, providers):
         """Test reporting success resets failure count."""
         lb = LoadBalancer(session, strategy="round-robin")
         
         # Simulate failures then success
-        lb.report_failure("provider-1")
-        lb.report_failure("provider-1")
-        lb.report_success("provider-1")
+        await lb.report_failure("provider-1")
+        await lb.report_failure("provider-1")
+        await lb.report_success("provider-1")
         
         # Provider should still be available
-        stats = lb.get_stats()
+        stats = await lb.get_stats()
         # Failure count should be reset or minimal
         assert stats is not None
     
-    def test_get_stats(self, session: Session, providers):
+    async def test_get_stats(self, session: Session, providers):
         """Test stats returns provider information."""
         lb = LoadBalancer(session, strategy="round-robin")
         
-        stats = lb.get_stats()
+        stats = await lb.get_stats()
         
         assert "strategy" in stats
         assert "provider_stats" in stats
 
-    def test_save_and_reload_state_round_trip(self, session: Session, providers):
+    async def test_save_and_reload_state_round_trip(self, session: Session, providers):
         """Persisted state should survive a reset and reload from the database."""
         lb = LoadBalancer(session, strategy="round-robin")
 
-        lb.get_next_provider()
-        lb.get_next_provider()
-        lb.report_failure("provider-1")
+        await lb.get_next_provider()
+        await lb.get_next_provider()
+        await lb.report_failure("provider-1")
         LoadBalancer.save_state_to_db(session)
 
         persisted = session.get(LoadBalancerState, 1)
@@ -170,59 +170,59 @@ class TestLoadBalancer:
         LoadBalancer.reset_state()
         LoadBalancer.load_state_from_db(session)
 
-        stats = lb.get_stats()
+        stats = await lb.get_stats()
         assert stats["current_index"] == 2
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
         assert provider_stats["provider-1"]["failures"] == 1
 
-    def test_runtime_state_is_shared_across_instances(self, session: Session, providers):
+    async def test_runtime_state_is_shared_across_instances(self, session: Session, providers):
         """Separate instances should observe the same runtime balancing state."""
         first = LoadBalancer(session, strategy="round-robin")
         second = LoadBalancer(session, strategy="least-connections")
 
-        selected = first.get_next_provider()
+        selected = await first.get_next_provider()
 
         assert selected is not None
 
-        stats = second.get_stats()
+        stats = await second.get_stats()
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
         assert provider_stats[selected.id]["jobs_assigned"] == 1
 
-    def test_runtime_state_can_be_isolated_per_instance(self, session: Session, providers):
+    async def test_runtime_state_can_be_isolated_per_instance(self, session: Session, providers):
         """Injected runtime state should allow isolated balancing contexts."""
         shared = LoadBalancer(session, strategy="round-robin")
         isolated_state = LoadBalancerRuntimeState()
         isolated = LoadBalancer(session, strategy="round-robin", runtime_state=isolated_state)
 
-        shared_selected = shared.get_next_provider()
+        shared_selected = await shared.get_next_provider()
 
         assert shared_selected is not None
 
-        isolated_stats_before = isolated.get_stats()
+        isolated_stats_before = await isolated.get_stats()
         isolated_provider_stats_before = {item["id"]: item for item in isolated_stats_before["provider_stats"]}
         assert isolated_provider_stats_before[shared_selected.id]["jobs_assigned"] == 0
 
-        isolated_selected = isolated.get_next_provider()
+        isolated_selected = await isolated.get_next_provider()
         assert isolated_selected is not None
 
-        isolated_stats_after = isolated.get_stats()
+        isolated_stats_after = await isolated.get_stats()
         isolated_provider_stats_after = {item["id"]: item for item in isolated_stats_after["provider_stats"]}
         assert isolated_provider_stats_after[isolated_selected.id]["jobs_assigned"] == 1
 
-    def test_release_job_persists_state(self, session: Session, providers):
+    async def test_release_job_persists_state(self, session: Session, providers):
         lb = LoadBalancer(session, strategy="round-robin")
 
-        selected = lb.get_next_provider()
+        selected = await lb.get_next_provider()
         assert selected is not None
 
-        lb.release_job(selected.id)
+        await lb.release_job(selected.id)
 
         persisted = session.get(LoadBalancerState, 1)
         assert persisted is not None
         provider_job_counts = persisted.provider_job_counts or {}
         assert provider_job_counts.get(selected.id, 0) == 0
 
-    def test_model_availability_filter_is_memoized(self, session: Session, providers, monkeypatch):
+    async def test_model_availability_filter_is_memoized(self, session: Session, providers, monkeypatch):
         lb = LoadBalancer(session, strategy="round-robin")
         required_models = {"checkpoints": ["dream.safetensors"]}
         call_count = 0
@@ -237,8 +237,8 @@ class TestLoadBalancer:
             fake_get_providers_with_models,
         )
 
-        first = lb.get_next_provider(required_models=required_models)
-        second = lb.get_next_provider(required_models=required_models)
+        first = await lb.get_next_provider(required_models=required_models)
+        second = await lb.get_next_provider(required_models=required_models)
 
         assert first is not None
         assert second is not None
@@ -246,7 +246,7 @@ class TestLoadBalancer:
         assert second.id == "provider-1"
         assert call_count == 1
 
-    def test_model_availability_cache_can_be_invalidated(self, session: Session, providers, monkeypatch):
+    async def test_model_availability_cache_can_be_invalidated(self, session: Session, providers, monkeypatch):
         lb = LoadBalancer(session, strategy="round-robin")
         required_models = {"checkpoints": ["dream.safetensors"]}
         call_count = 0
@@ -261,12 +261,12 @@ class TestLoadBalancer:
             fake_get_providers_with_models,
         )
 
-        first = lb.get_next_provider(required_models=required_models)
+        first = await lb.get_next_provider(required_models=required_models)
         assert first is not None
         assert call_count == 1
 
         LoadBalancer.invalidate_model_availability_cache(provider_id="provider-1")
 
-        second = lb.get_next_provider(required_models=required_models)
+        second = await lb.get_next_provider(required_models=required_models)
         assert second is not None
         assert call_count == 2

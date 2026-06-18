@@ -26,7 +26,7 @@ async def mark_provider_exhausted(
     message: str,
 ) -> None:
     """Release provider state and move the job back to pending before trying another provider."""
-    load_balancer.release_job(provider_id)
+    await load_balancer.release_job(provider_id)
     exhausted_providers.add(provider_id)
     await job_service.update_job(
         job_id,
@@ -45,8 +45,7 @@ async def select_next_provider(
     required_models: Optional[dict] = None,
 ) -> Optional[Provider]:
     """Select the next provider or fail the job when no providers remain."""
-    provider = await asyncio.to_thread(
-        load_balancer.get_next_provider,
+    provider = await load_balancer.get_next_provider(
         preferred_provider_id=preferred_provider_id,
         required_models=required_models,
         exclude_provider_ids=exhausted_providers,

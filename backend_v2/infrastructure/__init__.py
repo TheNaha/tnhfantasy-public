@@ -60,6 +60,16 @@ from .scheduler import (
     schedule_cleanup,
 )
 
+# Providers
+from .providers import (
+    ServerlessProvider, FileProxyProvider,
+    ModalProvider, ModalFileProxy,
+    BeamProvider, BeamFileProxy,
+    ProviderRegistry, ProviderTypeConfig,
+    create_provider_client,
+    get_provider_worker_base_url,
+)
+
 __all__ = [
     # Database
     "engine",
@@ -105,5 +115,12 @@ __all__ = [
     "schedule_reconciliation",
     "schedule_model_sync",
     "schedule_cleanup",
+    # Providers
+    "ServerlessProvider", "FileProxyProvider",
+    "ModalProvider", "ModalFileProxy",
+    "BeamProvider", "BeamFileProxy",
+    "ProviderRegistry", "ProviderTypeConfig",
+    "create_provider_client",
+    "get_provider_worker_base_url",
 ]
 

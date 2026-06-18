@@ -13,7 +13,7 @@ def create_provider_client(provider_id: str, config: dict):
     provider_type = (config or {}).get("type")
     
     # Lookup via ProviderRegistry
-    type_config = ProviderRegistry.get_type_config(provider_type)
+    type_config = ProviderRegistry.get(provider_type)
     if type_config and type_config.client_class:
         return type_config.client_class(provider_id, config)
         

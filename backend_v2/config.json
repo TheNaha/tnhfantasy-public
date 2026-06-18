@@ -28,13 +28,10 @@
     "scaledown_window": 5
   },
   "api": {
-    "cors_origins": [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:8000"
-    ],
     "gzip_minimum_size": 1000,
-    "worker_backend_url": "http://backend_v2:8002"
+    "cors_origins": [
+      "*"
+    ]
   },
   "jobs_cleanup": {
     "max_age_hours": 24,

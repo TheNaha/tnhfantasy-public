@@ -1,7 +1,7 @@
 # Database setup with SQLModel
 import os
 from dataclasses import dataclass
-from typing import Generator
+from typing import Callable, Generator
 
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -21,7 +21,7 @@ class MigrationStep:
 
     version: str
     description: str
-    apply_fn: callable
+    apply_fn: Callable
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
@@ -329,7 +329,7 @@ def create_db_and_tables() -> None:
     """Create all tables in the database."""
     # Import V1 entities to register them with SQLModel
     from core.entities import (Collection, CollectionImage, Download, Job,
-                               LoadBalancerState, LoadBalancingConfig, Model,
+                               LoadBalancerState, LoadBalancingConfig,
                                Prompt, Provider)
     # Import V2 entities (normalized schema)
     from core.entities_v2 import (ModelFile, ModelImage, ModelTag, ModelV2,
@@ -715,5 +715,5 @@ def _migrate_models_to_v2(conn) -> bool:
             )
             continue
 
-        logger.info("migration_v2_complete", migrated=migrated)
+    logger.info("migration_v2_complete", migrated=migrated)
     return True
