@@ -30,7 +30,6 @@ export function useGallery(filters = {}) {
 
             return {
                 files: filesData.files || [],
-                jobs: [],
                 nextPage: filesData.files?.length === LIMIT ? pageParam + 1 : undefined
             };
         },

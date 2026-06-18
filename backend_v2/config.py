@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     """Application settings with environment variable support."""
     
     # Database
-    database_url: str = "sqlite:///./data/comfy.db"
+    database_url: str = "sqlite:///./data/db/comfy.db"
     
     # Worker / Job Queue (overrides from env)
     worker_poll_interval: float = 0.3

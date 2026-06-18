@@ -1,3 +1,5 @@
+import { normalizeReconciliationStatus } from '../utils/providerStatus';
+
 function normalizeObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -11,15 +13,7 @@ export function extractProviderId(payload) {
     return source.provider_id ?? source.providerId ?? source.id ?? null;
 }
 
-export function normalizeReconciliationStatus(status) {
-    if (['started', 'queued'].includes(status)) {
-        return 'queued';
-    }
-    if (['running', 'progress', 'reconciling'].includes(status)) {
-        return 'reconciling';
-    }
-    return status || 'idle';
-}
+
 
 export function normalizeReconciliationState(payload, fallbackState = {}) {
     const source = unwrapEventData(payload);

@@ -14,7 +14,13 @@ T = TypeVar('T')
 
 # Track in-flight requests to deduplicate concurrent identical requests
 _in_flight: dict[str, asyncio.Task] = {}
-_in_flight_lock = asyncio.Lock()
+_in_flight_lock = None
+
+async def _get_lock() -> asyncio.Lock:
+    global _in_flight_lock
+    if _in_flight_lock is None:
+        _in_flight_lock = asyncio.Lock()
+    return _in_flight_lock
 
 
 def _resolve_result_cache_ttl_seconds() -> float:
@@ -68,7 +74,8 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
             lambda: service.list_jobs(limit, offset)
         )
     """
-    async with _in_flight_lock:
+    lock = await _get_lock()
+    async with lock:
         # Check result cache first
         if key in _result_cache:
             logger.debug("dedup_cache_hit", key=key)
@@ -89,12 +96,14 @@ async def deduplicated(key: str, coro_factory: Callable[[], Coroutine[Any, Any, 
         # cancel the underlying request for every other waiter.
         result = await asyncio.shield(task)
         if created_task:
-            async with _in_flight_lock:
+            lock = await _get_lock()
+            async with lock:
                 _result_cache[key] = result
         return result
     finally:
         if created_task:
-            async with _in_flight_lock:
+            lock = await _get_lock()
+            async with lock:
                 if _in_flight.get(key) is task:
                     _in_flight.pop(key, None)
 

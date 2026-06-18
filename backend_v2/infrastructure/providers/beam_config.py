@@ -4,6 +4,7 @@
 from typing import Dict, Any
 
 from .provider_registry import ProviderTypeConfig, ProviderRegistry
+from .beam_provider import BeamProvider
 
 
 def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
@@ -19,6 +20,12 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     """
     env_vars = {}
     
+    # Core config
+    if config.get("id"):
+        env_vars["PROVIDER_ID"] = config["id"]
+    from config import settings
+    env_vars["BACKEND_URL"] = settings.worker_backend_url
+
     # Beam authentication
     if credentials.get("api_key"):
         env_vars["BEAM_API_KEY"] = credentials["api_key"]
@@ -64,6 +71,7 @@ BEAM_PROVIDER_CONFIG = ProviderTypeConfig(
     
     # Default port for worker container
     default_port=8000,
+    client_class=BeamProvider
 )
 
 

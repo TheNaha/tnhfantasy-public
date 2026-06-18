@@ -66,7 +66,7 @@ class JobQueue:
         
         logger.info("job_queue_started", workers=self.max_workers)
     
-    async def stop(self) -> None:
+    async def stop(self, timeout_seconds: float = 30.0) -> None:
         """Stop the worker pool gracefully, allowing active jobs to drain first."""
         if not self._running and not self._workers:
             return
@@ -77,7 +77,7 @@ class JobQueue:
             try:
                 await asyncio.wait_for(
                     asyncio.gather(*self._workers, return_exceptions=True),
-                    timeout=5.0,
+                    timeout=timeout_seconds,
                 )
             except asyncio.TimeoutError:
                 logger.warning(

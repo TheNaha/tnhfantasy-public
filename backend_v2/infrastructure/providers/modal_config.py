@@ -4,6 +4,7 @@
 from typing import Dict, Any
 
 from .provider_registry import ProviderTypeConfig, ProviderRegistry
+from .modal_provider import ModalProvider
 
 
 def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
@@ -18,6 +19,12 @@ def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) ->
         Environment variables dict
     """
     env_vars = {}
+    
+    # Core config
+    if config.get("id"):
+        env_vars["PROVIDER_ID"] = config["id"]
+    from config import settings
+    env_vars["BACKEND_URL"] = settings.worker_backend_url
     
     # Modal authentication
     if credentials.get("token_id"):
@@ -58,6 +65,7 @@ MODAL_PROVIDER_CONFIG = ProviderTypeConfig(
     
     # Default port
     default_port=8000,
+    client_class=ModalProvider
 )
 
 

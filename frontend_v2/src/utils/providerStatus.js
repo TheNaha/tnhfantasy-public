@@ -21,7 +21,7 @@ function humanize(value, fallback = 'Unknown') {
     return String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function normalizeReconciliationStatus(status) {
+export function normalizeReconciliationStatus(status) {
     if (RECONCILIATION_QUEUED.has(status)) {
         return 'queued';
     }

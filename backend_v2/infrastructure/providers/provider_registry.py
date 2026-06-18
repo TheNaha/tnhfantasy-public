@@ -36,6 +36,9 @@ class ProviderTypeConfig:
     # Default port for worker container
     default_port: int = 8000
     
+    # The ServerlessProvider class for API interactions
+    client_class: Optional[Type['ServerlessProvider']] = None
+    
     def build_env_vars(self, credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
         """
         Build container environment variables from credentials and config.

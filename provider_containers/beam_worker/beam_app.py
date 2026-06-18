@@ -242,13 +242,8 @@ async def storage_health():
 @storage_app.post("/setup")
 async def setup():
     """Initialize volume directories."""
-    dirs = [
-        "/mnt/data/models/checkpoints", "/mnt/data/models/loras", "/mnt/data/models/vae",
-        "/mnt/data/models/controlnet", "/mnt/data/models/unet", "/mnt/data/models/clip",
-        "/mnt/data/models/embeddings", "/mnt/data/models/upscale_models",
-        "/mnt/data/models/hypernetworks", "/mnt/data/models/motion_modules",
-        "/mnt/data/output", "/mnt/data/input", "/mnt/data/downloads",
-    ]
+    from provider_core.models import MODEL_DIRECTORIES
+    dirs = ["/mnt/data/output", "/mnt/data/input", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     return {"status": "success", "directories": dirs}
@@ -403,16 +398,12 @@ async def upload_file(request: Request):
 
 @storage_app.post("/validate-models")
 async def validate_models(request: Request):
-    """
-    Validate all models in a directory for reconciliation.
-    Checks: minimum size, magic bytes, partial downloads.
-    Returns: valid models, invalid models (to redownload), partial downloads (to clean up).
-    """
     from provider_core.utils import get_safe_path
-
+    from provider_core.validation import validate_downloaded_file
+    
     data = await request.json()
     directory = data.get("directory", "models/checkpoints")
-    delete_invalid = data.get("delete_invalid", False)  # If True, auto-delete invalid files
+    delete_invalid = data.get("delete_invalid", False)
     
     try:
         target_dir = get_safe_path("/mnt/data", directory)
@@ -422,26 +413,19 @@ async def validate_models(request: Request):
     if not os.path.exists(target_dir):
         return {"valid": [], "invalid": [], "partial": [], "total": 0}
     
-    # Magic bytes for validation
-    VALID_HEADERS = VALID_FILE_HEADERS
-    
     valid_models = []
     invalid_models = []
     partial_downloads = []
     
     entries = os.listdir(target_dir)
-    
     for name in entries:
-        # Skip metadata files
         if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
             continue
         
         full_path = os.path.join(target_dir, name)
-        
         if not os.path.isfile(full_path):
             continue
-        
-        # Check for partial downloads
+            
         if name.endswith('.downloading'):
             partial_downloads.append({
                 "name": name,
@@ -450,99 +434,30 @@ async def validate_models(request: Request):
             })
             if delete_invalid:
                 os.remove(full_path)
-                print(f"[Validate] Deleted partial: {name}")
             continue
-        
+            
         file_size = os.path.getsize(full_path)
-        issues = []
-        detected_format = "unknown"
-        should_delete = False  # Only delete files with CLEAR problems
-        
-        # Size check - too small files are definitely broken
-        if file_size < MIN_MODEL_SIZE:
-            issues.append(f"Too small: {file_size} bytes")
-            should_delete = True  # Clear problem: file too small
-        
-        # Magic bytes check
-        if file_size >= 16:
-            with open(full_path, 'rb') as f:
-                header = f.read(16)
-            
-            header_valid = False
-            for magic, fmt in VALID_HEADERS.items():
-                if header.startswith(magic):
-                    header_valid = True
-                    detected_format = fmt
-                    break
-            
-            if not header_valid:
-                # Check for HTML error pages
-                if b'<html' in header.lower() or b'<!doctype' in header.lower():
-                    issues.append("HTML content (auth error?)")
-                    should_delete = True  # Clear problem: HTML instead of model
-                else:
-                    # Unknown format - log but DON'T delete (could be valid format we don't recognize)
-                    detected_format = f"unknown ({header[:4].hex()})"
-                    # NOT adding to issues - unknown format is not a problem
-        
-        # Safetensors integrity check - validates the header structure
-        # This catches corrupted files that pass magic byte checks but fail to load
-        # NOTE: We parse the header manually since safe_open(framework='pt') requires torch
-        if name.endswith('.safetensors') and file_size >= MIN_MODEL_SIZE and not issues:
-            try:
-                import struct
-                with open(full_path, 'rb') as f:
-                    # Safetensors format: 8-byte header size (little-endian u64) + JSON header
-                    header_size_bytes = f.read(8)
-                    if len(header_size_bytes) < 8:
-                        raise ValueError("File too small for safetensors header")
-                    header_size = struct.unpack('<Q', header_size_bytes)[0]
-                    
-                    # Sanity check - header shouldn't be bigger than the file
-                    if header_size > file_size - 8:
-                        raise ValueError(f"Invalid header size: {header_size} > {file_size - 8}")
-                    
-                    # Read and parse the JSON header
-                    header_bytes = f.read(header_size)
-                    header = json.loads(header_bytes)
-                    
-                    # Verify it has expected structure (__metadata__ is optional, but should have tensor info)
-                    if not isinstance(header, dict):
-                        raise ValueError("Header is not a dict")
-            except Exception as e:
-                error_msg = str(e)
-                # Truncate very long error messages
-                if len(error_msg) > 100:
-                    error_msg = error_msg[:100] + "..."
-                issues.append(f"Safetensors corrupted: {error_msg}")
-                should_delete = True
-                print(f"[Validate] Corrupted safetensors: {name} - {error_msg}")
+        validation = validate_downloaded_file(full_path)
         
         model_info = {
             "name": name,
             "size": file_size,
             "size_mb": round(file_size / (1024 * 1024), 1),
-            "format": detected_format
+            "format": "unknown"  # Extracted format wasn't returned by validate_downloaded_file but we can ignore it
         }
         
-        if issues:
-            model_info["issues"] = issues
+        if not validation["valid"]:
+            model_info["issues"] = [validation["error"]]
             invalid_models.append(model_info)
-            
-            # Only delete if we're sure it's broken (not just unknown format)
-            if delete_invalid and should_delete:
+            if delete_invalid:
                 os.remove(full_path)
-                # Also delete sidecar files
                 for ext in [".json", ".preview.png"]:
                     side_file = os.path.splitext(full_path)[0] + ext
                     if os.path.exists(side_file):
                         os.remove(side_file)
-                print(f"[Validate] Deleted invalid: {name} - {issues}")
         else:
             valid_models.append(model_info)
-    
-    print(f"[Validate] {directory}: {len(valid_models)} valid, {len(invalid_models)} invalid, {len(partial_downloads)} partial")
-    
+            
     return {
         "directory": directory,
         "total": len(valid_models) + len(invalid_models) + len(partial_downloads),
@@ -554,6 +469,38 @@ async def validate_models(request: Request):
         "partial_count": len(partial_downloads),
         "deleted": delete_invalid
     }
+
+@storage_app.post("/validate-all-models")
+async def validate_all_models(request: Request):
+    """Validate all model directories in one batch call to avoid O(N) HTTP requests."""
+    data = await request.json()
+    delete_invalid = data.get("delete_invalid", False)
+    
+    # We create a dummy request for the child function
+    class DummyRequest:
+        def __init__(self, data):
+            self._data = data
+        async def json(self):
+            return self._data
+
+    from provider_core.models import MODEL_DIRECTORIES
+    results = {"total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
+    
+    for directory in MODEL_DIRECTORIES:
+        req = DummyRequest({"directory": directory, "delete_invalid": delete_invalid})
+        res = await validate_models(req)
+        
+        dir_key = directory.replace("models/", "")
+        results["by_directory"][dir_key] = {
+            "valid": res.get("valid_count", 0),
+            "invalid": res.get("invalid_count", 0),
+            "partial": res.get("partial_count", 0),
+        }
+        results["total_valid"] += res.get("valid_count", 0)
+        results["total_invalid"] += res.get("invalid_count", 0)
+        results["total_partial"] += res.get("partial_count", 0)
+        
+    return results
 
 
 # =============================================================================

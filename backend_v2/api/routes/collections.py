@@ -72,6 +72,48 @@ async def list_collections(session: Session = Depends(get_session)):
     return {"collections": collections}
 
 
+@router.post("/import")
+async def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
+    """Bulk import collections (for migration from localStorage)."""
+    imported = []
+    
+    for col_data in data.collections:
+        # Create collection
+        collection = Collection(
+            name=col_data.get("name", "Untitled"),
+            color=col_data.get("color", "#3B82F6"),
+            description=col_data.get("description")
+        )
+        session.add(collection)
+        session.flush()  # Get the ID
+        
+        # Add images
+        images = col_data.get("images", [])
+        for filename in images:
+            img = CollectionImage(
+                collection_id=collection.id,
+                image_filename=filename
+            )
+            session.add(img)
+            
+        # Set thumbnail
+        if images:
+            collection.thumbnail = images[0]
+            
+        imported.append({
+            "id": collection.id,
+            "name": collection.name,
+            "image_count": len(images)
+        })
+        
+    session.commit()
+    return {
+        "success": True,
+        "imported": len(imported),
+        "collections": imported
+    }
+
+
 @router.get("/{collection_id}")
 async def get_collection(
     collection_id: int, 
@@ -240,47 +282,6 @@ async def remove_images_from_collection(
     return {"success": True, "removed": removed}
 
 
-@router.post("/import")
-async def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
-    """Bulk import collections (for migration from localStorage)."""
-    imported = []
-    
-    for col_data in data.collections:
-        # Create collection
-        collection = Collection(
-            name=col_data.get("name", "Untitled"),
-            color=col_data.get("color", "#3B82F6"),
-            description=col_data.get("description")
-        )
-        session.add(collection)
-        session.flush()  # Get the ID
-        
-        # Add images
-        images = col_data.get("images", [])
-        for filename in images:
-            ci = CollectionImage(
-                collection_id=collection.id,
-                image_filename=filename
-            )
-            session.add(ci)
-        
-        # Set thumbnail
-        if images:
-            collection.thumbnail = images[0]
-        
-        imported.append({
-            "id": collection.id,
-            "name": collection.name,
-            "image_count": len(images)
-        })
-    
-    session.commit()
-    
-    return {
-        "success": True,
-        "imported": len(imported),
-        "collections": imported
-    }
 
 
 @router.get("/export")

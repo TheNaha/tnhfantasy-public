@@ -223,6 +223,4 @@ def ws_logger() -> structlog.BoundLogger:
     return get_logger("websocket")
 
 
-# Initialize with default settings
-configure_logging()
-
+# Initialize

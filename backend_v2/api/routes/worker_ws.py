@@ -102,24 +102,6 @@ def is_worker_connected(provider_id: str) -> bool:
     return _get_live_worker(provider_id) is not None
 
 
-async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
-    """Push a job to a connected worker. Returns True if successful."""
-    worker = _get_live_worker(provider_id)
-    if not worker:
-        return False
-    
-    try:
-        await worker.ws.send_json({
-            "type": "job",
-            "data": job_data
-        })
-        worker.current_job = job_data.get("id")
-        return True
-    except Exception as e:
-        logger.error(f"[Worker WS] Failed to push job to {provider_id}: {e}")
-        return False
-
-
 async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
     """Send a job to a connected external worker and await its terminal result."""
     worker = _get_live_worker(provider_id)
@@ -226,6 +208,21 @@ async def worker_websocket(
         "message": "Connected to ComfyUI backend"
     })
     
+    # Push pending downloads immediately on connect
+    try:
+        async with get_session_context() as session:
+            from services.model_service import ModelServiceV2
+            service = ModelServiceV2(session)
+            pending = service.get_pending_downloads(provider_id)
+            if pending:
+                await websocket.send_json({
+                    "type": "pending_models",
+                    "models": pending
+                })
+                logger.info(f"[Worker WS] Pushed {len(pending)} pending downloads to {provider_id}")
+    except Exception as exc:
+        logger.warning(f"[Worker WS] Failed to push pending models to {provider_id}: {exc}")
+    
     try:
         # Main message loop
         while True:
@@ -289,51 +286,53 @@ async def worker_websocket(
                     logger.error(f"[Worker WS] Invalid completed payload for {job_id}: {exc}")
                     continue
                 
-                async with get_session_context() as session:
-                    from services.job_service import JobService
-                    job_service = JobService(session)
-                    await finalize_persisted_job_outputs(
-                        job_service=job_service,
-                        job_id=job_id,
-                        outputs=outputs,
-                        provider_id=provider_id,
-                    )
-                
-                future = pending_job_futures.pop(job_id, None)
-                if future and not future.done():
-                    future.set_result({
-                        "__handled_by_external_worker": True,
-                        "outputs": outputs,
-                    })
-                worker.current_job = None
-                worker.jobs_completed += 1
-                logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
+                try:
+                    async with get_session_context() as session:
+                        from services.job_service import JobService
+                        job_service = JobService(session)
+                        await finalize_persisted_job_outputs(
+                            job_service=job_service,
+                            job_id=job_id,
+                            outputs=outputs,
+                            provider_id=provider_id,
+                        )
+                finally:
+                    future = pending_job_futures.pop(job_id, None)
+                    if future and not future.done():
+                        future.set_result({
+                            "__handled_by_external_worker": True,
+                            "outputs": outputs,
+                        })
+                    worker.current_job = None
+                    worker.jobs_completed += 1
+                    logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
 
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
                 error = data.get("error", "Unknown error")
                 
-                async with get_session_context() as session:
-                    from services.job_service import JobService
-                    from core.entities import JobStatus
-                    job_service = JobService(session)
-                    await job_service.update_job(
-                        job_id,
-                        status=JobStatus.FAILED,
-                        error=error
-                    )
-                
-                future = pending_job_futures.pop(job_id, None)
-                if future and not future.done():
-                    future.set_exception(
-                        ProviderCallError(
-                            error,
-                            provider_id=provider_id,
-                            is_retryable=False,
+                try:
+                    async with get_session_context() as session:
+                        from services.job_service import JobService
+                        from core.entities import JobStatus
+                        job_service = JobService(session)
+                        await job_service.update_job(
+                            job_id,
+                            status=JobStatus.FAILED,
+                            error=error
                         )
-                    )
-                worker.current_job = None
-                logger.error(f"[Worker WS] Job failed: {job_id} - {error}")
+                finally:
+                    future = pending_job_futures.pop(job_id, None)
+                    if future and not future.done():
+                        future.set_exception(
+                            ProviderCallError(
+                                error,
+                                provider_id=provider_id,
+                                is_retryable=False,
+                            )
+                        )
+                    worker.current_job = None
+                    logger.error(f"[Worker WS] Job failed: {job_id} - {error}")
             
             elif msg_type == "get_pending_models":
                 # Return models that need to be synced

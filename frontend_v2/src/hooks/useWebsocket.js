@@ -182,8 +182,7 @@ export function useWebsocket() {
             console.log('[useWebsocket] Network online, reconnecting WebSocket...');
             dismissConnectionToast();
             reconnect();
-            const fetchStartedAt = Date.now();
-            fetchJobs({ skipIfEventAfter: fetchStartedAt }).catch(console.error);
+            fetchJobs().catch(console.error);
             if (isMobile() && useJobStore.getState().jobs.length > 0) startMobilePolling();
         };
 

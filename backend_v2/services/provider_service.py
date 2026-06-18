@@ -269,7 +269,7 @@ class ProviderService:
             logger.warning("provider_delete_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
 
-        from services.load_balancer import LoadBalancer, get_global_runtime_state
+        from services.load_balancer import get_global_runtime_state
         lb_runtime = get_global_runtime_state()
         lb_runtime.provider_job_counts.pop(provider_id, None)
         lb_runtime.provider_failures.pop(provider_id, None)

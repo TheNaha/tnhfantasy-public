@@ -4,8 +4,7 @@ import re
 import shutil
 from datetime import datetime
 
-OUTPUT_DIR = r'/home/thenaha/containers/comfyui/output'
-
+OUTPUT_DIR = os.environ.get('OUTPUT_DIR', os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'output')))
 def fix_filenames():
     files = []
     # Find all PNG files in the output directory and subdirectories

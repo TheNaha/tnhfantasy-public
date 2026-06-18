@@ -607,7 +607,6 @@ async def upload_input_image(
     """
     import uuid
     import base64
-    import aiohttp
     from PIL import Image
     import io
     
@@ -662,33 +661,34 @@ async def upload_input_image(
             active_providers.append({"id": p_id, "worker_url": worker_url})
         
         if active_providers:
-            async with aiohttp.ClientSession() as http:
-                payload = {
-                    "filename": unique_name,
-                    "content_base64": base64.b64encode(content).decode(),
-                    "directory": "input"
-                }
+            from infrastructure.http_client import get_http_client
+            http = get_http_client()
+            payload = {
+                "filename": unique_name,
+                "content_base64": base64.b64encode(content).decode(),
+                "directory": "input"
+            }
+            
+            for provider in active_providers:
+                worker_url = provider["worker_url"]
+                provider_id = provider["id"]
                 
-                for provider in active_providers:
-                    worker_url = provider["worker_url"]
-                    provider_id = provider["id"]
+                try:
+                    response = await http.post(
+                        f"{worker_url}/upload-file",
+                        json=payload,
+                        timeout=30.0
+                    )
                     
-                    try:
-                        async with http.post(
-                            f"{worker_url}/upload-file",
-                            json=payload,
-                            timeout=aiohttp.ClientTimeout(total=30)
-                        ) as response:
-                            if response.status == 200:
-                                synced_count += 1
-                                logger.info("upload_synced", filename=unique_name, provider_id=provider_id)
-                            else:
-                                failed_count += 1
-                                body = await response.text()
-                                logger.warning("upload_sync_failed", provider_id=provider_id, status=response.status, body=body[:100])
-                    except Exception as e:
+                    if response.status_code == 200:
+                        synced_count += 1
+                        logger.debug("upload_provider_sync_success", provider_id=provider_id)
+                    else:
                         failed_count += 1
-                        logger.warning("upload_sync_error", provider_id=provider_id, error=str(e))
+                        logger.warning("upload_provider_sync_failed", provider_id=provider_id, status=response.status_code, body=response.text[:100])
+                except Exception as e:
+                    failed_count += 1
+                    logger.warning("upload_sync_error", provider_id=provider_id, error=str(e))
             
             if synced_count > 0:
                 sync_status = "synced"
@@ -726,7 +726,6 @@ async def upload_mask_image(
     """
     import uuid
     import base64
-    import aiohttp
     
     mask_data = request.get("mask_data")
     source_filename = request.get("source_filename", "")

@@ -89,7 +89,7 @@ export default function Dashboard() {
     // Wrapped deleteJob to handle query invalidation
     const deleteJob = useCallback(async (jobId) => {
         await storeDeleteJob(jobId);
-        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+        queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
     }, [storeDeleteJob, queryClient, filters]);
 
     // Wrapped deleteJob with confirmation modal for card dismiss button

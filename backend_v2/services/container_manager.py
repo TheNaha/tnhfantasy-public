@@ -4,7 +4,7 @@ Manages Docker containers for provider workers with isolated credentials.
 """
 import docker
 import os
-import requests
+import httpx
 import time
 from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
@@ -329,7 +329,8 @@ class ContainerManager:
             else:
                 for method, url in probe_targets:
                     try:
-                        response = requests.get(url, timeout=2)
+                        with httpx.Client(timeout=2.0) as client:
+                            response = client.get(url)
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method=method)
                             return

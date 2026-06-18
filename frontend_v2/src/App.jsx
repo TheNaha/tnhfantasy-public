@@ -26,6 +26,7 @@ import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
 import { useBrandingStore } from './store/brandingStore';
+import { useSettings } from './store/settingsStore';
 import { useJobStore } from './store/jobStore';
 import useStore from './store/useStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
@@ -70,6 +71,7 @@ function App() {
     const fetchJobs = useJobStore((state) => state.fetchJobs);
     const { connect, disconnect } = useWebsocket();
     const loadBranding = useBrandingStore((state) => state.loadBranding);
+    const settings = useSettings();
     const initCollections = useStore((state) => state.initCollections);
 
     const [queryClient] = useState(() => (
@@ -174,12 +176,14 @@ function App() {
                             border: '1px solid #374151',
                         },
                         success: {
+                            duration: settings.ui.toastSuccessDuration,
                             iconTheme: {
                                 primary: '#10b981',
                                 secondary: '#1f2937',
                             },
                         },
                         error: {
+                            duration: settings.ui.toastErrorDuration,
                             iconTheme: {
                                 primary: '#ef4444',
                                 secondary: '#1f2937',

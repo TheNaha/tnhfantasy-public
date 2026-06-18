@@ -9,18 +9,15 @@ from .runtime import get_provider_worker_base_url
 from . import modal_config  # noqa: F401 - Registers Modal provider type
 from . import beam_config   # noqa: F401 - Registers Beam provider type
 
-_PROVIDER_CLIENTS = {
-    "modal": ModalProvider,
-    "beam": BeamProvider,
-}
-
-
 def create_provider_client(provider_id: str, config: dict):
     provider_type = (config or {}).get("type")
-    provider_class = _PROVIDER_CLIENTS.get(provider_type)
-    if provider_class:
-        return provider_class(provider_id, config)
-    raise ValueError(f"Unsupported provider type: {provider_type}")
+    
+    # Lookup via ProviderRegistry
+    type_config = ProviderRegistry.get_type_config(provider_type)
+    if type_config and type_config.client_class:
+        return type_config.client_class(provider_id, config)
+        
+    raise ValueError(f"Unsupported provider type or missing client_class: {provider_type}")
 
 __all__ = [
     "ServerlessProvider",

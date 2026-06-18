@@ -43,7 +43,6 @@ describe('QueueVisualization', () => {
                 ];
             }
             return {
-                jobs: [],
                 jobs: []
             };
         });

@@ -35,6 +35,7 @@ from .background import (
     log_startup_info,
     JobCancellationTracker,
     get_job_tracker,
+    auto_discovery_loop,
 )
 
 from .utils import get_safe_path, build_deploy_compatibility_response
@@ -44,6 +45,7 @@ from .validation import (
     VALID_FILE_HEADERS,
     validate_downloaded_file,
 )
+from .models_utils import list_models_with_metadata_internal
 
 __all__ = [
     "get_safe_path",
@@ -79,6 +81,7 @@ __all__ = [
     "log_startup_info",
     "JobCancellationTracker",
     "get_job_tracker",
+    "auto_discovery_loop",
     "build_deploy_compatibility_response",
     "download_model_to_path",
     "build_authenticated_download_request",
@@ -86,4 +89,5 @@ __all__ = [
     "MIN_MODEL_SIZE",
     "VALID_FILE_HEADERS",
     "validate_downloaded_file",
+    "list_models_with_metadata_internal",
 ]

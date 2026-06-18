@@ -436,21 +436,21 @@ def _migrate_models_to_v2(conn) -> bool:
 
     # Check if both old and new tables exist
     if "models" not in tables or "models_v2" not in tables:
-        return
+        return False
 
     # Check if migration already done (models_v2 has data)
     result = conn.execute(text("SELECT COUNT(*) FROM models_v2"))
     v2_count = result.scalar()
     if v2_count > 0:
         logger.debug("migration_v2_skip", reason="already_populated")
-        return
+        return False
 
     # Check if there's data to migrate
     result = conn.execute(text("SELECT COUNT(*) FROM models"))
     v1_count = result.scalar()
     if v1_count == 0:
         logger.debug("migration_v2_skip", reason="no_v1_models")
-        return
+        return False
 
     logger.info("migration_v2_start", v1_count=v1_count)
 

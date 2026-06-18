@@ -85,13 +85,23 @@ def validate_downloaded_file(
             validation_errors.append(f"Error reading header: {exc}")
 
     if "safetensors" in detected_format or path.endswith(".safetensors"):
-        try:
-            from safetensors import safe_open
-
-            with safe_open(path, framework="pt", device="cpu"):
-                pass
-        except Exception as exc:
-            validation_errors.append(f"Safetensors corrupted: {exc}")
+        if actual_size >= MIN_MODEL_SIZE and not validation_errors:
+            try:
+                import struct
+                import json
+                with open(path, 'rb') as f:
+                    header_size_bytes = f.read(8)
+                    if len(header_size_bytes) < 8:
+                        raise ValueError("File too small for safetensors header")
+                    header_size = struct.unpack('<Q', header_size_bytes)[0]
+                    if header_size > actual_size - 8:
+                        raise ValueError(f"Invalid header size: {header_size} > {actual_size - 8}")
+                    header_bytes = f.read(header_size)
+                    header = json.loads(header_bytes)
+                    if not isinstance(header, dict):
+                        raise ValueError("Header is not a dict")
+            except Exception as exc:
+                validation_errors.append(f"Safetensors corrupted: {exc}")
 
     if validation_errors:
         return {

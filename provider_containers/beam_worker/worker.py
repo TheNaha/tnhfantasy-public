@@ -418,7 +418,7 @@ async def download_model(request: DownloadRequest):
                 json={
                     "url": request.url,
                     "path": request.path,
-                    "token": request.token or HF_TOKEN or CIVITAI_TOKEN,
+                    "token": request.token or determine_download_token(request.url, HF_TOKEN, CIVITAI_TOKEN),
                     "preview_url": request.preview_url,
                     "metadata": request.metadata,
                 },
@@ -466,8 +466,9 @@ async def list_models(request: ListModelsRequest = None, directory: str = None):
             )
             if response.status_code == 200:
                 result = response.json()
-                print(f"[{PROVIDER_ID}] Found {len(result.get('files', []))} models")
-                return result
+                files = result.get('files', [])
+                print(f"[{PROVIDER_ID}] Found {len(files)} models")
+                return build_status_response("success", f"Listed models in {dir_to_list}", provider=PROVIDER_ID, files=files)
             return build_error_response(response.text or f"List models failed for {dir_to_list}", code=response.status_code)
     except Exception as e:
         print(f"[{PROVIDER_ID}] List models error: {e}")
@@ -695,28 +696,23 @@ async def validate_models(request: ValidateModelsRequest):
 
 @app.post("/validate-all-models")
 async def validate_all_models(delete_invalid: bool = False):
-    """Validate all model directories."""
+    """Validate all model directories via a single batch request to storage."""
     print(f"[{PROVIDER_ID}] Validating ALL model directories...")
-    
-    results = {"total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
-    
-    for directory in MODEL_DIRECTORIES:
-        try:
-            result = await validate_models(ValidateModelsRequest(directory=directory, delete_invalid=delete_invalid))
-            dir_key = directory.replace("models/", "")
-            results["by_directory"][dir_key] = {
-                "valid": result.get("valid_count", 0),
-                "invalid": result.get("invalid_count", 0),
-                "partial": result.get("partial_count", 0),
-            }
-            results["total_valid"] += result.get("valid_count", 0)
-            results["total_invalid"] += result.get("invalid_count", 0)
-            results["total_partial"] += result.get("partial_count", 0)
-        except Exception as e:
-            print(f"[{PROVIDER_ID}] Error validating {directory}: {e}")
-    
-    print(f"[{PROVIDER_ID}] Validation: {results['total_valid']} valid, {results['total_invalid']} invalid")
-    return results
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{BEAM_STORAGE_URL}/validate-all-models",
+                json={"delete_invalid": delete_invalid},
+                headers=get_beam_headers(),
+            )
+            if response.status_code == 200:
+                result = response.json()
+                print(f"[{PROVIDER_ID}] Validation: {result.get('total_valid', 0)} valid, {result.get('total_invalid', 0)} invalid")
+                return result
+            return {"error": f"HTTP {response.status_code}", "total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
+    except Exception as e:
+        print(f"[{PROVIDER_ID}] Validate all error: {e}")
+        return {"error": str(e), "total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
 
 
 # ============================================

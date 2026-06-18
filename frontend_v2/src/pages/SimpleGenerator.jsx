@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
+import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Layers, Copy, Check, Upload, Activity, Server, TriangleAlert, ImagePlus, Loader2, Info, Lock, Unlock, Sparkles, FolderOpen, BookOpen } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -15,6 +15,7 @@ import GeneratorTabs from '../components/generator/GeneratorTabs';
 import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
+import filesApi from '../api/files';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
@@ -23,7 +24,7 @@ import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { api, generateApi, createIdempotencyKey } from '../api';
+import { generateApi, createIdempotencyKey } from '../api';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -276,11 +277,7 @@ export default function SimpleGenerator() {
     };
 
     const handleControlNetUpload = async (index, file) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('path', 'input');
-
-        const uploadPromise = api.post('/api/upload', formData);
+        const uploadPromise = filesApi.uploadInput(file);
 
         toast.promise(uploadPromise, {
             loading: 'Uploading image...',
@@ -1284,7 +1281,7 @@ export default function SimpleGenerator() {
                                         setSeed(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
                                         if (!autoRandomizeSeed) {
                                             updateSetting('generator', 'autoRandomizeSeed', true);
-                                            toast.success('Auto-randomize enabled!', { icon: '🎲', duration: 2000 });
+                                            toast.success('Auto-randomize enabled!', { icon: '🎲' });
                                         }
                                     }}
                                     className="no-touch-padding w-10 flex items-center justify-center bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded transition-colors flex-shrink-0 text-base"
