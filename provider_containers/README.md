@@ -17,21 +17,19 @@ pip install docker
 ## Architecture
 
 ```
-Backend (ProviderManager)
-  ↓
-ContainerManager
+Backend (ProviderService / ContainerManager)
   ↓ starts/stops
-Docker Containers (one per profile)
-  ├─ Container 1: Modal Account 1 (port 8001)
-  ├─ Container 2: Modal Account 2 (port 8002)
-  └─ Container 3: Beam Account (port 8003)
+Docker Containers (one per provider)
+  ├─ Container 1: Modal Account 1 (port 8000 internally)
+  ├─ Container 2: Modal Account 2 (port 8000 internally)
+  └─ Container 3: Beam Account (port 8000 internally)
 ```
 
 Each container:
 - Runs an HTTP server (`worker.py`)
-- Has its own Modal credentials (env vars)
-- Exposes port 8000 internally (mapped to unique host port)
-- Backend communicates via HTTP
+- Has its own provider credentials (env vars)
+- Exposes port 8000 internally
+- Backend communicates via HTTP using the container name `comfy-provider-{PROVIDER_ID}`
 
 ---
 
@@ -75,54 +73,29 @@ PROVIDER_ID=modal-account2
 PORT=8000
 ```
 
-### 3. Update Provider Registry
+### 3. Register Provider via Backend API or UI
 
-Edit `backend/provider_registry.json`:
+Providers can be registered via:
 
-```json
-{
-  "providers": [
-    {
-      "id": "modal-primary",
-      "type": "modal",
-      "enabled": true,
-      "priority": 1,
-      "credentials": {
-        "username": "zetsuke17"
-      },
-      "config": {
-        "app_name": "comfy-modal-stack"
-      },
-      "container_config": null
-    },
-    {
-      "id": "modal-secondary",
-      "type": "modal",
-      "enabled": true,
-      "priority": 2,
-      "credentials": {
-        "username": "account2"
-      },
-      "config": {
-        "app_name": "comfy-modal-stack"
-      },
-      "container_config": {
-        "port": 8001,
-        "env_file": ".env.modal2"
-      }
-    }
-  ],
-  "load_balancing": {
-    "strategy": "round-robin",
-    "fallback_enabled": true
-  }
-}
+**Option A: Provider Discovery (recommended)**
+Containers with `BACKEND_URL` set will self-register via `POST /api/v2/providers/discovery`.
+
+**Option B: Backend API**
+```bash
+curl -X POST http://localhost:8002/api/providers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "modal-primary",
+    "type": "modal",
+    "enabled": true,
+    "priority": 1,
+    "credentials": {"username": "zetsuke17"},
+    "config": {"app_name": "comfy-modal-stack"}
+  }'
 ```
 
-**Key Points:**
-- `container_config: null` = Direct mode (uses env credentials)
-- `container_config: {port, env_file}` = Containerized mode
-- Each containerized provider needs a **unique port**
+**Option C: Docker Compose**
+Add provider blocks to `docker-compose.yml` with unique `PROVIDER_ID` and `container_name`.
 
 ### 4. Build Docker Image
 
@@ -131,20 +104,25 @@ cd provider_containers/modal_worker
 docker build -t comfy-provider-modal:latest .
 ```
 
-Or let the system build it automatically on first run.
+Or let the system build it automatically when using `docker-compose up -d`.
 
 ### 5. Start Backend
 
 ```bash
-cd backend
-python server.py
+cd backend_v2
+uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 ```
 
-The `ProviderManager` will automatically:
-1. Build Docker images (if not exists)
-2. Start containers for containerized providers
-3. Wait for health checks
-4. Initialize `ModalProvider` instances
+Or use Docker Compose from the project root:
+```bash
+docker-compose up -d
+```
+
+The backend will automatically:
+1. Discover running provider containers (if `BACKEND_URL` is set on providers)
+2. Register providers via the discovery endpoint
+3. Initialize provider instances
+4. Add them to the load balancer
 
 ### 6. Verify Containers Running
 
@@ -163,7 +141,7 @@ abc123...      comfy-provider-modal       0.0.0.0:8001->8000/tcp
 Submit a job and watch the load balancer distribute across providers:
 
 ```bash
-curl http://localhost:8000/api/providers/
+curl http://localhost:8002/api/providers/
 ```
 
 Should return both providers.
@@ -172,20 +150,17 @@ Should return both providers.
 
 ## Usage via UI
 
-1. Go to **Settings → Providers**
+1. Go to **Providers** page
 2. Click **"Add Provider"**
 3. Fill in:
    - **Provider ID**: `modal-account3`
    - **Type**: `modal`
    - **Priority**: `3`
    - **Username**: `account3`
-   - **Container Port**: `8002`
-   - **Env File**: `.env.modal3`
 4. Click **"Add Provider"**
 
 The backend will automatically:
-- Start a new container on port 8002
-- Initialize the provider
+- Register the provider in the database
 - Add it to the load balancer
 
 ---
@@ -207,8 +182,8 @@ docker logs comfy-provider-modal-account2
 ### Health Check Fails
 
 ```bash
-# Test health endpoint directly
-curl http://localhost:8001/health
+# Test health endpoint directly (default port 8000)
+curl http://localhost:8000/health
 
 # Should return:
 # {"status":"healthy","provider_id":"modal-account2",...}
@@ -233,8 +208,8 @@ curl http://localhost:8001/health
 ### Jobs Fail with Containerized Provider
 
 ```bash
-# Test inference endpoint
-curl -X POST http://localhost:8001/inference \
+# Test inference endpoint (default port 8000)
+curl -X POST http://localhost:8000/inference \
   -H "Content-Type: application/json" \
   -d '{"workflow": {...}}'
 ```
@@ -248,8 +223,8 @@ curl -X POST http://localhost:8001/inference \
 ```bash
 docker run -d \
   --name comfy-provider-modal-test \
-  -p 8003:8000 \
   --env-file .env.modal1 \
+  --network tnhcomfy \
   comfy-provider-modal:latest
 ```
 
@@ -293,7 +268,7 @@ Beam.cloud is now supported as an alternative to Modal.
 Note: worker `/deploy` endpoints are compatibility-only. Trigger deploys through the backend orchestrator (`POST /api/providers/{provider_id}/deploy`) or the Providers UI.
 
 ```bash
-cd backend_v2
+cd provider_containers/beam_worker
 beam deploy beam_app.py
 ```
 
@@ -312,9 +287,7 @@ cp .env.example .env.beam
 BEAM_API_KEY=your-beam-api-key
 BEAM_APP_NAME=comfy-beam
 PROVIDER_ID=beam-primary
-BEAM_GPU_TYPE=RTX4090
 BACKEND_URL=http://backend_v2:8002
-
 ```
 
 ### 4. Build and Run Container
@@ -322,27 +295,25 @@ BACKEND_URL=http://backend_v2:8002
 ```bash
 # Build
 cd provider_containers/beam_worker
-podman build -t comfy-provider-beam:latest .
+docker build -t comfy-provider-beam:latest .
 
-# Run
-podman run -d \
+# Run (or use docker-compose)
+docker run -d \
   --name comfy-provider-beam-primary \
-  -p 8004:8000 \
   --env-file .env.beam \
-  --network comfy-modal-stack_default \
+  --network tnhcomfy \
   comfy-provider-beam:latest
 ```
 
 ### 5. Add Provider via UI
 
-1. Go to **Settings → Providers**
+1. Go to **Providers** page
 2. Click **"Add Provider"**
 3. Select Type: **beam**
 4. Fill in:
    - **Provider ID**: `beam-primary`
    - **API Key**: Your Beam API key
    - **App Name**: `comfy-beam`
-   - **Container Port**: `8004`
 
 ---
 

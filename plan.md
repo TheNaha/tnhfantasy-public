@@ -33,10 +33,10 @@ This is a repo-wide audit and staged remediation plan for TNHComfy. The recommen
 7. High: Error handling is inconsistent across routes and providers. The backend mixes HTTPException and ComfyError patterns, while provider workers do not guarantee a single normalized error contract.
 8. High: Provider integration remains brittle. Health checks are not consistently enforced before scheduling, and provider lifecycle startup and recovery are only partially integrated.
 9. High: Backend job processing remains tightly coupled in backend_v2/api/main.py, mixing app startup, queue wiring, provider strategy, reconciliation, and background work orchestration.
-10. High: Provider route surface is not cleanly separated. backend_v2/api/routes/providers.py mixes provider CRUD with image save and cache-related responsibilities.
+10. High: Provider route surface is not cleanly separated. backend_v2/api/routes/providers/ mixes provider CRUD with image save and cache-related responsibilities.
 11. High: Frontend websocket lifecycle logic is dense and side-effect heavy in frontend_v2/src/store/jobStore.js, with reconnect, polling fallback, page visibility, and notification behavior all bundled together.
 12. High: Frontend has major missing page-level and integration tests, especially for Dashboard, generator pages, websocket-driven flows, and backend/frontend handoff.
-13. Medium: Several large modules impede maintainability and parallel work, notably backend_v2/api/main.py, backend_v2/infrastructure/database.py, backend_v2/services/model_service_v2.py, backend_v2/api/routes/providers.py, backend_v2/api/routes/models_v2.py, frontend_v2/src/store/jobStore.js, and frontend_v2/src/pages/Dashboard.jsx.
+13. Medium: Several large modules impede maintainability and parallel work, notably backend_v2/api/main.py, backend_v2/infrastructure/database.py, backend_v2/services/model_service.py, backend_v2/api/routes/providers/, backend_v2/api/routes/models/, frontend_v2/src/store/jobStore.js, and frontend_v2/src/pages/Dashboard.jsx.
 14. Medium: Logging and observability are inconsistent, with print-based diagnostics still present in backend and provider code.
 15. Medium: Config, deployment, and environment conventions are not fully unified across config.py, config.json, docker-compose.yml, backend startup, and provider worker settings.
 16. Medium: Documentation and contributor workflow are insufficient for coordinated multi-engineer or multi-agent work. There is no strong contributor guide, architecture decision log, or ownership map.
@@ -45,7 +45,7 @@ This is a repo-wide audit and staged remediation plan for TNHComfy. The recommen
 **Steps**
 1. Phase 1: Stabilize foundations. Unify dependency injection around backend_v2/api/deps.py, add tracked background task handling for backend_v2/api/main.py, and define one backend error translation path for ComfyError and HTTP responses. These changes should be treated as blockers for deeper refactors.
 2. Phase 1 parallel work: Normalize provider contracts and startup checks across provider_containers/modal_worker, provider_containers/beam_worker, and backend_v2 provider orchestration. Standardize health checks, image-save paths, and error payload formats.
-3. Phase 2: Reduce architecture hotspots. Extract job processing orchestration out of backend_v2/api/main.py into dedicated services such as job processor, provider strategy, and image pipeline modules. Split oversized route files, especially backend_v2/api/routes/models_v2.py and backend_v2/api/routes/providers.py, by responsibility.
+3. Phase 2: Reduce architecture hotspots. Extract job processing orchestration out of backend_v2/api/main.py into dedicated services such as job processor, provider strategy, and image pipeline modules. Split oversized route directories, especially backend_v2/api/routes/models/ and backend_v2/api/routes/providers/, by responsibility.
 4. Phase 2 depends on 1: Replace ad hoc migration logic in backend_v2/infrastructure/database.py with explicit versioned migration units and a migration registry. This does not require Alembic if the team wants to stay lightweight, but it does require deterministic version tracking and failure handling.
 5. Phase 3: Establish cleaner route and service boundaries. Each route module should own one domain, and each service should expose a narrow public API. Remove cross-domain surprises such as provider routes owning image-save endpoints.
 6. Phase 4: Rebuild frontend state boundaries. Keep websocket-driven active job progress in Zustand and move persistent server-owned job and gallery data to React Query. Update frontend_v2/src/store/jobStore.js, frontend_v2/src/hooks/useGallery.js, and related hooks so data ownership is explicit and cache invalidation rules are documented.
@@ -59,12 +59,12 @@ This is a repo-wide audit and staged remediation plan for TNHComfy. The recommen
 - backend_v2/api/main.py — currently overloaded with startup, orchestration, and background task concerns.
 - backend_v2/infrastructure/database.py — manual migration and startup DB handling hotspot.
 - backend_v2/core/events.py — event bus backpressure, queueing, and observability behavior.
-- backend_v2/api/routes/providers.py — provider CRUD mixed with image-save responsibilities.
-- backend_v2/api/routes/models_v2.py — oversized V2 route module.
+- backend_v2/api/routes/providers/ — provider CRUD, lifecycle, and reconciliation routes (split by responsibility).
+- backend_v2/api/routes/models/ — model CRUD, maintenance, preview, and provider-sync routes (split by responsibility).
 - frontend_v2/src/pages/Dashboard.jsx — monolithic dashboard component.
 - frontend_v2/src/store/jobStore.js — dense websocket lifecycle logic.
-- backend_v2/services/model_service_v2.py — oversized service to split by responsibility.
-- backend_v2/api/routes/providers.py — provider CRUD mixed with unrelated responsibilities.
+- backend_v2/services/model_service.py — model service to split by responsibility.
+- backend_v2/api/routes/providers/ — provider CRUD, lifecycle, and reconciliation routes.
 - frontend_v2/src/store/jobStore.js — websocket lifecycle and state-ownership hotspot.
 - frontend_v2/src/hooks/useGallery.js — React Query boundary with overlap against Zustand.
 - frontend_v2/src/pages/Dashboard.jsx — major UI hotspot blocking parallel frontend work.

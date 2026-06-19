@@ -32,4 +32,4 @@ Use `npm install`, `npm run dev`, `npm test`, and `npm run build`.
 `pnpm` and `yarn` are intentionally rejected by the frontend `preinstall` guard.
 
 ## Project Maintenance
-Built to scale seamlessly using serverless providers. Output images and localized SQLite states (`backend_v2/data/comfy.db`) are ignored from the version control for security.
+Built to scale seamlessly using serverless providers. Output images and localized SQLite states (`backend_v2/data/db/comfy.db`) are ignored from the version control for security.

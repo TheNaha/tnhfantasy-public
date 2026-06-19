@@ -67,4 +67,4 @@ This avoids requiring eager image hydration just to display collection counts or
    ```
 
 ## Styling
-The frontend likely uses standard CSS/SCSS or a utility-first framework like Tailwind CSS (check `package.json` for specific dependencies). It ensures responsive design for different screen sizes.
+The frontend uses **Tailwind CSS v4** with the `@tailwindcss/postcss` plugin, configured in `postcss.config.js`. Base styles are in `src/index.css` (`@import "tailwindcss"`).

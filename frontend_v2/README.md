@@ -1,16 +1,41 @@
-# React + Vite
+# Frontend (TNHComfy)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite frontend for the TNHComfy serverless ComfyUI stack.
 
-Currently, two official plugins are available:
+## Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **React 19** with Vite 7
+- **Tailwind CSS 4** (`@tailwindcss/postcss` plugin)
+- **Zustand 5** for client/UI state and WebSocket-driven realtime updates
+- **React Query 5** (`@tanstack/react-query`) for HTTP data fetching and caching
+- **Vitest 4** for testing (jsdom environment)
 
-## React Compiler
+## Quick Start
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev -- --host 0.0.0.0 --port 5174
+```
 
-## Expanding the ESLint configuration
+## Commands
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start dev server (port 5174) |
+| `npm run build` | Production build |
+| `npm test` | Run tests |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run lint` | Run ESLint |
+
+## State Management
+
+Read `STATE_MANAGEMENT.md` before changing state logic.
+
+- **Zustand** (`src/store/`): UI state, form drafts, realtime WebSocket job updates
+- **React Query** (`src/hooks/`): HTTP fetching, caching, mutations
+
+## Important
+
+- This workspace is **npm-only**. `pnpm` and `yarn` are rejected by a preinstall guard.
+- The dev server runs on **port 5174** (not 5173).
+- Vite proxy fallback: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:8002`.

@@ -10,7 +10,7 @@ TNHComfy is designed around a decoupled, microservices-style architecture tailor
 ## 2. Backend (tnhcomfy-backend)
 - **Framework:** FastAPI (Python)
 - **Role:** Acts as the central orchestrator. It manages the custom job queuing system, exposes REST endpoints for the frontend, coordinates real-time updates via WebSockets, and handles the local model management system without permanently storing large checkpoints on the backend.
-- **Data Storage:** Uses a localized SQLite database (`backend_v2/data/comfy.db`) for tracking application state, jobs, and metadata. Output images are stored on the filesystem but not tracked in version control.
+- **Data Storage:** Uses a localized SQLite database (`backend_v2/data/db/comfy.db`) for tracking application state, jobs, and metadata. Output images are stored on the filesystem but not tracked in version control.
 
 ## 3. Provider Workers
 - **Providers:** Serverless instances running on Modal or Beam.
