@@ -523,7 +523,10 @@ def get_provider_container_logs(provider_id: str, tail: int = 100, session: Sess
     try:
         return lifecycle.get_container_logs(provider_id, tail=tail)
     except ProviderError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        detail = str(exc)
+        if "not initialized" in detail:
+            raise HTTPException(status_code=503, detail="Container manager unavailable — provider is compose-managed. Use 'docker compose logs' instead.")
+        raise HTTPException(status_code=500, detail=detail) from exc
 
 
 @router.get("/{provider_id}/container/status")
@@ -533,7 +536,10 @@ async def get_provider_container_status(provider_id: str, session: Session = Dep
     try:
         return await lifecycle.get_container_status(provider_id)
     except ProviderError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        detail = str(exc)
+        if "not initialized" in detail:
+            raise HTTPException(status_code=503, detail="Container manager unavailable — provider is compose-managed.")
+        raise HTTPException(status_code=500, detail=detail) from exc
 
 
 # ============================================================================

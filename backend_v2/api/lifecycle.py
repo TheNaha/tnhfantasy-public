@@ -161,7 +161,7 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     broadcast_task.cancel()
     try:
         await broadcast_task
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, TimeoutError):
         pass
 
     logger.info("shutdown", phase="provider_monitor")

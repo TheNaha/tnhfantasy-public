@@ -2,6 +2,7 @@ services:
   backend_v2:
     build: ./backend_v2
     container_name: tnhcomfy-backend
+    user: "1000:1000"
     volumes:
       - ./data:/data
     env_file:
@@ -16,6 +17,12 @@ services:
       - tnhcomfy
       - metrics
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   frontend_v2:
     build:
@@ -23,7 +30,8 @@ services:
       target: prod
     container_name: tnhcomfy-frontend
     depends_on:
-      - backend_v2
+      backend_v2:
+        condition: service_healthy
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
@@ -38,6 +46,12 @@ services:
       - tnhcomfy
       - proxy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Provider containers - managed by compose (backend autostart is disabled).
   # To add a provider: copy this block, set a unique PROVIDER_ID and container_name.
@@ -47,6 +61,9 @@ services:
       context: ./provider_containers
       dockerfile: modal_worker/Dockerfile
     container_name: comfy-provider-modal-zetsuke
+    depends_on:
+      frontend_v2:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -59,6 +76,12 @@ services:
     networks:
       - tnhcomfy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # provider-beam:
   #   build:

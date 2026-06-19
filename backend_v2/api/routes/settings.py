@@ -349,7 +349,7 @@ async def reset_settings() -> Dict[str, Any]:
 # BRANDING CONFIGURATION
 # ============================================================================
 
-BRANDING_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../data/branding.json")
+BRANDING_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "branding.json")
 
 def get_branding_config() -> Dict[str, Any]:
     """Load branding configuration from JSON file."""

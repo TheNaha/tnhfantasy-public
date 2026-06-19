@@ -20,6 +20,8 @@ FROM dev AS builder
 RUN npm run build
 
 FROM nginx:alpine AS prod
+# Install wget for healthcheck support
+RUN apk add --no-cache wget
 # Copy built assets to Nginx
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf

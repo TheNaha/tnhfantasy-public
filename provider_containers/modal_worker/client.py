@@ -90,7 +90,7 @@ class ModalProviderClient:
                     async with asyncio.timeout(inference_timeout):
                         async for update in comfy_instance.run.remote_gen.aio(request.workflow):
                             if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\\n"
+                                yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                 return
 
                             if update.get("status") == "success" and "images" in update:
@@ -101,14 +101,14 @@ class ModalProviderClient:
                                         saved_images.append({"filename": img.get("filename", f"image_{i}.png"), "data": img_b64, "_base64_encoded": True})
                                 update["images"] = saved_images
 
-                            yield json.dumps(update) + "\\n"
+                            yield json.dumps(update) + "\n"
 
                 except TimeoutError:
-                    yield json.dumps(build_error_response(f"Inference timed out after {int(inference_timeout)}s", retryable=True, code=408)) + "\\n"
+                    yield json.dumps(build_error_response(f"Inference timed out after {int(inference_timeout)}s", retryable=True, code=408)) + "\n"
                 except modal.exception.ConnectionError as ce:
-                    yield json.dumps(build_error_response(f"Modal connection timeout: {ce}", retryable=True)) + "\\n"
+                    yield json.dumps(build_error_response(f"Modal connection timeout: {ce}", retryable=True)) + "\n"
                 except Exception as e:
-                    yield json.dumps(build_error_response(f"Stream error: {e}", retryable=False)) + "\\n"
+                    yield json.dumps(build_error_response(f"Stream error: {e}", retryable=False)) + "\n"
                 finally:
                     if job_id:
                         await self.job_tracker.end_job(job_id)

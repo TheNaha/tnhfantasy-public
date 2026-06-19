@@ -100,17 +100,17 @@ class BeamProviderClient:
                     async with asyncio.timeout(inference_timeout):
                         async for message in ws:
                             if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\\n"
+                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                 return
                             try:
                                 update = json.loads(message)
-                                yield json.dumps(update) + "\\n"
+                                yield json.dumps(update) + "\n"
                             except json.JSONDecodeError:
                                 pass
             except asyncio.TimeoutError:
-                yield json.dumps(build_error_response(f"Inference timed out after {inference_timeout}s", retryable=True, code=408)) + "\\n"
+                yield json.dumps(build_error_response(f"Inference timed out after {inference_timeout}s", retryable=True, code=408)) + "\n"
             except Exception as e:
-                yield json.dumps(build_error_response(str(e), retryable=True)) + "\\n"
+                yield json.dumps(build_error_response(str(e), retryable=True)) + "\n"
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

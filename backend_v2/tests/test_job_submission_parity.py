@@ -44,4 +44,4 @@ def test_jobs_and_generate_reject_the_same_unroutable_workflow(client):
 
     assert jobs_response.status_code == 400
     assert generate_response.status_code == 400
-    assert jobs_response.json()["detail"] == generate_response.json()["detail"]
+    assert jobs_response.json()["error"] == generate_response.json()["error"]
