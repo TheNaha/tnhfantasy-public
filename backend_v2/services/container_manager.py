@@ -4,7 +4,7 @@ Manages Docker containers for provider workers with isolated credentials.
 """
 import docker
 import os
-import requests
+import httpx
 import time
 from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
@@ -15,6 +15,7 @@ from infrastructure.providers.provider_registry import ProviderRegistry
 
 logger = get_logger("container_manager")
 _container_manager_singleton = None
+_CONTAINER_MANAGER_INIT_FAILED = False
 try:
     DEFAULT_HEALTH_TIMEOUT_SECONDS = max(10, int(os.getenv("COMFY_CONTAINER_HEALTH_TIMEOUT_SECONDS", "180")))
 except ValueError:
@@ -23,7 +24,8 @@ except ValueError:
 
 class ContainerManager:
     """Manages provider worker containers (Docker or Podman)."""
-    DEFAULT_PROVIDER_TYPES = ("modal", "beam")
+    # Dynamically derived from ProviderRegistry at runtime
+    DEFAULT_PROVIDER_TYPES = None  # Falls back to registry lookup
     
     def __init__(self, containers_dir: str = None):
         """
@@ -52,54 +54,46 @@ class ContainerManager:
     def _get_container_client(self):
         """Get Docker/Podman client with automatic detection."""
         
-        # Try mounted Podman socket first (for containerized backend)
+        last_error = None
         mounted_socket = "/run/podman/podman.sock"
         if os.path.exists(mounted_socket):
             try:
-                logger.debug("container_client_trying", socket=mounted_socket)
                 client = docker.DockerClient(base_url=f"unix://{mounted_socket}")
                 client.ping()
                 logger.info("container_client_connected", method="podman_mounted")
                 return client
             except Exception as e:
-                logger.debug("container_client_failed", method="podman_mounted", error=str(e))
-        
-        # Try Podman socket (rootless)
+                last_error = e
+
         podman_socket = os.path.expanduser(f"unix://{os.getenv('XDG_RUNTIME_DIR', '/run/user/1000')}/podman/podman.sock")
-        
         try:
-            logger.debug("container_client_trying", method="podman_rootless", socket=podman_socket)
             client = docker.DockerClient(base_url=podman_socket)
             client.ping()
             logger.info("container_client_connected", method="podman_rootless")
             return client
         except Exception as e:
-            logger.debug("container_client_failed", method="podman_rootless", error=str(e))
-        
-        # Try Podman socket (rootful)
+            last_error = e
+
         try:
-            logger.debug("container_client_trying", method="podman_rootful")
             client = docker.DockerClient(base_url="unix:///run/podman/podman.sock")
             client.ping()
             logger.info("container_client_connected", method="podman_rootful")
             return client
         except Exception as e:
-            logger.debug("container_client_failed", method="podman_rootful", error=str(e))
-        
-        # Fall back to Docker
+            last_error = e
+
         try:
-            logger.debug("container_client_trying", method="docker")
             client = docker.from_env()
+            client.ping()
             logger.info("container_client_connected", method="docker")
             return client
         except Exception as e:
-            logger.error("container_client_failed_all", error=str(e))
-            raise RuntimeError(
-                f"Could not connect to Docker or Podman. \n"
-                f"For Podman, run: systemctl --user enable --now podman.socket\n"
-                f"For containerized setups, ensure Podman socket is mounted to /run/podman/podman.sock\n"
-                f"Error: {e}"
-            )
+            last_error = e
+
+        raise RuntimeError(
+            "Could not connect to Docker or Podman. "
+            "For containerized setups, mount Podman socket to /run/podman/podman.sock"
+        ) from last_error
     
     def _detect_runtime(self) -> str:
         """Detect whether we're using Docker or Podman."""
@@ -157,7 +151,10 @@ class ContainerManager:
     def build_worker_images(self, provider_types: Optional[Iterable[str]] = None) -> Dict[str, str]:
         """Build provider worker images and continue past individual failures."""
         image_tags: Dict[str, str] = {}
-        provider_list = provider_types or self.DEFAULT_PROVIDER_TYPES
+        if provider_types:
+            provider_list = list(provider_types)
+        else:
+            provider_list = list(ProviderRegistry.get_all().keys())
 
         for provider_type in dict.fromkeys(provider_list):
             try:
@@ -240,8 +237,8 @@ class ContainerManager:
                 backend_host_path: {"bind": "/backend", "mode": "ro"}
             }
         
-        # Always use comfy-network for container-to-container communication
-        target_network = "comfy-network"
+        # Use the compose-defined network name for container-to-container communication
+        target_network = "tnhcomfy"
         logger.debug("container_network", network=target_network)
         
         try:
@@ -329,7 +326,8 @@ class ContainerManager:
             else:
                 for method, url in probe_targets:
                     try:
-                        response = requests.get(url, timeout=2)
+                        with httpx.Client(timeout=2.0) as client:
+                            response = client.get(url)
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method=method)
                             return
@@ -410,12 +408,19 @@ class ContainerManager:
 
 
 def get_container_manager() -> Optional[ContainerManager]:
-    """Return the shared container manager singleton."""
-    global _container_manager_singleton
+    """Return the shared container manager singleton.
+    
+    Once initialization fails, subsequent calls return None immediately
+    without retrying (avoids log spam when Docker/Podman socket is unavailable).
+    """
+    global _container_manager_singleton, _CONTAINER_MANAGER_INIT_FAILED
+    if _CONTAINER_MANAGER_INIT_FAILED:
+        return None
     if _container_manager_singleton is None:
         try:
             _container_manager_singleton = ContainerManager()
         except Exception as exc:
+            _CONTAINER_MANAGER_INIT_FAILED = True
             logger.warning("container_manager_init_failed", error=str(exc))
             return None
     return _container_manager_singleton

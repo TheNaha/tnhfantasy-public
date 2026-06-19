@@ -1,5 +1,6 @@
 import modal
 import asyncio
+import concurrent.futures
 import subprocess
 import time
 import logging
@@ -529,17 +530,14 @@ class ComfyUISnapshot:
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, info: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
-    import time
-
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "error": "Invalid path"}
+        return {"status": "error", "message": "Invalid path"}
 
     # Progress tracking
-    import json
     progress_dir = "/mnt/data/downloads"
     os.makedirs(progress_dir, exist_ok=True)
     safe_name = os.path.basename(path)
@@ -602,7 +600,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
             update_progress("success", 100, message="Download complete")
             return
 
-        if status == "error":
+        if status == "message":
             update_progress("error", message=payload.get("message", "Download failed"))
 
     result = download_model_to_path(
@@ -635,60 +633,8 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 def list_models_with_metadata(directory: str):
-    import os
-    import json
-    
-    base_path = "/mnt/data"
-
-    try:
-        target_dir = get_safe_path(base_path, directory)
-    except Exception:
-        logger.warning(f"[ListModels] Path traversal blocked: {directory}")
-        return []
-    
-    if not os.path.exists(target_dir):
-        return []
-        
-    entries = os.listdir(target_dir)
-    files = []
-    
-    # Create a map for quick lookup
-    entry_set = set(entries)
-    
-    for name in entries:
-        # Skip metadata/preview files themselves
-        if name.endswith('.json') or name.endswith('.preview.png'):
-            continue
-            
-        full_path = os.path.join(target_dir, name)
-        if not os.path.isfile(full_path):
-            continue
-            
-        file_data = {
-            "name": name,
-            "type": "file",
-            "size": os.path.getsize(full_path)
-        }
-        
-        # Check for preview
-        preview_name = f"{os.path.splitext(name)[0]}.preview.png"
-        if preview_name in entry_set:
-            file_data["preview"] = f"/api/view/{directory}/{preview_name}"
-            
-        # Check and READ metadata
-        meta_name = f"{os.path.splitext(name)[0]}.json"
-        if meta_name in entry_set:
-            file_data["metadata_url"] = f"/api/view/{directory}/{meta_name}"
-            try:
-                with open(os.path.join(target_dir, meta_name), 'r') as f:
-                    file_data["metadata"] = json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read metadata for {name}: {e}")
-                
-        files.append(file_data)
-        
-    vol.commit()
-    return files
+    from provider_core.models_utils import list_models_with_metadata_internal
+    return list_models_with_metadata_internal("/mnt/data", directory)
 
 
 # ============================================
@@ -708,10 +654,6 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
     Checks: minimum size, magic bytes, partial downloads.
     Returns: aggregated results for all directories.
     """
-    import os
-    import concurrent.futures
-    import functools
-    
     # ensure directories is a list
     if isinstance(directories, str):
         directories = [directories]
@@ -756,76 +698,12 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
                 }
             }
             
-        try:
-            file_size = os.path.getsize(full_path)
-        except OSError:
-            return None
-            
-        issues = []
+        file_size = os.path.getsize(full_path)
+        from provider_core.validation import validate_downloaded_file
+        validation = validate_downloaded_file(full_path)
+        issues = [] if validation["valid"] else [validation["error"]]
+        should_delete = not validation["valid"]
         detected_format = "unknown"
-        should_delete = False
-        
-        # Size check
-        if file_size < MIN_SIZE:
-            issues.append(f"Too small: {file_size} bytes")
-            should_delete = True
-            
-        # Magic bytes check
-        if file_size >= 16:
-            try:
-                with open(full_path, 'rb') as f:
-                    header = f.read(16)
-                
-                header_valid = False
-                for magic, fmt in VALID_HEADERS.items():
-                    if header.startswith(magic):
-                        header_valid = True
-                        detected_format = fmt
-                        break
-                        
-                if not header_valid:
-                    if b'<html' in header.lower() or b'<!doctype' in header.lower():
-                        issues.append("HTML content (auth error?)")
-                        should_delete = True
-                    else:
-                        detected_format = f"unknown ({header[:4].hex()})"
-            except Exception as e:
-                issues.append(f"Read error: {e}")
-                should_delete = False
-        
-        # Safetensors integrity check - validates the header structure
-        # This catches corrupted files that pass magic byte checks but fail to load
-        # NOTE: We parse the header manually for consistency (no framework dependency)
-        if name.endswith('.safetensors') and file_size >= MIN_SIZE and not issues:
-            try:
-                import struct
-                import json as json_module
-                with open(full_path, 'rb') as f:
-                    # Safetensors format: 8-byte header size (little-endian u64) + JSON header
-                    header_size_bytes = f.read(8)
-                    if len(header_size_bytes) < 8:
-                        raise ValueError("File too small for safetensors header")
-                    header_size = struct.unpack('<Q', header_size_bytes)[0]
-                    
-                    # Sanity check - header shouldn't be bigger than the file
-                    if header_size > file_size - 8:
-                        raise ValueError(f"Invalid header size: {header_size} > {file_size - 8}")
-                    
-                    # Read and parse the JSON header
-                    header_bytes = f.read(header_size)
-                    header = json_module.loads(header_bytes)
-                    
-                    # Verify it has expected structure
-                    if not isinstance(header, dict):
-                        raise ValueError("Header is not a dict")
-            except Exception as e:
-                error_msg = str(e)
-                # Truncate very long error messages
-                if len(error_msg) > 100:
-                    error_msg = error_msg[:100] + "..."
-                issues.append(f"Safetensors corrupted: {error_msg}")
-                should_delete = True
-                logger.warning(f"[Validate] Corrupted safetensors: {name} - {error_msg}")
                 
         model_info = {
             "name": name,
@@ -875,7 +753,7 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
                 all_file_tasks.append((directory, name))
         except Exception as e:
             logger.error(f"Error listing {directory}: {e}")
-            validation_results["by_directory"][directory] = {"error": str(e)}
+            validation_results["by_directory"][directory] = {"message": str(e)}
 
     # Execute all file validations concurrently
     # Flattened list allows optimal thread pool usage across ALL directories
@@ -1113,31 +991,14 @@ def storage_file_exists(path: str) -> bool:
 @modal.concurrent(max_inputs=10, target_inputs=5)
 def setup_models():
     import os
-    # Ensure directories exist
-    dirs = [
-        "/mnt/data/output",
-        "/mnt/data/downloads",
-        "/mnt/data/models/checkpoints",
-        "/mnt/data/models/loras",
-        "/mnt/data/models/vae",
-        "/mnt/data/models/controlnet",
-        "/mnt/data/models/embeddings",
-        "/mnt/data/models/upscale_models"
-    ]
+    from provider_core.models import MODEL_DIRECTORIES
+    dirs = ["/mnt/data/output", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
         logger.debug(f"Ensured directory: {d}")
         
-    # Check if we have models
-    if not os.path.exists("/mnt/data/models/checkpoints"):
-        logger.warning("No checkpoints directory found!")
-        return
-        
     logger.info("Setup complete. Volume ready.")
-    """
-    Downloads standard models (Upscalers, ADetailer) to the volume.
-    Run this once: modal run backend/modal_app.py::setup_models
-    """
+
     import os
     import requests
     import time

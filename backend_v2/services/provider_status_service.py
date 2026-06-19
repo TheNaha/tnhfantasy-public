@@ -12,7 +12,7 @@ from core.entities_v2 import ModelFile, ModelVersion, ModelV2
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.container_manager import get_container_manager
-from services.model_service_v2 import ModelServiceV2
+from services.model_service import ModelServiceV2
 from services.provider_service import ProviderService
 
 logger = get_logger("provider_status_service")
@@ -178,10 +178,10 @@ class ProviderStatusService:
 
         provider = provider or await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
-        if runtime.mode != "container_http":
+        if runtime.mode not in ("container_http", "discovery"):
             return self.empty_storage_payload(
                 provider_id,
-                "Stats are only available for container-backed providers",
+                "Stats are only available for container-backed or discovered providers",
             )
 
         container_manager = get_container_manager()
@@ -245,7 +245,7 @@ class ProviderStatusService:
         provider = provider or await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
 
-        if runtime.mode != "container_http":
+        if runtime.mode not in ("container_http", "discovery"):
             return self.normalize_reconciliation_for_card(persisted_state)
 
         http_client = get_http_client()
@@ -471,12 +471,16 @@ class ProviderStatusService:
             provider_id = provider.get("id")
             if not provider_id:
                 continue
-            records.append(
-                await self.build_provider_record(
-                    provider_id,
-                    provider_payload=provider,
+            try:
+                records.append(
+                    await self.build_provider_record(
+                        provider_id,
+                        provider_payload=provider,
+                    )
                 )
-            )
+            except Exception as exc:
+                logger.warning("provider_record_failed", provider_id=provider_id, error=str(exc))
+                records.append(self.build_provider_status_card_fallback(provider, error=str(exc)))
         return records
 
     async def build_provider_status_cards(

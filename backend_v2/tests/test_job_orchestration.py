@@ -15,11 +15,16 @@ class StubJobService:
 
 
 class StubLoadBalancer:
+    async def release_job(self, p): pass
+    async def report_success(self, p): pass
+    async def report_failure(self, p): pass
+    async def get_stats(self): return {}
+
     def __init__(self, provider=None):
         self.provider = provider
         self.calls = []
 
-    def get_next_provider(self, preferred_provider_id=None, required_models=None, exclude_provider_ids=None):
+    async def get_next_provider(self, preferred_provider_id=None, required_models=None, exclude_provider_ids=None):
         self.calls.append((preferred_provider_id, required_models, exclude_provider_ids))
         return self.provider
 

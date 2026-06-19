@@ -4,9 +4,8 @@ from typing import Optional
 from types import SimpleNamespace
 
 from infrastructure.http_client import get_http_client
-from infrastructure.database import get_session_sync
+from api.deps import get_session_sync
 from infrastructure.logging import get_logger
-from services.job_queue import job_queue
 
 logger = get_logger("provider_runtime")
 
@@ -33,17 +32,20 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     container_config = getattr(provider, "container_config", None) or {}
     provider_id = getattr(provider, "id")
     provider_type = getattr(provider, "type", "")
+    provider_config = getattr(provider, "config", None) or {}
 
     if container_config:
         container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
         connected = False
         healthy = None
         status = "unknown"
+        docker_available = False
         try:
             from services.container_manager import get_container_manager
 
             container_manager = get_container_manager()
-            if container_manager:
+            if container_manager and getattr(container_manager, "client", None) is not None:
+                docker_available = True
                 container = container_manager.running_containers.get(provider_id)
                 if container is None:
                     try:
@@ -63,17 +65,19 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         except Exception as exc:
             logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
 
-        return ProviderRuntimeTarget(
-            provider_id=provider_id,
-            mode="container_http",
-            worker_url=f"http://{container_name}:8000",
-            container_name=container_name,
-            supports_setup=provider_type == "modal",
-            supports_reconciliation=True,
-            connected=connected,
-            status=status,
-            healthy=healthy,
-        )
+        if docker_available:
+            return ProviderRuntimeTarget(
+                provider_id=provider_id,
+                mode="container_http",
+                worker_url=f"http://{container_name}:8000",
+                container_name=container_name,
+                supports_setup=provider_type == "modal",
+                supports_reconciliation=True,
+                connected=connected,
+                status=status,
+                healthy=healthy,
+            )
+        # Docker not available — fall through to discovery / worker_ws checks
 
     if is_worker_connected(provider_id):
         return ProviderRuntimeTarget(
@@ -83,6 +87,20 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             supports_reconciliation=False,
             connected=True,
             status="connected",
+            healthy=True,
+        )
+
+    provider_config = getattr(provider, "config", None) or {}
+    discovery_url = provider_config.get("discovery_url") if isinstance(provider_config, dict) else None
+    if discovery_url:
+        return ProviderRuntimeTarget(
+            provider_id=provider_id,
+            mode="discovery",
+            worker_url=discovery_url,
+            supports_setup=False,
+            supports_reconciliation=True,
+            connected=True,
+            status="discovered",
             healthy=True,
         )
 
@@ -114,7 +132,7 @@ async def run_reconciliation_for_all_providers():
                 continue
 
             runtime = resolve_provider_runtime(SimpleNamespace(**provider))
-            if runtime.mode != "container_http":
+            if runtime.mode not in ("container_http", "discovery"):
                 continue
 
             provider_id = provider.get("id")
@@ -142,6 +160,7 @@ async def monitor_provider_changes():
     """Resize worker pool as provider availability changes."""
     from core.events import EventType, event_bus
     from infrastructure.repositories import ProviderRepository
+    from services.job_queue import job_queue
 
     logger.info("provider_monitor_start")
     subscription = event_bus.subscribe("provider")

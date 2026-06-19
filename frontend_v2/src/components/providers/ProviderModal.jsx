@@ -64,6 +64,15 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             ];
         }
 
+        if (formData.type === 'kaggle') {
+            return [
+                { key: 'username', label: 'Kaggle Username', type: 'text', placeholder: 'kaggle-username' },
+                { key: 'api_key', label: 'Kaggle API Key', type: 'password', placeholder: 'kaggle-key' },
+                { key: 'hf_token', label: 'HuggingFace Token', type: 'password', placeholder: 'hf_...' },
+                { key: 'civitai_token', label: 'CivitAI Token', type: 'password', placeholder: 'CivitAI token' },
+            ];
+        }
+
         return [
             { key: 'token_id', label: 'Token ID', type: 'text', placeholder: 'ak-...' },
             { key: 'token_secret', label: 'Token Secret', type: 'password', placeholder: 'as-...' },
@@ -184,6 +193,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                 >
                                     <option value="modal">Modal</option>
                                     <option value="beam">Beam.cloud</option>
+                                    <option value="kaggle">Kaggle</option>
                                 </select>
                             </Field>
 

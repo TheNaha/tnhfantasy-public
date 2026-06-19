@@ -3,16 +3,18 @@
  * Centralized HTTP client for all backend requests.
  */
 
-import { getApiUrl } from './config';
+import { getApiUrl, DEFAULT_API_URL } from './config';
 
-// In development, use relative URLs so Vite's proxy handles CORS
-// In production, use the configured API URL
+// Use relative URLs when no explicit API URL is configured.
+// In production, nginx proxies /api/ to the backend.
+// In development, Vite's proxy handles CORS.
+// Only use an absolute URL when the user explicitly sets VITE_API_URL or localStorage.
 const getBaseUrl = () => {
-    // Check if we're in development mode (Vite sets this)
-    if (import.meta.env.DEV) {
-        return ''; // Use relative URLs - Vite proxy will handle
+    const apiUrl = getApiUrl();
+    if (apiUrl && apiUrl !== DEFAULT_API_URL && import.meta.env.PROD) {
+        return apiUrl;
     }
-    return getApiUrl();
+    return '';
 };
 
 class ApiError extends Error {

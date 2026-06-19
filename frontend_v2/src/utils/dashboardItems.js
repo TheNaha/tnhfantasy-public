@@ -46,7 +46,7 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
 
     const mergedJobs = new Map();
     historicalJobs.forEach((job) => mergedJobs.set(job.id, job));
-    activeJobs.forEach((job) => mergedJobs.set(job.id, toJobItem(job)));
+    (activeJobs || []).forEach((job) => mergedJobs.set(job.id, toJobItem(job)));
 
     const imagesByJobId = new Map();
     // ⚡ Bolt: Create a hash map for O(1) image lookups by filename to prevent O(N^2) performance degradation on large galleries

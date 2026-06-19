@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from services.model_service_v2 import ModelServiceV2
+from services.model_service import ModelServiceV2
 from core.exceptions import NotFoundError
 
 
@@ -271,7 +271,7 @@ class TestModelServiceV2NetworkEfficiency:
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
         fake_http_client = _FakeHttpClient()
-        with patch("services.model_service_v2.get_http_client", return_value=fake_http_client):
+        with patch("services.model_service.get_http_client", return_value=fake_http_client):
             result = await service.trigger_download_to_providers(model_id=1)
 
         assert _FakeHttpClient.created == 1
@@ -294,7 +294,7 @@ class TestModelServiceV2NetworkEfficiency:
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
         fake_http_client = _FakeHttpClient()
-        with patch("services.model_service_v2.get_http_client", return_value=fake_http_client):
+        with patch("services.model_service.get_http_client", return_value=fake_http_client):
             result = await service.trigger_delete_from_providers(model_id=1)
 
         assert _FakeHttpClient.created == 1

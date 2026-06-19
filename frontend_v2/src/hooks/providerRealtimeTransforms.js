@@ -1,25 +1,11 @@
-function normalizeObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
+import { normalizeReconciliationStatus } from '../utils/providerStatus';
+import { unwrapPayload, normalizeObject, extractProviderId } from '../utils/providerUtils';
 
-export function unwrapEventData(payload) {
-    return payload?.data ?? payload ?? {};
-}
+export { extractProviderId };
+export const unwrapEventData = unwrapPayload;
 
-export function extractProviderId(payload) {
-    const source = unwrapEventData(payload);
-    return source.provider_id ?? source.providerId ?? source.id ?? null;
-}
 
-export function normalizeReconciliationStatus(status) {
-    if (['started', 'queued'].includes(status)) {
-        return 'queued';
-    }
-    if (['running', 'progress', 'reconciling'].includes(status)) {
-        return 'reconciling';
-    }
-    return status || 'idle';
-}
+
 
 export function normalizeReconciliationState(payload, fallbackState = {}) {
     const source = unwrapEventData(payload);

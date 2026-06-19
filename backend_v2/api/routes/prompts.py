@@ -12,15 +12,19 @@
 #   DELETE /api/prompts/{id}     – Delete a prompt
 #   POST   /api/prompts/{id}/use – Increment usage counter
 #   GET    /api/prompts/categories – List all distinct categories
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select, or_
 from sqlalchemy import text
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from api.deps import get_session
 from core.entities import Prompt
+from infrastructure.logging import get_logger
+
+logger = get_logger("prompts_route")
 
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
@@ -124,7 +128,7 @@ async def list_prompts(
         }
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.get("/categories")
@@ -165,7 +169,7 @@ async def get_prompt(prompt_id: int, session: Session = Depends(get_session)):
     """Get a single prompt by ID."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     return prompt
 
 
@@ -200,8 +204,8 @@ async def create_prompt(data: PromptCreate, session: Session = Depends(get_sessi
             "tags": ",".join(prompt.tags) if prompt.tags else ""
         })
         session.commit()
-    except Exception:
-        pass  # FTS5 might not exist yet
+    except Exception as e:
+        logger.warning("fts5_insert_failed", prompt_id=prompt.id, error=str(e))
     
     return prompt
 
@@ -211,14 +215,14 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
     """Update an existing prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     # Update only provided fields
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(prompt, key, value)
     
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = datetime.now(timezone.utc)
     session.add(prompt)
     session.commit()
     session.refresh(prompt)
@@ -239,8 +243,8 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
             "tags": ",".join(prompt.tags) if prompt.tags else ""
         })
         session.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("fts5_update_failed", prompt_id=prompt.id, error=str(e))
     
     return prompt
 
@@ -250,13 +254,13 @@ async def delete_prompt(prompt_id: int, session: Session = Depends(get_session))
     """Delete a prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     # Delete from FTS5 first
     try:
         session.execute(text("DELETE FROM prompts_fts WHERE rowid = :id"), {"id": prompt_id})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("fts5_delete_failed", prompt_id=prompt_id, error=str(e))
     
     session.delete(prompt)
     session.commit()
@@ -269,10 +273,10 @@ async def increment_usage(prompt_id: int, session: Session = Depends(get_session
     """Increment usage count for a prompt (called when prompt is used)."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     prompt.usage_count += 1
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = datetime.now(timezone.utc)
     session.add(prompt)
     session.commit()
     
@@ -316,8 +320,8 @@ async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_
                 "description": prompt.description or "",
                 "tags": ",".join(prompt.tags) if prompt.tags else ""
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("fts5_bulk_insert_failed", prompt_id=prompt.id, error=str(e))
     
     session.commit()
     

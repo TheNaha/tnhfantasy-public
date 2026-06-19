@@ -13,7 +13,8 @@
 import os
 import json
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Request, Depends
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -45,7 +46,7 @@ async def get_settings() -> Dict[str, Any]:
             "settings": app_config.get_config()
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.get("/schema")
@@ -136,19 +137,19 @@ async def get_settings_schema() -> Dict[str, Any]:
                 }
             }
         },
-        "sse": {
-            "description": "Server-Sent Events configuration",
+        "websocket": {
+            "description": "WebSocket configuration (realtime job updates via Socket.IO)",
             "fields": {
                 "poll_interval": {
                     "type": "number",
-                    "description": "Seconds between SSE updates",
+                    "description": "Seconds between mobile polling fallback updates",
                     "min": 0.1,
                     "max": 5,
                     "default": 0.5
                 },
-                "error_retry_delay": {
+                "reconnect_delay": {
                     "type": "integer",
-                    "description": "Seconds to wait after SSE error",
+                    "description": "Seconds to wait before reconnecting",
                     "min": 1,
                     "max": 30,
                     "default": 1
@@ -307,7 +308,7 @@ async def update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
         Updated configuration
         
     Raises:
-        HTTPException: If validation fails
+       : If validation fails
     """
     try:
         # Don't allow updating Modal settings
@@ -321,9 +322,9 @@ async def update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
             "settings": updated_config
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationError(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.post("/reset")
@@ -342,14 +343,14 @@ async def reset_settings() -> Dict[str, Any]:
             "settings": default_config
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 # ============================================================================
 # BRANDING CONFIGURATION
 # ============================================================================
 
-BRANDING_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "../../data/branding.json")
+BRANDING_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "branding.json")
 
 def get_branding_config() -> Dict[str, Any]:
     """Load branding configuration from JSON file."""

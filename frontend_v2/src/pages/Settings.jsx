@@ -1,15 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, RotateCcw, Save, Info, Server } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
-import { useEffect } from 'react';
 import { useBrandingStore } from '../store/brandingStore';
 
 
 export default function Settings() {
-    const _motion = motion;
     const settings = useSettings();
     const { updateSetting, resetCategory, resetSettings } = useUpdateSettings();
     const { confirm } = useConfirmation();
@@ -18,7 +16,7 @@ export default function Settings() {
 
     const handleUpdateSetting = (category, key, value) => {
         updateSetting(category, key, value);
-        toast.success('Setting updated!', { duration: 1500 });
+        toast.success('Setting updated!');
     };
 
     const handleResetCategory = (category) => {
@@ -162,7 +160,7 @@ function BrandingSettings() {
         try {
             await saveBranding(effectiveBranding);
             setLocalBranding(null);
-            toast.success('Branding updated! Refresh the page to see changes.', { duration: 3000 });
+            toast.success('Branding updated! Refresh the page to see changes.');
         } catch {
             toast.error('Failed to save branding settings');
         }
@@ -177,7 +175,7 @@ function BrandingSettings() {
         try {
             await saveBranding(defaultBranding);
             setLocalBranding(null);
-            toast.success('Branding reset to defaults. Refresh the page to see changes.', { duration: 3000 });
+            toast.success('Branding reset to defaults. Refresh the page to see changes.');
         } catch {
             toast.error('Failed to reset branding settings');
         }

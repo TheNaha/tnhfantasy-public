@@ -88,7 +88,7 @@ class ProviderDeployOrchestrator:
                 "provider-type": provider_type,
                 "deploy-attempt-id": attempt_id,
             },
-            network="comfy-network",
+            network="tnhcomfy",
         )
 
     async def run_step(self, container: Any, command: List[str], *, timeout_seconds: Optional[float] = None) -> Any:

@@ -4,7 +4,7 @@ from infrastructure.providers.modal_config import build_modal_env_vars
 def test_build_modal_env_vars_empty():
     """Test with empty credentials and config."""
     result = build_modal_env_vars({}, {})
-    assert result == {}
+    assert "MODAL_" not in str(result)
 
 def test_build_modal_env_vars_full_credentials():
     """Test with all credentials and config present."""
@@ -19,12 +19,11 @@ def test_build_modal_env_vars_full_credentials():
 
     result = build_modal_env_vars(credentials, config)
 
-    assert result == {
-        "MODAL_TOKEN_ID": "test_token_id",
-        "MODAL_TOKEN_SECRET": "test_token_secret",
-        "MODAL_USERNAME": "test_user",
-        "MODAL_APP_NAME": "test_app"
-    }
+    assert result["MODAL_TOKEN_ID"] == "test_token_id"
+    assert result["MODAL_TOKEN_SECRET"] == "test_token_secret"
+    assert result["MODAL_USERNAME"] == "test_user"
+    assert result["MODAL_APP_NAME"] == "test_app"
+    assert "BACKEND_URL" in result
 
 def test_build_modal_env_vars_partial_credentials():
     """Test with partial credentials."""
@@ -35,9 +34,8 @@ def test_build_modal_env_vars_partial_credentials():
 
     result = build_modal_env_vars(credentials, config)
 
-    assert result == {
-        "MODAL_TOKEN_ID": "test_token_id"
-    }
+    assert result["MODAL_TOKEN_ID"] == "test_token_id"
+    assert "MODAL_TOKEN_SECRET" not in result
 
 def test_build_modal_env_vars_memory_snapshot_true():
     """Test with enable_memory_snapshot set to True."""
@@ -48,9 +46,7 @@ def test_build_modal_env_vars_memory_snapshot_true():
 
     result = build_modal_env_vars(credentials, config)
 
-    assert result == {
-        "ENABLE_MEMORY_SNAPSHOT": "true"
-    }
+    assert result["ENABLE_MEMORY_SNAPSHOT"] == "true"
 
 def test_build_modal_env_vars_memory_snapshot_false():
     """Test with enable_memory_snapshot set to False."""
@@ -61,9 +57,7 @@ def test_build_modal_env_vars_memory_snapshot_false():
 
     result = build_modal_env_vars(credentials, config)
 
-    assert result == {
-        "ENABLE_MEMORY_SNAPSHOT": "false"
-    }
+    assert result["ENABLE_MEMORY_SNAPSHOT"] == "false"
 
 def test_build_modal_env_vars_ignores_unknown_keys():
     """Test that unknown keys in credentials and config are ignored."""
@@ -78,10 +72,10 @@ def test_build_modal_env_vars_ignores_unknown_keys():
 
     result = build_modal_env_vars(credentials, config)
 
-    assert result == {
-        "MODAL_TOKEN_ID": "test_token_id",
-        "MODAL_APP_NAME": "test_app"
-    }
+    assert result["MODAL_TOKEN_ID"] == "test_token_id"
+    assert result["MODAL_APP_NAME"] == "test_app"
+    assert "unknown_cred" not in result
+    assert "unknown_config" not in result
 
 def test_modal_provider_config_structure():
     """Test that MODAL_PROVIDER_CONFIG is structured correctly."""

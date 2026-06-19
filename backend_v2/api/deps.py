@@ -22,9 +22,6 @@ from infrastructure.database import (
     get_session_context as db_get_session_context,
     get_session_sync as db_get_session_sync,
 )
-from services.job_service import JobService
-from services.provider_service import ProviderService
-from services.external_model_service import ExternalModelService
 from core.events import event_bus, EventBus
 from infrastructure.logging import get_logger
 
@@ -53,24 +50,27 @@ def get_event_bus() -> EventBus:
     return event_bus
 
 
-def get_job_service(session: Session) -> JobService:
+def get_job_service(session: Session):
     """Get job service instance."""
+    from services.job_service import JobService
     return JobService(session)
 
 
-def get_provider_service(session: Session) -> ProviderService:
+def get_provider_service(session: Session):
     """Get provider service instance."""
+    from services.provider_service import ProviderService
     return ProviderService(session)
 
 
 def get_model_service_v2(session: Session):
     """Get model service V2 instance."""
-    from services.model_service_v2 import ModelServiceV2
+    from services.model_service import ModelServiceV2
     return ModelServiceV2(session)
 
 
-def get_external_model_service() -> ExternalModelService:
+def get_external_model_service():
     """Get external model service instance."""
+    from services.external_model_service import ExternalModelService
     return ExternalModelService()
 
 

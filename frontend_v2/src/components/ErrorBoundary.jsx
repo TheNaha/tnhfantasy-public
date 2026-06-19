@@ -25,9 +25,9 @@ class ErrorBoundary extends React.Component {
                         <p className="text-gray-400 mb-6">
                             The application encountered an unexpected error. Try refreshing the page.
                         </p>
-                        {this.state.error && (
+                        {this.state.error && import.meta.env.DEV && (
                             <details className="text-left text-sm bg-gray-800 p-4 rounded mb-4">
-                                <summary className="cursor-pointer font-semibold mb-2">Error Details</summary>
+                                <summary className="cursor-pointer font-semibold mb-2">Error Details (Dev Only)</summary>
                                 <pre className="text-red-400 whitespace-pre-wrap">
                                     {this.state.error.toString()}
                                 </pre>

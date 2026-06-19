@@ -170,9 +170,6 @@ def get_jobs_status() -> list:
 # COMMON SCHEDULED TASKS
 # ============================================================================
 
-async def _noop_task():
-    """Placeholder task for testing scheduler."""
-    pass
 
 
 def schedule_reconciliation(func: Callable, interval_seconds: int = 120):

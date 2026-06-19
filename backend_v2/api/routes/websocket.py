@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, Set, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.events import event_bus, Event, EventType
 from config import settings
@@ -113,7 +113,7 @@ async def connect(sid, environ):
     # Send welcome message with connection info
     await sio.emit('connected', {
         'sid': sid,
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'message': 'Connected to ComfyUI WebSocket'
     }, room=sid)
 
@@ -185,7 +185,7 @@ async def cancel_job(sid, data):
     from services.job_service import JobService
     from services.provider_service import ProviderService
     from core.entities import JobStatus
-    from api.deps import get_session_context
+    from api.deps import get_session_context, get_job_service, get_provider_service
     from infrastructure.http_client import get_http_client
     from api.provider_runtime import resolve_provider_runtime
     
@@ -194,16 +194,16 @@ async def cancel_job(sid, data):
         if job_queue.is_job_active(job_id):
             # Job is currently being processed - signal cancellation to worker
             async with get_session_context() as session:
-                job_service = JobService(session)
+                job_service = get_job_service(session)
                 job = await job_service.get_job(job_id)
                 
                 # Try to cancel on the provider worker
                 if job.provider_id:
-                    provider_service = ProviderService(session)
+                    provider_service = get_provider_service(session)
                     provider = await provider_service.get_provider(job.provider_id)
                     runtime = resolve_provider_runtime(provider)
 
-                    if runtime.mode == "container_http":
+                    if runtime.mode in ("container_http", "discovery"):
                         try:
                             http_client = get_http_client()
                             response = await http_client.post(
@@ -234,7 +234,7 @@ async def cancel_job(sid, data):
         else:
             # Job is pending in queue - can cancel immediately
             async with get_session_context() as session:
-                job_service = JobService(session)
+                job_service = get_job_service(session)
                 job = await job_service.get_job(job_id)
                 
                 if job.status.value == 'pending':
@@ -262,7 +262,7 @@ async def cancel_job(sid, data):
 @sio.event
 async def ping(sid, data):
     """Handle ping for connection keepalive."""
-    await sio.emit('pong', {'timestamp': datetime.utcnow().isoformat()}, room=sid)
+    await sio.emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()}, room=sid)
 
 
 # ============================================================================

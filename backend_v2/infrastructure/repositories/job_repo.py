@@ -1,9 +1,9 @@
 # Job Repository - Data access layer for jobs
-from sqlmodel import Session, select, col
+from sqlmodel import Session, select, col, delete
 from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import aliased
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.entities import Job, JobStatus
 from core.dtos import JobQueueItem
@@ -163,7 +163,7 @@ class JobRepository:
             if hasattr(job, key):
                 setattr(job, key, value)
         
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(timezone.utc)
         self.session.commit()
         self.session.refresh(job)
         return job
@@ -180,12 +180,10 @@ class JobRepository:
     
     def delete_all(self) -> int:
         """Delete all jobs. Returns count of deleted jobs."""
-        jobs = self.session.exec(select(Job)).all()
-        count = len(jobs)
-        for job in jobs:
-            self.session.delete(job)
+        count = self.session.scalar(select(func.count()).select_from(Job))
+        self.session.exec(delete(Job))
         self.session.commit()
-        return count
+        return count or 0
     
     def count_by_status(self) -> Dict[str, int]:
         """Get count of jobs by status using efficient GROUP BY query."""

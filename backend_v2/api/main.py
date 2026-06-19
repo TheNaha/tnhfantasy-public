@@ -39,7 +39,7 @@ from config import (
     get_job_retry_base_delay,
     get_job_retry_max_delay
 )
-from infrastructure.database import get_session
+from api.deps import get_session
 from services.job_queue import job_queue
 
 # Import routers

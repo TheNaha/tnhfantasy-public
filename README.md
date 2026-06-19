@@ -20,7 +20,7 @@ This project serves as a dynamic, containerized wrapper around ComfyUI that inte
 
 ## Quick Start
 1. Copy `.env.example` to `.env` and configure your API tokens (HF_TOKEN, CIVITAI_TOKEN).
-2. Start the project using Docker Compose:
+2. Start the project using Docker Compose. This single command brings up the frontend, backend, and the serverless provider workers:
    ```bash
    docker-compose up -d
    ```

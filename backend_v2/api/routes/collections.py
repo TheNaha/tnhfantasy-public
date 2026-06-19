@@ -13,15 +13,16 @@
 #   POST   /api/collections/{id}/images          – Add images to collection
 #   DELETE /api/collections/{id}/images          – Remove images from collection
 #   POST   /api/collections/import               – Bulk import (for localStorage migration)
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 from sqlalchemy import text, func
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from api.deps import get_session
 from core.entities import Collection, CollectionImage
+from core.exceptions import NotFoundError
 
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
@@ -72,6 +73,48 @@ async def list_collections(session: Session = Depends(get_session)):
     return {"collections": collections}
 
 
+@router.post("/import")
+async def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
+    """Bulk import collections (for migration from localStorage)."""
+    imported = []
+    
+    for col_data in data.collections:
+        # Create collection
+        collection = Collection(
+            name=col_data.get("name", "Untitled"),
+            color=col_data.get("color", "#3B82F6"),
+            description=col_data.get("description")
+        )
+        session.add(collection)
+        session.flush()  # Get the ID
+        
+        # Add images
+        images = col_data.get("images", [])
+        for filename in images:
+            img = CollectionImage(
+                collection_id=collection.id,
+                image_filename=filename
+            )
+            session.add(img)
+            
+        # Set thumbnail
+        if images:
+            collection.thumbnail = images[0]
+            
+        imported.append({
+            "id": collection.id,
+            "name": collection.name,
+            "image_count": len(images)
+        })
+        
+    session.commit()
+    return {
+        "success": True,
+        "imported": len(imported),
+        "collections": imported
+    }
+
+
 @router.get("/{collection_id}")
 async def get_collection(
     collection_id: int, 
@@ -81,7 +124,7 @@ async def get_collection(
     """Get a single collection with its images."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     result = {
         "id": collection.id,
@@ -129,13 +172,13 @@ async def update_collection(
     """Update a collection's name, color, or description."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(collection, key, value)
     
-    collection.updated_at = datetime.utcnow()
+    collection.updated_at = datetime.now(timezone.utc)
     session.add(collection)
     session.commit()
     session.refresh(collection)
@@ -148,7 +191,7 @@ async def delete_collection(collection_id: int, session: Session = Depends(get_s
     """Delete a collection (images are NOT deleted, only the association)."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     # Delete all image associations first
     session.execute(
@@ -172,7 +215,7 @@ async def add_images_to_collection(
     """Add images to a collection."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     added = []
     for filename in data.images:
@@ -195,7 +238,7 @@ async def add_images_to_collection(
     # Update collection thumbnail to newest image
     if added:
         collection.thumbnail = added[0]
-        collection.updated_at = datetime.utcnow()
+        collection.updated_at = datetime.now(timezone.utc)
         session.add(collection)
     
     session.commit()
@@ -212,7 +255,7 @@ async def remove_images_from_collection(
     """Remove images from a collection."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     removed = 0
     for filename in data.images:
@@ -233,54 +276,13 @@ async def remove_images_from_collection(
     ).first()
     
     collection.thumbnail = remaining.image_filename if remaining else None
-    collection.updated_at = datetime.utcnow()
+    collection.updated_at = datetime.now(timezone.utc)
     session.add(collection)
     session.commit()
     
     return {"success": True, "removed": removed}
 
 
-@router.post("/import")
-async def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
-    """Bulk import collections (for migration from localStorage)."""
-    imported = []
-    
-    for col_data in data.collections:
-        # Create collection
-        collection = Collection(
-            name=col_data.get("name", "Untitled"),
-            color=col_data.get("color", "#3B82F6"),
-            description=col_data.get("description")
-        )
-        session.add(collection)
-        session.flush()  # Get the ID
-        
-        # Add images
-        images = col_data.get("images", [])
-        for filename in images:
-            ci = CollectionImage(
-                collection_id=collection.id,
-                image_filename=filename
-            )
-            session.add(ci)
-        
-        # Set thumbnail
-        if images:
-            collection.thumbnail = images[0]
-        
-        imported.append({
-            "id": collection.id,
-            "name": collection.name,
-            "image_count": len(images)
-        })
-    
-    session.commit()
-    
-    return {
-        "success": True,
-        "imported": len(imported),
-        "collections": imported
-    }
 
 
 @router.get("/export")

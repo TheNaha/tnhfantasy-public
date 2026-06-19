@@ -45,25 +45,30 @@ def cached(cache_name: str = "stats", ttl: Optional[int] = None):
         async def get_statistics():
             ...
     """
-    cache_map = {
-        "stats": _stats_cache,
-        "model": _model_cache,
-        "search": _search_cache,
-        "lru": _lru_cache,
-    }
+    # Resolve the cache instance at decoration time
+    if ttl is not None:
+        # Create a custom TTLCache if ttl is specified
+        target_cache = TTLCache(maxsize=100, ttl=ttl)
+    else:
+        cache_map = {
+            "stats": _stats_cache,
+            "model": _model_cache,
+            "search": _search_cache,
+            "lru": _lru_cache,
+        }
+        target_cache = cache_map.get(cache_name, _stats_cache)
     
     def decorator(func: Callable):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             # Create cache key from function name and arguments
             key = _make_key(func.__name__, args, kwargs)
-            cache = cache_map.get(cache_name, _stats_cache)
             
             # Check cache
-            if key in cache:
+            if key in target_cache:
                 logger.debug("cache_hit", cache_name=cache_name, func=func.__name__)
                 metrics.track_cache_hit(cache_name)
-                return cache[key]
+                return target_cache[key]
             
             logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
             metrics.track_cache_miss(cache_name)
@@ -72,26 +77,25 @@ def cached(cache_name: str = "stats", ttl: Optional[int] = None):
             result = await func(*args, **kwargs)
             
             # Store in cache
-            cache[key] = result
-            metrics.set_cache_size(cache_name, len(cache))
+            target_cache[key] = result
+            metrics.set_cache_size(cache_name, len(target_cache))
             return result
         
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             key = _make_key(func.__name__, args, kwargs)
-            cache = cache_map.get(cache_name, _stats_cache)
             
-            if key in cache:
+            if key in target_cache:
                 logger.debug("cache_hit", cache_name=cache_name, func=func.__name__)
                 metrics.track_cache_hit(cache_name)
-                return cache[key]
+                return target_cache[key]
             
             logger.debug("cache_miss", cache_name=cache_name, func=func.__name__)
             metrics.track_cache_miss(cache_name)
             
             result = func(*args, **kwargs)
-            cache[key] = result
-            metrics.set_cache_size(cache_name, len(cache))
+            target_cache[key] = result
+            metrics.set_cache_size(cache_name, len(target_cache))
             return result
         
         # Return appropriate wrapper based on function type

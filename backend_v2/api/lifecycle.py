@@ -3,7 +3,6 @@ import asyncio
 from api.deps import get_session_sync
 from api.provider_runtime import monitor_provider_changes
 from api.startup_helpers import (
-    autostart_provider_containers,
     cleanup_provider_state_artifacts,
     configure_worker_pool,
     recover_pending_jobs,
@@ -129,13 +128,10 @@ async def startup_application(process_job, ws_manager):
     await recover_pending_jobs()
     await recover_post_processing_jobs()
 
-    logger.info("startup_init", phase="containers")
-    autostart_provider_containers()
-
     logger.info("startup_init", phase="scheduler")
     start_scheduler()
     schedule_vacuum(vacuum_database, interval_seconds=86400)
-    from api.routes.models_v2 import (
+    from services.model_preview_service import (
         PREVIEW_PREFETCH_INTERVAL_SECONDS,
         prefetch_stale_model_previews,
     )
@@ -165,7 +161,7 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     broadcast_task.cancel()
     try:
         await broadcast_task
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, TimeoutError):
         pass
 
     logger.info("shutdown", phase="provider_monitor")

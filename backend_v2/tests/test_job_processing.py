@@ -120,7 +120,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
-    stats = LoadBalancer(session, strategy="priority").get_stats()
+    stats = await LoadBalancer(session, strategy="priority").get_stats()
     provider_stats = {item["id"]: item for item in stats["provider_stats"]}
     assert provider_stats["provider-1"]["jobs_assigned"] == 0
     assert provider_stats["provider-1"]["failures"] == 1
@@ -155,7 +155,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
-    stats = LoadBalancer(session, strategy="priority").get_stats()
+    stats = await LoadBalancer(session, strategy="priority").get_stats()
     provider_stats = {item["id"]: item for item in stats["provider_stats"]}
     assert provider_stats["provider-1"]["jobs_assigned"] == 0
     assert provider_stats["provider-1"]["failures"] == 1
@@ -354,7 +354,7 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
     assert "provider-1" in updated_job.error
     assert "provider-2" in updated_job.error
 
-    stats = LoadBalancer(session, strategy="priority").get_stats()
+    stats = await LoadBalancer(session, strategy="priority").get_stats()
     provider_stats = {item["id"]: item for item in stats["provider_stats"]}
     assert provider_stats["provider-1"]["failures"] >= 1
     assert provider_stats["provider-2"]["failures"] >= 1

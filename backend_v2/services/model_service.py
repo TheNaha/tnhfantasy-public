@@ -13,6 +13,9 @@
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
+from sqlalchemy import text, distinct
+from api.provider_runtime import resolve_provider_runtime
+
 from sqlmodel import Session
 
 from core.entities_v2 import (
@@ -24,6 +27,23 @@ from core.exceptions import NotFoundError
 from infrastructure.http_client import get_http_client
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.logging import model_logger
+
+_DIRECTORY_TO_MODEL_TYPE = {
+    "checkpoints": "Checkpoint",
+    "loras": "LORA",
+    "vae": "VAE",
+    "controlnet": "Controlnet",
+    "unet": "Checkpoint",
+    "clip": "CLIP",
+    "upscale_models": "Upscaler",
+    "embeddings": "TextualInversion",
+    "hypernetworks": "Hypernetwork",
+    "aesthetics": "Other",
+    "poses": "Poses",
+    "wildcards": "Wildcards",
+    "ultralytics/bbox": "Other",
+    "motion_modules": "MotionModule",
+}
 
 logger = model_logger()
 
@@ -102,14 +122,14 @@ class ModelServiceV2:
         return self.repo.model_to_dict(model)
     
     async def list_models(self, include_versions: bool = False) -> List[Dict[str, Any]]:
-        """List all models."""
+        """List all models (bulk-loaded, no N+1)."""
         models = self.repo.get_all_models()
-        return [self.repo.model_to_dict(m, include_versions=include_versions) for m in models]
+        return self.repo.models_to_dict(models, include_versions=include_versions)
     
     async def list_models_by_directory(self, directory: str) -> List[Dict[str, Any]]:
-        """List models in a specific directory."""
+        """List models in a specific directory (bulk-loaded, no N+1)."""
         models = self.repo.get_models_by_directory(directory)
-        return [self.repo.model_to_dict(m, include_versions=True) for m in models]
+        return self.repo.models_to_dict(models, include_versions=True)
     
     async def get_models_grouped(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get all models grouped by directory."""
@@ -421,6 +441,109 @@ class ModelServiceV2:
         await self.trigger_download_to_providers(model.id, provider_ids=provider_ids)
         return self.repo.model_to_dict(model)
     
+    async def register_discovered_files(
+        self,
+        provider_id: str,
+        files: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        imported = 0
+        skipped = 0
+        errors = 0
+        results = []
+
+        for file_info in files:
+            storage_path = file_info.get("path", "")
+            size_bytes = file_info.get("size_bytes")
+
+            if not storage_path:
+                errors += 1
+                results.append({"path": "", "file_id": None, "status": "error", "reason": "empty path"})
+                continue
+
+            parts = storage_path.replace("models/", "", 1).split("/")
+            if len(parts) < 2:
+                errors += 1
+                results.append({"path": storage_path, "file_id": None, "status": "error", "reason": "invalid path format"})
+                continue
+
+            directory = parts[0]
+            filename = "/".join(parts[1:])
+
+            try:
+                existing_file = self.repo.get_file_by_storage_path(directory, filename)
+                if existing_file:
+                    self.repo.update_provider_status(
+                        file_id=existing_file.id,
+                        provider_name=provider_id,
+                        status="ready",
+                        storage_path=storage_path,
+                        size_bytes=size_bytes,
+                    )
+                    skipped += 1
+                    results.append({"path": storage_path, "file_id": existing_file.id, "status": "skipped"})
+                else:
+                    name = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    resolved_type = _DIRECTORY_TO_MODEL_TYPE.get(directory, "Other")
+
+                    model = ModelV2(
+                        name=name,
+                        type=resolved_type,
+                        directory=directory,
+                        description=f"Auto-discovered from {provider_id} storage",
+                        source="custom",
+                        nsfw=False,
+                        nsfw_level=1,
+                    )
+                    self.session.add(model)
+                    self.session.flush()
+
+                    version = ModelVersion(
+                        model_id=model.id,
+                        name="v1.0",
+                        base_model="Custom",
+                        base_model_type="Standard",
+                        description=f"Auto-discovered from {provider_id} storage",
+                        is_enabled=True,
+                        is_default=True,
+                    )
+                    self.session.add(version)
+                    self.session.flush()
+
+                    file = ModelFile(
+                        version_id=version.id,
+                        original_filename=filename,
+                        storage_filename=filename,
+                        size_kb=(size_bytes or 0) / 1024.0,
+                        format=filename.split(".")[-1] if "." in filename else "Unknown",
+                        is_primary=True,
+                        file_type="Model",
+                    )
+                    self.session.add(file)
+                    self.session.flush()
+
+                    self.repo.update_provider_status(
+                        file_id=file.id,
+                        provider_name=provider_id,
+                        status="ready",
+                        storage_path=storage_path,
+                        size_bytes=size_bytes,
+                    )
+
+                    imported += 1
+                    results.append({"path": storage_path, "file_id": file.id, "status": "imported"})
+            except Exception as exc:
+                errors += 1
+                results.append({"path": storage_path, "file_id": None, "status": "error", "reason": str(exc)})
+
+        self.session.commit()
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+            "total": len(files),
+            "files": results,
+        }
+
     async def trigger_delete_from_providers(self, model_id: int) -> Dict[str, Any]:
         """
         Trigger immediate deletion of model files from all providers.
@@ -491,7 +614,7 @@ class ModelServiceV2:
     async def get_versions(self, model_id: int) -> List[Dict[str, Any]]:
         """Get all versions for a model."""
         versions = self.repo.get_versions_for_model(model_id)
-        return [self.repo.version_to_dict(v) for v in versions]
+        return [self.repo._version_to_dict(v) for v in versions]
     
     async def set_default_version(self, model_id: int, version_id: int) -> bool:
         """Set a version as the default for generation."""
@@ -501,7 +624,7 @@ class ModelServiceV2:
         """Toggle whether a version is enabled."""
         version = self.repo.toggle_version_enabled(version_id)
         if version:
-            return self.repo.version_to_dict(version)
+            return self.repo._version_to_dict(version)
         return None
     
     async def get_version_for_generation(
@@ -598,9 +721,9 @@ class ModelServiceV2:
     # =========================================================================
     
     async def search_by_tag(self, tag: str) -> List[Dict[str, Any]]:
-        """Search models by tag."""
+        """Search models by tag (bulk-loaded, no N+1)."""
         models = self.repo.search_by_tag(tag)
-        return [self.repo.model_to_dict(m, include_versions=False) for m in models]
+        return self.repo.models_to_dict(models, include_versions=False)
     
     async def search_models(
         self, 
@@ -637,4 +760,4 @@ class ModelServiceV2:
                     filtered.append(model)
             models = filtered
         
-        return [self.repo.model_to_dict(m, include_versions=False) for m in models]
+        return self.repo.models_to_dict(models, include_versions=False)

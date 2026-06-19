@@ -1,6 +1,6 @@
 # Job Service - Business logic for job management
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Session
 
@@ -52,8 +52,8 @@ class JobService:
             raise NotFoundError("Job", job_id)
         try:
             self.session.refresh(job)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
         return job
     
     async def list_jobs(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
@@ -96,16 +96,18 @@ class JobService:
             Updated job
         """
         # Track timing based on status changes
-        status = updates.get("status")
-        if status == JobStatus.RUNNING:
-            updates["started_at"] = datetime.utcnow()
-        elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-            updates["completed_at"] = datetime.utcnow()
-        
-        job = self.repo.update(job_id, **updates)
+        job = self.repo.get(job_id)
         if not job:
             logger.warning("job_update_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
+            
+        status = updates.get("status")
+        if status == JobStatus.RUNNING and not job.started_at:
+            updates["started_at"] = datetime.now(timezone.utc)
+        elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            updates["completed_at"] = datetime.now(timezone.utc)
+        
+        job = self.repo.update(job_id, **updates)
         
         if status:
             logger.info("job_status_changed", job_id=job_id, status=status.value if hasattr(status, 'value') else status)

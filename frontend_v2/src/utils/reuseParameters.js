@@ -662,11 +662,6 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
         updates.adetailerPrompt = adetailerPrompt;
     }
 
-    const adetailerNegative = firstDefined(metadata, ['adetailerNegative', 'adetailer_negative']);
-    if (typeof adetailerNegative === 'string') {
-        updates.adetailerNegative = adetailerNegative;
-    }
-
     const adetailerSteps = toFiniteNumber(firstDefined(metadata, ['adetailerSteps', 'adetailer_steps']));
     if (adetailerSteps !== null) {
         updates.adetailerSteps = Math.floor(adetailerSteps);

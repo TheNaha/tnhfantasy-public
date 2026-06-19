@@ -10,9 +10,15 @@
 from .entities import (
     Job, JobStatus,
     Provider,
-    Model, ModelStatus,
     Download,
-    LoadBalancingConfig
+    LoadBalancingConfig, LoadBalancerState,
+    Prompt,
+    Collection, CollectionImage,
+)
+from .entities_v2 import (
+    ModelV2, ModelVersion, ModelFile, ModelImage,
+    ModelTag, ProviderVersionStatus,
+    ModelType, ProviderFileStatus,
 )
 from .events import (
     Event, EventType, EventBus,
@@ -29,14 +35,23 @@ from .exceptions import (
     DownloadError,
     ConfigurationError
 )
+from .dtos import JobQueueItem
+from .workflow_parser import extract_models_from_workflow, get_all_required_files, get_required_storage_paths
 
 __all__ = [
-    # Entities
+    # V1 Entities
     "Job", "JobStatus",
     "Provider",
-    "Model", "ModelStatus",
     "Download",
-    "LoadBalancingConfig",
+    "LoadBalancingConfig", "LoadBalancerState",
+    "Prompt",
+    "Collection", "CollectionImage",
+    # V2 Entities
+    "ModelV2", "ModelVersion", "ModelFile", "ModelImage",
+    "ModelTag", "ProviderVersionStatus",
+    "ModelType", "ProviderFileStatus",
+    # DTOs
+    "JobQueueItem",
     # Events
     "Event", "EventType", "EventBus",
     "event_bus",
@@ -50,4 +65,6 @@ __all__ = [
     "JobError",
     "DownloadError",
     "ConfigurationError",
+    # Workflow Parser
+    "extract_models_from_workflow", "get_all_required_files", "get_required_storage_paths",
 ]

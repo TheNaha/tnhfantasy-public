@@ -2,68 +2,104 @@ services:
   backend_v2:
     build: ./backend_v2
     container_name: tnhcomfy-backend
-#    ports:
-#      - "8002:8002"
+    user: "1000:1000"
     volumes:
-      # Input/Output directories - create these in project root
-      - ./input:/app/input
-      - ./output:/app/output
-      - ./backend_v2:/app
-      - ./provider_containers:/app/provider_containers
-      # Docker socket mount:
-      # - Windows: Use //var/run/docker.sock:/var/run/docker.sock
-      # - Linux with Docker: /var/run/docker.sock:/var/run/docker.sock
-      # - Linux with Podman: /var/run/docker.sock:/run/podman/podman.sock
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
     env_file:
-      - .env # Create .env file with HF_TOKEN, CIVITAI_TOKEN
+      - .env
     environment:
-      - OUTPUT_DIR=/app/output
-      - INPUT_DIR=/app/input
-      - COMFY_UVICORN_RELOAD=1
-    privileged: true
-    security_opt:
-      - label=disable
+      - OUTPUT_DIR=/data/output
+      - INPUT_DIR=/data/input
+      - COMFY_DATABASE_URL=sqlite:////data/db/comfy.db
+      - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
+      - COMFY_UVICORN_RELOAD=0
     networks:
-      - comfy-network
+      - tnhcomfy
       - metrics
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   frontend_v2:
-    build: ./frontend_v2
+    build:
+      context: ./frontend_v2
+      target: prod
     container_name: tnhcomfy-frontend
-#    ports:
-#      - "5174:5174"
-    volumes:
-      - ./frontend_v2:/app:z
-      - frontend_v2_node_modules:/app/node_modules
-    environment:
-      - VITE_API_URL=http://localhost:8002 # For browser-side SSE
-      - VITE_PROXY_TARGET=http://tnhcomfy-backend:8002 # For Vite server-side proxy
-      - CHOKIDAR_USEPOLLING=true # Enable file watching in container
     depends_on:
-      - backend_v2
+      backend_v2:
+        condition: service_healthy
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
       - traefik.http.routers.tnhcomfy.rule=Host(`comfy.lan.thenaha.my.id`)
-      - traefik.http.services.tnhcomfy.loadbalancer.server.port=5174
+      - traefik.http.services.tnhcomfy.loadbalancer.server.port=80
       - homepage.group=Projects
       - homepage.name=ComfyUI
       - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
       - homepage.href=http://comfy.lan.thenaha.my.id/
       - homepage.description=Image generation service
     networks:
-      - comfy-network
+      - tnhcomfy
       - proxy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-volumes:
-  frontend_v2_node_modules:
+  # Provider containers - managed by compose (backend autostart is disabled).
+  # To add a provider: copy this block, set a unique PROVIDER_ID and container_name.
+  # container_name MUST be "comfy-provider-{PROVIDER_ID}" so the backend can detect it.
+  provider-modal:
+    build:
+      context: ./provider_containers
+      dockerfile: modal_worker/Dockerfile
+    container_name: comfy-provider-modal-zetsuke
+    depends_on:
+      frontend_v2:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - PROVIDER_ID=modal-zetsuke
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+    # Mount /data so provider workers can access models, input, output
+    volumes:
+      - ./data:/data
+    networks:
+      - tnhcomfy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # provider-beam:
+  #   build:
+  #     context: ./provider_containers
+  #     dockerfile: beam_worker/Dockerfile
+  #   container_name: comfy-provider-beam-primary
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - PROVIDER_ID=beam-primary
+  #     - PORT=8000
+  #     - BACKEND_URL=http://backend_v2:8002
+  #   networks:
+  #     - tnhcomfy
 
 networks:
-  comfy-network:
-    name: comfy-network # Explicit name prevents docker-compose project prefix
+  tnhcomfy:
+    name: tnhcomfy
     driver: bridge
   metrics:
     external: true

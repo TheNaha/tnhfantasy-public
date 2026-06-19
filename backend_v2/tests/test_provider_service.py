@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from services.provider_service import ProviderService
+from services.provider_utils import utcnow_iso
 from services.load_balancer import LoadBalancer
 from core.exceptions import NotFoundError, ProviderError
 from core.entities import LoadBalancerState
@@ -233,18 +234,18 @@ class TestProviderServiceDelete:
         assert len(providers) == 0
 
     async def test_delete_provider_cleans_load_balancer_runtime_state(self, service, session, sample_provider_data):
-        runtime_state = LoadBalancer.default_runtime_state()
+        from services.load_balancer import get_global_runtime_state
 
-        with runtime_state.lock:
-            runtime_state.provider_failures["test-provider"] = 4
-            runtime_state.provider_job_counts["test-provider"] = 2
+        runtime_state = get_global_runtime_state()
+
+        runtime_state.provider_failures["test-provider"] = 4
+        runtime_state.provider_job_counts["test-provider"] = 2
 
         await service.create_provider(sample_provider_data)
         await service.delete_provider("test-provider")
 
-        with runtime_state.lock:
-            assert "test-provider" not in runtime_state.provider_failures
-            assert "test-provider" not in runtime_state.provider_job_counts
+        assert "test-provider" not in runtime_state.provider_failures
+        assert "test-provider" not in runtime_state.provider_job_counts
 
         state_row = session.get(LoadBalancerState, 1)
         assert state_row is not None
@@ -493,7 +494,7 @@ class TestProviderServiceDeploy:
         container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
         container_manager = _DummyContainerManager("test-provider", container)
 
-        with patch("services.provider_service.is_in_flight", return_value=True):
+        with patch("services.provider_deploy_service.is_in_flight", return_value=True):
             result = await service.deploy_provider_app("test-provider", container_manager)
 
         assert result["status"] == "already_running"
@@ -504,16 +505,16 @@ class TestProviderServiceDeploy:
         await service.create_provider(stuck_provider_data)
         provider = await service.get_provider("stuck-provider")
 
-        stuck_state = service._build_deploy_state(
+        stuck_state = service.deploy_service._build_deploy_state(
             provider_id=provider.id,
             provider_type=provider.type,
             status="deploying",
             attempt_id="179eec65-3a78-4f7f-8c96-4a12572efa5e",
-            started_at=service._utcnow_iso(),
+            started_at=utcnow_iso(),
             message="Deployment started",
             steps=[],
         )
-        service._persist_deploy_state(provider, stuck_state)
+        service.deploy_service._persist_deploy_state(provider, stuck_state)
 
         deploy_container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
         missing_attempt_client = _DummyContainersClient(
@@ -540,16 +541,16 @@ class TestProviderServiceDeploy:
         await service.create_provider(stuck_provider_data)
         provider = await service.get_provider("stuck-provider-state")
 
-        stuck_state = service._build_deploy_state(
+        stuck_state = service.deploy_service._build_deploy_state(
             provider_id=provider.id,
             provider_type=provider.type,
             status="deploying",
             attempt_id="179eec65-3a78-4f7f-8c96-4a12572efa5e",
-            started_at=service._utcnow_iso(),
+            started_at=utcnow_iso(),
             message="Deployment started",
             steps=[],
         )
-        service._persist_deploy_state(provider, stuck_state)
+        service.deploy_service._persist_deploy_state(provider, stuck_state)
 
         missing_attempt_client = _DummyContainersClient(
             None,

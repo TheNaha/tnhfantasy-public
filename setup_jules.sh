@@ -19,6 +19,17 @@ fi
 # Activate the virtual environment
 source venv/bin/activate
 
+# Load environment variables from root .env if it exists
+if [ -f "../.env" ]; then
+    echo "Loading environment variables from root .env..."
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^#.*$ ]] && continue
+        [[ -z "$line" ]] && continue
+        export "$line"
+    done < ../.env
+fi
+
 # Install the necessary pip requirements
 pip install -r requirements.txt
 

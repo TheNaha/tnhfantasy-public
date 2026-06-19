@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from core.exceptions import JobError, MissingModelsError
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_queue import job_queue
@@ -73,16 +74,11 @@ class JobSubmissionService:
 
         if required_models and not availability.valid:
             logger.warning("job_creation_missing_models", global_missing=availability.global_missing)
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "missing_models",
-                    "message": "No provider has all required models installed",
-                    "required_models": required_models,
-                    "global_missing": availability.global_missing,
-                    "missing_by_provider": availability.missing_models,
-                    "can_trigger_download": availability.can_trigger_download,
-                },
+            raise MissingModelsError(
+                required_models=required_models,
+                global_missing=availability.global_missing,
+                missing_by_provider=availability.missing_models,
+                can_trigger_download=availability.can_trigger_download,
             )
 
         job = await self.job_service.create_job(workflow, metadata)
@@ -98,13 +94,7 @@ class JobSubmissionService:
             except Exception as cleanup_exc:
                 logger.error("job_enqueue_cleanup_failed", job_id=job.id, error=str(cleanup_exc))
 
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": "queue_unavailable",
-                    "message": "Failed to enqueue job. Please retry.",
-                },
-            ) from exc
+            raise JobError(job_id=job.id, message="Failed to enqueue job. Please retry.") from exc
 
         logger.info("job_enqueued", job_id=job.id)
         return job

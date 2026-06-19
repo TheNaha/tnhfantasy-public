@@ -90,13 +90,29 @@ class ExternalModelService:
         model_id = match.group(1)
 
         try:
+            return await self.get_civitai_model(int(model_id))
+        except ExternalModelServiceError:
+            raise
+        except Exception as exc:
+            raise ExternalModelServiceError(
+                status_code=500,
+                detail=f"Failed to fetch from CivitAI: {str(exc)}",
+            ) from exc
+
+    async def get_civitai_model(self, model_id: int) -> Dict[str, Any]:
+        try:
             response = await get_http_client().get(
                 f"https://civitai.com/api/v1/models/{model_id}",
                 timeout=15,
             )
             response.raise_for_status()
             return response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.HTTPStatusError as exc:
+            raise ExternalModelServiceError(
+                status_code=exc.response.status_code,
+                detail=f"Failed to fetch from CivitAI: {str(exc)}",
+            ) from exc
+        except Exception as exc:
             raise ExternalModelServiceError(
                 status_code=500,
                 detail=f"Failed to fetch from CivitAI: {str(exc)}",

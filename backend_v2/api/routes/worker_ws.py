@@ -13,17 +13,17 @@ Protocol:
 """
 
 import asyncio
-import logging
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from api.deps import get_session_context
+from api.deps import get_session_context, get_job_service, get_provider_service
 from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
 from core.exceptions import NotFoundError
 from api.provider_client import ProviderCallError
 from core.entities import JobStatus
+from infrastructure.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("worker_ws")
 
 router = APIRouter(tags=["worker-ws"])
 
@@ -37,8 +37,8 @@ class ConnectedWorker:
     def __init__(self, ws: WebSocket, provider_id: str):
         self.ws = ws
         self.provider_id = provider_id
-        self.connected_at = datetime.utcnow()
-        self.last_heartbeat = datetime.utcnow()
+        self.connected_at = datetime.now(timezone.utc)
+        self.last_heartbeat = datetime.now(timezone.utc)
         self.current_job: Optional[str] = None
         self.jobs_completed: int = 0
     
@@ -74,12 +74,12 @@ def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
         connected_workers.pop(provider_id, None)
         return None
 
-    heartbeat_age = (datetime.utcnow() - worker.last_heartbeat).total_seconds()
+    heartbeat_age = (datetime.now(timezone.utc) - worker.last_heartbeat).total_seconds()
     if heartbeat_age > WORKER_HEARTBEAT_TIMEOUT_SECONDS:
         logger.warning(
-            "[Worker WS] Worker heartbeat stale: %s age=%.1fs",
-            provider_id,
-            heartbeat_age,
+            "worker_heartbeat_stale",
+            provider_id=provider_id,
+            age_seconds=round(heartbeat_age, 1),
         )
         connected_workers.pop(provider_id, None)
         return None
@@ -100,24 +100,6 @@ def get_connected_workers() -> Dict[str, dict]:
 def is_worker_connected(provider_id: str) -> bool:
     """Check if a worker is connected for this provider."""
     return _get_live_worker(provider_id) is not None
-
-
-async def push_job_to_worker(provider_id: str, job_data: dict) -> bool:
-    """Push a job to a connected worker. Returns True if successful."""
-    worker = _get_live_worker(provider_id)
-    if not worker:
-        return False
-    
-    try:
-        await worker.ws.send_json({
-            "type": "job",
-            "data": job_data
-        })
-        worker.current_job = job_data.get("id")
-        return True
-    except Exception as e:
-        logger.error(f"[Worker WS] Failed to push job to {provider_id}: {e}")
-        return False
 
 
 async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
@@ -172,7 +154,7 @@ async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
         })
         return True
     except Exception as exc:
-        logger.warning(f"[Worker WS] Failed to send cancellation for {job_id} to {provider_id}: {exc}")
+        logger.warning("cancel_send_failed", job_id=job_id, provider_id=provider_id, error=str(exc))
         return False
 
 
@@ -198,7 +180,7 @@ async def worker_websocket(
     # Authenticate
     try:
         async with get_session_context() as session:
-            provider_service = ProviderService(session)
+            provider_service = get_provider_service(session)
             provider = await provider_service.get_provider(provider_id)
             
             # Verify token matches provider's configured token
@@ -217,7 +199,7 @@ async def worker_websocket(
     worker = ConnectedWorker(websocket, provider_id)
     connected_workers[provider_id] = worker
     
-    logger.info(f"[Worker WS] Worker connected: {provider_id}")
+    logger.info("worker_connected", provider_id=provider_id)
     
     # Send welcome message
     await websocket.send_json({
@@ -226,6 +208,21 @@ async def worker_websocket(
         "message": "Connected to ComfyUI backend"
     })
     
+    # Push pending downloads immediately on connect
+    try:
+        async with get_session_context() as session:
+            from api.deps import get_model_service_v2
+            service = get_model_service_v2(session)
+            pending = service.get_pending_downloads(provider_id)
+            if pending:
+                await websocket.send_json({
+                    "type": "pending_models",
+                    "models": pending
+                })
+                logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
+    except Exception as exc:
+        logger.warning("pending_models_push_failed", provider_id=provider_id, error=str(exc))
+    
     try:
         # Main message loop
         while True:
@@ -233,13 +230,13 @@ async def worker_websocket(
             msg_type = data.get("type")
             
             if msg_type == "heartbeat":
-                worker.last_heartbeat = datetime.utcnow()
+                worker.last_heartbeat = datetime.now(timezone.utc)
                 await websocket.send_json({"type": "heartbeat_ack"})
             
             elif msg_type == "job_started":
                 job_id = data.get("job_id")
                 worker.current_job = job_id
-                logger.info(f"[Worker WS] Job started: {job_id}")
+                logger.info("job_started", job_id=job_id)
             
             elif msg_type == "job_progress":
                 payload = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
@@ -265,7 +262,7 @@ async def worker_websocket(
                         async with get_session_context() as session:
                             from services.job_service import JobService
 
-                            job_service = JobService(session)
+                            job_service = get_job_service(session)
                             await job_service.update_job(job_id, **updates)
             
             elif msg_type == "job_completed":
@@ -278,7 +275,7 @@ async def worker_websocket(
                         from services.job_service import JobService
                         from core.entities import JobStatus
 
-                        job_service = JobService(session)
+                        job_service = get_job_service(session)
                         await job_service.update_job(
                             job_id,
                             status=JobStatus.FAILED,
@@ -286,60 +283,62 @@ async def worker_websocket(
                         )
 
                     worker.current_job = None
-                    logger.error(f"[Worker WS] Invalid completed payload for {job_id}: {exc}")
+                    logger.error("invalid_completed_payload", job_id=job_id, error=str(exc))
                     continue
                 
-                async with get_session_context() as session:
-                    from services.job_service import JobService
-                    job_service = JobService(session)
-                    await finalize_persisted_job_outputs(
-                        job_service=job_service,
-                        job_id=job_id,
-                        outputs=outputs,
-                        provider_id=provider_id,
-                    )
-                
-                future = pending_job_futures.pop(job_id, None)
-                if future and not future.done():
-                    future.set_result({
-                        "__handled_by_external_worker": True,
-                        "outputs": outputs,
-                    })
-                worker.current_job = None
-                worker.jobs_completed += 1
-                logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
+                try:
+                    async with get_session_context() as session:
+                        from services.job_service import JobService
+                        job_service = get_job_service(session)
+                        await finalize_persisted_job_outputs(
+                            job_service=job_service,
+                            job_id=job_id,
+                            outputs=outputs,
+                            provider_id=provider_id,
+                        )
+                finally:
+                    future = pending_job_futures.pop(job_id, None)
+                    if future and not future.done():
+                        future.set_result({
+                            "__handled_by_external_worker": True,
+                            "outputs": outputs,
+                        })
+                    worker.current_job = None
+                    worker.jobs_completed += 1
+                    logger.info("job_post_processing", job_id=job_id)
 
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
                 error = data.get("error", "Unknown error")
                 
-                async with get_session_context() as session:
-                    from services.job_service import JobService
-                    from core.entities import JobStatus
-                    job_service = JobService(session)
-                    await job_service.update_job(
-                        job_id,
-                        status=JobStatus.FAILED,
-                        error=error
-                    )
-                
-                future = pending_job_futures.pop(job_id, None)
-                if future and not future.done():
-                    future.set_exception(
-                        ProviderCallError(
-                            error,
-                            provider_id=provider_id,
-                            is_retryable=False,
+                try:
+                    async with get_session_context() as session:
+                        from services.job_service import JobService
+                        from core.entities import JobStatus
+                        job_service = get_job_service(session)
+                        await job_service.update_job(
+                            job_id,
+                            status=JobStatus.FAILED,
+                            error=error
                         )
-                    )
-                worker.current_job = None
-                logger.error(f"[Worker WS] Job failed: {job_id} - {error}")
+                finally:
+                    future = pending_job_futures.pop(job_id, None)
+                    if future and not future.done():
+                        future.set_exception(
+                            ProviderCallError(
+                                error,
+                                provider_id=provider_id,
+                                is_retryable=False,
+                            )
+                        )
+                    worker.current_job = None
+                    logger.error("job_failed", job_id=job_id, error=error)
             
             elif msg_type == "get_pending_models":
                 # Return models that need to be synced
                 async with get_session_context() as session:
-                    from services.model_service_v2 import ModelServiceV2
-                    service = ModelServiceV2(session)
+                    from api.deps import get_model_service_v2
+                    service = get_model_service_v2(session)
                     pending = service.get_pending_downloads(provider_id)
                     await websocket.send_json({
                         "type": "pending_models",
@@ -347,9 +346,9 @@ async def worker_websocket(
                     })
     
     except WebSocketDisconnect:
-        logger.info(f"[Worker WS] Worker disconnected: {provider_id}")
+        logger.info("worker_disconnected", provider_id=provider_id)
     except Exception as e:
-        logger.error(f"[Worker WS] Error for {provider_id}: {e}")
+        logger.error("worker_error", provider_id=provider_id, error=str(e))
     finally:
         # Cleanup
         if worker.current_job:

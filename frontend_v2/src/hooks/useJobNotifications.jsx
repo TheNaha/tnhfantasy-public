@@ -25,16 +25,16 @@ export function useJobNotifications() {
                         </span>
                     </div>,
                     {
-                        duration: 4000,
+
                         icon: '✨',
                     }
                 );
             }
             
             // Detect queue empty (all active jobs done)
-            if (prevState.activeJobs.length > 0 && state.activeJobs.length === 0) {
+            if (prevState.jobs.length > 0 && state.jobs.length === 0) {
                 toast.success('All jobs completed! Queue is empty.', {
-                    duration: 3000,
+
                     icon: '🎉',
                 });
             }
@@ -51,7 +51,7 @@ export function useJobNotifications() {
                         </span>
                     </div>,
                     {
-                        duration: 5000,
+
                     }
                 );
             }
@@ -59,7 +59,7 @@ export function useJobNotifications() {
             if (state.lastCancelledJob !== prevState.lastCancelledJob && state.lastCancelledJob) {
                 toast('Job cancelled', {
                     icon: '🛑',
-                    duration: 3000,
+
                 });
             }
         });

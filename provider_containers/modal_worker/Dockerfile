@@ -21,6 +21,9 @@ COPY provider_core/ /app/provider_core/
 # Copy worker script
 COPY modal_worker/worker.py .
 
+# Copy client script
+COPY modal_worker/client.py .
+
 # Copy modal_app.py for deployment
 COPY modal_worker/modal_app.py .
 

@@ -60,8 +60,6 @@ class ErrorResponse(BaseModel):
     message: str
     retryable: bool = False
     code: Optional[int] = None
-    error: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
 
 
 class StatusResponse(BaseModel):
@@ -78,15 +76,12 @@ def build_error_response(
     *,
     retryable: bool = False,
     code: Optional[int] = None,
-    details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build a normalized error payload while preserving the legacy error field."""
+    """Build a normalized error payload."""
     return ErrorResponse(
         message=message,
         retryable=retryable,
         code=code,
-        error=message,
-        details=details,
     ).model_dump(exclude_none=True)
 
 

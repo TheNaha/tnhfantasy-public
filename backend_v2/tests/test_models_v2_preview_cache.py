@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 import httpx
 
-from api.routes import models_v2
+from api.routes import models as models_router
+from api.routes import models
 from infrastructure.request_dedup import clear_dedup_cache
 
 
@@ -33,7 +34,7 @@ class _DummyAsyncClient:
 
 @pytest.mark.asyncio
 async def test_fetch_civitai_preview_caches_by_version_and_image_index(monkeypatch, tmp_path):
-    monkeypatch.setattr(models_v2, "PREVIEW_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(models_router, "PREVIEW_CACHE_DIR", str(tmp_path))
 
     calls = []
 
@@ -62,9 +63,9 @@ async def test_fetch_civitai_preview_caches_by_version_and_image_index(monkeypat
 
         raise AssertionError(f"Unexpected URL requested: {url}")
 
-    monkeypatch.setattr(models_v2, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
 
-    image_data, content_type, cache_hit = await models_v2.fetch_civitai_preview(100, version_id=222, image_index=2)
+    image_data, content_type, cache_hit = await models_router.fetch_civitai_preview(100, version_id=222, image_index=2)
 
     assert image_data == b"third-image"
     assert content_type == "image/webp"
@@ -75,7 +76,7 @@ async def test_fetch_civitai_preview_caches_by_version_and_image_index(monkeypat
     ]
 
     # Cached fetch should not hit network again.
-    cached_data, cached_content_type, cached_hit = await models_v2.fetch_civitai_preview(100, version_id=222, image_index=2)
+    cached_data, cached_content_type, cached_hit = await models_router.fetch_civitai_preview(100, version_id=222, image_index=2)
     assert cached_data == b"third-image"
     assert cached_content_type == "image/webp"
     assert cached_hit is True
@@ -87,7 +88,7 @@ async def test_fetch_civitai_preview_caches_by_version_and_image_index(monkeypat
 
 @pytest.mark.asyncio
 async def test_fetch_civitai_preview_falls_back_to_first_version_and_clamps_image_index(monkeypatch, tmp_path):
-    monkeypatch.setattr(models_v2, "PREVIEW_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(models_router, "PREVIEW_CACHE_DIR", str(tmp_path))
 
     calls = []
 
@@ -114,11 +115,11 @@ async def test_fetch_civitai_preview_falls_back_to_first_version_and_clamps_imag
 
         raise AssertionError(f"Unexpected URL requested: {url}")
 
-    monkeypatch.setattr(models_v2, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
 
     # version_id is unknown, so route should fallback to first available version.
     # image_index is out of range, so it should clamp to the last available image.
-    image_data, content_type, cache_hit = await models_v2.fetch_civitai_preview(77, version_id=999, image_index=9)
+    image_data, content_type, cache_hit = await models_router.fetch_civitai_preview(77, version_id=999, image_index=9)
 
     assert image_data == b"second-image"
     assert content_type == "image/jpeg"
@@ -140,11 +141,11 @@ async def test_get_model_preview_image_deduplicates_concurrent_fetches(monkeypat
         await asyncio.sleep(0)
         return b"img", "image/jpeg", False
 
-    monkeypatch.setattr(models_v2, "fetch_civitai_preview", fake_fetch)
+    monkeypatch.setattr(models_router, "fetch_civitai_preview", fake_fetch)
 
     await asyncio.gather(
-        models_v2.get_model_preview_image(11, version_id=22, image_index=0),
-        models_v2.get_model_preview_image(11, version_id=22, image_index=0),
+        models_router.get_model_preview_image(11, version_id=22, image_index=0),
+        models_router.get_model_preview_image(11, version_id=22, image_index=0),
     )
 
     assert calls == 1
@@ -152,8 +153,8 @@ async def test_get_model_preview_image_deduplicates_concurrent_fetches(monkeypat
 
 @pytest.mark.asyncio
 async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(models_v2, "PREVIEW_CACHE_DIR", str(tmp_path))
-    monkeypatch.setattr(models_v2, "PREVIEW_FAILURE_TTL_SECONDS", 600)
+    monkeypatch.setattr(models_router, "PREVIEW_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(models_router, "PREVIEW_FAILURE_TTL_SECONDS", 600)
 
     calls = []
 
@@ -161,10 +162,10 @@ async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypa
         calls.append(url)
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(models_v2, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
 
-    first_data, first_content_type, first_cache_hit = await models_v2.fetch_civitai_preview(987654, image_index=0)
-    second_data, second_content_type, second_cache_hit = await models_v2.fetch_civitai_preview(987654, image_index=0)
+    first_data, first_content_type, first_cache_hit = await models_router.fetch_civitai_preview(987654, image_index=0)
+    second_data, second_content_type, second_cache_hit = await models_router.fetch_civitai_preview(987654, image_index=0)
 
     assert first_data is None
     assert first_content_type is None
@@ -177,8 +178,8 @@ async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypa
 
 @pytest.mark.asyncio
 async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeypatch, tmp_path):
-    monkeypatch.setattr(models_v2, "PREVIEW_CACHE_DIR", str(tmp_path))
-    monkeypatch.setattr(models_v2, "PREVIEW_NOT_FOUND_TTL_SECONDS", 3600)
+    monkeypatch.setattr(models_router, "PREVIEW_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(models_router, "PREVIEW_NOT_FOUND_TTL_SECONDS", 3600)
 
     calls = []
 
@@ -188,10 +189,10 @@ async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeyp
         response = httpx.Response(status_code=404, request=request)
         raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
 
-    monkeypatch.setattr(models_v2, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
 
-    first_data, first_content_type, first_cache_hit = await models_v2.fetch_civitai_preview(579645, image_index=0)
-    second_data, second_content_type, second_cache_hit = await models_v2.fetch_civitai_preview(579645, image_index=0)
+    first_data, first_content_type, first_cache_hit = await models_router.fetch_civitai_preview(579645, image_index=0)
+    second_data, second_content_type, second_cache_hit = await models_router.fetch_civitai_preview(579645, image_index=0)
 
     assert first_data is None
     assert first_content_type is None
@@ -204,15 +205,15 @@ async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeyp
 
 @pytest.mark.asyncio
 async def test_prefetch_stale_model_previews_warms_selected_candidates(monkeypatch):
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_ENABLED", True)
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_JITTER_SECONDS", 0.0)
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_ITEM_DELAY_SECONDS", 0.0)
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_MAX_CANDIDATES", 10)
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_BATCH_SIZE", 2)
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_STALE_AFTER_SECONDS", 3600)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_ENABLED", True)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_JITTER_SECONDS", 0.0)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_ITEM_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_MAX_CANDIDATES", 10)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_BATCH_SIZE", 2)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_STALE_AFTER_SECONDS", 3600)
 
-    monkeypatch.setattr(models_v2, "_list_civitai_model_ids_for_prefetch", lambda: [101, 102, 103])
-    monkeypatch.setattr(models_v2, "_select_stale_prefetch_candidates", lambda *_args: [101, 103])
+    monkeypatch.setattr(models_router, "_list_civitai_model_ids_for_prefetch", lambda: [101, 102, 103])
+    monkeypatch.setattr(models_router, "_select_stale_prefetch_candidates", lambda *_args: [101, 103])
 
     calls = []
 
@@ -220,9 +221,9 @@ async def test_prefetch_stale_model_previews_warms_selected_candidates(monkeypat
         calls.append((model_id, version_id, image_index, force_refresh))
         return b"img", "image/jpeg", False
 
-    monkeypatch.setattr(models_v2, "fetch_civitai_preview", fake_fetch)
+    monkeypatch.setattr(models_router, "fetch_civitai_preview", fake_fetch)
 
-    result = await models_v2.prefetch_stale_model_previews()
+    result = await models_router.prefetch_stale_model_previews()
 
     assert result["status"] == "ok"
     assert result["selected"] == 2
@@ -236,8 +237,8 @@ async def test_prefetch_stale_model_previews_warms_selected_candidates(monkeypat
 
 @pytest.mark.asyncio
 async def test_prefetch_stale_model_previews_returns_disabled_when_off(monkeypatch):
-    monkeypatch.setattr(models_v2, "PREVIEW_PREFETCH_ENABLED", False)
+    monkeypatch.setattr(models_router, "PREVIEW_PREFETCH_ENABLED", False)
 
-    result = await models_v2.prefetch_stale_model_previews()
+    result = await models_router.prefetch_stale_model_previews()
 
     assert result == {"status": "disabled"}

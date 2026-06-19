@@ -30,7 +30,7 @@ describe('useDashboardItems', () => {
 
         const { result } = renderHook(() => useDashboardItems({
             data,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: 'job-complete',
             activeCollection: null,
             collections: {},
@@ -57,7 +57,7 @@ describe('useDashboardItems', () => {
 
         const { result } = renderHook(() => useDashboardItems({
             data,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: null,
             activeCollection: 'collection-1',
             collections: {
@@ -125,7 +125,7 @@ describe('useDashboardItems', () => {
 
         rerender({
             data: completedData,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: null,
             activeCollection: null,
             collections: {},
@@ -213,7 +213,7 @@ describe('useDashboardItems', () => {
 
         rerender({
             data: completedPageOneData,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: null,
             activeCollection: null,
             collections: {},
@@ -226,7 +226,7 @@ describe('useDashboardItems', () => {
 
         rerender({
             data: completedWithOlderPageData,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: null,
             activeCollection: null,
             collections: {},
@@ -261,7 +261,7 @@ describe('useDashboardItems', () => {
 
         const { result } = renderHook(() => useDashboardItems({
             data: reloadedData,
-            activeJobs: [],
+            jobs: [],
             selectedJobId: null,
             activeCollection: null,
             collections: {},

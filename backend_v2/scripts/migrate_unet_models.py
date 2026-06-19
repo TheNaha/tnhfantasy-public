@@ -9,7 +9,7 @@ import os
 # Ensure we can import from backend_v2
 sys.path.insert(0, os.getcwd())
 
-from infrastructure.database import get_session_sync
+from api.deps import get_session_sync
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
 def main():

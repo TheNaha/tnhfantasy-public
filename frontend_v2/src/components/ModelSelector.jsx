@@ -44,7 +44,7 @@ const ModelSelector = memo(function ModelSelector({
   const [loadingMore, setLoadingMore] = useState(false);
   const [internalSelectedModel, setInternalSelectedModel] = useState(null);
   const [hasMore, setHasMore] = useState(true);
-  const [, setOffset] = useState(0);
+
   const offsetRef = useRef(0); // Track offset with ref to avoid stale closures
   const loadingRef = useRef(false);
   const loadingMoreRef = useRef(false);
@@ -212,11 +212,9 @@ const ModelSelector = memo(function ModelSelector({
       if (loadMore) {
         setModels((prev) => [...prev, ...newModels]);
         const newOffset = currentOffset + 50;
-        setOffset(newOffset);
         offsetRef.current = newOffset;
       } else {
         setModels(newModels);
-        setOffset(50);
         offsetRef.current = 50;
       }
 
@@ -251,7 +249,6 @@ const ModelSelector = memo(function ModelSelector({
     if (!directory) return; // No directory and no initialModels - nothing to show
 
     // Reset pagination when search or sort changes
-    setOffset(0);
     offsetRef.current = 0;
     setHasMore(true);
 

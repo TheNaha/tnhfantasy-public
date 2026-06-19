@@ -1,6 +1,6 @@
 from unittest.mock import AsyncMock
 
-from datetime import datetime
+from datetime import datetime, timezone
 import pytest
 
 from core.entities import Job, JobStatus
@@ -13,8 +13,8 @@ class TestMainLifecycle:
         running_job = Job(
             status=JobStatus.RUNNING,
             workflow={"nodes": {}},
-            started_at=datetime.utcnow(),
-            completed_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
             progress=72.5,
             overall_progress=45.0,
             message="Rendering",
@@ -24,7 +24,7 @@ class TestMainLifecycle:
             status=JobStatus.POST_PROCESSING,
             workflow={"nodes": {}},
             outputs=[{"filename": "output.png", "relative_path": "2026/04/01/output.png"}],
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
             progress=100.0,
             overall_progress=100.0,
             message="Finishing outputs",
@@ -32,8 +32,8 @@ class TestMainLifecycle:
         completed_job = Job(
             status=JobStatus.COMPLETED,
             workflow={"nodes": {}},
-            started_at=datetime.utcnow(),
-            completed_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
             progress=100.0,
             overall_progress=100.0,
             message="Done",

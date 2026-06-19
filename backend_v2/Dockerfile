@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -15,9 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application
 COPY . .
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data
+# Create unprivileged user
+RUN useradd -r -s /bin/false comfy && \
+    mkdir -p /data/db /data/input /data/output && \
+    chown -R comfy:comfy /app /data
 
+USER comfy
 # Expose port
 EXPOSE 8002
 

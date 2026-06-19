@@ -10,6 +10,7 @@ __pycache__/
 # Output/Input directories created by user
 input/
 output/
+data/
 
 # IDE
 .vscode/
@@ -21,15 +22,15 @@ frontend_v2/dist/
 .vite/
 
 # Backend Data
-backend_v2/data/*.db
-backend_v2/data/*.db-shm
-backend_v2/data/*.db-wal
-backend_v2/data/*.sqlite
-backend_v2/data/*.sqlite3
+backend_v2/data/
 backend_v2/input/
 backend_v2/output/
 backend_v2/cache/
+backend_v2/fix_*.py
+backend_v2/patch_*.py
 .coverage
-transcode_results.json
-transcode_test.py
-transcode_test2.py
+*.pyc
+
+# Provider envs
+provider_containers/**/.env.*
+!provider_containers/**/.env.example

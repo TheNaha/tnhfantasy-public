@@ -70,11 +70,6 @@ const Statistics = () => {
         count
     }));
 
-    const weekdayNames = {
-        '0': 'Mon', '1': 'Tue', '2': 'Wed', '3': 'Thu', '4': 'Fri', '5': 'Sat', '6': 'Sun'
-    };
-    void weekdayNames;
-
     // Prepare model data
     const checkpointsData = Object.entries(data.models.checkpoints).map(([name, count]) => ({
         name: name.length > 25 ? name.substring(0, 25) + '...' : name,
@@ -87,7 +82,6 @@ const Statistics = () => {
         count
     }));
 
-    void data.models.schedulers;
 
     // Prepare settings data
     const stepsData = Object.entries(data.settings.steps).map(([steps, count]) => ({

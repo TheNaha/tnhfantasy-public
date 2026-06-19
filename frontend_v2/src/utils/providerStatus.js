@@ -1,4 +1,4 @@
-const ONLINE_RUNTIME_STATUSES = new Set(['running', 'active', 'connected']);
+const ONLINE_RUNTIME_STATUSES = new Set(['running', 'active', 'connected', 'discovered']);
 const TRANSITION_RUNTIME_STATUSES = new Set(['starting', 'stopping', 'restarting']);
 const RECONCILIATION_QUEUED = new Set(['started', 'queued']);
 const RECONCILIATION_ACTIVE = new Set(['progress', 'running', 'reconciling']);
@@ -21,7 +21,7 @@ function humanize(value, fallback = 'Unknown') {
     return String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function normalizeReconciliationStatus(status) {
+export function normalizeReconciliationStatus(status) {
     if (RECONCILIATION_QUEUED.has(status)) {
         return 'queued';
     }

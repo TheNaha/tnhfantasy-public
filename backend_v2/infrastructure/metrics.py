@@ -14,11 +14,10 @@ from prometheus_client import (
     CollectorRegistry,
     generate_latest,
     CONTENT_TYPE_LATEST,
+    REGISTRY,
 )
 
-
 # Use the default registry so all metrics are auto-registered
-REGISTRY = CollectorRegistry()
 
 # ============================================================================
 # HTTP REQUEST METRICS

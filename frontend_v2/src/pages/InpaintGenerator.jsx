@@ -21,6 +21,8 @@ import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
+import PromptPanel from '../components/generator/PromptPanel';
+import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
@@ -43,7 +45,7 @@ export default function InpaintGenerator() {
         prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
         sourceImage, denoise, maskImage, maskBlur,
         selectedCheckpoint, selectedVae, selectedLoras,
-        setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler,
+        setSeed, setSteps, setCfg, setSampler, setScheduler,
         setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
         setSelectedCheckpoint, setSelectedVae,
         randomizeSeed, addLora, removeLora, updateLora
@@ -62,8 +64,6 @@ export default function InpaintGenerator() {
         selectedCheckpoint: state.selectedCheckpoint,
         selectedVae: state.selectedVae,
         selectedLoras: state.selectedLoras,
-        setPrompt: state.setPrompt,
-        setNegativePrompt: state.setNegativePrompt,
         setSeed: state.setSeed,
         setSteps: state.setSteps,
         setCfg: state.setCfg,
@@ -82,7 +82,7 @@ export default function InpaintGenerator() {
         updateLora: state.updateLora,
     })));
 
-    const activeJobCount = useJobStore(state => state.activeJobs.length);
+    const activeJobCount = useJobStore(state => state.jobs.length);
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
@@ -211,7 +211,7 @@ export default function InpaintGenerator() {
             } else {
                 toast.success('Job added to queue!');
                 if (settings.generator.autoRandomizeSeed) {
-                    setSeed(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
+                    randomizeSeed();
                 }
             }
 
@@ -298,32 +298,7 @@ export default function InpaintGenerator() {
                     </div>
 
                     {/* Prompt Section */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                            <Wand2 size={18} className="text-blue-400" />
-                            Prompts
-                        </h3>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">
-                                What to generate (in masked area)
-                            </label>
-                            <textarea
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white min-h-[6rem] focus:ring-2 focus:ring-blue-500 outline-none resize-y"
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
-                                placeholder="Describe what you want in the masked area..."
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-400 mb-1">Negative Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white min-h-[4rem] focus:ring-2 focus:ring-red-500 outline-none resize-y"
-                                value={negativePrompt}
-                                onChange={(e) => setNegativePrompt(e.target.value)}
-                                placeholder="What to avoid..."
-                            />
-                        </div>
-                    </div>
+                    <PromptPanel />
 
                     {/* Model Selection */}
                     <div className="space-y-4 pb-4 border-b border-gray-800">
@@ -443,6 +418,8 @@ export default function InpaintGenerator() {
                         title="Inpaint Runway"
                         hint="Check runtime health and workflow availability before regenerating the masked region."
                     />
+
+                    <PresetManager />
 
                     {/* Denoise Strength */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">

@@ -4,10 +4,60 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Type, Callable
+import base64
+import urllib.parse
 
 from infrastructure.logging import provider_logger
+from infrastructure.http_client import get_http_client
 
 logger = provider_logger()
+
+
+def clean_dict(d):
+    """Return a new dict with only string keys and non-None values."""
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str)}
+
+
+class HttpFileProxy:
+    """Shared file proxy implementation for HTTP-based provider containers."""
+
+    def __init__(self, provider_id: str, config: Dict[str, Any], base_url: str):
+        self.provider_id = provider_id
+        self.config = config
+        self.base_url = base_url.rstrip("/")
+
+    async def get_file(self, path: str) -> bytes:
+        client = get_http_client()
+        encoded_path = urllib.parse.quote(path, safe="/")
+        url = f"{self.base_url}/get-file/{encoded_path}"
+        response = await client.get(url)
+        if response.status_code == 200:
+            content_type = response.headers.get("content-type", "") or ""
+            if not isinstance(content_type, str):
+                content_type = str(content_type)
+            if "json" in content_type.lower() or response.content[:1] in (b"{", b"["):
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    content_base64 = payload.get("content_base64")
+                    if isinstance(content_base64, str):
+                        return base64.b64decode(content_base64)
+            return response.content
+        raise Exception(f"Failed to get file: {response.status_code}")
+
+    async def delete_file(self, path: str) -> bool:
+        client = get_http_client()
+        encoded_path = urllib.parse.quote(path, safe="/")
+        url = f"{self.base_url}/delete-file/{encoded_path}"
+        response = await client.delete(url)
+        return response.status_code == 200
+
+    def get_proxy_url(self) -> str:
+        return self.base_url
 
 
 @dataclass
@@ -35,6 +85,9 @@ class ProviderTypeConfig:
     
     # Default port for worker container
     default_port: int = 8000
+    
+    # The ServerlessProvider class for API interactions
+    client_class: Optional[Type['ServerlessProvider']] = None
     
     def build_env_vars(self, credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
         """

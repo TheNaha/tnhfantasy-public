@@ -9,10 +9,10 @@ function getJobTimelineAnchor(job) {
     return job?.created_at || job?.updated_at || 0;
 }
 
-function buildJobTimelineOverrides(previousAnchors, activeJobs) {
+function buildJobTimelineOverrides(previousAnchors, activeJobs = []) {
     const nextAnchors = new Map(previousAnchors);
 
-    activeJobs.forEach((job) => {
+    (activeJobs || []).forEach((job) => {
         if (!job?.id || nextAnchors.has(job.id)) {
             return;
         }

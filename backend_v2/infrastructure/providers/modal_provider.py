@@ -1,54 +1,12 @@
 # Modal provider implementation
 import os
-import base64
-import urllib.parse
 from typing import Dict, List, AsyncIterator, Any, Optional
 
 from .base import ServerlessProvider, FileProxyProvider
 from .ndjson import iter_ndjson_payloads
 from .runtime import get_provider_worker_base_url
+from .provider_registry import HttpFileProxy
 from infrastructure.http_client import get_http_client
-
-
-class ModalFileProxy(FileProxyProvider):
-    """File proxy for Modal - uses HTTP calls to worker container."""
-    
-    def __init__(self, provider_id: str, config: Dict[str, Any], base_url: str):
-        super().__init__(provider_id, config)
-        self.base_url = base_url.rstrip("/")
-    
-    async def get_file(self, path: str) -> bytes:
-        """Get file from Modal via worker container."""
-        client = get_http_client()
-        encoded_path = urllib.parse.quote(path, safe="/")
-        url = f"{self.base_url}/get-file/{encoded_path}"
-        response = await client.get(url)
-        if response.status_code == 200:
-            content_type = response.headers.get("content-type", "") or ""
-            if not isinstance(content_type, str):
-                content_type = str(content_type)
-            if "json" in content_type.lower() or response.content[:1] in (b"{", b"["):
-                try:
-                    payload = response.json()
-                except Exception:
-                    payload = None
-                if isinstance(payload, dict):
-                    content_base64 = payload.get("content_base64")
-                    if isinstance(content_base64, str):
-                        return base64.b64decode(content_base64)
-            return response.content
-        raise Exception(f"Failed to get file: {response.status_code}")
-    
-    async def delete_file(self, path: str) -> bool:
-        """Delete file from Modal volume."""
-        client = get_http_client()
-        encoded_path = urllib.parse.quote(path, safe="/")
-        url = f"{self.base_url}/delete-file/{encoded_path}"
-        response = await client.delete(url)
-        return response.status_code == 200
-    
-    def get_proxy_url(self) -> str:
-        return self.base_url
 
 
 class ModalProvider(ServerlessProvider):
@@ -69,7 +27,7 @@ class ModalProvider(ServerlessProvider):
         self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)
         
         # File proxy
-        self._file_proxy = ModalFileProxy(provider_id, config, self.worker_url)
+        self._file_proxy = HttpFileProxy(provider_id, config, self.worker_url)
         
         # Credentials
         self.credentials = config.get("credentials", {})

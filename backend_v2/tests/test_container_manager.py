@@ -175,6 +175,18 @@ class TestContainerManager:
         # Verify
         assert cm.runtime == "unknown"
 
+    def _create_mock_httpx_client(self, status_code=200, side_effect=None):
+        """Create a mock httpx.Client that works as a context manager."""
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        mock_client_instance = MagicMock()
+        mock_client_instance.get.return_value = mock_response
+        if side_effect:
+            mock_client_instance.get.side_effect = side_effect
+        mock_client_class = MagicMock()
+        mock_client_class.__enter__.return_value = mock_client_instance
+        return mock_client_class, mock_client_instance
+
     def test_wait_for_health_succeeds_on_http_200(self):
         cm = ContainerManager.__new__(ContainerManager)
         container = MagicMock()
@@ -182,10 +194,9 @@ class TestContainerManager:
         container.status = "running"
         container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
 
-        response = MagicMock()
-        response.status_code = 200
+        mock_client_class, _ = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.requests.get", return_value=response), \
+        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
              patch("services.container_manager.time.sleep", return_value=None):
             cm._wait_for_health(container, timeout=1)
 
@@ -205,14 +216,13 @@ class TestContainerManager:
             }
         }
 
-        response = MagicMock()
-        response.status_code = 200
+        mock_client_class, mock_instance = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.requests.get", return_value=response) as mock_get, \
+        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
              patch("services.container_manager.time.sleep", return_value=None):
             cm._wait_for_health(container, timeout=1)
 
-        mock_get.assert_called_once_with("http://test-container:8000/health", timeout=2)
+        mock_instance.get.assert_called_once_with("http://test-container:8000/health")
 
     def test_wait_for_health_times_out_when_only_running(self):
         cm = ContainerManager.__new__(ContainerManager)
@@ -221,7 +231,9 @@ class TestContainerManager:
         container.status = "running"
         container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
 
-        with patch("services.container_manager.requests.get", side_effect=Exception("probe failed")), \
+        mock_client_class, _ = self._create_mock_httpx_client(side_effect=Exception("probe failed"))
+
+        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
              patch("services.container_manager.time.sleep", return_value=None), \
              patch("services.container_manager.time.time", side_effect=[0, 0.1, 1.1]):
             with pytest.raises(TimeoutError) as excinfo:

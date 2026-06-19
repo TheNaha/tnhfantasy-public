@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { filesApi } from '../api';
+import { filesApi, jobsApi } from '../api';
 
 const LIMIT = 20;
 
@@ -11,10 +11,8 @@ export function useGallery(filters = {}) {
 
             // Build params
             const params = {
-                directory: 'output',
                 limit: LIMIT,
                 offset: offset,
-                sort: 'date_desc',
                 ...filters
             };
 
@@ -25,19 +23,21 @@ export function useGallery(filters = {}) {
                 }
             });
 
-            // Fetch Files using API client
-            const filesData = await filesApi.list(params);
+            // Fetch Files and Jobs using API client
+            const [filesData, jobsData] = await Promise.all([
+                filesApi.list({ ...params, directory: 'output', sort: 'date_desc' }),
+                jobsApi.list({ ...params, sort: 'created_at_desc' }).catch(() => ({ jobs: [] })) // fallback if jobs fails
+            ]);
 
             return {
                 files: filesData.files || [],
-                jobs: [],
+                jobs: jobsData.jobs || [],
                 nextPage: filesData.files?.length === LIMIT ? pageParam + 1 : undefined
             };
         },
         getNextPageParam: (lastPage) => lastPage.nextPage,
         initialPageParam: 0,
         staleTime: 1 * 60 * 1000, // 1 minute
-
     });
 }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, Upload, RefreshCw, Info, Lock, Unlock, Layers, Sparkles, FolderOpen, Loader2, BookOpen, ChevronDown } from 'lucide-react';
+import { Wand2, Image as ImageIcon, Settings2, Plus, Trash2, ChevronDown, ChevronUp, RefreshCw, Layers, Copy, Check, Upload, Activity, Server, TriangleAlert, ImagePlus, Loader2, Info, Lock, Unlock, Sparkles, FolderOpen, BookOpen } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
@@ -9,12 +9,13 @@ import ModelSelector from '../components/ModelSelector';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
-import PromptLibrary from '../components/generator/PromptLibrary';
+import PromptPanel from '../components/generator/PromptPanel';
 import PresetManager from '../components/generator/PresetManager';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import CollapsibleSection from '../components/CollapsibleSection';
 import NumberInput from '../components/common/NumberInput';
 import { useNavigate } from 'react-router-dom';
+import filesApi from '../api/files';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
@@ -23,7 +24,73 @@ import toast from 'react-hot-toast';
 import useSettingsStore, { useSettings, useUpdateSettings } from '../store/settingsStore';
 
 // API Layer
-import { api, generateApi, createIdempotencyKey } from '../api';
+import { generateApi, createIdempotencyKey } from '../api';
+
+const generatorSelector = (state) => ({
+    prompt: state.prompt,
+    negativePrompt: state.negativePrompt,
+    seed: state.seed,
+    steps: state.steps,
+    cfg: state.cfg,
+    sampler: state.sampler,
+    scheduler: state.scheduler,
+    width: state.width,
+    height: state.height,
+    batchSize: state.batchSize,
+    selectedCheckpoint: state.selectedCheckpoint,
+    selectedVae: state.selectedVae,
+    selectedClip: state.selectedClip,
+    selectedClip2: state.selectedClip2,
+    selectedLoras: state.selectedLoras,
+    controlnets: state.controlnets,
+    hiresFix: state.hiresFix,
+    hiresUpscaler: state.hiresUpscaler,
+    hiresDenoise: state.hiresDenoise,
+    hiresUpscale: state.hiresUpscale,
+    hiresSteps: state.hiresSteps,
+    adetailer: state.adetailer,
+    adetailerModel: state.adetailerModel,
+    adetailerPrompt: state.adetailerPrompt,
+    adetailerSteps: state.adetailerSteps,
+    adetailerDenoise: state.adetailerDenoise,
+    adetailerInpaintMasked: state.adetailerInpaintMasked,
+    setPrompt: state.setPrompt,
+    setNegativePrompt: state.setNegativePrompt,
+    setSeed: state.setSeed,
+    setSteps: state.setSteps,
+    setCfg: state.setCfg,
+    setSampler: state.setSampler,
+    setScheduler: state.setScheduler,
+    setWidth: state.setWidth,
+    setHeight: state.setHeight,
+    setBatchSize: state.setBatchSize,
+    setAspectRatioLocked: state.setAspectRatioLocked,
+    setSelectedCheckpoint: state.setSelectedCheckpoint,
+    setSelectedVae: state.setSelectedVae,
+    setSelectedClip: state.setSelectedClip,
+    setSelectedClip2: state.setSelectedClip2,
+    setHiresFix: state.setHiresFix,
+    setHiresUpscaler: state.setHiresUpscaler,
+    setHiresDenoise: state.setHiresDenoise,
+    setHiresUpscale: state.setHiresUpscale,
+    setHiresSteps: state.setHiresSteps,
+    setAdetailer: state.setAdetailer,
+    setAdetailerModel: state.setAdetailerModel,
+    setAdetailerPrompt: state.setAdetailerPrompt,
+    setAdetailerSteps: state.setAdetailerSteps,
+    setAdetailerDenoise: state.setAdetailerDenoise,
+    setAdetailerInpaintMasked: state.setAdetailerInpaintMasked,
+    randomizeSeed: state.randomizeSeed,
+    addLora: state.addLora,
+    removeLora: state.removeLora,
+    updateLora: state.updateLora,
+    addControlNet: state.addControlNet,
+    removeControlNet: state.removeControlNet,
+    updateControlNet: state.updateControlNet,
+    addTriggerWords: state.addTriggerWords,
+    applySDXLSettings: state.applySDXLSettings,
+    aspectRatioLocked: state.aspectRatioLocked,
+});
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -39,79 +106,14 @@ export default function SimpleGenerator() {
         prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
         selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
         hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
-        adetailer, adetailerModel, adetailerPrompt, adetailerNegative, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
+        adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
         setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
         setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
         setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
         setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
         randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords, applySDXLSettings,
         aspectRatioLocked
-    } = useGeneratorStore(useShallow((state) => ({
-        prompt: state.prompt,
-        negativePrompt: state.negativePrompt,
-        seed: state.seed,
-        steps: state.steps,
-        cfg: state.cfg,
-        sampler: state.sampler,
-        scheduler: state.scheduler,
-        width: state.width,
-        height: state.height,
-        batchSize: state.batchSize,
-        selectedCheckpoint: state.selectedCheckpoint,
-        selectedVae: state.selectedVae,
-        selectedClip: state.selectedClip,
-        selectedClip2: state.selectedClip2,
-        selectedLoras: state.selectedLoras,
-        controlnets: state.controlnets,
-        hiresFix: state.hiresFix,
-        hiresUpscaler: state.hiresUpscaler,
-        hiresDenoise: state.hiresDenoise,
-        hiresUpscale: state.hiresUpscale,
-        hiresSteps: state.hiresSteps,
-        adetailer: state.adetailer,
-        adetailerModel: state.adetailerModel,
-        adetailerPrompt: state.adetailerPrompt,
-        adetailerNegative: state.adetailerNegative,
-        adetailerSteps: state.adetailerSteps,
-        adetailerDenoise: state.adetailerDenoise,
-        adetailerInpaintMasked: state.adetailerInpaintMasked,
-        setPrompt: state.setPrompt,
-        setNegativePrompt: state.setNegativePrompt,
-        setSeed: state.setSeed,
-        setSteps: state.setSteps,
-        setCfg: state.setCfg,
-        setSampler: state.setSampler,
-        setScheduler: state.setScheduler,
-        setWidth: state.setWidth,
-        setHeight: state.setHeight,
-        setBatchSize: state.setBatchSize,
-        setAspectRatioLocked: state.setAspectRatioLocked,
-        setSelectedCheckpoint: state.setSelectedCheckpoint,
-        setSelectedVae: state.setSelectedVae,
-        setSelectedClip: state.setSelectedClip,
-        setSelectedClip2: state.setSelectedClip2,
-        setHiresFix: state.setHiresFix,
-        setHiresUpscaler: state.setHiresUpscaler,
-        setHiresDenoise: state.setHiresDenoise,
-        setHiresUpscale: state.setHiresUpscale,
-        setHiresSteps: state.setHiresSteps,
-        setAdetailer: state.setAdetailer,
-        setAdetailerModel: state.setAdetailerModel,
-        setAdetailerPrompt: state.setAdetailerPrompt,
-        setAdetailerSteps: state.setAdetailerSteps,
-        setAdetailerDenoise: state.setAdetailerDenoise,
-        setAdetailerInpaintMasked: state.setAdetailerInpaintMasked,
-        randomizeSeed: state.randomizeSeed,
-        addLora: state.addLora,
-        removeLora: state.removeLora,
-        updateLora: state.updateLora,
-        addControlNet: state.addControlNet,
-        removeControlNet: state.removeControlNet,
-        updateControlNet: state.updateControlNet,
-        addTriggerWords: state.addTriggerWords,
-        applySDXLSettings: state.applySDXLSettings,
-        aspectRatioLocked: state.aspectRatioLocked,
-    })));
+    } = useGeneratorStore(useShallow(generatorSelector));
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
@@ -123,8 +125,8 @@ export default function SimpleGenerator() {
     const embeddingModels = modelsByKey.embeddingModels || [];
     const adetailerModels = modelsByKey.adetailerModels || [];
 
-    const activeJobCount = useJobStore(state => state.activeJobs.length);
-    const activeJobs = useJobStore(state => state.activeJobs);
+    const activeJobCount = useJobStore(state => state.jobs.length);
+    const activeJobs = useJobStore(state => state.jobs);
     const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
     const lastFailedJob = useJobStore(state => state.lastFailedJob);
     const lastCancelledJob = useJobStore(state => state.lastCancelledJob);
@@ -133,7 +135,7 @@ export default function SimpleGenerator() {
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     const { updateSetting } = useUpdateSettings();
 
-    const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null); // Index of LoRA selector to auto-open
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const {
@@ -164,15 +166,7 @@ export default function SimpleGenerator() {
 
         return { positive, negative };
     };
-    // Obsolete saved prompts functionality removed - using Prompt Library instead
 
-    // Handler for Prompt Library
-    const handleSelectPromptFromLibrary = (prompt) => {
-        setPrompt(prompt.text);
-        if (prompt.negative) {
-            setNegativePrompt(prompt.negative);
-        }
-    };
 
     useEffect(() => {
         if (!currentJobId) {
@@ -232,8 +226,7 @@ export default function SimpleGenerator() {
 
     const handleAddLora = () => {
         addLora();
-        // Auto-open the selector for the newly added LoRA
-        setAutoOpenLoraIndex(selectedLoras.length); // Will be the new index after addLora
+        setAutoOpenLoraIndex(selectedLoras.length);
     };
 
     const handleRemoveLora = (index) => {
@@ -243,14 +236,6 @@ export default function SimpleGenerator() {
     const handleLoraChange = (index, field, value) => {
         updateLora(index, field, value);
     };
-
-    // addTriggerWords is now handled by the store action directly in the effect
-    // But we still need the function for the UI buttons
-    // The store action is named addTriggerWords too, so it's already in scope!
-    // However, the UI calls addTriggerWords(words) which matches the store signature.
-    // So we don't need to redefine it, BUT we need to make sure the toast is shown.
-    // The store action doesn't show toast.
-    // Let's wrap it.
 
     const handleAddTriggerWordsUI = (words) => {
         addTriggerWords(words);
@@ -276,11 +261,7 @@ export default function SimpleGenerator() {
     };
 
     const handleControlNetUpload = async (index, file) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('path', 'input');
-
-        const uploadPromise = api.post('/api/upload', formData);
+        const uploadPromise = filesApi.uploadInput(file);
 
         toast.promise(uploadPromise, {
             loading: 'Uploading image...',
@@ -295,8 +276,6 @@ export default function SimpleGenerator() {
             error: 'Upload failed'
         });
     };
-
-    // const [progress, setProgress] = useState(null); // Moved to top level state
 
     // Helper to detect model types
     const isFluxModel = (model) => {
@@ -352,7 +331,6 @@ export default function SimpleGenerator() {
             adetailer,
             adetailerModel,
             adetailerPrompt,
-            adetailerNegative,
             adetailerSteps,
             adetailerDenoise,
             adetailerInpaintMasked,
@@ -382,8 +360,6 @@ export default function SimpleGenerator() {
 
         return { workflow, metadata };
     };
-
-// ...
 
     const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
         if (trackQueuedJob) {
@@ -544,60 +520,7 @@ export default function SimpleGenerator() {
 
 
                     {/* Prompt Section */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <div className="flex justify-between items-center">
-                            <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                                <Wand2 size={18} className="text-blue-400" />
-                                Prompts
-                            </h3>
-                            <button
-                                onClick={() => setShowPromptLibrary(true)}
-                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs lg:text-sm rounded-lg flex items-center gap-1.5 transition-colors"
-                                aria-label="Open prompt library"
-                                type="button"
-                            >
-                                <BookOpen size={14} aria-hidden="true" />
-                                <span className="hidden sm:inline">Library</span>
-                                <span className="sm:hidden">Library</span>
-                            </button>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1">Positive Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 lg:p-3 text-sm text-white min-h-[4rem] lg:min-h-[8rem] focus:ring-2 focus:ring-blue-500 outline-none resize-y overflow-hidden"
-                                value={prompt}
-                                onChange={(e) => {
-                                    setPrompt(e.target.value);
-                                    e.target.style.height = 'auto';
-                                    e.target.style.height = e.target.scrollHeight + 'px';
-                                }}
-                                ref={(el) => {
-                                    if (el) {
-                                        el.style.height = 'auto';
-                                        el.style.height = el.scrollHeight + 'px';
-                                    }
-                                }}
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1">Negative Prompt</label>
-                            <textarea
-                                className="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-2 lg:p-3 text-sm text-white min-h-[3rem] lg:min-h-[5rem] focus:ring-2 focus:ring-red-500 outline-none resize-y overflow-hidden"
-                                value={negativePrompt}
-                                onChange={(e) => {
-                                    setNegativePrompt(e.target.value);
-                                    e.target.style.height = 'auto';
-                                    e.target.style.height = e.target.scrollHeight + 'px';
-                                }}
-                                ref={(el) => {
-                                    if (el) {
-                                        el.style.height = 'auto';
-                                        el.style.height = el.scrollHeight + 'px';
-                                    }
-                                }}
-                            />
-                        </div>
-                    </div>
+                    <PromptPanel />
 
                     {/* Model Selection */}
                     <div className="space-y-3 lg:space-y-4 pb-4 border-b border-gray-800">
@@ -730,10 +653,10 @@ export default function SimpleGenerator() {
                                                 key={emb.name}
                                                 onClick={() => {
                                                     if (isNegative) {
-                                                        setNegativePrompt(prev => prev + (prev ? ", " : "") + `embedding:${emb.name}`);
+                                                        setNegativePrompt(negativePrompt ? `${negativePrompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
                                                         toast.success(`Added ${emb.name} to Negative Prompt`, { icon: '🚫' });
                                                     } else {
-                                                        setPrompt(prev => prev + (prev ? ", " : "") + `embedding:${emb.name}`);
+                                                        setPrompt(prompt ? `${prompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
                                                         toast.success(`Added ${emb.name} to Positive Prompt`, { icon: '✨' });
                                                     }
                                                 }}
@@ -1284,7 +1207,7 @@ export default function SimpleGenerator() {
                                         setSeed(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
                                         if (!autoRandomizeSeed) {
                                             updateSetting('generator', 'autoRandomizeSeed', true);
-                                            toast.success('Auto-randomize enabled!', { icon: '🎲', duration: 2000 });
+                                            toast.success('Auto-randomize enabled!', { icon: '🎲' });
                                         }
                                     }}
                                     className="no-touch-padding w-10 flex items-center justify-center bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded transition-colors flex-shrink-0 text-base"
@@ -1520,12 +1443,6 @@ export default function SimpleGenerator() {
                 />
             )}
 
-            {/* Prompt Library Modal */}
-            <PromptLibrary
-                isOpen={showPromptLibrary}
-                onClose={() => setShowPromptLibrary(false)}
-                onSelectPrompt={handleSelectPromptFromLibrary}
-            />
 
             <MissingModelsDialog
                 isOpen={isMissingModelsOpen}

@@ -10,6 +10,7 @@ import AddModelToProviderModal from '../components/providers/AddModelToProviderM
 import ReconciliationStatus from '../components/providers/ReconciliationStatus';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { providersApi } from '../api';
+import { summarizeProviderStatus } from '../utils/providerStatus';
 import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
 
 const FILTERS = [
@@ -169,10 +170,7 @@ export default function Providers() {
     };
 
     // ── Stats helpers ──
-    const onlineCount = providers.filter((p) => {
-        const s = p.runtime_state?.status;
-        return p.enabled && ['running', 'active', 'connected'].includes(s);
-    }).length;
+    const onlineCount = providers.filter((p) => summarizeProviderStatus(p).isOnline).length;
 
     return (
         <motion.div

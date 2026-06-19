@@ -33,7 +33,7 @@ async def _get_job_status(job_service, job_id: str):
 async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: str) -> bool:
     """Best-effort cancellation request to the active provider runtime."""
     try:
-        if runtime.mode == "container_http" and runtime.worker_url:
+        if runtime.mode in ("container_http", "discovery") and runtime.worker_url:
             http_client = get_http_client()
             response = await http_client.post(
                 f"{runtime.worker_url}/cancel-job",
@@ -145,7 +145,7 @@ async def execute_job(
                     provider=current_provider.id,
                     status=latest_status.value,
                 )
-                load_balancer.release_job(current_provider.id)
+                await load_balancer.release_job(current_provider.id)
                 return
 
             await job_service.update_job(
@@ -158,7 +158,7 @@ async def execute_job(
             runtime = resolve_provider_runtime(current_provider)
             if not runtime.connected:
                 logger.warning("provider_runtime_unavailable", job_id=job_id, provider=current_provider.id, mode=runtime.mode)
-                load_balancer.report_failure(current_provider.id)
+                await load_balancer.report_failure(current_provider.id)
                 await mark_provider_exhausted(
                     load_balancer=load_balancer,
                     exhausted_providers=exhausted_providers,
@@ -175,7 +175,7 @@ async def execute_job(
             use_snapshot = provider_config.get("enable_memory_snapshot", False)
 
             try:
-                if runtime.mode == "container_http":
+                if runtime.mode in ("container_http", "discovery"):
                     # call_provider_fn already enforces stream/client timeout semantics.
                     # Avoid double-wrapping with asyncio.wait_for to keep timeout ownership clear.
                     final_result = await call_provider_fn(
@@ -215,12 +215,12 @@ async def execute_job(
                         provider=current_provider.id,
                         status=latest_status.value,
                     )
-                    load_balancer.release_job(current_provider.id)
+                    await load_balancer.release_job(current_provider.id)
                     return
 
                 if final_result.get("__handled_by_external_worker"):
-                    load_balancer.report_success(current_provider.id)
-                    load_balancer.release_job(current_provider.id)
+                    await load_balancer.report_success(current_provider.id)
+                    await load_balancer.release_job(current_provider.id)
                 else:
                     await finalize_successful_job(
                         job=job,
@@ -243,7 +243,7 @@ async def execute_job(
                         message=str(error),
                         provider_id=current_provider.id,
                     )
-                load_balancer.release_job(current_provider.id)
+                await load_balancer.release_job(current_provider.id)
                 return
 
             except JobTimeoutError:
@@ -258,9 +258,9 @@ async def execute_job(
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status == JobStatus.CANCELLED:
                     logger.info("job_cancelled_after_timeout", job_id=job_id, provider=current_provider.id)
-                    load_balancer.release_job(current_provider.id)
+                    await load_balancer.release_job(current_provider.id)
                     return
-                load_balancer.report_failure(current_provider.id)
+                await load_balancer.report_failure(current_provider.id)
                 should_retry, retry_count = await maybe_retry_current_provider(
                     job_service=job_service,
                     job_id=job_id,
@@ -304,9 +304,9 @@ async def execute_job(
                     logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=current_provider.id)
                 refreshed_job = await job_service.get_job(job_id)
                 if refreshed_job.status in {JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.COMPLETED}:
-                    load_balancer.release_job(current_provider.id)
+                    await load_balancer.release_job(current_provider.id)
                     return
-                load_balancer.report_failure(current_provider.id)
+                await load_balancer.report_failure(current_provider.id)
                 should_retry = False
                 if error.is_retryable:
                     should_retry, retry_count = await maybe_retry_current_provider(
@@ -356,9 +356,9 @@ async def execute_job(
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status == JobStatus.CANCELLED:
                     logger.info("job_cancelled_after_timeout_exceeded", job_id=job_id, provider=current_provider.id)
-                    load_balancer.release_job(current_provider.id)
+                    await load_balancer.release_job(current_provider.id)
                     return
-                load_balancer.report_failure(current_provider.id)
+                await load_balancer.report_failure(current_provider.id)
                 await mark_provider_exhausted(
                     load_balancer=load_balancer,
                     exhausted_providers=exhausted_providers,

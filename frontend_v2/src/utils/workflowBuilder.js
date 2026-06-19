@@ -19,6 +19,86 @@ export class WorkflowBuilder {
     }
 
     /**
+     * Helper to generate standardized filename prefixes based on generation type and current time.
+     */
+    _generateFilenamePrefix(type = "T2I") {
+        const now = new Date();
+        const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        const timeStr = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
+        return `${type}_${dateStr}_${timeStr}`;
+    }
+
+    /**
+     * Helper to load Checkpoint or UNET+DualCLIP and return currentModel, currentClip, currentVae.
+     */
+    _loadModelComponents({ checkpoint, unet, clip, clip2, vae, modelType }) {
+        let currentModel, currentClip, currentVae;
+
+        if (unet && clip) {
+            // Split Loader Mode (for Flux and other UNET-only models)
+            const unetLoader = this.addNode("UNETLoader", {
+                unet_name: unet,
+                weight_dtype: "default"  // Required parameter: default, fp8_e4m3fn, fp8_e5m2
+            });
+            
+            // Use DualCLIPLoader for Flux (T5XXL + CLIP-L) or SDXL (L + G)
+            if (clip2) {
+                let clip1Name = clip;
+                let clip2Name = clip2;
+                let loaderType = "flux";
+
+                if (modelType === "sdxl") {
+                    clip1Name = clip2;
+                    clip2Name = clip;
+                    loaderType = "sdxl";
+                }
+
+                const dualClipLoader = this.addNode("DualCLIPLoader", {
+                    clip_name1: clip1Name,
+                    clip_name2: clip2Name,
+                    type: loaderType
+                });
+                currentClip = [dualClipLoader, 0];
+            } else {
+                // Single CLIP loader fallback
+                const clipLoader = this.addNode("CLIPLoader", {
+                    clip_name: clip,
+                    type: "stable_diffusion"
+                });
+                currentClip = [clipLoader, 0];
+            }
+
+            currentModel = [unetLoader, 0];
+
+            // VAE is REQUIRED for UNET-only models (they have no baked VAE)
+            const vaeName = (vae && vae !== "Baked in") ? vae : "ae.safetensors";
+            const vaeLoader = this.addNode("VAELoader", {
+                vae_name: vaeName
+            });
+            currentVae = [vaeLoader, 0];
+            
+        } else {
+            // Standard Checkpoint Loader (SD 1.5, standard SDXL)
+            const checkpointLoader = this.addNode("CheckpointLoaderSimple", {
+                ckpt_name: checkpoint
+            });
+            currentModel = [checkpointLoader, 0];
+            currentClip = [checkpointLoader, 1];
+            currentVae = [checkpointLoader, 2];
+
+            // 1b. Load Custom VAE (if provided)
+            if (vae && vae !== "Baked in") {
+                const vaeLoader = this.addNode("VAELoader", {
+                    vae_name: vae
+                });
+                currentVae = [vaeLoader, 0];
+            }
+        }
+
+        return { currentModel, currentClip, currentVae };
+    }
+
+    /**
      * Builds a standard T2I workflow with optional LoRAs, ControlNet, etc.
      */
     build({
@@ -46,83 +126,15 @@ export class WorkflowBuilder {
         adetailer = false,
         adetailerModel = "face_yolov8n.pt",
         adetailerPrompt = "",
-        adetailerNegative = "",
         adetailerSteps = 20,
         adetailerDenoise = 0.4,
-        adetailerInpaintMasked = true,
         vae = "Baked in",
         modelType = "flux" // "flux", "sdxl", or "sd15"
     }) {
-        let currentModel, currentClip, currentVae;
-
         // 1. Load Model (Checkpoint or Split)
-        if (unet && clip) {
-            // Split Loader Mode (for Flux and other UNET-only models)
-            const unetLoader = this.addNode("UNETLoader", {
-                unet_name: unet,
-                weight_dtype: "default"  // Required parameter: default, fp8_e4m3fn, fp8_e5m2
-            });
-            
-            // Use DualCLIPLoader for Flux (T5XXL + CLIP-L) or SDXL (L + G)
-            if (clip2) {
-                let clip1Name = clip;
-                let clip2Name = clip2;
-                let loaderType = "flux";
-
-                if (modelType === "sdxl") {
-                    // SDXL DualCLIPLoader expects:
-                    // clip_name1: CLIP-L (which is our clip2 input)
-                    // clip_name2: CLIP-G (which is our clip input)
-                    // type: sdxl
-                    clip1Name = clip2;
-                    clip2Name = clip;
-                    loaderType = "sdxl";
-                }
-
-                const dualClipLoader = this.addNode("DualCLIPLoader", {
-                    clip_name1: clip1Name,   // T5XXL for Flux, CLIP-L for SDXL
-                    clip_name2: clip2Name,   // CLIP-L for Flux, CLIP-G for SDXL
-                    type: loaderType
-                });
-                currentClip = [dualClipLoader, 0];
-            } else {
-                // Single CLIP loader fallback (Pony V7, AuraFlow, SDXL split)
-                const clipLoader = this.addNode("CLIPLoader", {
-                    clip_name: clip,
-                    type: "stable_diffusion" // Valid types: stable_diffusion, sd3, stable_cascade, etc.
-                });
-                currentClip = [clipLoader, 0];
-            }
-
-            currentModel = [unetLoader, 0];
-
-            // VAE is REQUIRED for UNET-only models (they have no baked VAE)
-            // If not specified, use a default Flux VAE
-            const vaeName = (vae && vae !== "Baked in") ? vae : "ae.safetensors";
-            const vaeLoader = this.addNode("VAELoader", {
-                vae_name: vaeName
-            });
-            currentVae = [vaeLoader, 0];
-
-        } else {
-            // Standard Checkpoint Mode
-            const checkpointLoader = this.addNode("CheckpointLoaderSimple", {
-                ckpt_name: checkpoint
-            });
-
-            currentModel = [checkpointLoader, 0];
-            currentClip = [checkpointLoader, 1];
-            
-            // Default VAE from checkpoint
-            currentVae = [checkpointLoader, 2];
-
-            if (vae && vae !== "Baked in") {
-                const vaeLoader = this.addNode("VAELoader", {
-                    vae_name: vae
-                });
-                currentVae = [vaeLoader, 0];
-            }
-        }
+        let { currentModel, currentClip, currentVae } = this._loadModelComponents({
+            checkpoint, unet, clip, clip2, vae, modelType
+        });
 
         for (const lora of loras) {
             if (!lora.name) continue;
@@ -214,13 +226,8 @@ export class WorkflowBuilder {
 
             let upscaleImage;
 
-            if (hiresUpscaler === "Latent") {
-                // Latent Upscale (Old Method) - Actually this logic was pixel upscale then re-encode
-                // Let's stick to Pixel Upscale -> Re-encode for "Latent" mode too as it's more stable
-                // Or actually, "Latent" usually means "LatentUpscale" node.
-                // But ComfyUI standard workflow is Decode -> Scale -> Encode -> KSampler.
-
-                // Let's use standard Scale for "Latent" (Nearest Exact)
+            if (hiresUpscaler === "Pixel") {
+                // Pixel Upscale -> Re-encode
                 upscaleImage = this.addNode("ImageScaleBy", {
                     image: [vaeDecode, 0],
                     upscale_method: "nearest-exact",
@@ -291,10 +298,6 @@ export class WorkflowBuilder {
 
         // 10. ADetailer
         if (adetailer) {
-            // Reserved for future FaceDetailer prompt/mask options.
-            void adetailerNegative;
-            void adetailerInpaintMasked;
-
             // Load BBox Model
             const bboxLoader = this.addNode("UltralyticsDetectorProvider", {
                 model_name: `bbox/${adetailerModel}`
@@ -338,12 +341,8 @@ export class WorkflowBuilder {
             finalImage = [faceDetailer, 0];
         }
 
-        // 11. Save Image
-        const now = new Date();
-        const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-        const timeStr = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
-        const prefix = `Generated_${dateStr}_${timeStr}`;
-
+        // 9. Save Image
+        const prefix = this._generateFilenamePrefix(hiresFix ? "T2I_Hires" : "T2I");
         this.addNode("SaveImage", {
             filename_prefix: prefix,
             images: [finalImage, 0]
@@ -368,26 +367,17 @@ export class WorkflowBuilder {
         scheduler,
         denoise = 0.7,   // Key Img2Img parameter: 0.0 = keep original, 1.0 = full regeneration
         checkpoint,
+        unet,
+        clip,
+        clip2,
+        modelType = "flux",
         loras = [],
         vae = "Baked in"
     }) {
-        // 1. Load Checkpoint
-        const checkpointLoader = this.addNode("CheckpointLoaderSimple", {
-            ckpt_name: checkpoint
+        // 1. Load Model (Checkpoint or Split)
+        let { currentModel, currentClip, currentVae } = this._loadModelComponents({
+            checkpoint, unet, clip, clip2, vae, modelType
         });
-
-        // 1b. Load VAE (Optional)
-        let currentVae = [checkpointLoader, 2];
-        if (vae && vae !== "Baked in") {
-            const vaeLoader = this.addNode("VAELoader", {
-                vae_name: vae
-            });
-            currentVae = [vaeLoader, 0];
-        }
-
-        // 2. LoRA Chain
-        let currentModel = [checkpointLoader, 0];
-        let currentClip = [checkpointLoader, 1];
 
         for (const lora of loras) {
             if (!lora.name) continue;
@@ -445,10 +435,7 @@ export class WorkflowBuilder {
         });
 
         // 8. Save Image
-        const now = new Date();
-        const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-        const timeStr = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
-        const prefix = `Img2Img_${dateStr}_${timeStr}`;
+        const prefix = this._generateFilenamePrefix("Img2Img");
 
         this.addNode("SaveImage", {
             filename_prefix: prefix,
@@ -474,28 +461,19 @@ export class WorkflowBuilder {
         scheduler,
         denoise = 0.8,   // Usually higher for inpainting
         checkpoint,
+        unet,
+        clip,
+        clip2,
+        modelType = "flux",
         loras = [],
         vae = "Baked in",
         maskBlur = 4,    // Blur mask edges for better blending
         growMask = 6     // Expand mask slightly for better blending
     }) {
-        // 1. Load Checkpoint
-        const checkpointLoader = this.addNode("CheckpointLoaderSimple", {
-            ckpt_name: checkpoint
+        // 1. Load Model (Checkpoint or Split)
+        let { currentModel, currentClip, currentVae } = this._loadModelComponents({
+            checkpoint, unet, clip, clip2, vae, modelType
         });
-
-        // 1b. Load VAE (Optional)
-        let currentVae = [checkpointLoader, 2];
-        if (vae && vae !== "Baked in") {
-            const vaeLoader = this.addNode("VAELoader", {
-                vae_name: vae
-            });
-            currentVae = [vaeLoader, 0];
-        }
-
-        // 2. LoRA Chain
-        let currentModel = [checkpointLoader, 0];
-        let currentClip = [checkpointLoader, 1];
 
         for (const lora of loras) {
             if (!lora.name) continue;
@@ -586,10 +564,7 @@ export class WorkflowBuilder {
         });
 
         // 10. Save Image
-        const now = new Date();
-        const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-        const timeStr = String(now.getHours()).padStart(2, '0') + '-' + String(now.getMinutes()).padStart(2, '0') + '-' + String(now.getSeconds()).padStart(2, '0');
-        const prefix = `Inpaint_${dateStr}_${timeStr}`;
+        const prefix = this._generateFilenamePrefix("Inpaint");
 
         this.addNode("SaveImage", {
             filename_prefix: prefix,

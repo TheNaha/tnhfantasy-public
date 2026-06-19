@@ -8,7 +8,7 @@
 import asyncio
 from typing import Dict, List, Any, AsyncGenerator, Optional
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from collections import deque
 
@@ -72,7 +72,7 @@ class Event:
     """Event payload for SSE streaming."""
     type: EventType
     data: Dict[str, Any]
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
 
     
@@ -124,7 +124,7 @@ class EventBus:
         self._last_drop = {
             "topic": topic,
             "event_type": event_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "subscriber_count": subscriber_count,
             "queue_size": queue.qsize(),
             "queue_maxsize": queue.maxsize,

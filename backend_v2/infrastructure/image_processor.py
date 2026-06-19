@@ -8,6 +8,9 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from typing import Tuple, Optional, Dict, List
 import config as app_config
+from infrastructure.logging import get_logger
+
+logger = get_logger("image_processor")
 
 
 def get_output_path(base_dir: str = None, subdir: str = None) -> str:
@@ -63,7 +66,7 @@ def save_image_with_metadata(image: Image.Image, path: str, metadata: dict) -> s
     
     # Save with embedded metadata
     image.save(path, pnginfo=pnginfo)
-    print(f"Saved image with embedded metadata: {path}")
+    logger.info("image_saved_with_metadata", path=path)
     
     return path
 
@@ -96,7 +99,7 @@ def read_image_metadata(path: str) -> dict:
                 metadata = json.loads(metadata_str)
                 return metadata
     except Exception as e:
-        print(f"Could not read embedded metadata from {path}: {e}")
+        logger.debug("embedded_metadata_read_failed", path=path, error=str(e))
     
     # Fallback to sidecar .json file for legacy images
     json_path = f"{path}.json"
@@ -105,7 +108,7 @@ def read_image_metadata(path: str) -> dict:
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
         except Exception as e:
-            print(f"Could not read sidecar JSON {json_path}: {e}")
+            logger.debug("sidecar_json_read_failed", path=json_path, error=str(e))
     
     return metadata
 
@@ -171,7 +174,7 @@ def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: st
         
         thumbnail_paths[suffix] = thumb_path
         
-        print(f"Generated {suffix} thumbnail ({thumb_format}): {thumb_path}")
+        logger.info("thumbnail_generated", suffix=suffix, format=thumb_format, path=thumb_path)
     
     return thumbnail_paths
 
@@ -192,7 +195,7 @@ def encode_blurhash(image_path: str, components_x: int = None, components_y: int
         import blurhash
         import numpy as np
     except ImportError:
-        print("Warning: blurhash or numpy not installed, returning empty hash")
+        logger.warning("blurhash_import_missing")
         return ""
     
     if not os.path.exists(image_path):
@@ -219,7 +222,7 @@ def encode_blurhash(image_path: str, components_x: int = None, components_y: int
     # Encode blurhash
     hash_value = blurhash.encode(img_array, components_x=components_x, components_y=components_y)
     
-    print(f"Generated BlurHash: {hash_value}")
+    logger.info("blurhash_generated", hash_value=hash_value)
     return hash_value
 
 
@@ -286,7 +289,7 @@ def process_image(image_path: str, save_metadata: bool = True) -> dict:
         - blurhash: hash string
         - metadata_path: path to .json file (if saved)
     """
-    print(f"Processing image: {image_path}")
+    logger.info("processing_image", path=image_path)
     
     # Generate thumbnails
     thumbnails = generate_thumbnails(image_path)
@@ -317,7 +320,7 @@ def process_image(image_path: str, save_metadata: bool = True) -> dict:
                 # Add blurhash and thumbnail info to result (for legacy compatibility)
                 result['legacy_metadata'] = metadata
             except Exception as e:
-                print(f"Warning: Could not read existing sidecar metadata: {e}")
+                logger.warning("sidecar_metadata_read_failed", error=str(e))
     
     return result
 
@@ -355,7 +358,7 @@ def process_directory(directory: str, pattern: str = "*.png", skip_existing: boo
             thumb_path = f"{base_path}.thumb{ext}"
             
             if os.path.exists(thumb_path):
-                print(f"Skipping {base_name} (thumbnails already exist)")
+                logger.info("thumbnail_skipped", filename=base_name)
                 continue
         
         # Process image
@@ -363,7 +366,7 @@ def process_directory(directory: str, pattern: str = "*.png", skip_existing: boo
             process_image(image_path)
             processed.append(image_path)
         except Exception as e:
-            print(f"Error processing {base_name}: {e}")
+            logger.error("image_processing_failed", filename=base_name, error=str(e))
     
     return processed
 
@@ -388,9 +391,9 @@ def cleanup_thumbnails(directory: str) -> int:
             try:
                 os.remove(filepath)
                 removed += 1
-                print(f"Removed: {filepath}")
+                logger.info("thumbnail_removed", path=filepath)
             except Exception as e:
-                print(f"Error removing {filepath}: {e}")
+                logger.error("thumbnail_remove_failed", path=filepath, error=str(e))
     
     return removed
 

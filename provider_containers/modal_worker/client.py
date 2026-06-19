@@ -1,0 +1,225 @@
+import asyncio
+import os
+import base64
+import json
+from typing import Dict, Any, Optional
+
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse, Response
+import modal
+
+from provider_core import (
+    InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
+    UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
+    build_error_response, build_status_response,
+    get_job_tracker, build_deploy_compatibility_response, get_reconciliation_state
+)
+from provider_core.models import MODEL_DIRECTORIES
+
+MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
+MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
+PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
+
+_function_cache = {}
+
+def get_modal_function(func_name: str):
+    key = f"{MODAL_APP_NAME}.{func_name}"
+    if key not in _function_cache:
+        print(f"[{PROVIDER_ID}] Caching Modal function: {key}")
+        _function_cache[key] = modal.Function.from_name(MODAL_APP_NAME, func_name)
+    return _function_cache[key]
+
+class ModalProviderClient:
+    def __init__(self, runtime_config: Dict[str, Any]):
+        self.runtime_config = runtime_config
+        self.job_tracker = get_job_tracker()
+        self.reconciliation_state = get_reconciliation_state(PROVIDER_ID)
+
+    async def get_health(self) -> Dict[str, Any]:
+        missing = []
+        if not MODAL_APP_NAME:
+            missing.append("MODAL_APP_NAME")
+
+        if missing:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "missing": missing},
+            )
+        return {"status": "healthy", "provider_id": PROVIDER_ID, "modal_username": MODAL_USERNAME, "modal_app": MODAL_APP_NAME, "ready": True}
+
+    async def get_info(self) -> Dict[str, Any]:
+        return {"provider_id": PROVIDER_ID, "type": "modal", "username": MODAL_USERNAME, "app_name": MODAL_APP_NAME, "containerized": True}
+
+    def get_config(self) -> Dict[str, Any]:
+        return {"config": self.runtime_config}
+
+    def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        updated = []
+        for key, value in updates.items():
+            if key in self.runtime_config:
+                self.runtime_config[key] = value
+                updated.append(key)
+                print(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
+        return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
+
+    async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
+        job_id = request.job_id
+        cancelled = await self.job_tracker.cancel_job(job_id)
+        if cancelled:
+            return {"status": "cancelled", "job_id": job_id, "message": "Job marked for cancellation, streaming will stop"}
+        return {"status": "not_found", "job_id": job_id, "message": "Job not currently active on this worker"}
+
+    async def inference(self, request: InferenceRequest) -> StreamingResponse:
+        use_snapshot = request.use_snapshot
+        job_id = request.job_id
+        inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
+        class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
+        
+        if job_id:
+            await self.job_tracker.start_job(job_id)
+        
+        try:
+            ComfyUIClass = modal.Cls.from_name(MODAL_APP_NAME, class_name)
+            comfy_instance = ComfyUIClass()
+            
+            async def generate():
+                try:
+                    async with asyncio.timeout(inference_timeout):
+                        async for update in comfy_instance.run.remote_gen.aio(request.workflow):
+                            if job_id and await self.job_tracker.is_cancelled(job_id):
+                                yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                                return
+
+                            if update.get("status") == "success" and "images" in update:
+                                saved_images = []
+                                for i, img in enumerate(update["images"]):
+                                    if "data" in img and isinstance(img["data"], bytes):
+                                        img_b64 = base64.b64encode(img["data"]).decode('utf-8')
+                                        saved_images.append({"filename": img.get("filename", f"image_{i}.png"), "data": img_b64, "_base64_encoded": True})
+                                update["images"] = saved_images
+
+                            yield json.dumps(update) + "\n"
+
+                except TimeoutError:
+                    yield json.dumps(build_error_response(f"Inference timed out after {int(inference_timeout)}s", retryable=True, code=408)) + "\n"
+                except modal.exception.ConnectionError as ce:
+                    yield json.dumps(build_error_response(f"Modal connection timeout: {ce}", retryable=True)) + "\n"
+                except Exception as e:
+                    yield json.dumps(build_error_response(f"Stream error: {e}", retryable=False)) + "\n"
+                finally:
+                    if job_id:
+                        await self.job_tracker.end_job(job_id)
+            
+            return StreamingResponse(generate(), media_type="application/x-ndjson")
+        except Exception as e:
+            if job_id:
+                await self.job_tracker.end_job(job_id)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def setup_models(self) -> Dict[str, Any]:
+        setup_func = get_modal_function("setup_models")
+        await setup_func.spawn.aio()
+        return build_status_response("queued", "Setup queued", provider=PROVIDER_ID)
+
+    async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
+        download_func = get_modal_function("download_model")
+        await download_func.spawn.aio(request.url, request.path, request.token, request.preview_url, request.metadata)
+        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
+
+    async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
+        directory = request.directory if request else ""
+        list_func = get_modal_function("list_models_with_metadata")
+        files = await list_func.remote.aio(directory)
+        return build_status_response("success", f"Listed models in {directory}", provider=PROVIDER_ID, files=files)
+
+    async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
+        FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+        storage = FileStorage()
+        success = await storage.delete_file.remote.aio(request.path)
+        return {"success": success, "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}", "provider": PROVIDER_ID}
+
+    async def get_file(self, path: str) -> StreamingResponse:
+        try:
+            FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+            storage = FileStorage()
+            file_contents = await storage.get_file.remote.aio(path)
+            return Response(content=file_contents, media_type="application/octet-stream")
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    async def delete_file(self, path: str) -> Dict[str, Any]:
+        FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+        storage = FileStorage()
+        success = await storage.delete_file.remote.aio(path)
+        return {"success": success, "message": f"Deleted {path}" if success else f"File not found: {path}"}
+
+    async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
+        content = base64.b64decode(request.content_base64)
+        FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+        storage = FileStorage()
+        path = f"{request.directory}/{request.filename}"
+        await storage.put_file.remote.aio(path=path, content=content)
+        return {"status": "success", "path": path, "size": len(content)}
+
+    async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return build_deploy_compatibility_response(backend_url=BACKEND_URL, provider_id=PROVIDER_ID, provider_type="modal")
+
+    async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
+        validate_fn = get_modal_function("validate_models")
+        return await validate_fn.remote.aio(request.directory, request.delete_invalid)
+
+    async def validate_all_models(self) -> Dict[str, Any]:
+        validate_fn = get_modal_function("validate_models")
+        return await validate_fn.remote.aio(MODEL_DIRECTORIES, False)
+
+    async def run_reconciliation(self) -> Dict[str, Any]:
+        from provider_core.reconciliation import run_reconciliation_v2
+        if self.reconciliation_state.status == "reconciling":
+            return {"status": "already_running", "message": "Reconciliation already in progress"}
+        
+        async def validate_existing(delete_invalid: bool):
+            validate_fn = get_modal_function("validate_models")
+            timeout_seconds = max(1.0, float(self.runtime_config.get("validation_timeout_seconds", 300.0)))
+            return await asyncio.wait_for(validate_fn.remote.aio(MODEL_DIRECTORIES, delete_invalid), timeout=timeout_seconds)
+
+        async def list_existing_files():
+            paths = set()
+            list_models_func = get_modal_function("list_models_with_metadata")
+            list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 45.0)))
+            for directory in MODEL_DIRECTORIES:
+                try:
+                    files = await asyncio.wait_for(list_models_func.remote.aio(directory), timeout=list_timeout_seconds)
+                    for file_info in files: paths.add(f"{directory}/{file_info['name']}")
+                except Exception: pass
+            return paths
+
+        async def download_file(download_url: str, storage_path: str, token: str = None):
+            download_model_func = get_modal_function("download_model")
+            await download_model_func.remote.aio(url=download_url, path=storage_path, token=token)
+
+        async def delete_file(storage_path: str):
+            delete_file_func = get_modal_function("storage_delete_file")
+            await delete_file_func.remote.aio(storage_path)
+            return True
+
+        async def perform_reconciliation():
+            try:
+                await run_reconciliation_v2(
+                    provider_id=PROVIDER_ID, backend_url=BACKEND_URL, reconciliation_state=self.reconciliation_state,
+                    max_concurrent_downloads=self.runtime_config["max_concurrent_downloads"],
+                    hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN, storage_label="Modal",
+                    validate_existing=validate_existing, list_existing_files=list_existing_files,
+                    download_file=download_file, delete_file=delete_file
+                )
+            except Exception as e:
+                print(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
+                self.reconciliation_state.status = "error"
+
+        asyncio.create_task(perform_reconciliation())
+        return {"status": "started", "message": "Reconciliation started"}
+
+    def get_reconciliation_status(self) -> Dict[str, Any]:
+        return self.reconciliation_state.to_dict()

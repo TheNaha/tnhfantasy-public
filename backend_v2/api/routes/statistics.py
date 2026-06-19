@@ -125,7 +125,7 @@ def _calculate_statistics() -> Dict[str, Any]:
                     try:
                         date = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d")
                         stats["images_by_date"][date] = stats["images_by_date"].get(date, 0) + 1
-                    except:
+                    except Exception:
                         pass
 
     except Exception as e:
@@ -275,7 +275,7 @@ def _calculate_detailed_statistics() -> Dict[str, Any]:
                         weekday = str(dt.weekday())
                         detailed_stats["timeline"]["weekday"][weekday] = \
                             detailed_stats["timeline"]["weekday"].get(weekday, 0) + 1
-                    except:
+                    except Exception:
                         pass
 
             # === MODEL DATA ===

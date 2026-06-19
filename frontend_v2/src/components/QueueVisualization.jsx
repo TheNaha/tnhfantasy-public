@@ -12,7 +12,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const contentId = useId();
 
     // Use global WebSocket job store
-    const activeJobs = useJobStore(state => state.activeJobs);
+    const activeJobs = useJobStore(state => state.jobs);
     const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {
         // Filter for active items only and sort
         const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');
@@ -21,24 +21,24 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
 
         // Calculate basic stats/ETAs locally since we have state
         // This is a simplified estimation - ideally backend sends this, but WS handles status
-        const avgTime = 30; // Default or fetch once on mount if needed
+        const DEFAULT_AVG_JOB_TIME = 30; // Default seconds per job; backend sends actual stats via queue endpoint
 
         const runningProcessed = running.map(j => ({
             ...j,
-            eta_seconds: Math.max(0, avgTime - ((j.progress || 0) / 100) * avgTime)
+            eta_seconds: Math.max(0, DEFAULT_AVG_JOB_TIME - ((j.progress || 0) / 100) * DEFAULT_AVG_JOB_TIME)
         }));
 
         const pendingProcessed = pending.map((j, index) => ({
             ...j,
             position: index + 1,
-            eta_seconds: avgTime * (index + 1) + (running.length > 0 ? avgTime / 2 : 0)
+            eta_seconds: DEFAULT_AVG_JOB_TIME * (index + 1) + (running.length > 0 ? DEFAULT_AVG_JOB_TIME / 2 : 0)
         }));
 
         // Calculate approximate ETAs
         const calculatedQueue = [...runningProcessed, ...pendingProcessed];
 
         const derivedStats = {
-            avg_duration_seconds: avgTime,
+            avg_duration_seconds: DEFAULT_AVG_JOB_TIME,
             has_history: true,
             total_pending: pending.length,
             total_running: running.length
@@ -169,7 +169,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                             <div className="text-xs text-gray-500 text-center pt-1">
                                 Avg. job time: {formatETA(stats.avg_duration_seconds)}
                                 {pendingJobs.length > 0 && (
-                                    <> • Total wait: ~{formatETA(pendingJobs.reduce((sum, j) => sum + j.eta_seconds, 0))}</>
+                                    <> • Total wait: ~{formatETA(pendingJobs[pendingJobs.length - 1].eta_seconds)}</>
                                 )}
                             </div>
                         </div>

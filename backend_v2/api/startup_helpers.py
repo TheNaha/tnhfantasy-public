@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import os
 
 from api.deps import get_session_sync
@@ -59,44 +59,18 @@ def build_provider_worker_images() -> None:
 
 
 def autostart_provider_containers() -> None:
-    """Start enabled provider containers configured for local management."""
-    try:
-        from infrastructure.repositories import ProviderRepository
-        from services.provider_service import ProviderService
-        from services.container_manager import get_container_manager
-
-        session = get_session_sync()
-        try:
-            provider_repo = ProviderRepository(session)
-            provider_service = ProviderService(session)
-            providers = provider_repo.get_all()
-            container_manager = get_container_manager()
-            if not container_manager:
-                return
-
-            for provider in providers:
-                if provider.enabled and provider.container_config:
-                    try:
-                        logger.info("container_starting", provider=provider.id)
-                        port = provider.container_config.get("port", 8000)
-                        env_vars = provider_service.build_provider_environment(provider)
-                        container_manager.start_container(
-                            provider_id=provider.id,
-                            provider_type=provider.type,
-                            port=port,
-                            env_vars=env_vars if env_vars else None,
-                        )
-                        logger.info("container_started", provider=provider.id)
-                    except Exception as exc:
-                        logger.warning("container_start_failed", provider=provider.id, error=str(exc))
-        finally:
-            session.close()
-    except Exception as exc:
-        logger.warning("container_autostart_failed", error=str(exc))
+    """Provider containers are managed by docker compose. This function is a no-op."""
+    logger.info("provider_autostart_skipped", reason="compose_managed")
 
 
 def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120) -> None:
-    """Remove orphaned provider statuses and reset stale downloading entries."""
+    """Reset stale downloading entries and clean orphaned provider statuses.
+    
+    Does NOT purge provider records — let the discovery heartbeat system
+    (POST /api/v2/providers/discovery) upsert live provider records.
+    Providers from old backups are harmless; they get overwritten when
+    the live container sends its first discovery heartbeat.
+    """
     try:
         from infrastructure.repositories import ProviderRepository
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
@@ -104,11 +78,12 @@ def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120)
         session = get_session_sync()
         try:
             provider_repo = ProviderRepository(session)
-            active_provider_ids = [provider.id for provider in provider_repo.get_all()]
+            all_providers = provider_repo.get_all()
+            active_provider_ids = [p.id for p in all_providers]
 
             model_repo = ModelRepositoryV2(session)
             orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
-            stale_before = datetime.utcnow() - timedelta(minutes=stale_downloading_after_minutes)
+            stale_before = datetime.now(timezone.utc) - timedelta(minutes=stale_downloading_after_minutes)
             stale_resets = model_repo.reset_stale_downloading_statuses(
                 stale_before=stale_before,
                 provider_names=active_provider_ids,

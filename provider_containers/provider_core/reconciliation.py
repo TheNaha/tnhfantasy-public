@@ -5,6 +5,7 @@ event pushes, and the shared reconciliation orchestration used by workers.
 """
 
 import asyncio
+import os
 from typing import Awaitable, Callable, Dict, List, Optional, Any, Set
 from datetime import datetime
 
@@ -270,7 +271,7 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     """
     Calculate safe deletion limit to prevent accidental mass deletion.
     
-    Limits deletions to 50% of total files as a safety measure.
+    Limits deletions to 10% of total files as a safety measure.
     
     Args:
         total_files: Total number of files in storage
@@ -279,12 +280,56 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     Returns:
         Maximum number of files to delete
     """
-    max_deletions = total_files // 2
+    max_deletions = max(1, total_files // 10)
     if orphaned_count > max_deletions and max_deletions > 0:
-        print(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 50% of files!")
+        print(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 10% of files!")
         print(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
         return max_deletions
     return orphaned_count
+
+
+async def register_discovered_files(
+    backend_url: str,
+    provider_id: str,
+    orphaned_files: List[str],
+    http_client=None,
+) -> Dict[str, Any]:
+    """Register files found on provider storage as database models.
+    
+    Sends orphaned file paths to the backend so they get registered as
+    ModelV2 / ModelVersion / ModelFile / ProviderVersionStatus entries.
+    This ensures files that exist on the provider but weren't previously
+    in the database are persisted and show up in the provider's model count.
+    """
+    if not orphaned_files:
+        return {"imported": 0, "skipped": 0, "errors": 0, "total": 0, "files": []}
+
+    url = f"{backend_url}/api/v2/models/register-discovered"
+    payload = {
+        "provider_id": provider_id,
+        "files": [{"path": path} for path in orphaned_files],
+    }
+
+    try:
+        client = http_client or get_http_client()
+        response = await client.post(url, json=payload, timeout=60.0)
+
+        if response.status_code == 200:
+            result = response.json()
+            imported = result.get("imported", 0)
+            skipped = result.get("skipped", 0)
+            errors = result.get("errors", 0)
+            print(
+                f"[V2 Reconciliation] Registered provider files: "
+                f"{imported} imported, {skipped} skipped, {errors} errors"
+            )
+            return result
+        else:
+            print(f"[V2 Reconciliation] Warning: Failed to register discovered files: {response.status_code}")
+            return {"imported": 0, "skipped": 0, "errors": len(orphaned_files), "total": len(orphaned_files), "files": []}
+    except Exception as e:
+        print(f"[V2 Reconciliation] Warning: Error registering discovered files: {e}")
+        return {"imported": 0, "skipped": 0, "errors": len(orphaned_files), "total": len(orphaned_files), "files": []}
 
 
 async def run_reconciliation_v2(
@@ -495,21 +540,41 @@ async def run_reconciliation_v2(
             print("[V2 Reconciliation] ⚠️ SAFETY: No expected paths - skipping deletion!")
         else:
             orphaned_files = [path for path in existing_files if path not in all_expected_paths]
-            max_deletions = calculate_safe_deletion_limit(len(existing_files), len(orphaned_files))
-            orphaned_files = orphaned_files[:max_deletions]
 
             if orphaned_files:
-                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files to delete")
-                for orphan_path in orphaned_files:
-                    try:
-                        deleted = await delete_file(orphan_path)
-                        if deleted is False:
-                            print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
-                            continue
-                        reconciliation_state.increment_deletions_completed()
-                        print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
-                    except Exception as exc:
-                        print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files")
+
+                # Register orphaned files as database models so they persist across restarts
+                registration_result = await register_discovered_files(
+                    backend_url, provider_id, orphaned_files,
+                    http_client=shared_http_client,
+                )
+                registered_count = registration_result.get("imported", 0)
+
+                # Only consider deletion for files that weren't successfully registered
+                if registered_count < len(orphaned_files):
+                    unregistered = orphaned_files
+                    max_deletions = calculate_safe_deletion_limit(len(existing_files), len(unregistered))
+                    unregistered = unregistered[:max_deletions]
+                else:
+                    unregistered = []
+
+                if unregistered:
+                    delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
+                    if delete_enabled:
+                        for orphan_path in unregistered:
+                            try:
+                                deleted = await delete_file(orphan_path)
+                                if deleted is False:
+                                    print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
+                                    continue
+                                reconciliation_state.increment_deletions_completed()
+                                print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
+                            except Exception as exc:
+                                print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                    else:
+                        print(f"[V2 Reconciliation] Dry-run: would delete {len(unregistered)} orphaned files")
+                        print(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
             else:
                 print("[V2 Reconciliation] No orphaned files to delete")
 
