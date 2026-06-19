@@ -30,6 +30,7 @@ backend_v2/fix_*.py
 backend_v2/patch_*.py
 .coverage
 *.pyc
+*.db
 
 # Provider envs
 provider_containers/**/.env.*
