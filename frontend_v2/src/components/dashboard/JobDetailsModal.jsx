@@ -1,14 +1,14 @@
-import { useState } from 'react';
 import { X, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import ConfirmationModal from '../ConfirmationModal';
+import { useConfirmation } from '../../store/confirmationStore';
+import { getProviderDisplayName } from '../../utils/providerUtils';
+import { formatElapsed, formatTimestamp } from '../../utils/dateTime';
 
 import { memo } from 'react';
 
 // ⚡ Bolt: Wrap JobDetailsModal in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
-    const [confirmAction, setConfirmAction] = useState(null);
-    const [confirmConfig, setConfirmConfig] = useState(null);
+    const { confirm } = useConfirmation();
 
     if (!job) return null;
 
@@ -20,69 +20,44 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
     const isFailed = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
 
-    const handleActionClick = (actionType) => {
+    const handleActionClick = async (actionType) => {
         if (actionType === 'cancel') {
-            setConfirmConfig({
+            const accepted = await confirm({
                 title: "Cancel Job",
                 message: "Are you sure you want to cancel this job? This action cannot be undone.",
                 confirmText: "Yes, Cancel Job",
                 isDangerous: true,
-                onConfirm: async () => {
-                    try {
-                        await onCancel(job.id);
-                        onClose();
-                        toast.success('Job cancelled');
-                    } catch {
-                        toast.error('Failed to cancel job');
-                    }
-                }
             });
-            setConfirmAction('cancel');
+            if (!accepted) return;
+            try {
+                await onCancel(job.id);
+                onClose();
+                toast.success('Job cancelled');
+            } catch {
+                toast.error('Failed to cancel job');
+            }
         } else if (actionType === 'delete') {
-            setConfirmConfig({
+            const accepted = await confirm({
                 title: "Remove Job",
                 message: "Are you sure you want to remove this job from history? The generated images will remain in your gallery.",
                 confirmText: "Yes, Remove Job",
                 isDangerous: true,
-                onConfirm: async () => {
-                    try {
-                        await onDelete(job.id);
-                        onClose();
-                        toast.success('Job removed from history');
-                    } catch {
-                        toast.error('Failed to delete job');
-                    }
-                }
             });
-            setConfirmAction('delete');
+            if (!accepted) return;
+            try {
+                await onDelete(job.id);
+                onClose();
+                toast.success('Job removed from history');
+            } catch {
+                toast.error('Failed to delete job');
+            }
         }
-    };
-
-    const closeConfirm = () => {
-        setConfirmAction(null);
-        setConfirmConfig(null);
     };
 
     // Calculate elapsed time
-    const getElapsedTime = () => {
-        if (!job.created_at) return null;
-        // Ensure UTC parsing - append 'Z' if not present (backend stores UTC without suffix)
-        const createdAt = job.created_at.endsWith('Z') ? job.created_at : job.created_at + 'Z';
-        const start = new Date(createdAt);
-        let end;
-        if (job.completed_at) {
-            const completedAt = job.completed_at.endsWith('Z') ? job.completed_at : job.completed_at + 'Z';
-            end = new Date(completedAt);
-        } else {
-            end = new Date();
-        }
-        const elapsed = Math.floor((end - start) / 1000);
-        if (elapsed < 60) return `${elapsed}s`;
-        if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
-        return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
-    };
+    const getElapsedTime = () => formatElapsed(job.created_at, job.completed_at);
 
-    const providerName = job.provider_id?.replace('comfy-provider-', '').replace('modal-', '');
+    const providerName = getProviderDisplayName(job.provider_id);
 
     return (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
@@ -254,13 +229,13 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     {/* Timestamps */}
                     <div className="text-xs text-gray-600 space-y-1 pt-2 border-t border-gray-700">
                         {job.created_at && (
-                            <p>Created: {new Date(job.created_at.endsWith('Z') ? job.created_at : job.created_at + 'Z').toLocaleString()}</p>
+                            <p>Created: {formatTimestamp(job.created_at)}</p>
                         )}
                         {job.started_at && (
-                            <p>Started: {new Date(job.started_at.endsWith('Z') ? job.started_at : job.started_at + 'Z').toLocaleString()}</p>
+                            <p>Started: {formatTimestamp(job.started_at)}</p>
                         )}
                         {job.completed_at && (
-                            <p>Completed: {new Date(job.completed_at.endsWith('Z') ? job.completed_at : job.completed_at + 'Z').toLocaleString()}</p>
+                            <p>Completed: {formatTimestamp(job.completed_at)}</p>
                         )}
                     </div>
                 </div>
@@ -311,18 +286,6 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     </button>
                 </div>
             </div>
-
-            {/* Confirmation Modal */}
-            <ConfirmationModal
-                isOpen={!!confirmAction}
-                onClose={closeConfirm}
-                onCancel={closeConfirm}
-                onConfirm={confirmConfig?.onConfirm}
-                title={confirmConfig?.title}
-                message={confirmConfig?.message}
-                confirmText={confirmConfig?.confirmText}
-                isDangerous={confirmConfig?.isDangerous}
-            />
         </div>
     );
 });

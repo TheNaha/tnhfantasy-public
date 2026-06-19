@@ -5,6 +5,7 @@ import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { MODEL_MANAGER_CATEGORIES } from '../../constants/modelDirectories';
+import { getProviderDisplayName } from '../../utils/providerUtils';
 import {
     availabilityTone,
     formatAvailabilityBadgeLabel,
@@ -164,34 +165,33 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         return result;
     }, [files, selectedTags, sortBy, filterBaseModel, filterType, showNSFW]);
 
-    const handleDelete = (file) => {
+    const handleDelete = async (file) => {
         const displayName = file.display_name || file.name;
         const modelId = file.model_id;
 
-        openConfirm({
+        const accepted = await openConfirm({
             title: "Delete Model",
             message: `Are you sure you want to delete ${displayName}? This will also remove it from all providers.`,
             isDangerous: true,
             confirmText: "Delete",
-            onConfirm: async () => {
-                try {
-                    if (modelId) {
-                        // Use V2 API with proper provider sync
-                        const { modelsApi } = await import('../../api');
-                        await modelsApi.deleteV2(modelId);
-                        toast.success(`Deleted ${displayName} and synced providers`);
-                    } else {
-                        // Fallback to legacy file deletion
-                        await filesApi.deleteMultiple([file.name]);
-                        toast.success("Deleted " + displayName);
-                    }
-                    fetchFiles(true);
-                } catch (e) {
-                    console.error("Delete failed:", e);
-                    toast.error("Error deleting model");
-                }
-            }
         });
+        if (!accepted) return;
+        try {
+            if (modelId) {
+                // Use V2 API with proper provider sync
+                const { modelsApi } = await import('../../api');
+                await modelsApi.deleteV2(modelId);
+                toast.success(`Deleted ${displayName} and synced providers`);
+            } else {
+                // Fallback to legacy file deletion
+                await filesApi.deleteMultiple([file.name]);
+                toast.success("Deleted " + displayName);
+            }
+            fetchFiles(true);
+        } catch (e) {
+            console.error("Delete failed:", e);
+            toast.error("Error deleting model");
+        }
     };
 
     return (
@@ -460,7 +460,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                     {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
                                         <div className="mt-1 flex gap-1">
                                             {Object.entries(file.provider_statuses).map(([providerId, status]) => {
-                                                const providerShort = providerId.replace('comfy-provider-', '').replace('modal-', '');
+                                                const providerShort = getProviderDisplayName(providerId);
                                                 const initial = providerShort.charAt(0).toUpperCase();
                                                 const statusValue = typeof status === 'object' ? status.status : status;
                                                 const colorClass = {

@@ -1,5 +1,4 @@
 from datetime import datetime, timezone, timedelta
-import os
 
 from api.deps import get_session_sync
 from infrastructure.logging import get_logger
@@ -38,29 +37,6 @@ async def recover_pending_jobs() -> None:
             recovery_session.close()
     except Exception as exc:
         logger.warning("job_recovery_failed", error=str(exc))
-
-
-def build_provider_worker_images() -> None:
-    """Optionally refresh built provider worker images before container startup."""
-    if os.getenv("COMFY_BUILD_PROVIDER_IMAGES_ON_STARTUP", "").strip().lower() not in {"1", "true", "yes", "on"}:
-        logger.info("provider_image_refresh_skipped", reason="startup_build_disabled")
-        return
-
-    try:
-        from services.container_manager import get_container_manager
-
-        container_manager = get_container_manager()
-        if not container_manager:
-            return
-        image_tags = container_manager.build_worker_images()
-        logger.info("provider_image_refresh_complete", built=list(image_tags.keys()))
-    except Exception as exc:
-        logger.warning("provider_image_refresh_failed", error=str(exc))
-
-
-def autostart_provider_containers() -> None:
-    """Provider containers are managed by docker compose. This function is a no-op."""
-    logger.info("provider_autostart_skipped", reason="compose_managed")
 
 
 def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120) -> None:

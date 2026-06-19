@@ -12,13 +12,17 @@
 
 import { io } from 'socket.io-client';
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { getApiUrl } from './config';
+import { getApiUrl, DEFAULT_API_URL } from './config';
 
 function getSocketBaseUrl() {
     if (import.meta.env.DEV) {
         return '';
     }
-    return getApiUrl();
+    const apiUrl = getApiUrl();
+    if (apiUrl && apiUrl !== DEFAULT_API_URL) {
+        return apiUrl;
+    }
+    return '';
 }
 
 // WebSocket connection instance

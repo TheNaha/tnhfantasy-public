@@ -21,7 +21,8 @@ export function parseGalleryDate(value) {
     }
 
     if (typeof value === 'number') {
-        return new Date(value * 1000);
+        // Distinguish seconds vs milliseconds: values > 1e12 are milliseconds
+        return new Date(value > 1e12 ? value : value * 1000);
     }
 
     if (typeof value === 'string') {
@@ -60,4 +61,21 @@ export function getLatestDate(dates = []) {
     });
 
     return latest;
+}
+
+export function formatElapsed(startIso, endIso) {
+    if (!startIso) return null;
+    const createdAt = startIso.endsWith('Z') ? startIso : startIso + 'Z';
+    const start = new Date(createdAt);
+    const end = endIso ? new Date(endIso.endsWith('Z') ? endIso : endIso + 'Z') : new Date();
+    const elapsed = Math.floor((end - start) / 1000);
+    if (elapsed < 0) return '0s';
+    if (elapsed < 60) return `${elapsed}s`;
+    if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+    return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
+}
+
+export function formatTimestamp(value) {
+    const date = parseGalleryDate(value);
+    return isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString();
 }

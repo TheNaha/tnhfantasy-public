@@ -1,7 +1,7 @@
 """Tests for helper functions in api/routes/files.py"""
 import os
 import pytest
-from fastapi import HTTPException
+from core.exceptions import ValidationError
 
 
 class TestGetSafePath:
@@ -17,9 +17,8 @@ class TestGetSafePath:
 
     def test_traversal_raises_403(self, tmp_path):
         from api.routes.files import get_safe_path
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ValidationError):
             get_safe_path(str(tmp_path), "../../etc/passwd")
-        assert exc_info.value.status_code == 403
 
     def test_leading_slash_stripped(self, tmp_path):
         from api.routes.files import get_safe_path
@@ -28,17 +27,14 @@ class TestGetSafePath:
 
     def test_empty_path(self, tmp_path):
         from api.routes.files import get_safe_path
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ValidationError):
             get_safe_path(str(tmp_path), "")
-        assert exc_info.value.status_code == 400
 
-        with pytest.raises(HTTPException) as exc_info_slash:
+        with pytest.raises(ValidationError):
             get_safe_path(str(tmp_path), "/")
-        assert exc_info_slash.value.status_code == 400
 
-        with pytest.raises(HTTPException) as exc_info_backslash:
+        with pytest.raises(ValidationError):
             get_safe_path(str(tmp_path), "\\")
-        assert exc_info_backslash.value.status_code == 400
 
     def test_same_dir(self, tmp_path):
         from api.routes.files import get_safe_path

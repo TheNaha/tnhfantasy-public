@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 import httpx
 
-from api.routes import models as models_router
-from api.routes import models
+from services import model_preview_service as models_router
+from services import external_model_service
+from api.routes.models.preview import get_model_preview_image
 from infrastructure.request_dedup import clear_dedup_cache
 
 
@@ -63,7 +64,9 @@ async def test_fetch_civitai_preview_caches_by_version_and_image_index(monkeypat
 
         raise AssertionError(f"Unexpected URL requested: {url}")
 
-    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    dummy_client = _DummyAsyncClient(fake_get)
+    monkeypatch.setattr(models_router, "get_http_client", lambda: dummy_client)
+    monkeypatch.setattr(external_model_service, "get_http_client", lambda: dummy_client)
 
     image_data, content_type, cache_hit = await models_router.fetch_civitai_preview(100, version_id=222, image_index=2)
 
@@ -115,7 +118,9 @@ async def test_fetch_civitai_preview_falls_back_to_first_version_and_clamps_imag
 
         raise AssertionError(f"Unexpected URL requested: {url}")
 
-    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    dummy_client = _DummyAsyncClient(fake_get)
+    monkeypatch.setattr(models_router, "get_http_client", lambda: dummy_client)
+    monkeypatch.setattr(external_model_service, "get_http_client", lambda: dummy_client)
 
     # version_id is unknown, so route should fallback to first available version.
     # image_index is out of range, so it should clamp to the last available image.
@@ -144,8 +149,8 @@ async def test_get_model_preview_image_deduplicates_concurrent_fetches(monkeypat
     monkeypatch.setattr(models_router, "fetch_civitai_preview", fake_fetch)
 
     await asyncio.gather(
-        models_router.get_model_preview_image(11, version_id=22, image_index=0),
-        models_router.get_model_preview_image(11, version_id=22, image_index=0),
+        get_model_preview_image(11, version_id=22, image_index=0),
+        get_model_preview_image(11, version_id=22, image_index=0),
     )
 
     assert calls == 1
@@ -162,7 +167,9 @@ async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypa
         calls.append(url)
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    dummy_client = _DummyAsyncClient(fake_get)
+    monkeypatch.setattr(models_router, "get_http_client", lambda: dummy_client)
+    monkeypatch.setattr(external_model_service, "get_http_client", lambda: dummy_client)
 
     first_data, first_content_type, first_cache_hit = await models_router.fetch_civitai_preview(987654, image_index=0)
     second_data, second_content_type, second_cache_hit = await models_router.fetch_civitai_preview(987654, image_index=0)
@@ -189,7 +196,9 @@ async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeyp
         response = httpx.Response(status_code=404, request=request)
         raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
 
-    monkeypatch.setattr(models_router, "get_http_client", lambda: _DummyAsyncClient(fake_get))
+    dummy_client = _DummyAsyncClient(fake_get)
+    monkeypatch.setattr(models_router, "get_http_client", lambda: dummy_client)
+    monkeypatch.setattr(external_model_service, "get_http_client", lambda: dummy_client)
 
     first_data, first_content_type, first_cache_hit = await models_router.fetch_civitai_preview(579645, image_index=0)
     second_data, second_content_type, second_cache_hit = await models_router.fetch_civitai_preview(579645, image_index=0)

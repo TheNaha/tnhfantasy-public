@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { HardDrive, Globe } from 'lucide-react';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
 import { useSettings } from '../store/settingsStore';
 
 // Extracted Components
@@ -9,13 +9,7 @@ import { DiscoverTab, InstalledTab } from '../components/model-manager';
 export default function ModelManager() {
     const settings = useSettings();
     const [activeTab, setActiveTab] = useState('discover');
-    const [confirmModal, setConfirmModal] = useState({
-        isOpen: false,
-        title: '',
-        message: '',
-        onConfirm: () => { },
-        isDangerous: false
-    });
+    const { confirm } = useConfirmation();
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-4 lg:p-8 relative">
@@ -55,21 +49,11 @@ export default function ModelManager() {
                     ) : (
                         <InstalledTab
                             itemsPerPage={settings.models.itemsPerPage}
-                            openConfirm={(config) => setConfirmModal({ ...config, isOpen: true })}
+                            openConfirm={confirm}
                         />
                     )}
                 </div>
             </div>
-
-            <ConfirmationModal
-                isOpen={confirmModal.isOpen}
-                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-                onConfirm={confirmModal.onConfirm}
-                title={confirmModal.title}
-                message={confirmModal.message}
-                isDangerous={confirmModal.isDangerous}
-                confirmText={confirmModal.confirmText}
-            />
         </div>
     );
 }

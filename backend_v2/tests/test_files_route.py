@@ -12,6 +12,7 @@ from sqlmodel.pool import StaticPool
 
 from api.routes.files import router, get_safe_path
 from api.deps import get_session, get_provider_service
+from api.error_handlers import register_exception_handlers
 from services.gallery_indexer import GalleryIndexer
 
 # Setup database fixtures
@@ -34,6 +35,7 @@ def session_fixture(engine):
 def client_fixture(session):
     app = FastAPI()
     app.include_router(router)
+    register_exception_handlers(app)
 
     app.dependency_overrides[get_session] = lambda: session
 
@@ -55,10 +57,9 @@ class TestFilesRoute:
         path = "../file.txt"
         with patch("os.path.abspath", side_effect=lambda x: x):
             with patch("os.path.join", side_effect=lambda x, y: "/tmp/file.txt"):
-                from fastapi import HTTPException
-                with pytest.raises(HTTPException) as exc:
+                from core.exceptions import ValidationError
+                with pytest.raises(ValidationError):
                     get_safe_path(base, path)
-                assert exc.value.status_code == 403
 
     @patch("services.gallery_indexer.gallery_indexer")
     def test_list_files_output(self, mock_indexer, client):

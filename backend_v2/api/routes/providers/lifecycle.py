@@ -25,7 +25,7 @@ from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
 from services.provider_lifecycle_service import ProviderLifecycleService
 from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
-from core.exceptions import NotFoundError, ProviderError, ValidationError
+from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger

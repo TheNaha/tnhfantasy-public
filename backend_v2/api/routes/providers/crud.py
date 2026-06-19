@@ -244,7 +244,6 @@ async def delete_provider(
     """Delete a provider."""
     service = get_provider_service(session)
     await service.delete_provider(provider_id)
-    _container_status_cache.clear()
     invalidate_provider_status_caches(provider_id)
     return {"status": "success"}
 

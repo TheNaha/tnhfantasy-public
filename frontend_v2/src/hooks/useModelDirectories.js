@@ -12,7 +12,8 @@ async function fetchModelDirectory(directory) {
 }
 
 export function useModelDirectories(requests) {
-    const stableRequests = useMemo(() => requests, [requests]);
+    const requestsKey = useMemo(() => JSON.stringify(requests), [requests]);
+    const stableRequests = useMemo(() => JSON.parse(requestsKey), [requestsKey]);
     const directoryQueries = useQueries({
         queries: stableRequests.map(({ directory }) => ({
             queryKey: ['model-directory', directory],

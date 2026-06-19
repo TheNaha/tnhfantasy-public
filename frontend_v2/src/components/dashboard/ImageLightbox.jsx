@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
+import { getProviderDisplayName } from '../../utils/providerUtils';
 
 import { memo } from 'react';
 
@@ -158,7 +159,7 @@ export default memo(function ImageLightbox({
                                     {job.provider_id && (
                                         <div className="flex items-center gap-2 text-purple-400">
                                             <Server size={14} />
-                                            <span>{job.provider_id.replace('comfy-provider-', '').replace('modal-', '')}</span>
+                                            <span>{getProviderDisplayName(job.provider_id)}</span>
                                         </div>
                                     )}
                                     {getJobDuration() && (
@@ -235,7 +236,7 @@ export default memo(function ImageLightbox({
                                             {metadata.provider && (
                                                 <div className="flex items-center gap-2 text-purple-400">
                                                     <Server size={14} />
-                                                    <span>{metadata.provider.replace('comfy-provider-', '').replace('modal-', '')}</span>
+                                                    <span>{getProviderDisplayName(metadata.provider)}</span>
                                                 </div>
                                             )}
                                         </div>

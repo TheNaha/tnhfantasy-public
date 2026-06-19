@@ -14,7 +14,15 @@ logger = get_logger("job_processing")
 
 
 _finalizing_jobs: Set[str] = set()
-_finalizing_jobs_lock = asyncio.Lock()
+_finalizing_jobs_lock = None
+
+
+def _get_finalization_lock():
+    """Lazy initialization of asyncio.Lock to avoid event loop issues at import time."""
+    global _finalizing_jobs_lock
+    if _finalizing_jobs_lock is None:
+        _finalizing_jobs_lock = asyncio.Lock()
+    return _finalizing_jobs_lock
 
 
 def _serialize_datetime(value: Any) -> Optional[str]:
@@ -30,7 +38,7 @@ def _serialize_datetime(value: Any) -> Optional[str]:
 
 
 async def _reserve_finalization(job_id: str) -> bool:
-    async with _finalizing_jobs_lock:
+    async with _get_finalization_lock():
         if job_id in _finalizing_jobs:
             return False
         _finalizing_jobs.add(job_id)
@@ -38,7 +46,7 @@ async def _reserve_finalization(job_id: str) -> bool:
 
 
 async def _release_finalization(job_id: str) -> None:
-    async with _finalizing_jobs_lock:
+    async with _get_finalization_lock():
         _finalizing_jobs.discard(job_id)
 
 

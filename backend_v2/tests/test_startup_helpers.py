@@ -5,64 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from api.lifecycle import startup_application
 from api.startup_helpers import (
-    autostart_provider_containers,
-    build_provider_worker_images,
     cleanup_provider_state_artifacts,
 )
-
-
-def test_build_provider_worker_images_skips_when_startup_build_disabled():
-    container_manager = MagicMock()
-
-    with patch("services.container_manager.get_container_manager", return_value=container_manager):
-        build_provider_worker_images()
-
-    container_manager.build_worker_images.assert_not_called()
-
-
-def test_build_provider_worker_images_attempts_builds_when_enabled():
-    container_manager = MagicMock()
-    container_manager.build_worker_images.return_value = {
-        "modal": "comfy-provider-modal:latest",
-        "beam": "comfy-provider-beam:latest",
-    }
-
-    with patch.dict("os.environ", {"COMFY_BUILD_PROVIDER_IMAGES_ON_STARTUP": "true"}, clear=False), \
-         patch("services.container_manager.get_container_manager", return_value=container_manager):
-        build_provider_worker_images()
-
-    container_manager.build_worker_images.assert_called_once_with()
-
-
-def test_autostart_provider_containers_starts_enabled_containerized_providers():
-    session = MagicMock()
-    container_manager = MagicMock()
-    provider_service = MagicMock()
-
-    provider = MagicMock()
-    provider.id = "modal-primary"
-    provider.type = "modal"
-    provider.enabled = True
-    provider.container_config = {"port": 8001}
-
-    provider_repo = MagicMock()
-    provider_repo.get_all.return_value = [provider]
-
-    with patch("api.startup_helpers.get_session_sync", return_value=session), \
-         patch("infrastructure.repositories.ProviderRepository", return_value=provider_repo), \
-         patch("services.container_manager.get_container_manager", return_value=container_manager), \
-         patch("services.provider_service.ProviderService", return_value=provider_service):
-        provider_service.build_provider_environment.return_value = {"TOKEN": "abc"}
-        autostart_provider_containers()
-
-    container_manager.start_container.assert_called_once_with(
-        provider_id="modal-primary",
-        provider_type="modal",
-        port=8001,
-        env_vars={"TOKEN": "abc"},
-    )
-    provider_service.build_provider_environment.assert_called_once_with(provider)
-    session.close.assert_called_once_with()
 
 
 def test_cleanup_provider_state_artifacts_cleans_orphans_and_stale_downloads():
@@ -118,7 +62,6 @@ async def test_startup_application_autostarts_providers_after_cleanup():
          patch("api.lifecycle.schedule_vacuum"), \
          patch("api.lifecycle.recover_pending_jobs", new_callable=AsyncMock) as recover_pending_jobs, \
          patch("api.lifecycle.recover_post_processing_jobs", new_callable=AsyncMock) as recover_post_processing_jobs, \
-         patch("api.lifecycle.autostart_provider_containers", side_effect=lambda: events.append("autostart")), \
          patch("api.lifecycle.monitor_provider_changes", new_callable=AsyncMock), \
          patch("api.lifecycle.start_background_task", side_effect=start_background_task_side_effect), \
          patch("services.gallery_indexer.gallery_indexer.start"), \
@@ -132,7 +75,7 @@ async def test_startup_application_autostarts_providers_after_cleanup():
 
     job_queue.set_processor.assert_called_once_with(process_job)
     job_queue.start.assert_awaited_once_with()
-    assert events == ["cleanup", "autostart"]
+    assert events == ["cleanup"]
     assert tasks == {
         "provider_monitor_task": provider_monitor_task,
         "broadcast_task": broadcast_task,

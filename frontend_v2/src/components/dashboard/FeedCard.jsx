@@ -1,6 +1,5 @@
 import { useState, useRef, memo, useCallback, useId } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
   ChevronUp,
@@ -23,6 +22,7 @@ import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
+import { formatTimestamp } from "../../utils/dateTime";
 import {
   buildGeneratorStateFromMetadata,
   hydrateGeneratorStateModelVisuals,
@@ -46,29 +46,35 @@ const FeedCard = memo(function FeedCard({
   const imageEndpoint = `/api/view/output/${encodedName}`;
   const detailsId = useId();
 
-  const loadMetadata = useCallback(async () => {
+  // Use item.metadata from the gallery indexer (already fetched with the file list)
+  // Lazy-load full metadata only when user expands details, reuses, or remixes
+  const [fetchedMetadata, setFetchedMetadata] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const fetchInProgressRef = useRef(false);
+
+  const metadata = fetchedMetadata || item.metadata;
+
+  const ensureMetadata = useCallback(async () => {
+    if (metadata) return metadata;
+    if (fetchInProgressRef.current) return null;
+    fetchInProgressRef.current = true;
     try {
-      return await api.get(metadataEndpoint);
+      const data = await api.get(metadataEndpoint);
+      setFetchedMetadata(data);
+      return data;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
-        return null;
-      }
+      if (error instanceof ApiError && error.status === 404) return null;
       throw error;
+    } finally {
+      fetchInProgressRef.current = false;
     }
-  }, [metadataEndpoint]);
+  }, [metadata, metadataEndpoint]);
 
   const loadImageBlob = useCallback(async () => {
-    const response = await api.get(imageEndpoint);
+    const response = await fetch(imageEndpoint);
+    if (!response.ok) throw new Error(`Failed to load image: ${response.status}`);
     return response.blob();
   }, [imageEndpoint]);
-
-  // Use React Query for metadata fetching with caching
-  const { data: metadata, isLoading: loading } = useQuery({
-    queryKey: ["metadata", item.name],
-    queryFn: loadMetadata,
-    enabled: true, // Always fetch for header display - fixes "invalid model" issue
-    staleTime: 5 * 60 * 1000,
-  });
 
   const handleReuse = async () => {
     if (reuseLockRef.current) {
@@ -79,20 +85,10 @@ const FeedCard = memo(function FeedCard({
     setReusing(true);
 
     try {
-      // Fetch metadata if not loaded yet
-      let meta = metadata;
+      let meta = await ensureMetadata();
       if (!meta) {
-        try {
-          meta = await loadMetadata();
-          if (!meta) {
-            toast.error("Failed to load metadata");
-            return;
-          }
-        } catch (error) {
-          console.error("Error loading metadata:", error);
-          toast.error("Failed to load metadata");
-          return;
-        }
+        toast.error("Failed to load metadata");
+        return;
       }
 
       const reuseState = buildGeneratorStateFromMetadata(meta);
@@ -133,14 +129,10 @@ const FeedCard = memo(function FeedCard({
     setRemixing(true);
 
     try {
-      // Fetch metadata
-      let meta = metadata;
+      let meta = await ensureMetadata();
       if (!meta) {
-        meta = await loadMetadata();
-        if (!meta) {
-          toast.error("Failed to load image metadata");
-          return;
-        }
+        toast.error("Failed to load image metadata");
+        return;
       }
 
       // Generate new random seed
@@ -197,21 +189,22 @@ const FeedCard = memo(function FeedCard({
   // Navigate to Img2Img with this image as source
   const handleImg2Img = useCallback(async () => {
     try {
-      // Upload the image for Img2Img use
       const blob = await loadImageBlob();
 
-      // Get image dimensions
+      const dimensionUrl = URL.createObjectURL(blob);
       const img = new Image();
-      img.src = URL.createObjectURL(blob);
+      img.src = dimensionUrl;
       await new Promise((resolve) => {
         img.onload = resolve;
       });
+      URL.revokeObjectURL(dimensionUrl);
 
+      const previewUrl = URL.createObjectURL(blob);
       navigate("/img2img", {
         state: {
           sourceImage: {
             filename: item.name,
-            previewUrl: URL.createObjectURL(blob),
+            previewUrl,
             width: img.width,
             height: img.height,
             needsSync: true,
@@ -228,21 +221,22 @@ const FeedCard = memo(function FeedCard({
   // Navigate to Inpaint with this image as source
   const handleInpaint = useCallback(async () => {
     try {
-      // Fetch the image for Inpaint use
       const blob = await loadImageBlob();
 
-      // Get image dimensions
+      const dimensionUrl = URL.createObjectURL(blob);
       const img = new Image();
-      img.src = URL.createObjectURL(blob);
+      img.src = dimensionUrl;
       await new Promise((resolve) => {
         img.onload = resolve;
       });
+      URL.revokeObjectURL(dimensionUrl);
 
+      const previewUrl = URL.createObjectURL(blob);
       navigate("/inpaint", {
         state: {
           sourceImage: {
             filename: item.name,
-            previewUrl: URL.createObjectURL(blob),
+            previewUrl,
             width: img.width,
             height: img.height,
             needsSync: true,
@@ -255,6 +249,15 @@ const FeedCard = memo(function FeedCard({
       toast.error("Failed to load image");
     }
   }, [item.name, loadImageBlob, navigate]);
+
+  const handleShowDetails = async () => {
+    if (!showDetails && !metadata) {
+      setDetailsLoading(true);
+      await ensureMetadata();
+      setDetailsLoading(false);
+    }
+    setShowDetails(!showDetails);
+  };
 
   const checkpointDisplayName = getCheckpointDisplayName(metadata) || getCheckpointDisplayName(item) || "Unknown Model";
 
@@ -270,39 +273,16 @@ const FeedCard = memo(function FeedCard({
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-white truncate">
-              {loading ? "Loading..." : checkpointDisplayName}
+              {checkpointDisplayName}
             </h3>
             <p className="text-xs text-gray-400 truncate">
-              {(() => {
-                const timestamp = item.date || item.mtime;
-                if (!timestamp) return "Unknown date";
-
-                let date;
-                if (typeof timestamp === "string") {
-                  // ISO string or similar
-                  date = new Date(
-                    timestamp.endsWith("Z") ? timestamp : timestamp + "Z",
-                  );
-                } else if (timestamp > 1e12) {
-                  // Milliseconds (13+ digits)
-                  date = new Date(timestamp);
-                } else if (timestamp > 0) {
-                  // Seconds (Unix timestamp)
-                  date = new Date(timestamp * 1000);
-                } else {
-                  return "Unknown date";
-                }
-
-                return isNaN(date.getTime())
-                  ? "Unknown date"
-                  : date.toLocaleString();
-              })()}
+              {formatTimestamp(item.date || item.mtime)}
             </p>
           </div>
         </div>
         <div className="flex gap-2 flex-shrink-0">
           <button
-            onClick={() => setShowDetails(!showDetails)}
+            onClick={handleShowDetails}
             className={`p-2 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors ${showDetails ? "bg-gray-800" : ""}`}
             title={showDetails ? "Hide Details" : "Show Details"}
             aria-label={showDetails ? "Hide Details" : "Show Details"}
@@ -440,16 +420,9 @@ const FeedCard = memo(function FeedCard({
       <ContextMenu
         disabled={selectionMode}
         actions={createImageActions({
-          onCopySeed: async () => {
-            let meta = metadata;
-            if (!meta) {
-              try {
-                meta = await loadMetadata();
-              } catch {
-                // Metadata sidecar is optional; seed copy falls back to unavailable state.
-              }
-            }
-            if (meta?.seed) {
+        onCopySeed: async () => {
+          const meta = await ensureMetadata();
+          if (meta?.seed) {
               navigator.clipboard.writeText(String(meta.seed));
               toast.success(`Seed copied: ${meta.seed}`, { icon: "📋" });
             } else {
@@ -489,7 +462,7 @@ const FeedCard = memo(function FeedCard({
       {/* Details */}
       {showDetails && (
         <div id={detailsId} className="p-6 space-y-6 bg-gray-900/30 border-t border-gray-800">
-          {loading ? (
+          {detailsLoading ? (
             <div className="flex gap-2 items-center text-gray-500 text-sm">
               <Loader2 className="animate-spin" size={14} /> Loading details...
             </div>

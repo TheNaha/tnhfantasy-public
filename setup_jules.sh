@@ -52,7 +52,7 @@ npm install
 # Start the frontend dev server in the background
 # Allowing it to be accessed externally via 0.0.0.0
 echo "Starting Frontend server..."
-npm run dev -- --host 0.0.0.0 --port 5173 &
+npm run dev -- --host 0.0.0.0 --port 5174 &
 FRONTEND_PID=$!
 
 cd ..
@@ -60,7 +60,7 @@ cd ..
 echo "==================================="
 echo "Setup complete! Services are running:"
 echo "- Backend API: http://localhost:8002"
-echo "- Frontend UI: http://localhost:5173"
+echo "- Frontend UI: http://localhost:5174"
 echo "==================================="
 
 # Keep the script running to prevent the background jobs from dying

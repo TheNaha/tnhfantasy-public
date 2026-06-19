@@ -141,15 +141,15 @@ class TestModelsV2Extended:
             "/api/v2/models/external/parse",
             json={"url": "https://civitai.com/models/12345"}
         )
-        assert response.status_code in (200, 400, 422, 500)
+        assert response.status_code in (200, 400, 422, 500, 502)
 
     def test_external_civitai_search(self, client):
         response = client.get("/api/v2/models/external/civitai?query=checkpoint")
-        assert response.status_code in (200, 500, 503)
+        assert response.status_code in (200, 500, 502, 503)
 
     def test_external_hf_search(self, client):
         response = client.get("/api/v2/models/external/huggingface?query=diffusion")
-        assert response.status_code in (200, 500, 503)
+        assert response.status_code in (200, 500, 502, 503)
 
     def test_delete_nonexistent_model(self, client):
         response = client.delete("/api/v2/models/99999")

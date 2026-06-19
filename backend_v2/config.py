@@ -22,7 +22,7 @@
 # - Sensible defaults for quick setup
 import os
 import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from functools import lru_cache
@@ -566,7 +566,7 @@ def get_thumbnail_quality() -> int:
     return get_config()["image_processing"]["thumbnail_quality"]
 
 
-def get_blurhash_components() -> Tuple[int, int]:
+def get_blurhash_components():
     """Get blurhash components as (x, y) tuple."""
     cfg = get_config()["image_processing"]
     return (cfg["blurhash_components_x"], cfg["blurhash_components_y"])

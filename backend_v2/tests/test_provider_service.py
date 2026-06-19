@@ -262,14 +262,14 @@ class TestProviderServiceLoadBalancing:
         config = await service.update_load_balancing_config(strategy="round-robin")
         assert config is not None
 
-    def test_get_load_balancer_stats(self, service):
-        stats = service.get_load_balancer_stats()
+    async def test_get_load_balancer_stats(self, service):
+        stats = await service.get_load_balancer_stats()
         assert isinstance(stats, dict)
 
     async def test_get_load_balancer_stats_reflects_created_provider(self, service, sample_provider_data):
         await service.create_provider(sample_provider_data)
 
-        stats = service.get_load_balancer_stats()
+        stats = await service.get_load_balancer_stats()
         provider_ids = {item["id"] for item in stats["provider_stats"]}
 
         assert "test-provider" in provider_ids

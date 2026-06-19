@@ -19,7 +19,7 @@ import { useDashboardModals } from '../hooks/useDashboardModals';
 import { useDashboardSelection } from '../hooks/useDashboardSelection';
 
 import { GallerySkeleton } from '../components/Skeleton';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
 import useSettingsStore from '../store/settingsStore';
 
 import { FilterBar } from '../components/dashboard/FilterBar';
@@ -80,9 +80,9 @@ export default function Dashboard() {
         aspect_ratio: ''
     });
 
+    const { confirm } = useConfirmation();
+
     const {
-        confirmModal,
-        setConfirmModal,
         selectedJobId,
         setSelectedJobId,
         showCollectionsPanel,
@@ -95,7 +95,6 @@ export default function Dashboard() {
         setShowComparison,
         deleteJob,
         retryJob,
-        handleJobDelete,
         handleJobClick,
         handleJobDetailsClose,
     } = useDashboardModals({ queryClient, filters });
@@ -117,7 +116,7 @@ export default function Dashboard() {
         toggleFavorite,
         queryClient,
         filters,
-        setConfirmModal,
+        confirm,
         activeCollection,
         removeFromCollection,
         setShowSelectCollection
@@ -233,31 +232,45 @@ export default function Dashboard() {
         favorites,
     });
 
-    const handleDelete = useCallback((filename) => {
-        setConfirmModal({
-            isOpen: true,
+    const handleDelete = useCallback(async (filename) => {
+        const accepted = await confirm({
             title: 'Delete Image',
             message: `Are you sure you want to delete ${filename}? This action cannot be undone.`,
-            isDangerous: true,
             confirmText: 'Delete',
-            onConfirm: async () => {
-                try {
-                    await filesApi.deleteMultiple([filename]);
-                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
-                    if (selectedImage?.name === filename) closeSelectedImage();
-                    toast.success(`Successfully deleted ${filename}`, {
-                        icon: '🗑️',
-                        duration: toastSuccessDuration,
-                    });
-                } catch (e) {
-                    toast.error(`Failed to delete: ${e.message}`, {
-                        icon: '❌',
-                        duration: toastErrorDuration,
-                    });
-                }
-            }
+            isDangerous: true,
         });
-    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters, setConfirmModal]);
+        if (!accepted) return;
+        try {
+            await filesApi.deleteMultiple([filename]);
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+            if (selectedImage?.name === filename) closeSelectedImage();
+            toast.success(`Successfully deleted ${filename}`, {
+                icon: '🗑️',
+                duration: toastSuccessDuration,
+            });
+        } catch (e) {
+            toast.error(`Failed to delete: ${e.message}`, {
+                icon: '❌',
+                duration: toastErrorDuration,
+            });
+        }
+    }, [closeSelectedImage, confirm, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters]);
+
+    const handleJobDelete = useCallback(async (jobId) => {
+        const accepted = await confirm({
+            title: 'Remove Job',
+            message: 'Are you sure you want to remove this job from history? The generated images will remain in your gallery.',
+            confirmText: 'Remove',
+            isDangerous: true,
+        });
+        if (!accepted) return;
+        try {
+            await deleteJob(jobId);
+            toast.success('Job removed from history');
+        } catch (e) {
+            toast.error(e.message || 'Failed to remove job');
+        }
+    }, [confirm, deleteJob]);
 
     const useParameters = useCallback(async () => {
         if (reuseParametersLockRef.current) return;
@@ -339,19 +352,17 @@ export default function Dashboard() {
                         activeCollectionName={activeCollection && collections[activeCollection] ? collections[activeCollection].name : null}
                         setShowCollectionsPanel={setShowCollectionsPanel}
                         setShowStatsPanel={setShowStatsPanel}
-                        onClearHistory={() => {
-                            setConfirmModal({
-                                isOpen: true,
+                        onClearHistory={async () => {
+                            const accepted = await confirm({
                                 title: 'Clear Job History',
                                 message: 'Are you sure you want to clear all job history? This will remove all job records but keep the generated images.',
-                                isDangerous: true,
                                 confirmText: 'Clear History',
-                                onConfirm: async () => {
-                                    await jobsApi.clear();
-                                    useJobStore.setState({ jobs: [] });
-                                    refetch();
-                                }
+                                isDangerous: true,
                             });
+                            if (!accepted) return;
+                            await jobsApi.clear();
+                            useJobStore.setState({ jobs: [] });
+                            refetch();
                         }}
                     />
 
@@ -459,16 +470,6 @@ export default function Dashboard() {
                     onRetry={retryJob}
                 />
             )}
-
-            <ConfirmationModal
-                isOpen={confirmModal.isOpen}
-                title={confirmModal.title}
-                message={confirmModal.message}
-                isDangerous={confirmModal.isDangerous}
-                confirmText={confirmModal.confirmText}
-                onConfirm={confirmModal.onConfirm}
-                onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-            />
 
             {showComparison && (
                 <ImageComparison

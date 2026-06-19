@@ -30,6 +30,12 @@ COPY beam_worker/client.py .
 # Copy beam_app.py for deployment
 COPY beam_worker/beam_app.py .
 
+# Create unprivileged user matching host UID for shared volume access
+RUN useradd -r -u 1000 -s /bin/false worker && \
+    chown -R worker:worker /app
+
+USER worker
+
 # Expose HTTP port
 EXPOSE 8000
 

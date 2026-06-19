@@ -304,12 +304,12 @@ def fetch_hf_files(repo_id: str) -> List[Dict[str, Any]]:
     
     Returns list of file objects with path and size.
     """
-    import requests
+    import httpx
     
     url = f"https://huggingface.co/api/models/{repo_id}/tree/main"
     
     try:
-        response = requests.get(url, timeout=10)
+        response = httpx.get(url, timeout=10)
         response.raise_for_status()
         return response.json()
     except Exception as e:

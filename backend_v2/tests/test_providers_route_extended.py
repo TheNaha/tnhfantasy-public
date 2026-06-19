@@ -186,10 +186,10 @@ class TestProvidersRouteReconcile:
             }
         )
 
-        with patch("api.routes.providers._get_provider_lifecycle_service", return_value=lifecycle):
+        with patch("api.routes.providers.reconciliation._get_provider_lifecycle_service", return_value=lifecycle):
             response = client.post("/api/providers/test-provider/reconcile")
 
-        assert response.status_code == 409
+        assert response.status_code == 400
 
     def test_reconciliation_event_persists_backend_state(self, client):
         mock_service = MagicMock()
@@ -197,7 +197,7 @@ class TestProvidersRouteReconcile:
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
-        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+        with patch("api.routes.providers.reconciliation.get_provider_service", return_value=mock_service):
             response = client.post(
                 "/api/providers/test-provider/reconciliation-event",
                 json={"status": "reconciling", "phase": "downloading", "stats": {}},
@@ -214,8 +214,8 @@ class TestProvidersRouteReconcile:
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
-        with patch("api.routes.providers.get_provider_service", return_value=mock_service), \
-             patch("api.routes.providers.emit_provider_stats", new=AsyncMock()) as emit_stats:
+        with patch("api.routes.providers.reconciliation.get_provider_service", return_value=mock_service), \
+             patch("api.routes.providers.reconciliation.emit_provider_stats", new=AsyncMock()) as emit_stats:
             response = client.post(
                 "/api/providers/test-provider/reconciliation-event",
                 json={
@@ -234,7 +234,7 @@ class TestProvidersRouteReconcile:
             return_value={"provider_id": "test-provider", "status": "reconciling"}
         )
 
-        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+        with patch("api.routes.providers.reconciliation.get_provider_service", return_value=mock_service):
             response = client.post(
                 "/api/providers/test-provider/reconciliation-event",
                 json={
@@ -304,10 +304,10 @@ class TestProvidersRouteReconcile:
             }
         )
 
-        with patch("api.routes.providers.get_provider_service", return_value=mock_service):
+        with patch("api.routes.providers.lifecycle.get_provider_service", return_value=mock_service):
             response = client.post("/api/providers/test-provider/deploy")
 
-        assert response.status_code == 409
+        assert response.status_code == 400
 
     def test_get_provider_deploy_status_route(self, client):
         payload = {

@@ -146,7 +146,7 @@ class TestProvidersSaveImage:
 
         with patch("services.image_service.get_image_service", return_value=mock_service), \
              patch("services.gallery_indexer.gallery_indexer", mock_gallery_indexer), \
-             patch("api.routes.providers.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+             patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
             response = client.post(
                 "/api/providers/save-image",
                 json={"image_base64": b64}

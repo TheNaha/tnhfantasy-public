@@ -30,6 +30,12 @@ COPY modal_worker/modal_app.py .
 # Copy memory_snapshot_helper (required by modal_app.py for snapshot mode)
 COPY modal_worker/memory_snapshot_helper/ /app/memory_snapshot_helper/
 
+# Create unprivileged user matching host UID for shared volume access
+RUN useradd -r -u 1000 -s /bin/false worker && \
+    chown -R worker:worker /app
+
+USER worker
+
 # Expose HTTP port
 EXPOSE 8000
 

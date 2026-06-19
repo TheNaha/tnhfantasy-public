@@ -1,5 +1,9 @@
+import os
 import re
 from playwright.sync_api import sync_playwright
+
+SCREENSHOT_DIR = os.environ.get("VERIFY_SCREENSHOT_DIR", "/tmp/verification/screenshots")
+VIDEO_DIR = os.environ.get("VERIFY_VIDEO_DIR", "/tmp/verification/videos")
 
 def run_cuj(page):
     # Navigate to Advanced Generate page, which renders QueueVisualization inside GenerateLayout
@@ -26,15 +30,16 @@ def run_cuj(page):
     """)
     page.wait_for_timeout(2000)
 
-    # Let's just take a screenshot and see what rendered on the advanced page
-    page.screenshot(path="/home/jules/verification/screenshots/verification.png")
+    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+    page.screenshot(path=os.path.join(SCREENSHOT_DIR, "verification.png"))
     page.wait_for_timeout(1000)
 
 if __name__ == "__main__":
+    os.makedirs(VIDEO_DIR, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            record_video_dir="/home/jules/verification/videos",
+            record_video_dir=VIDEO_DIR,
             viewport={'width': 1280, 'height': 800}
         )
         page = context.new_page()

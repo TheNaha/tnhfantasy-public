@@ -8,7 +8,7 @@ import LoadBalancerBar from '../components/providers/LoadBalancerBar';
 import ProviderModal from '../components/providers/ProviderModal';
 import AddModelToProviderModal from '../components/providers/AddModelToProviderModal';
 import ReconciliationStatus from '../components/providers/ReconciliationStatus';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
 import { providersApi } from '../api';
 import { summarizeProviderStatus } from '../utils/providerStatus';
 import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
@@ -29,7 +29,7 @@ export default function Providers() {
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState('all');
     const [selectedProviderId, setSelectedProviderId] = useState(null);
-    const [resetConfirm, setResetConfirm] = useState({ isOpen: false, providerId: null });
+    const { confirm } = useConfirmation();
 
     const {
         providers,
@@ -160,9 +160,7 @@ export default function Providers() {
         try { await updateLoadBalancerStrategy(strategy, lbConfig); }
         catch (error) { toast.error(`Strategy update failed: ${error.message}`); }
     };
-    const executeResetStatus = async () => {
-        const providerId = resetConfirm.providerId;
-        setResetConfirm({ isOpen: false, providerId: null });
+    const executeResetStatus = async (providerId) => {
         try {
             const result = await resetProviderModelStatus(providerId);
             toast.success(`Reset complete! ${result.deleted_count || 0} entries cleared.`);
@@ -304,7 +302,15 @@ export default function Providers() {
                         onRestart={() => handleRestart(selectedProvider.id)}
                         onDeploy={() => handleDeploy(selectedProvider.id)}
                         onReconcile={() => handleReconcile(selectedProvider.id)}
-                        onResetStatus={() => setResetConfirm({ isOpen: true, providerId: selectedProvider.id })}
+                        onResetStatus={async () => {
+                            const accepted = await confirm({
+                                title: 'Reset Provider Status',
+                                message: 'This clears persisted provider sync rows and forces the next reconciliation to rebuild model state.',
+                                confirmText: 'Reset Provider',
+                                isDangerous: true,
+                            });
+                            if (accepted) executeResetStatus(selectedProvider.id);
+                        }}
                         onSetup={() => handleSetup(selectedProvider.id)}
                         providerFailures={providerStatsMap.get(selectedProvider.id)?.failures ?? 0}
                         jobsAssigned={providerStatsMap.get(selectedProvider.id)?.jobs_assigned ?? 0}
@@ -335,16 +341,6 @@ export default function Providers() {
                     onClose={async () => { setReconcilingProviderId(null); await refreshAll(); }}
                 />
             )}
-
-            <ConfirmationModal
-                isOpen={resetConfirm.isOpen}
-                onClose={() => setResetConfirm({ isOpen: false, providerId: null })}
-                onConfirm={executeResetStatus}
-                title="Reset Provider Status"
-                message="This clears persisted provider sync rows and forces the next reconciliation to rebuild model state."
-                isDangerous
-                confirmText="Reset Provider"
-            />
         </motion.div>
     );
 }

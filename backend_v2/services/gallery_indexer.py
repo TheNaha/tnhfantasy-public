@@ -443,9 +443,8 @@ class GalleryIndexer:
             # Format output
             result = [self.files[k] for k in paginated_keys]
             
-            # Copy to avoid mutation issues outside
-            import copy
-            return {"files": copy.deepcopy(result), "total": total}
+            # Shallow copy - callers only read dicts during JSON serialization
+            return {"files": list(result), "total": total}
 
     def get_all_files(self) -> List[Dict[str, Any]]:
         """

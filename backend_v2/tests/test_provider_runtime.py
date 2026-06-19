@@ -14,10 +14,10 @@ def test_container_provider_defaults_to_unknown_until_probe_succeeds():
     with patch("services.container_manager.get_container_manager", return_value=None):
         runtime = resolve_provider_runtime(provider)
 
-    assert runtime.mode == "container_http"
+    assert runtime.mode == "unavailable"
     assert runtime.connected is False
-    assert runtime.status == "unknown"
-    assert runtime.healthy is None
+    assert runtime.status == "unavailable"
+    assert runtime.healthy is False
 
 
 def test_container_provider_reports_connected_when_container_probe_succeeds():

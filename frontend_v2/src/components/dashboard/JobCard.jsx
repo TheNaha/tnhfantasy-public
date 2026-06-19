@@ -1,8 +1,10 @@
 import { memo, useState, useEffect, useCallback } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X } from 'lucide-react';
+import { getProviderDisplayName } from '../../utils/providerUtils';
+import { formatElapsed } from '../../utils/dateTime';
 
 const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
-    const [currentTime, setCurrentTime] = useState(() => Date.now());
+    const [, setCurrentTime] = useState(() => Date.now());
 
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
@@ -32,12 +34,7 @@ const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
     const prompt = meta.prompt || '';
     const promptPreview = prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt;
 
-    // Extract provider display name from provider_id
-    const getProviderName = (providerId) => {
-        if (!providerId) return null;
-        return providerId.replace('comfy-provider-', '').replace('modal-', '');
-    };
-    const providerName = getProviderName(job.provider_id);
+    const providerName = getProviderDisplayName(job.provider_id);
 
     // ⚡ Bolt: Use a stable callback to prevent creating a new function on every render (especially when processing updates every second)
     const handleClick = useCallback(() => {
@@ -56,18 +53,7 @@ const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
         onDelete?.(job.id);
     }, [onDelete, job.id]);
 
-    // Calculate elapsed time
-    const getElapsedTime = () => {
-        if (!job.created_at) return null;
-        // Ensure UTC parsing - append 'Z' if not present for proper timezone handling
-        const createdAt = job.created_at.endsWith('Z') ? job.created_at : job.created_at + 'Z';
-        const start = new Date(createdAt);
-        const now = new Date(currentTime);
-        const elapsed = Math.floor((now - start) / 1000);
-        if (elapsed < 60) return `${elapsed}s`;
-        if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
-        return `${Math.floor(elapsed / 3600)}h ${Math.floor((elapsed % 3600) / 60)}m`;
-    };
+    const getElapsedTime = () => formatElapsed(job.created_at);
 
     return (
         <div

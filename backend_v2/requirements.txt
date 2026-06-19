@@ -51,7 +51,3 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 
-#Provide-Testing
-modal
-beta9
-beam-client

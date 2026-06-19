@@ -4,16 +4,8 @@ from typing import Optional, Set, Tuple
 from core.entities import JobStatus, Provider
 from infrastructure.logging import get_logger
 from services.load_balancer import LoadBalancer
-from services.load_balancer_factory import create_load_balancer as create_balancer
 
 logger = get_logger("job_orchestration")
-
-
-def create_load_balancer(session, provider_service) -> LoadBalancer:
-    """Create a load balancer using the currently configured strategy."""
-    lb_config = provider_service.get_load_balancing_config()
-    strategy = lb_config.strategy if lb_config else None
-    return create_balancer(session, strategy=strategy)
 
 
 async def mark_provider_exhausted(

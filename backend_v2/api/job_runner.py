@@ -2,7 +2,6 @@ import asyncio
 from typing import Optional
 
 from api.job_orchestration import (
-    create_load_balancer,
     mark_provider_exhausted,
     maybe_retry_current_provider,
     select_next_provider,
@@ -17,6 +16,7 @@ from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.job_service import JobService
 from services.provider_service import ProviderService
+from services.load_balancer_factory import create_load_balancer
 
 logger = get_logger("job_runner")
 
@@ -91,7 +91,7 @@ async def execute_job(
     try:
         job_service = JobService(session)
         provider_service = ProviderService(session)
-        load_balancer = create_load_balancer(session, provider_service)
+        load_balancer = create_load_balancer(session)
 
         try:
             job = await job_service.get_job(job_id)

@@ -82,7 +82,7 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
-            b'{"status":"error","error":"beam upstream failed","retryable":true}\n',
+            b'{"status":"error","message":"beam upstream failed","retryable":true}\n',
         ]
     )
     install_streaming_client(monkeypatch, response)
@@ -110,7 +110,7 @@ async def test_call_provider_uses_details_message_field(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
-            b'{"status":"error","details":{"message":"nested worker message"},"retryable":true}\n',
+            b'{"status":"error","message":"nested worker message","retryable":true}\n',
         ]
     )
     install_streaming_client(monkeypatch, response)

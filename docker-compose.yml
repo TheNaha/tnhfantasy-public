@@ -88,14 +88,26 @@ services:
   #     context: ./provider_containers
   #     dockerfile: beam_worker/Dockerfile
   #   container_name: comfy-provider-beam-primary
+  #   depends_on:
+  #     frontend_v2:
+  #       condition: service_healthy
   #   env_file:
   #     - .env
   #   environment:
   #     - PROVIDER_ID=beam-primary
   #     - PORT=8000
   #     - BACKEND_URL=http://backend_v2:8002
+  #   volumes:
+  #     - ./data:/data
   #   networks:
   #     - tnhcomfy
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
 
 networks:
   tnhcomfy:

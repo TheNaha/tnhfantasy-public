@@ -1,5 +1,6 @@
 """Tests for api/routes/settings.py"""
 import pytest
+from unittest.mock import patch
 import config as cfg_module
 from config import DEFAULT_CONFIG
 
@@ -100,26 +101,38 @@ class TestSettingsReset:
 
 
 class TestBrandingSettings:
-    def test_get_branding(self, client):
-        response = client.get("/api/settings/branding")
-        assert response.status_code == 200
+    def test_get_branding(self, client, tmp_path):
+        import api.routes.settings as settings_mod
+        branding_path = str(tmp_path / "branding.json")
+        with patch.object(settings_mod, "BRANDING_CONFIG_PATH", branding_path):
+            response = client.get("/api/settings/branding")
+            assert response.status_code == 200
 
-    def test_get_branding_has_app_name(self, client):
-        response = client.get("/api/settings/branding")
-        data = response.json()
-        assert "appName" in data
+    def test_get_branding_has_app_name(self, client, tmp_path):
+        import api.routes.settings as settings_mod
+        branding_path = str(tmp_path / "branding.json")
+        with patch.object(settings_mod, "BRANDING_CONFIG_PATH", branding_path):
+            response = client.get("/api/settings/branding")
+            data = response.json()
+            assert "appName" in data
 
-    def test_post_branding(self, client):
+    def test_post_branding(self, client, tmp_path):
+        import api.routes.settings as settings_mod
+        branding_path = str(tmp_path / "branding.json")
         payload = {"appName": "My ComfyUI", "logoUrl": "/logo.png", "faviconUrl": "/favicon.ico"}
-        response = client.post("/api/settings/branding", json=payload)
-        assert response.status_code == 200
+        with patch.object(settings_mod, "BRANDING_CONFIG_PATH", branding_path):
+            response = client.post("/api/settings/branding", json=payload)
+            assert response.status_code == 200
 
-    def test_post_branding_returns_updated(self, client):
+    def test_post_branding_returns_updated(self, client, tmp_path):
+        import api.routes.settings as settings_mod
+        branding_path = str(tmp_path / "branding.json")
         payload = {"appName": "Custom App", "logoUrl": "/logo.png", "faviconUrl": "/favicon.ico"}
-        response = client.post("/api/settings/branding", json=payload)
-        assert response.status_code == 200
-        data = response.json()
-        assert data.get("branding", {}).get("appName") == "Custom App" or response.status_code == 200
+        with patch.object(settings_mod, "BRANDING_CONFIG_PATH", branding_path):
+            response = client.post("/api/settings/branding", json=payload)
+            assert response.status_code == 200
+            data = response.json()
+            assert data.get("branding", {}).get("appName") == "Custom App" or response.status_code == 200
 
 
 class TestSessionSettings:

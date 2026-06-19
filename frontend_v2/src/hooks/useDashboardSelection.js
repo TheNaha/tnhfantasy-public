@@ -7,7 +7,7 @@ export function useDashboardSelection({
     toggleFavorite, 
     queryClient, 
     filters,
-    setConfirmModal,
+    confirm,
     activeCollection,
     removeFromCollection,
     setShowSelectCollection
@@ -24,38 +24,35 @@ export function useDashboardSelection({
         });
     }, []);
 
-    const handleBatchDownload = useCallback(() => {
-        setConfirmModal({
-            isOpen: true,
+    const handleBatchDownload = useCallback(async () => {
+        const accepted = await confirm({
             title: 'Download Images',
             message: `Download ${selectedFiles.size} images to your computer?`,
-            isDangerous: false,
             confirmText: 'Download',
-            onConfirm: async () => {
-                const filesToDownload = Array.from(selectedFiles);
-                toast.promise(
-                    (async () => {
-                        for (const filename of filesToDownload) {
-                            const link = document.createElement('a');
-                            link.href = `/api/view/output/${filename}`;
-                            link.download = filename;
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    })(),
-                    {
-                        loading: `Downloading ${filesToDownload.length} images...`,
-                        success: `Downloaded ${filesToDownload.length} images!`,
-                        error: 'Download failed'
-                    }
-                );
-                setSelectionMode(false);
-                setSelectedFiles(new Set());
-            }
         });
-    }, [selectedFiles, setConfirmModal]);
+        if (!accepted) return;
+        const filesToDownload = Array.from(selectedFiles);
+        toast.promise(
+            (async () => {
+                for (const filename of filesToDownload) {
+                    const link = document.createElement('a');
+                    link.href = `/api/view/output/${filename}`;
+                    link.download = filename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            })(),
+            {
+                loading: `Downloading ${filesToDownload.length} images...`,
+                success: `Downloaded ${filesToDownload.length} images!`,
+                error: 'Download failed'
+            }
+        );
+        setSelectionMode(false);
+        setSelectedFiles(new Set());
+    }, [selectedFiles, confirm]);
 
     const handleBatchFavorite = useCallback(() => {
         Array.from(selectedFiles).forEach(filename => {
@@ -78,27 +75,25 @@ export function useDashboardSelection({
         setSelectedFiles(new Set());
     }, [activeCollection, removeFromCollection, selectedFiles]);
 
-    const handleBatchDelete = useCallback(() => {
-        setConfirmModal({
-            isOpen: true,
+    const handleBatchDelete = useCallback(async () => {
+        const accepted = await confirm({
             title: `Delete ${selectedFiles.size} Images`,
             message: 'Are you sure you want to delete these images? This action cannot be undone.',
-            isDangerous: true,
             confirmText: 'Delete Images',
-            onConfirm: async () => {
-                try {
-                    await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
-                    setSelectedFiles(new Set());
-                    setSelectionMode(false);
-                    toast.success(`Deleted ${selectedFiles.size} images`);
-                } catch (e) {
-                    console.error(e);
-                    toast.error(`Failed to delete: ${e.message}`);
-                }
-            }
+            isDangerous: true,
         });
-    }, [queryClient, selectedFiles, filters, setConfirmModal]);
+        if (!accepted) return;
+        try {
+            await filesApi.deleteMultiple(Array.from(selectedFiles));
+            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
+            setSelectedFiles(new Set());
+            setSelectionMode(false);
+            toast.success(`Deleted ${selectedFiles.size} images`);
+        } catch (e) {
+            console.error(e);
+            toast.error(`Failed to delete: ${e.message}`);
+        }
+    }, [queryClient, selectedFiles, filters, confirm]);
 
     const handleCancelSelectionMode = useCallback(() => {
         setSelectionMode(false);

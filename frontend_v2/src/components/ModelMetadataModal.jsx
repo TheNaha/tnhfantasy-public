@@ -3,6 +3,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { copyToClipboard } from '../utils/clipboard';
+import { getProviderDisplayName } from '../utils/providerUtils';
 
 const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected']);
 const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
@@ -22,12 +23,6 @@ function isProviderOnline(provider) {
         return false;
     }
     return ONLINE_RUNTIME_STATES.has(provider.runtime_state?.status);
-}
-
-function formatProviderName(providerId) {
-    return providerId
-        .replace('comfy-provider-', '')
-        .replace('modal-', '');
 }
 
 function modelStatusTone(status) {
@@ -174,7 +169,7 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
             const modelStatus = normalizeModelStatus(providerStatuses[providerId]);
             return {
                 providerId,
-                providerName: formatProviderName(providerId),
+                providerName: getProviderDisplayName(providerId),
                 online: onlineProviderIds.has(providerId),
                 runtimeStatus,
                 modelStatus,

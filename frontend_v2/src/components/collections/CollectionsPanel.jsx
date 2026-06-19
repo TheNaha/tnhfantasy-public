@@ -3,7 +3,7 @@ import { FolderOpen, Plus, Trash2, Edit2, X, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useStore from '../../store/useStore';
 import CreateCollectionModal from './CreateCollectionModal';
-import ConfirmationModal from '../ConfirmationModal';
+import { useConfirmation } from '../../store/confirmationStore';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
@@ -17,9 +17,9 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
     const setActiveCollection = useStore((state) => state.setActiveCollection);
 
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const [deleteConfirm, setDeleteConfirm] = useState(null); // Store collection ID to delete
     const [editingId, setEditingId] = useState(null);
     const [editName, setEditName] = useState('');
+    const { confirm } = useConfirmation();
 
     const collectionList = Object.values(collections);
     const getImageCount = (collection) => collection.imageCount ?? collection.images?.length ?? 0;
@@ -28,15 +28,16 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
         createCollection(name, color);
     };
 
-    const handleDelete = (id, e) => {
+    const handleDelete = async (id, e) => {
         e.stopPropagation();
-        setDeleteConfirm(id); // Show confirmation modal
-    };
-
-    const confirmDelete = () => {
-        if (deleteConfirm) {
-            deleteCollection(deleteConfirm);
-            setDeleteConfirm(null);
+        const accepted = await confirm({
+            title: 'Delete Collection?',
+            message: 'This will delete the collection but keep all the images. This action cannot be undone.',
+            confirmText: 'Delete Collection',
+            isDangerous: true,
+        });
+        if (accepted) {
+            deleteCollection(id);
         }
     };
 
@@ -223,17 +224,6 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                         isOpen={showCreateModal}
                         onClose={() => setShowCreateModal(false)}
                         onCreate={handleCreate}
-                    />
-
-                    {/* Delete Confirmation Modal */}
-                    <ConfirmationModal
-                        isOpen={!!deleteConfirm}
-                        onCancel={() => setDeleteConfirm(null)}
-                        onConfirm={confirmDelete}
-                        title="Delete Collection?"
-                        message="This will delete the collection but keep all the images. This action cannot be undone."
-                        confirmText="Delete Collection"
-                        isDangerous={true}
                     />
                 </div>
             )}
