@@ -28,12 +28,12 @@ Execute codebase audit, consolidation, and repair of the ComfyUI Wrapper applica
   1. Baseline Audit & Test Verification [done]
   2. Backend Foundation & DI Stabilization [done]
   3. Provider Integration & Health Normalization [done]
-  4. Backend Refactoring & Decoupling [in-progress]
-  5. Frontend State & WebSocket Cleanup [pending]
-  6. Frontend Dashboard Monolith Decomposition [pending]
+  4. Backend Refactoring & Decoupling [done]
+  5. Frontend State & WebSocket Cleanup [done]
+  6. Frontend Dashboard Monolith Decomposition [in-progress]
   7. Full Test Coverage & Acceptance [pending]
 - **Current phase**: 1
-- **Current focus**: Backend Refactoring & Decoupling
+- **Current focus**: Frontend Dashboard Monolith Decomposition
 
 ## 🔒 Key Constraints
 - Never write, modify, or create source code files directly.
@@ -42,8 +42,8 @@ Execute codebase audit, consolidation, and repair of the ComfyUI Wrapper applica
 - Never reuse a subagent after it has delivered its handoff — always spawn fresh.
 
 ## Current Parent
-- Conversation ID: 7e809d37-bb54-437f-91c0-dd04ae2895aa
-- Updated: not yet
+- Conversation ID: c6a3f71a-cedf-4a56-b415-22ede573d693
+- Updated: 2026-06-19T14:08:00Z
 
 ## Key Decisions Made
 - Initialized plan.md, progress.md, and context.md in the orchestrator directory.
@@ -60,17 +60,32 @@ Execute codebase audit, consolidation, and repair of the ComfyUI Wrapper applica
 | Milestone 3 Reviewer | teamwork_preview_reviewer | Provider Integration & Health Normalization | completed | ccac5b0f-9af4-4b57-ac02-837081f3c661 |
 | Forensic Auditor (M3) | teamwork_preview_auditor | Provider Integration & Health Normalization | completed | 95ebc2c0-20e2-4591-9876-fd480e9b6a38 |
 | Milestone 4 Explorer | teamwork_preview_explorer | Backend Refactoring & Decoupling | completed | 1373e85b-932a-4a44-982d-f5599f28236c |
-| Milestone 4 Worker | teamwork_preview_worker | Backend Refactoring & Decoupling | in-progress | 36649717-d615-4ccd-a192-3a4a1b255a7d |
+| Milestone 4 Worker | teamwork_preview_worker | Backend Refactoring & Decoupling | failed | 36649717-d615-4ccd-a192-3a4a1b255a7d |
+| Milestone 4 Worker Gen 2 | teamwork_preview_worker | Backend Refactoring & Decoupling | completed | 69f17cab-6e30-4562-803c-e39ccd163f0d |
+| Milestone 4 Reviewer | teamwork_preview_reviewer | Backend Refactoring & Decoupling | completed | 4c105291-d248-4c66-89fb-15dc3b77a1a5 |
+| Forensic Auditor (M4) | teamwork_preview_auditor | Backend Refactoring & Decoupling | completed | 9d6b3287-9ea7-4bf8-af64-3c7f0a50d39a |
+| Milestone 5 Explorer | teamwork_preview_explorer | Frontend State & WebSocket Cleanup | completed | eca35148-3b11-49d1-9412-9a283ab860d6 |
+| Milestone 5 Worker | teamwork_preview_worker | Frontend State & WebSocket Cleanup | completed | 37d219f8-9881-4ad7-92cf-6039240de4fc |
+| Milestone 5 Reviewer | teamwork_preview_reviewer | Frontend State & WebSocket Cleanup | completed | 2e65471b-ad95-4873-ba8a-e80d4370bf52 |
+| Milestone 5 Worker Gen 2 | teamwork_preview_worker | Frontend State & WebSocket Cleanup | completed | 858c0917-9f53-41a1-a94c-9777df0f84f9 |
+| Milestone 5 Reviewer Gen 2 | teamwork_preview_reviewer | Frontend State & WebSocket Cleanup | completed | 560c1ed8-ad08-4e32-aba9-b8dc26e63f19 |
+| Milestone 5 Auditor Gen 2 | teamwork_preview_auditor | Frontend State & WebSocket Cleanup | completed | cc0ee7e3-ad28-46f7-a3c4-1635420143cb |
+| Milestone 6 Explorer 1 | teamwork_preview_explorer | Frontend Dashboard Monolith Decomposition | completed | 79ed444b-6b02-42f5-a253-d12756fdba74 |
+| Milestone 6 Explorer 2 | teamwork_preview_explorer | Frontend Dashboard Monolith Decomposition | completed | 365a47f5-c932-4213-b97d-e94ae45eca36 |
+| Milestone 6 Explorer 3 | teamwork_preview_explorer | Frontend Dashboard Monolith Decomposition | completed | 9e330130-8a90-4aa0-a474-f4d30d4d283c |
+| Milestone 6 Worker | teamwork_preview_worker | Frontend Dashboard Monolith Decomposition | completed | 773db258-9281-4d4d-a79a-316198b2dec0 |
+| Milestone 6 Reviewer | teamwork_preview_reviewer | Frontend Dashboard Monolith Decomposition | in-progress | 80d8bd01-a9f8-438f-93fa-781d968ec666 |
+| Milestone 6 Auditor | teamwork_preview_auditor | Frontend Dashboard Monolith Decomposition | in-progress | 5d3849e8-43b4-4058-b43e-a6d681297a19 |
 
 ## Succession Status
 - Succession required: no
-- Spawn count: 10 / 16
-- Pending subagents: 36649717-d615-4ccd-a192-3a4a1b255a7d
-- Predecessor: none
+- Spawn count: 9 / 16
+- Pending subagents: 80d8bd01-a9f8-438f-93fa-781d968ec666, 5d3849e8-43b4-4058-b43e-a6d681297a19
+- Predecessor: c6a3f71a-cedf-4a56-b415-22ede573d693
 - Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: d4553e37-d267-4d5b-ba70-743258ac2a78/task-47
+- Heartbeat cron: f3fe977c-2535-4010-aa01-d012ab0834b3/task-27
 - Safety timer: none
 - On succession: kill all timers before spawning successor
 - On context truncation: run `manage_task(Action="list")` — re-create if missing

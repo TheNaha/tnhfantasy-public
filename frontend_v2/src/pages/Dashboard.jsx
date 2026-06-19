@@ -1,45 +1,47 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 // API Layer
 import { filesApi } from '../api';
 import { jobsApi } from '../api/jobs';
+import { cancelJob as cancelJobWs } from '../api/websocket';
+import * as ws from '../api/websocket';
 
+// Hooks
 import { useGallery } from '../hooks/useGallery';
 import { useDashboardItems } from '../hooks/useDashboardItems';
 import { useSelectedImageState } from '../hooks/useSelectedImageState';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
+import {
+    useCollections,
+    useCollectionImages,
+    useAddImagesToCollection,
+    useRemoveImagesFromCollection
+} from '../hooks/useCollections';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useDashboardModals } from '../hooks/useDashboardModals';
 import { useDashboardSelection } from '../hooks/useDashboardSelection';
-
-import { GallerySkeleton } from '../components/Skeleton';
-import { useConfirmation } from '../store/confirmationStore';
-import useSettingsStore from '../store/settingsStore';
-
-import { FilterBar } from '../components/dashboard/FilterBar';
-import GroupedDashboardContent from '../components/dashboard/GroupedDashboardContent';
-import { ImageComparison } from '../components/dashboard/ImageComparison';
-import { TimelineView } from '../components/dashboard/TimelineView';
-import SelectionToolbar from '../components/dashboard/SelectionToolbar';
-import ImageLightbox from '../components/dashboard/ImageLightbox';
-import JobDetailsModal from '../components/dashboard/JobDetailsModal';
-import useStore from '../store/useStore';
-import CollectionsPanel from '../components/collections/CollectionsPanel';
-import SelectCollectionModal from '../components/collections/SelectCollectionModal';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
-import StatsPanel from '../components/stats/StatsPanel';
-import EmptyState from '../components/EmptyState';
-import QueueVisualization from '../components/QueueVisualization';
 import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefresh';
 import { useGalleryAutoRefresh } from '../hooks/useGalleryAutoRefresh';
-import { DashboardHeader } from '../components/dashboard/DashboardHeader';
-import { DashboardToolbar } from '../components/dashboard/DashboardToolbar';
+
+// Stores
+import { useConfirmation } from '../store/confirmationStore';
+import useSettingsStore from '../store/settingsStore';
+import useStore from '../store/useStore';
+
+// Components
+import QueueVisualization from '../components/QueueVisualization';
+import GeneratorFloatingButton from '../components/dashboard/GeneratorFloatingButton';
+import DashboardOverlays from '../components/dashboard/DashboardOverlays';
+import DashboardGalleryGrid from '../components/dashboard/DashboardGalleryGrid';
+import DashboardHeaderToolbar from '../components/dashboard/DashboardHeaderToolbar';
+
+// Utils
 import {
     buildGeneratorStateFromMetadata,
     hydrateGeneratorStateModelVisuals,
@@ -54,18 +56,56 @@ export default function Dashboard() {
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
     
-    // Global State
-    const activeJobs = useJobStore((state) => state.jobs);
-    const cancelJob = useJobStore((state) => state.cancelJob);
     const favorites = useStore((state) => state.favorites);
     const toggleFavorite = useStore((state) => state.toggleFavorite);
-    const collections = useStore((state) => state.collections);
     const activeCollection = useStore((state) => state.activeCollection);
-    const addToCollection = useStore((state) => state.addToCollection);
-    const removeFromCollection = useStore((state) => state.removeFromCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
-    const initCollections = useStore((state) => state.initCollections);
-    const loadCollectionImages = useStore((state) => state.loadCollectionImages);
+    
+    // React Query / WebSocket state
+    const { data: activeJobs = [] } = useActiveJobs();
+    const { data: collections = {} } = useCollections();
+    const { data: activeCollectionImages = [] } = useCollectionImages(activeCollection);
+    
+    const addImagesToCollectionMutation = useAddImagesToCollection();
+    const removeImagesFromCollectionMutation = useRemoveImagesFromCollection();
+
+    const collectionsWithImages = useMemo(() => {
+        if (!activeCollection || !collections[activeCollection]) return collections;
+        return {
+            ...collections,
+            [activeCollection]: {
+                ...collections[activeCollection],
+                images: activeCollectionImages
+            }
+        };
+    }, [collections, activeCollection, activeCollectionImages]);
+
+    const addToCollection = useCallback(async (collectionId, images) => {
+        const imagesArray = Array.isArray(images) ? images : [images];
+        await addImagesToCollectionMutation.mutateAsync({ collectionId, images: imagesArray });
+    }, [addImagesToCollectionMutation]);
+
+    const removeFromCollection = useCallback(async (collectionId, images) => {
+        const imagesArray = Array.isArray(images) ? images : [images];
+        await removeImagesFromCollectionMutation.mutateAsync({ collectionId, images: imagesArray });
+    }, [removeImagesFromCollectionMutation]);
+
+    const cancelJob = useCallback(async (jobId) => {
+        try {
+            await cancelJobWs(jobId);
+            queryClient.setQueryData(['jobs', 'active'], (old = []) => old.filter(j => j.id !== jobId));
+        } catch (error) {
+            console.error('Failed to cancel job:', error);
+        }
+    }, [queryClient]);
+
+    const [lastCompletedJob, setLastCompletedJob] = useState(null);
+    useEffect(() => {
+        return ws.on(ws.EventTypes.JOB_COMPLETED, (event) => {
+            const job = event.data?.job || event;
+            setLastCompletedJob(job);
+        });
+    }, []);
 
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);
@@ -185,21 +225,7 @@ export default function Dashboard() {
         if (hasInitializedRef.current) return;
         hasInitializedRef.current = true;
         void refetch();
-        void initCollections();
-    }, [initCollections, refetch]);
-
-    useEffect(() => {
-        if (!activeCollection) return;
-        const collection = collections[activeCollection];
-        if (!collection) return;
-
-        const imageCount = collection.imageCount ?? collection.images?.length ?? 0;
-        if ((collection.images?.length ?? 0) === 0 && imageCount > 0) {
-            void loadCollectionImages(activeCollection);
-        }
-    }, [activeCollection, collections, loadCollectionImages]);
-
-    const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
+    }, [refetch]);
     
     useGalleryAutoRefresh({
         lastCompletedJob,
@@ -227,7 +253,7 @@ export default function Dashboard() {
         activeJobs,
         selectedJobId,
         activeCollection,
-        collections,
+        collections: collectionsWithImages,
         showFavorites,
         favorites,
     });
@@ -313,6 +339,49 @@ export default function Dashboard() {
         threshold: 80
     });
 
+    const handleClearFilters = useCallback(() => {
+        if (showFavorites) {
+            setShowFavorites(false);
+        } else if (activeCollection) {
+            setActiveCollection(null);
+        } else if (filters.search || filters.model || filters.sampler || filters.aspect_ratio) {
+            setFilters({ search: '', model: '', sampler: '', aspect_ratio: '' });
+        }
+    }, [showFavorites, activeCollection, filters, setShowFavorites, setActiveCollection, setFilters]);
+
+    const handleClearHistory = useCallback(async () => {
+        const accepted = await confirm({
+            title: 'Clear Job History',
+            message: 'Are you sure you want to clear all job history? This will remove all job records but keep the generated images.',
+            confirmText: 'Clear History',
+            isDangerous: true,
+        });
+        if (!accepted) return;
+        await jobsApi.clear();
+        queryClient.setQueryData(['jobs', 'active'], []);
+        refetch();
+    }, [confirm, queryClient, refetch]);
+
+    const handleSetSelectionMode = useCallback((mode) => {
+        setSelectionMode(mode);
+        if (mode) setSelectedFiles(new Set());
+    }, [setSelectionMode, setSelectedFiles]);
+
+    const handleSelectCollection = useCallback((collectionId) => {
+        addToCollection(collectionId, Array.from(selectedFiles));
+        toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
+        setSelectedFiles(new Set());
+        setSelectionMode(false);
+    }, [addToCollection, selectedFiles, setSelectedFiles, setSelectionMode]);
+
+    const comparisonImages = useMemo(() => {
+        return allItems.filter(item => selectedFiles.has(item.name));
+    }, [allItems, selectedFiles]);
+
+    const activeCollectionName = useMemo(() => {
+        return activeCollection && collections[activeCollection] ? collections[activeCollection].name : null;
+    }, [activeCollection, collections]);
+
     return (
         <motion.div
             ref={containerRef}
@@ -329,185 +398,88 @@ export default function Dashboard() {
             <div className="max-w-7xl mx-auto space-y-8">
                 <QueueVisualization onJobClick={handleJobClick} />
 
-                <div className="flex flex-col gap-4">
-                    <DashboardHeader
-                        viewMode={viewMode}
-                        setViewMode={setViewMode}
-                        gridCols={gridCols}
-                        setGridCols={setGridCols}
-                        selectionMode={selectionMode}
-                        setSelectionMode={(mode) => {
-                            setSelectionMode(mode);
-                            if (mode) setSelectedFiles(new Set());
-                        }}
-                        selectedFilesCount={selectedFiles.size}
-                        onRefetch={() => refetch()}
-                    />
+                <DashboardHeaderToolbar
+                    viewMode={viewMode}
+                    setViewMode={setViewMode}
+                    gridCols={gridCols}
+                    setGridCols={setGridCols}
+                    selectionMode={selectionMode}
+                    setSelectionMode={handleSetSelectionMode}
+                    selectedFiles={selectedFiles}
+                    onRefetch={refetch}
+                    showFavorites={showFavorites}
+                    setShowFavorites={setShowFavorites}
+                    favoritesCount={favorites.length}
+                    activeCollection={activeCollection}
+                    activeCollectionName={activeCollectionName}
+                    setShowCollectionsPanel={setShowCollectionsPanel}
+                    setShowStatsPanel={setShowStatsPanel}
+                    onClearHistory={handleClearHistory}
+                    onBatchDownload={handleBatchDownload}
+                    onBatchDelete={handleBatchDelete}
+                    onBatchFavorite={handleBatchFavorite}
+                    onBatchAddToCollection={handleAddSelectionToCollection}
+                    onBatchRemoveFromCollection={handleRemoveSelectionFromCollection}
+                    onCancelSelectionMode={handleCancelSelectionMode}
+                    filters={filters}
+                    onFilterChange={setFilters}
+                />
 
-                    <DashboardToolbar
-                        showFavorites={showFavorites}
-                        setShowFavorites={setShowFavorites}
-                        favoritesCount={favorites.length}
-                        activeCollection={activeCollection}
-                        activeCollectionName={activeCollection && collections[activeCollection] ? collections[activeCollection].name : null}
-                        setShowCollectionsPanel={setShowCollectionsPanel}
-                        setShowStatsPanel={setShowStatsPanel}
-                        onClearHistory={async () => {
-                            const accepted = await confirm({
-                                title: 'Clear Job History',
-                                message: 'Are you sure you want to clear all job history? This will remove all job records but keep the generated images.',
-                                confirmText: 'Clear History',
-                                isDangerous: true,
-                            });
-                            if (!accepted) return;
-                            await jobsApi.clear();
-                            useJobStore.setState({ jobs: [] });
-                            refetch();
-                        }}
-                    />
-
-                    <AnimatePresence>
-                        {selectionMode && (
-                            <SelectionToolbar
-                                selectedFiles={selectedFiles}
-                                onDownload={handleBatchDownload}
-                                onDelete={handleBatchDelete}
-                                onFavorite={handleBatchFavorite}
-                                onAddToCollection={handleAddSelectionToCollection}
-                                onRemoveFromCollection={handleRemoveSelectionFromCollection}
-                                onCancel={handleCancelSelectionMode}
-                                activeCollection={activeCollection}
-                            />
-                        )}
-                    </AnimatePresence>
-                </div>
-
-                <FilterBar filters={filters} onFilterChange={setFilters} />
-
-                {isLoading ? (
-                    <GallerySkeleton count={12} mode={viewMode} />
-                ) : !isLoading && displayedItems.length === 0 ? (
-                    <EmptyState
-                        type={
-                            showFavorites ? 'favorites' :
-                                activeCollection ? 'collection' :
-                                    filters.search || filters.model ? 'search' :
-                                        'gallery'
-                        }
-                        onAction={() => {
-                            if (showFavorites) {
-                                setShowFavorites(false);
-                            } else if (activeCollection) {
-                                setActiveCollection(null);
-                            } else if (filters.search || filters.model) {
-                                setFilters({ search: '', model: '', sampler: '', aspect_ratio: '' });
-                            }
-                        }}
-                        showTutorialHint={!showFavorites && !activeCollection && allItems.length === 0}
-                    />
-                ) : (
-                    viewMode === 'timeline' ? (
-                        <TimelineView
-                            items={displayedItems}
-                            onImageClick={handleImageClick}
-                            onJobClick={handleJobClick}
-                            selectionMode={selectionMode}
-                            selectedFiles={selectedFiles}
-                            onToggleSelection={toggleSelection}
-                            isFavorite={fastIsFavorite}
-                            onToggleFavorite={handleToggleFavorite}
-                        />
-                    ) : (
-                        <GroupedDashboardContent
-                            viewMode={viewMode}
-                            sortedGroupedEntries={sortedGroupedEntries}
-                            formatDateLabel={formatDateLabel}
-                            gridCols={gridCols}
-                            selectedFiles={selectedFiles}
-                            selectionMode={selectionMode}
-                            handleJobClick={handleJobClick}
-                            handleImageClick={handleImageClick}
-                            toggleSelection={toggleSelection}
-                            isFavorite={fastIsFavorite}
-                            handleToggleFavorite={handleToggleFavorite}
-                            handleDelete={handleDelete}
-                            handleJobDelete={handleJobDelete}
-                        />
-                    )
-                )}
-
-                <div ref={sentinelRef} className="h-4" />
-
-                {isFetchingNextPage && (
-                    <div className="flex justify-center py-8">
-                        <Loader2 className="animate-spin text-gray-400" size={32} />
-                    </div>
-                )}
+                <DashboardGalleryGrid
+                    isLoading={isLoading}
+                    viewMode={viewMode}
+                    displayedItems={displayedItems}
+                    showFavorites={showFavorites}
+                    activeCollection={activeCollection}
+                    filters={filters}
+                    onClearFilters={handleClearFilters}
+                    allItems={allItems}
+                    onImageClick={handleImageClick}
+                    onJobClick={handleJobClick}
+                    selectionMode={selectionMode}
+                    selectedFiles={selectedFiles}
+                    onToggleSelection={toggleSelection}
+                    isFavorite={fastIsFavorite}
+                    onToggleFavorite={handleToggleFavorite}
+                    sortedGroupedEntries={sortedGroupedEntries}
+                    formatDateLabel={formatDateLabel}
+                    gridCols={gridCols}
+                    onDelete={handleDelete}
+                    onJobDelete={handleJobDelete}
+                    sentinelRef={sentinelRef}
+                    isFetchingNextPage={isFetchingNextPage}
+                />
             </div>
 
-            {selectedImage && (
-                <ImageLightbox
-                    image={selectedImage}
-                    images={lightboxImages}
-                    currentIndex={selectedImage.siblingImages?.findIndex(img => img.name === selectedImage.name) || 0}
-                    onNavigate={handleLightboxNavigate}
-                    metadata={metadata}
-                    loadingMeta={loadingMeta}
-                    job={selectedImage.associatedJob}
-                    onClose={closeSelectedImage}
-                    onDelete={handleDelete}
-                    onReuseParameters={useParameters}
-                    reuseInProgress={isReusingParameters}
-                />
-            )}
-
-            {selectedJob && (
-                <JobDetailsModal
-                    job={selectedJob}
-                    onClose={handleJobDetailsClose}
-                    onCancel={cancelJob}
-                    onDelete={deleteJob}
-                    onRetry={retryJob}
-                />
-            )}
-
-            {showComparison && (
-                <ImageComparison
-                    images={allItems.filter(item => selectedFiles.has(item.name))}
-                    onClose={() => setShowComparison(false)}
-                />
-            )}
-
-            <CollectionsPanel
-                isOpen={showCollectionsPanel}
-                onClose={() => setShowCollectionsPanel(false)}
-            />
-
-            <button
-                onClick={() => navigate('/generate')}
-                className="fixed bottom-6 right-6 z-40 md:hidden bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
-                title="Go to Generator"
-                aria-label="Go to Generator"
-            >
-                <ImageIcon size={24} />
-            </button>
-
-            <SelectCollectionModal
-                isOpen={showSelectCollection}
-                onClose={() => setShowSelectCollection(false)}
+            <DashboardOverlays
+                selectedImage={selectedImage}
+                lightboxImages={lightboxImages}
+                onLightboxNavigate={handleLightboxNavigate}
+                metadata={metadata}
+                loadingMeta={loadingMeta}
+                onLightboxClose={closeSelectedImage}
+                onLightboxDelete={handleDelete}
+                onLightboxReuseParameters={useParameters}
+                reuseInProgress={isReusingParameters}
+                selectedJob={selectedJob}
+                onJobDetailsClose={handleJobDetailsClose}
+                onJobCancel={cancelJob}
+                onJobDelete={deleteJob}
+                onJobRetry={retryJob}
+                showComparison={showComparison}
+                onComparisonClose={() => setShowComparison(false)}
+                comparisonImages={comparisonImages}
+                showCollectionsPanel={showCollectionsPanel}
+                onCollectionsPanelClose={() => setShowCollectionsPanel(false)}
+                showSelectCollection={showSelectCollection}
+                onSelectCollectionClose={() => setShowSelectCollection(false)}
                 collections={collections}
-                onSelect={(collectionId) => {
-                    addToCollection(collectionId, Array.from(selectedFiles));
-                    toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
-                    setSelectedFiles(new Set());
-                    setSelectionMode(false);
-                }}
+                onSelectCollection={handleSelectCollection}
+                showStatsPanel={showStatsPanel}
+                onStatsPanelClose={() => setShowStatsPanel(false)}
             />
 
-            <StatsPanel
-                isOpen={showStatsPanel}
-                onClose={() => setShowStatsPanel(false)}
-            />
+            <GeneratorFloatingButton onClick={() => navigate('/generate')} />
         </motion.div>
     );
 }

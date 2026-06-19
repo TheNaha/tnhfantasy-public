@@ -2,19 +2,24 @@ import { useState } from 'react';
 import { FolderOpen, Plus, Trash2, Edit2, X, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useStore from '../../store/useStore';
+import {
+    useCollections,
+    useCreateCollection,
+    useDeleteCollection,
+    useRenameCollection
+} from '../../hooks/useCollections';
 import CreateCollectionModal from './CreateCollectionModal';
 import { useConfirmation } from '../../store/confirmationStore';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
-    // ⚡ Bolt: Using granular selectors to prevent unnecessary O(N) re-renders
-    // Reduces re-renders by only subscribing to the specific state slices used in this component
-    const collections = useStore((state) => state.collections);
+    const { data: collections = {} } = useCollections();
     const activeCollection = useStore((state) => state.activeCollection);
-    const createCollection = useStore((state) => state.createCollection);
-    const deleteCollection = useStore((state) => state.deleteCollection);
-    const renameCollection = useStore((state) => state.renameCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
+
+    const createCollectionMutation = useCreateCollection();
+    const deleteCollectionMutation = useDeleteCollection();
+    const renameCollectionMutation = useRenameCollection();
 
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [editingId, setEditingId] = useState(null);
@@ -25,7 +30,7 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
     const getImageCount = (collection) => collection.imageCount ?? collection.images?.length ?? 0;
 
     const handleCreate = (name, color) => {
-        createCollection(name, color);
+        createCollectionMutation.mutate({ name, color });
     };
 
     const handleDelete = async (id, e) => {
@@ -37,13 +42,13 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
             isDangerous: true,
         });
         if (accepted) {
-            deleteCollection(id);
+            deleteCollectionMutation.mutate(id);
         }
     };
 
     const handleRename = (id) => {
         if (editName.trim()) {
-            renameCollection(id, editName.trim());
+            renameCollectionMutation.mutate({ id, name: editName.trim() });
         }
         setEditingId(null);
         setEditName('');

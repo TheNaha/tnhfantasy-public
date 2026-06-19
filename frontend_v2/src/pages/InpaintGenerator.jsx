@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
@@ -82,7 +82,8 @@ export default function InpaintGenerator() {
         updateLora: state.updateLora,
     })));
 
-    const activeJobCount = useJobStore(state => state.jobs.length);
+    const { data: activeJobs = [] } = useActiveJobs();
+    const activeJobCount = activeJobs.length;
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;

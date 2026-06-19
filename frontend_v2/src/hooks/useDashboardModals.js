@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { jobsApi } from '../api/jobs';
-import { useJobStore } from '../store/jobStore';
 
 export function useDashboardModals({ queryClient, filters }) {
     const [selectedJobId, setSelectedJobId] = useState(null);
@@ -12,9 +11,7 @@ export function useDashboardModals({ queryClient, filters }) {
     const deleteJob = useCallback(async (jobId) => {
         try {
             await jobsApi.delete(jobId);
-            useJobStore.setState(state => ({
-                jobs: state.jobs.filter(j => j.id !== jobId)
-            }));
+            queryClient.invalidateQueries({ queryKey: ['jobs'] });
             queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
         } catch (error) {
             console.error('Failed to delete job:', error);

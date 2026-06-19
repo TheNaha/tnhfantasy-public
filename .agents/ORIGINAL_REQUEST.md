@@ -30,3 +30,32 @@ You are allowed to repurpose and integrate code from other open-source projects,
 ### Architecture Unified & Clean
 - [ ] All duplicate code paths identified during the audit have been consolidated.
 - [ ] The frontend, backend, and provider containers can all be built and started successfully via Docker without errors.
+
+## Follow-up — 2026-06-19T13:45:46Z
+
+Comprehensive codebase audit, consolidation, and repair for a ComfyUI Wrapper (TensorArt/CivitAI clone). The system consists of a Frontend, Backend, and Provider Containers (Modal, Beam) and is currently in the middle of a messy consolidation. The goal is to comprehensively find and automatically fix bugs, dead code, detached systems, performance issues, and un-integrated components. The agent team is authorized to make major architectural or QoL improvements to unify the system, provided the final application remains accessible and functional for a single user.
+
+Working directory: /home/thenaha/containers/stacks/comfyui
+Integrity mode: development
+
+## Requirements
+
+### R1. Codebase Audit and Resolution
+Conduct a thorough audit across the frontend, backend, and provider containers. Identify and document bugs, dead code, duplicate code, detached systems, and performance bottlenecks. Produce a final report of all issues found and resolved.
+
+### R2. Automated Repair and Architecture Refactoring
+Automatically implement fixes for all identified issues. Make necessary major architectural, state-flow, or QoL improvements to properly consolidate the messy codebase into a unified, functional system.
+
+### R3. End-to-End System Verification
+Ensure the fully modified application stack can be launched via Docker and remains accessible. Programmatically verify that the backend, frontend, and provider containers correctly interact and function.
+
+## Acceptance Criteria
+
+### System Verification & Functionality
+- [ ] The full docker stack starts cleanly with no crashing containers.
+- [ ] The backend API and frontend development server are accessible and responsive.
+- [ ] Provider containers are correctly detected and integrated with the backend.
+- [ ] Unit test suites (`pytest` for backend/providers, `vitest` for frontend) pass successfully.
+
+### Deliverables
+- [ ] A comprehensive final report detailing all identified issues and the architectural changes/fixes implemented is provided.

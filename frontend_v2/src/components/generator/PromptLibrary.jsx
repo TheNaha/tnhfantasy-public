@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { X, Search, Plus, Download, Upload, Star, TrendingUp, FolderOpen } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
-import { usePromptStore } from '../../store/promptStore';
+import {
+    usePrompts,
+    usePromptCategories,
+    useDeletePrompt,
+    useUpdatePrompt,
+    useIncrementPromptUsage,
+    useImportPrompts
+} from '../../hooks/usePrompts';
+import promptsApi from '../../api/promptsApi';
 import PromptCard from './PromptCard';
 import PromptForm from './PromptForm';
 import toast from 'react-hot-toast';
@@ -12,33 +19,13 @@ import { useConfirmation } from '../../store/confirmationStore';
  * Browse, search, and manage saved prompts
  */
 export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
-    const {
-        prompts,
-        categories,
-        initialize,
-        initialized,
-        isLoading,
-        deletePrompt,
-        toggleFavorite,
-        incrementUsage,
-        getFavorites,
-        getMostUsed,
-        exportPrompts,
-        importPrompts,
-    } = usePromptStore(useShallow((state) => ({
-        prompts: state.prompts,
-        categories: state.categories,
-        initialize: state.initialize,
-        initialized: state.initialized,
-        isLoading: state.isLoading,
-        deletePrompt: state.deletePrompt,
-        toggleFavorite: state.toggleFavorite,
-        incrementUsage: state.incrementUsage,
-        getFavorites: state.getFavorites,
-        getMostUsed: state.getMostUsed,
-        exportPrompts: state.exportPrompts,
-        importPrompts: state.importPrompts,
-    })));
+    const { data: prompts = [], isLoading } = usePrompts();
+    const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
+
+    const deletePromptMutation = useDeletePrompt();
+    const updatePromptMutation = useUpdatePrompt();
+    const incrementPromptUsageMutation = useIncrementPromptUsage();
+    const importPromptsMutation = useImportPrompts();
 
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('All');
@@ -49,23 +36,17 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     const [isImporting, setIsImporting] = useState(false);
     const { confirm } = useConfirmation();
 
-    useEffect(() => {
-        if (!isOpen || initialized || isLoading) {
-            return;
-        }
-
-        void initialize();
-    }, [initialize, initialized, isLoading, isOpen]);
-
     // Filter and search prompts
     const displayedPrompts = useMemo(() => {
         let filtered = prompts;
 
         // View filter
         if (view === 'favorites') {
-            filtered = getFavorites();
+            filtered = prompts.filter(p => p.favorite);
         } else if (view === 'popular') {
-            filtered = getMostUsed(20);
+            filtered = [...prompts]
+                .sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))
+                .slice(0, 20);
         }
 
         // Category filter
@@ -85,14 +66,22 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         }
 
         return filtered;
-    }, [prompts, view, selectedCategory, searchQuery, getFavorites, getMostUsed]);
+    }, [prompts, view, selectedCategory, searchQuery]);
 
     // Handle using a prompt
     const handleUsePrompt = (prompt) => {
-        void incrementUsage(prompt.id);
+        void incrementPromptUsageMutation.mutate(prompt.id);
         onSelectPrompt(prompt);
         toast.success(`Applied "${prompt.name}"`, { icon: '✨' });
         onClose();
+    };
+
+    // Handle toggle favorite
+    const handleToggleFavorite = async (id) => {
+        const prompt = prompts.find(p => p.id === id);
+        if (prompt) {
+            await updatePromptMutation.mutateAsync({ id, updates: { favorite: !prompt.favorite } });
+        }
     };
 
     // Handle delete with confirmation
@@ -105,7 +94,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
             isDangerous: true
         });
         if (confirmed) {
-            await deletePrompt(id);
+            await deletePromptMutation.mutateAsync(id);
             toast.success('Prompt deleted', { icon: '🗑️' });
         }
     };
@@ -114,7 +103,8 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
     const handleExport = async () => {
         setIsExporting(true);
         try {
-            const json = await exportPrompts();
+            const { prompts: exportData } = await promptsApi.exportPrompts();
+            const json = JSON.stringify(exportData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -138,13 +128,18 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
         const reader = new FileReader();
         reader.onload = async (event) => {
             setIsImporting(true);
-            const result = await importPrompts(event.target.result);
-            if (result.success) {
-                toast.success(`Imported ${result.count} prompts`, { icon: '📤' });
-            } else {
-                toast.error(`Import failed: ${result.error}`, { icon: '❌' });
+            try {
+                const result = await importPromptsMutation.mutateAsync(event.target.result);
+                if (result.success) {
+                    toast.success(`Imported ${result.count} prompts`, { icon: '📤' });
+                } else {
+                    toast.error(`Import failed: ${result.error}`, { icon: '❌' });
+                }
+            } catch (error) {
+                toast.error(`Import failed: ${error.message}`, { icon: '❌' });
+            } finally {
+                setIsImporting(false);
             }
-            setIsImporting(false);
         };
         reader.readAsText(file);
         e.target.value = ''; // Reset input
@@ -298,7 +293,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
                                     onUse={handleUsePrompt}
                                     onEdit={(p) => setEditingPrompt(p)}
                                     onDelete={handleDelete}
-                                    onToggleFavorite={toggleFavorite}
+                                    onToggleFavorite={handleToggleFavorite}
                                 />
                             ))}
                         </div>

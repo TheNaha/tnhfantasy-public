@@ -1,5 +1,5 @@
 import { useState, useMemo, memo, useId } from 'react';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
 import { Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 
@@ -11,8 +11,8 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const contentId = useId();
 
-    // Use global WebSocket job store
-    const activeJobs = useJobStore(state => state.jobs);
+    // Use active jobs from React Query
+    const { data: activeJobs = [] } = useActiveJobs();
     const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {
         // Filter for active items only and sort
         const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');

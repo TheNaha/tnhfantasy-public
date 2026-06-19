@@ -1,11 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import QueueVisualization from './QueueVisualization';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
 
 // Mock dependencies
-vi.mock('../store/jobStore', () => ({
-    useJobStore: vi.fn(),
+vi.mock('../hooks/useActiveJobs', () => ({
+    useActiveJobs: vi.fn(),
 }));
 
 // Mock framer-motion
@@ -24,27 +24,23 @@ describe('QueueVisualization', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         // Setup default mock return value
-        useJobStore.mockImplementation((selector) => {
-            if (selector) {
-                return [
-                    {
-                        id: '1',
-                        status: 'running',
-                        prompt: 'Running Job',
-                        progress: 50,
-                        started_at: new Date().toISOString()
-                    },
-                    {
-                        id: '2',
-                        status: 'pending',
-                        prompt: 'Pending Job',
-                        queue_position: 1
-                    },
-                ];
-            }
-            return {
-                jobs: []
-            };
+        useActiveJobs.mockReturnValue({
+            data: [
+                {
+                    id: '1',
+                    status: 'running',
+                    prompt: 'Running Job',
+                    progress: 50,
+                    started_at: new Date().toISOString()
+                },
+                {
+                    id: '2',
+                    status: 'pending',
+                    prompt: 'Pending Job',
+                    queue_position: 1
+                },
+            ],
+            isLoading: false,
         });
     });
 

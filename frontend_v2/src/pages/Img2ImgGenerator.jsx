@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
 import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
@@ -86,7 +86,8 @@ export default function Img2ImgGenerator() {
         runWithPreflight,
     } = useGenerationPreflight();
 
-    const activeJobCount = useJobStore(state => state.jobs.length);
+    const { data: activeJobs = [] } = useActiveJobs();
+    const activeJobCount = activeJobs.length;
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {

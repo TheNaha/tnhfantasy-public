@@ -8,103 +8,41 @@ vi.mock('zustand/middleware', async (importOriginal) => {
     };
 });
 
-vi.mock('../api/collectionsApi', () => ({
-    listCollections: vi.fn(),
-    getCollection: vi.fn(),
-    createCollection: vi.fn(),
-    updateCollection: vi.fn(),
-    deleteCollection: vi.fn(),
-    addImagesToCollection: vi.fn(),
-    removeImagesFromCollection: vi.fn(),
-    importCollections: vi.fn(),
-    exportCollections: vi.fn(),
-}));
-
-describe('useStore collections integration', () => {
+describe('useStore basic state', () => {
     let useStore;
-    let collectionsApi;
 
     beforeEach(async () => {
         vi.resetModules();
-        const apiMod = await import('../api/collectionsApi');
-        collectionsApi = apiMod;
         const storeMod = await import('./useStore.js');
         useStore = storeMod.default;
 
         useStore.setState({
-            models: {},
             viewMode: 'grid',
             favorites: [],
-            collections: {},
             activeCollection: null,
-            collectionsLoading: false,
-            collectionsInitialized: false,
-            page: 0,
-            hasMore: true,
         });
     });
 
-    it('initCollections loads server collections with image counts without eagerly loading images', async () => {
-        collectionsApi.listCollections.mockResolvedValue({
-            collections: [{
-                id: 'collection-1',
-                name: 'Favorites',
-                color: '#3B82F6',
-                thumbnail: 'thumb.png',
-                image_count: 3,
-                created_at: '2026-01-01T00:00:00Z',
-                updated_at: '2026-01-02T00:00:00Z',
-            }],
-        });
-
-        await useStore.getState().initCollections();
-
-        const state = useStore.getState();
-        expect(state.collectionsInitialized).toBe(true);
-        expect(state.collections['collection-1']).toMatchObject({
-            id: 'collection-1',
-            name: 'Favorites',
-            imageCount: 3,
-            images: [],
-            thumbnail: 'thumb.png',
-        });
+    it('manages viewMode', () => {
+        expect(useStore.getState().viewMode).toBe('grid');
+        useStore.getState().setViewMode('list');
+        expect(useStore.getState().viewMode).toBe('list');
     });
 
-    it('loadCollectionImages hydrates images while preserving canonical count fields', async () => {
-        useStore.setState({
-            collections: {
-                'collection-1': {
-                    id: 'collection-1',
-                    name: 'Favorites',
-                    color: '#3B82F6',
-                    thumbnail: 'thumb.png',
-                    images: [],
-                    imageCount: 2,
-                },
-            },
-        });
-
-        collectionsApi.getCollection.mockResolvedValue({
-            id: 'collection-1',
-            images: ['one.png', 'two.png'],
-            image_count: 2,
-        });
-
-        const images = await useStore.getState().loadCollectionImages('collection-1');
-        const collection = useStore.getState().collections['collection-1'];
-
-        expect(images).toEqual(['one.png', 'two.png']);
-        expect(collection.images).toEqual(['one.png', 'two.png']);
-        expect(collection.imageCount).toBe(2);
+    it('manages favorites', () => {
+        expect(useStore.getState().favorites).toEqual([]);
+        useStore.getState().toggleFavorite('image1.png');
+        expect(useStore.getState().favorites).toEqual(['image1.png']);
+        expect(useStore.getState().isFavorite('image1.png')).toBe(true);
+        
+        useStore.getState().toggleFavorite('image1.png');
+        expect(useStore.getState().favorites).toEqual([]);
+        expect(useStore.getState().isFavorite('image1.png')).toBe(false);
     });
 
-    it('keeps collectionsInitialized false when initialization fails so it can retry later', async () => {
-        collectionsApi.listCollections.mockRejectedValue(new Error('temporary outage'));
-
-        await useStore.getState().initCollections();
-
-        const state = useStore.getState();
-        expect(state.collectionsInitialized).toBe(false);
-        expect(state.collectionsLoading).toBe(false);
+    it('manages activeCollection', () => {
+        expect(useStore.getState().activeCollection).toBe(null);
+        useStore.getState().setActiveCollection('coll-1');
+        expect(useStore.getState().activeCollection).toBe('coll-1');
     });
 });

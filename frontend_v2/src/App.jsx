@@ -27,11 +27,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
 import { useBrandingStore } from './store/brandingStore';
 import { useSettings } from './store/settingsStore';
-import { useJobStore } from './store/jobStore';
-import useStore from './store/useStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
-import { useJobNotifications } from './hooks/useJobNotifications.jsx';
-import { useWebsocket } from './hooks/useWebsocket';
+import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { api } from './api';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -68,11 +65,8 @@ let hasRequestedProviderWake = false;
 
 function App() {
     const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
-    const fetchJobs = useJobStore((state) => state.fetchJobs);
-    const { connect, disconnect } = useWebsocket();
     const loadBranding = useBrandingStore((state) => state.loadBranding);
     const settings = useSettings();
-    const initCollections = useStore((state) => state.initCollections);
 
     const [queryClient] = useState(() => (
         new QueryClient({
@@ -121,19 +115,8 @@ function App() {
     // This sets --vh CSS variable that works correctly with address bar
     useViewportHeight();
     
-    // Initialize global job notifications (toasts for completion, failures, etc.)
-    useJobNotifications();
-
-    // Initialize all global stores on app startup.
-    // No cleanup on unmount to avoid StrictMode connect/disconnect churn in development.
-    useEffect(() => {
-        connect();
-        fetchJobs();
-
-        return () => {
-            disconnect();
-        };
-    }, [connect, disconnect, fetchJobs]);
+    // Initialize global job notifications and WebSocket sync
+    useJobsRealtime();
 
     useEffect(() => {
         if (hasRequestedProviderWake) {
@@ -148,8 +131,7 @@ function App() {
 
     useEffect(() => {
         loadBranding();
-        initCollections();
-    }, [initCollections, loadBranding]);
+    }, [loadBranding]);
 
     return (
         <ErrorBoundary>

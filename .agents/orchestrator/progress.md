@@ -1,6 +1,6 @@
-# Progress — 2026-06-19T12:48:00Z
+# Progress — 2026-06-19T14:10:00Z
 
-Last visited: 2026-06-19T12:48:00Z
+Last visited: 2026-06-19T14:10:00Z
 
 ## Iteration Status
 Current iteration: 7 / 32
@@ -19,15 +19,18 @@ Current iteration: 7 / 32
   - [x] Normalize provider worker contracts (Conv ID: c6546765-fce4-4da4-a45f-edd8131c03df)
   - [x] Enforce health checks before scheduling (Conv ID: c6546765-fce4-4da4-a45f-edd8131c03df)
   - [x] Verify implementation via Reviewer (Conv ID: ccac5b0f-9af4-4b57-ac02-837081f3c661) and Auditor (Conv ID: 95ebc2c0-20e2-4591-9876-fd480e9b6a38)
-- [ ] M4: Backend Refactoring & Decoupling
-  - [ ] Extract job processing orchestration out of `main.py`.
-  - [ ] Separate provider route responsibilities.
-  - [ ] Implement database versioned migration registry.
-- [ ] M5: Frontend State & WebSocket Cleanup
-  - [ ] Draw Zustand/React Query state boundaries.
-  - [ ] Extract WebSocket connection logic from store.
+- [x] M4: Backend Refactoring & Decoupling
+  - [x] Extract job processing orchestration out of `main.py`.
+  - [x] Separate provider route responsibilities.
+  - [x] Implement database versioned migration registry.
+- [x] M5: Frontend State & WebSocket Cleanup
+  - [x] Draw Zustand/React Query state boundaries (implemented, TDZ bug fix verified)
+  - [x] Extract WebSocket connection logic from store
+  - [x] Fix TDZ ReferenceError and outdated comment via Worker Gen 2 (Conv ID: 858c0917-9f53-41a1-a94c-9777df0f84f9)
+  - [x] Verify implementation via Reviewer Gen 2 (Conv ID: 560c1ed8-ad08-4e32-aba9-b8dc26e63f19) and Auditor Gen 2 (Conv ID: cc0ee7e3-ad28-46f7-a3c4-1635420143cb)
 - [ ] M6: Frontend Dashboard Monolith Decomposition
-  - [ ] Refactor `Dashboard.jsx` monolith into sub-components.
+  - [x] Create synthesis report of decomposition plan (synthesis_m6.md)
+  - [ ] Refactor `Dashboard.jsx` monolith into sub-components via Worker (Conv ID: 773db258-9281-4d4d-a79a-316198b2dec0)
 - [ ] M7: Full Test Coverage & Acceptance
   - [ ] Add missing integration and page-level tests.
   - [ ] Confirm full end-to-end functionality.

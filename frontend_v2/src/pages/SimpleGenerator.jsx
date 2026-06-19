@@ -3,7 +3,8 @@ import { FolderOpen, Loader2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useGeneratorStore } from '../store/generatorStore';
-import { useJobStore } from '../store/jobStore';
+import { useActiveJobs } from '../hooks/useActiveJobs';
+import { useTrackJob } from '../hooks/useTrackJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
@@ -122,11 +123,9 @@ export default function SimpleGenerator() {
     const embeddingModels = modelsByKey.embeddingModels || [];
     const adetailerModels = modelsByKey.adetailerModels || [];
 
-    const activeJobCount = useJobStore(state => state.jobs.length);
-    const activeJobs = useJobStore(state => state.jobs);
-    const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
-    const lastFailedJob = useJobStore(state => state.lastFailedJob);
-    const lastCancelledJob = useJobStore(state => state.lastCancelledJob);
+    const { data: activeJobs = [] } = useActiveJobs();
+    const activeJobCount = activeJobs.length;
+    const { data: trackedJob } = useTrackJob(currentJobId);
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
@@ -157,23 +156,12 @@ export default function SimpleGenerator() {
     };
 
     useEffect(() => {
-        if (!currentJobId) return;
+        if (!currentJobId || !trackedJob) return;
 
-        const trackedJob = activeJobs.find(job => job.id === currentJobId);
-        if (trackedJob) {
-            const isQueued = trackedJob.status === 'pending';
-            const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
-            setGenerating(true);
-            setProgress({
-                value: progressValue,
-                max: 100,
-                status: isQueued ? 'queued' : trackedJob.status,
-                node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
-            });
-            return;
-        }
+        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
+        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
 
-        if (lastCompletedJob?.id === currentJobId) {
+        if (trackedJob.status === 'completed') {
             setGenerating(false);
             setProgress(null);
             setCurrentJobId(null);
@@ -184,22 +172,32 @@ export default function SimpleGenerator() {
             return;
         }
 
-        if (lastFailedJob?.id === currentJobId) {
+        if (trackedJob.status === 'failed') {
             setGenerating(false);
             setProgress(null);
             setCurrentJobId(null);
-            toast.error(`Generation failed: ${lastFailedJob.error || 'Unknown error'}`);
+            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
             return;
         }
 
-        if (lastCancelledJob?.id === currentJobId) {
+        if (trackedJob.status === 'cancelled') {
             setGenerating(false);
             setProgress(null);
             setCurrentJobId(null);
             toast('Generation cancelled');
+            return;
         }
+
+        // Otherwise it is active
+        setGenerating(true);
+        setProgress({
+            value: progressValue,
+            max: 100,
+            status: isQueued ? 'queued' : trackedJob.status,
+            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
+        });
     }, [
-        activeJobs, currentJobId, lastCancelledJob, lastCompletedJob, lastFailedJob,
+        trackedJob, currentJobId,
         navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
     ]);
 

@@ -1,7 +1,10 @@
 import { useState, useId } from 'react';
 import { X, Save, Tag } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
-import { usePromptStore } from '../../store/promptStore';
+import {
+    usePromptCategories,
+    useCreatePrompt,
+    useUpdatePrompt
+} from '../../hooks/usePrompts';
 import toast from 'react-hot-toast';
 
 /**
@@ -14,11 +17,11 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
     const textId = useId();
     const negativeId = useId();
     const tagId = useId();
-    const { categories, addPrompt, updatePrompt } = usePromptStore(useShallow((state) => ({
-        categories: state.categories,
-        addPrompt: state.addPrompt,
-        updatePrompt: state.updatePrompt,
-    })));
+
+    const { data: categories = ['All', 'Portrait', 'Landscape', 'Anime', 'Abstract', 'Realistic', 'Custom'] } = usePromptCategories();
+    const createPromptMutation = useCreatePrompt();
+    const updatePromptMutation = useUpdatePrompt();
+
     const isEditing = !!prompt;
 
     const [formData, setFormData] = useState({
@@ -71,10 +74,10 @@ export const PromptForm = ({ prompt, onClose, onSave }) => {
 
         try {
             if (isEditing) {
-                await updatePrompt(prompt.id, formData);
+                await updatePromptMutation.mutateAsync({ id: prompt.id, updates: formData });
                 toast.success('Prompt updated successfully', { icon: '✏️' });
             } else {
-                await addPrompt(formData);
+                await createPromptMutation.mutateAsync(formData);
                 toast.success('Prompt added to library', { icon: '✨' });
             }
 

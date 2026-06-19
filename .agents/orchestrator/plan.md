@@ -32,9 +32,9 @@ The project is decomposed into the following milestones to be completed sequenti
 | 1 | Baseline Audit & Test Verification | Run existing backend and frontend test suites, document architecture, verify environment status | None | DONE |
 | 2 | Backend Foundation & DI Stabilization | Unify dependency injection around `deps.py`, track background tasks, standardize error handler translations | M1 | DONE |
 | 3 | Provider Integration & Health Normalization | Standardize worker contracts, implement robust pre-scheduling health checks, and normalize error payloads | M2 | DONE |
-| 4 | Backend Refactoring & Decoupling | Extract job processing from `main.py`, separate provider routes from image-saving, add migration versioning | M3 | PLANNED |
-| 5 | Frontend State & WebSocket Cleanup | Unify Zustand vs React Query boundaries, extract WebSocket lifecycle orchestration from store | M1 | PLANNED |
-| 6 | Frontend Dashboard Monolith Decomposition | Split `Dashboard.jsx` into modular components (grid, filters, selections, container views) | M5 | PLANNED |
+| 4 | Backend Refactoring & Decoupling | Extract job processing from `main.py`, separate provider routes from image-saving, add migration versioning | M3 | DONE |
+| 5 | Frontend State & WebSocket Cleanup | Unify Zustand vs React Query boundaries, extract WebSocket lifecycle orchestration from store | M1 | DONE |
+| 6 | Frontend Dashboard Monolith Decomposition | Split `Dashboard.jsx` into modular components (grid, filters, selections, container views) | M5 | IN_PROGRESS |
 | 7 | Full Test Coverage & Acceptance | Write backend integration tests and frontend component tests, pass 100% tests, verify end-to-end flow | M4, M6 | PLANNED |
 
 ## Interface Contracts
