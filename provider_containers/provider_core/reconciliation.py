@@ -274,18 +274,11 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     """
     Calculate safe deletion limit to prevent accidental mass deletion.
     
-    Limits deletions to 10% of total files as a safety measure.
-    
-    Args:
-        total_files: Total number of files in storage
-        orphaned_count: Number of orphaned files found
-        
-    Returns:
-        Maximum number of files to delete
+    Limits deletions to 20% of total files, or at least 20 files, to allow bulk clear-outs.
     """
-    max_deletions = max(1, total_files // 10)
+    max_deletions = max(20, total_files // 5)
     if orphaned_count > max_deletions and max_deletions > 0:
-        logger.warning(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 10% of files!")
+        logger.warning(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 20% of files!")
         logger.warning(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
         return max_deletions
     return orphaned_count

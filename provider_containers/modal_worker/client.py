@@ -11,10 +11,9 @@ import modal
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
-    build_error_response, build_status_response,
-    get_job_tracker, build_deploy_compatibility_response, get_reconciliation_state,
     get_logger
 )
+from provider_core.base_client import BaseProviderClient
 
 logger = get_logger("modal_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
@@ -35,11 +34,9 @@ def get_modal_function(func_name: str):
         _function_cache[key] = modal.Function.from_name(MODAL_APP_NAME, func_name)
     return _function_cache[key]
 
-class ModalProviderClient:
+class ModalProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
-        self.runtime_config = runtime_config
-        self.job_tracker = get_job_tracker()
-        self.reconciliation_state = get_reconciliation_state(PROVIDER_ID)
+        super().__init__(PROVIDER_ID, runtime_config)
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -55,25 +52,6 @@ class ModalProviderClient:
 
     async def get_info(self) -> Dict[str, Any]:
         return {"provider_id": PROVIDER_ID, "type": "modal", "username": MODAL_USERNAME, "app_name": MODAL_APP_NAME, "containerized": True}
-
-    def get_config(self) -> Dict[str, Any]:
-        return {"config": self.runtime_config}
-
-    def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        updated = []
-        for key, value in updates.items():
-            if key in self.runtime_config:
-                self.runtime_config[key] = value
-                updated.append(key)
-                logger.info(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
-        return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
-
-    async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
-        job_id = request.job_id
-        cancelled = await self.job_tracker.cancel_job(job_id)
-        if cancelled:
-            return {"status": "cancelled", "job_id": job_id, "message": "Job marked for cancellation, streaming will stop"}
-        return {"status": "not_found", "job_id": job_id, "message": "Job not currently active on this worker"}
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         use_snapshot = request.use_snapshot
@@ -95,14 +73,6 @@ class ModalProviderClient:
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                 return
-
-                            if update.get("status") == "success" and "images" in update:
-                                saved_images = []
-                                for i, img in enumerate(update["images"]):
-                                    if "data" in img and isinstance(img["data"], bytes):
-                                        img_b64 = base64.b64encode(img["data"]).decode('utf-8')
-                                        saved_images.append({"filename": img.get("filename", f"image_{i}.png"), "data": img_b64, "_base64_encoded": True})
-                                update["images"] = saved_images
 
                             yield json.dumps(update) + "\n"
 
@@ -223,6 +193,3 @@ class ModalProviderClient:
 
         asyncio.create_task(perform_reconciliation())
         return {"status": "started", "message": "Reconciliation started"}
-
-    def get_reconciliation_status(self) -> Dict[str, Any]:
-        return self.reconciliation_state.to_dict()

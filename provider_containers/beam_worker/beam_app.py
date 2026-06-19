@@ -97,6 +97,8 @@ gpu_image = (
         "websockets", 
         "uvicorn", 
         "requests",
+        "httpx",
+        "aiofiles",
         "torch",
         "torchvision",
         "torchaudio",
@@ -125,6 +127,8 @@ cpu_image = (
         "fastapi", 
         "uvicorn", 
         "requests",
+        "httpx",
+        "aiofiles",
         "safetensors",
     ])
 )
@@ -216,12 +220,6 @@ async def _run_inference_realtime(workflow: Dict[str, Any]):
     _ensure_comfyui_running()
     
     async for update in _execute_workflow(workflow, _comfy_port):
-        if update.get("status") == "success" and "images" in update:
-            # Base64 encode images for WebSocket transfer
-            for img in update["images"]:
-                if "data" in img and isinstance(img["data"], bytes):
-                    img["data"] = base64.b64encode(img["data"]).decode('utf-8')
-                    img["_base64_encoded"] = True
         
         # Log what we're yielding
         status = update.get("status", "unknown")

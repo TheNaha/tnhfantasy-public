@@ -4,9 +4,8 @@ import asyncio
 import json
 import logging
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
+import httpx
+import base64
 import uuid
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -53,23 +52,20 @@ async def _connect_with_retry(
     raise RuntimeError("Workflow websocket connection retries exhausted")
 
 
-def _queue_prompt(
+async def _queue_prompt(
     server_address: str,
     workflow_json: Dict[str, Any],
     client_id: str,
 ) -> tuple[str | None, Dict[str, Any] | None]:
     payload = {"prompt": workflow_json, "client_id": client_id}
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(f"http://{server_address}/prompt", data=data)
-    req.add_header("Content-Type", "application/json")
-
+    
     try:
-        with urllib.request.urlopen(req) as response:
-            response_data = json.loads(response.read())
-    except urllib.error.HTTPError as error:
-        body = ""
-        if error.fp:
-            body = error.read().decode(errors="replace")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(f"http://{server_address}/prompt", json=payload, timeout=10.0)
+            response.raise_for_status()
+            response_data = response.json()
+    except httpx.HTTPStatusError as error:
+        body = error.response.text
         message = body or str(error)
         return None, {"status": "error", "message": f"ComfyUI rejected workflow: {message}"}
     except Exception as error:
@@ -89,10 +85,12 @@ def _queue_prompt(
     return prompt_id, None
 
 
-def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
+async def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
     try:
-        with urllib.request.urlopen(f"http://{server_address}/history/{prompt_id}") as response:
-            history = json.loads(response.read())
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"http://{server_address}/history/{prompt_id}", timeout=10.0)
+            response.raise_for_status()
+            history = response.json()
     except Exception as error:
         return None, f"Failed to fetch history: {error}"
 
@@ -124,10 +122,13 @@ def _collect_images_from_filesystem(
 
             try:
                 with open(filepath, "rb") as file_obj:
+                    data = file_obj.read()
+                    b64_data = base64.b64encode(data).decode('utf-8')
                     images_output.append(
                         {
                             "filename": filename,
-                            "data": file_obj.read(),
+                            "data": b64_data,
+                            "_base64_encoded": True,
                             "type": folder_type,
                         }
                     )
@@ -137,7 +138,7 @@ def _collect_images_from_filesystem(
     return images_output
 
 
-def _collect_images_via_view_api(
+async def _collect_images_via_view_api(
     history_data: Dict[str, Any],
     *,
     server_address: str,
@@ -146,34 +147,38 @@ def _collect_images_via_view_api(
 ) -> List[Dict[str, Any]]:
     images_output: List[Dict[str, Any]] = []
 
-    for node_output in history_data.get("outputs", {}).values():
-        for image in node_output.get("images", []):
-            filename = image.get("filename")
-            if not filename:
-                continue
+    async with httpx.AsyncClient() as client:
+        for node_output in history_data.get("outputs", {}).values():
+            for image in node_output.get("images", []):
+                filename = image.get("filename")
+                if not filename:
+                    continue
 
-            subfolder = image.get("subfolder") or ""
-            folder_type = image.get("type", "output")
-            query = urllib.parse.urlencode(
-                {
+                subfolder = image.get("subfolder") or ""
+                folder_type = image.get("type", "output")
+                
+                params = {
                     "filename": filename,
                     "subfolder": subfolder,
                     "type": folder_type,
                 }
-            )
-            view_url = f"http://{server_address}/view?{query}"
+                view_url = f"http://{server_address}/view"
 
-            try:
-                with urllib.request.urlopen(view_url, timeout=view_timeout_seconds) as response:
+                try:
+                    response = await client.get(view_url, params=params, timeout=view_timeout_seconds)
+                    response.raise_for_status()
+                    data = response.content
+                    b64_data = base64.b64encode(data).decode('utf-8')
                     images_output.append(
                         {
                             "filename": filename,
-                            "data": response.read(),
+                            "data": b64_data,
+                            "_base64_encoded": True,
                             "type": folder_type,
                         }
                     )
-            except Exception as error:
-                _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
+                except Exception as error:
+                    _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
 
     return images_output
 
@@ -210,7 +215,7 @@ async def execute_comfy_workflow(
 
     prompt_id: str | None = None
     try:
-        prompt_id, queue_error = _queue_prompt(server_address, workflow_json, client_id)
+        prompt_id, queue_error = await _queue_prompt(server_address, workflow_json, client_id)
         if queue_error:
             yield queue_error
             return
@@ -229,7 +234,7 @@ async def execute_comfy_workflow(
             except asyncio.TimeoutError:
                 # ComfyUI occasionally deadlocks mid-run on long-lived containers.
                 # Probe history once before failing the request as stalled.
-                history_probe, _history_probe_error = _get_history(server_address, prompt_id)
+                history_probe, _history_probe_error = await _get_history(server_address, prompt_id)
                 if history_probe is not None:
                     _log(
                         logger,
@@ -317,13 +322,13 @@ async def execute_comfy_workflow(
     if history_delay_seconds > 0:
         await asyncio.sleep(history_delay_seconds)
 
-    history_data, history_error = _get_history(server_address, prompt_id)
+    history_data, history_error = await _get_history(server_address, prompt_id)
     if history_error:
         yield {"status": "error", "message": history_error}
         return
 
     if image_fetch_mode == IMAGE_FETCH_VIEW_API:
-        images_output = _collect_images_via_view_api(
+        images_output = await _collect_images_via_view_api(
             history_data,
             server_address=server_address,
             view_timeout_seconds=view_timeout_seconds,

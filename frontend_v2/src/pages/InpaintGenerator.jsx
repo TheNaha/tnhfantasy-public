@@ -8,13 +8,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useShallow } from 'zustand/react/shallow';
-import { useModelDirectories } from '../hooks/useModelDirectories';
-import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import toast from 'react-hot-toast';
-
-import { WorkflowBuilder } from '../utils/workflowBuilder';
-import { useGeneratorStore } from '../store/generatorStore';
+import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
@@ -27,8 +21,10 @@ import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
 import { useSettings } from '../store/settingsStore';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
-import useGenerationPreflight from '../hooks/useGenerationPreflight';
-import useProvidersPageData from '../hooks/useProvidersPageData';
+import { useModelDirectories } from '../hooks/useModelDirectories';
+import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
+import toast from 'react-hot-toast';
+import { WorkflowBuilder } from '../utils/workflowBuilder';
 
 const EMPTY_MODELS = [];
 
@@ -36,66 +32,36 @@ export default function InpaintGenerator() {
     const navigate = useNavigate();
     const location = useLocation();
     const settings = useSettings();
-    const [generating, setGenerating] = useState(false);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
     const [showCanvas, setShowCanvas] = useState(false);
 
-    // Global State from Store
     const {
-        prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
-        sourceImage, denoise, maskImage, maskBlur,
-        selectedCheckpoint, selectedVae, selectedLoras,
-        setSeed, setSteps, setCfg, setSampler, setScheduler,
-        setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
-        setSelectedCheckpoint, setSelectedVae,
-        randomizeSeed, addLora, removeLora, updateLora
-    } = useGeneratorStore(useShallow((state) => ({
-        prompt: state.prompt,
-        negativePrompt: state.negativePrompt,
-        seed: state.seed,
-        steps: state.steps,
-        cfg: state.cfg,
-        sampler: state.sampler,
-        scheduler: state.scheduler,
-        sourceImage: state.sourceImage,
-        denoise: state.denoise,
-        maskImage: state.maskImage,
-        maskBlur: state.maskBlur,
-        selectedCheckpoint: state.selectedCheckpoint,
-        selectedVae: state.selectedVae,
-        selectedLoras: state.selectedLoras,
-        setSeed: state.setSeed,
-        setSteps: state.setSteps,
-        setCfg: state.setCfg,
-        setSampler: state.setSampler,
-        setScheduler: state.setScheduler,
-        setSourceImage: state.setSourceImage,
-        setDenoise: state.setDenoise,
-        setMaskImage: state.setMaskImage,
-        setMaskBlur: state.setMaskBlur,
-        clearSourceImage: state.clearSourceImage,
-        setSelectedCheckpoint: state.setSelectedCheckpoint,
-        setSelectedVae: state.setSelectedVae,
-        randomizeSeed: state.randomizeSeed,
-        addLora: state.addLora,
-        removeLora: state.removeLora,
-        updateLora: state.updateLora,
-    })));
+        store: {
+            prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
+            sourceImage, denoise, maskImage, maskBlur,
+            selectedCheckpoint, selectedVae, selectedLoras,
+            setSeed, setSteps, setCfg, setSampler, setScheduler,
+            setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
+            setSelectedCheckpoint, setSelectedVae,
+            randomizeSeed, addLora, removeLora, updateLora
+        },
+        generating, setGenerating,
+        providers, providersLoading,
+        preflight: {
+            isChecking: preflightChecking,
+            validationResult,
+            summary: validationSummary,
+            isMissingModelsOpen,
+            setIsMissingModelsOpen,
+            runWithPreflight,
+        }
+    } = useGeneratorCore();
 
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
     const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
-    const { providers, isLoading: providersLoading } = useProvidersPageData();
-    const {
-        isChecking: preflightChecking,
-        validationResult,
-        summary: validationSummary,
-        isMissingModelsOpen,
-        setIsMissingModelsOpen,
-        runWithPreflight,
-    } = useGenerationPreflight();
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {

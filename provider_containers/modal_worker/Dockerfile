@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir \
     uvicorn \
     httpx \
     python-multipart \
+    aiofiles \
     tenacity
 
 # Copy shared provider_core package (available since build context is provider_containers/)

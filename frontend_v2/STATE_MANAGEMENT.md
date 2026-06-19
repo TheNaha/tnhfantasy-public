@@ -38,9 +38,8 @@ Use Zustand for:
 
 **Example Stores:**
 
-- `jobStore.js` - Real-time job updates via WebSocket
 - `settingsStore.js` - User preferences (branding, theme)
-- `useStore.js` - Gallery UI state, favorites, and server-backed collection cache
+- `useStore.js` - Gallery UI state, favorites, and active collection cache
 
 ### React Query - Server Data
 
@@ -92,15 +91,8 @@ deleteJob: async (jobId) => {
 Real-time updates via WebSocket are handled in Zustand:
 
 ```javascript
-// In jobStore.js
-connect: async () => {
-  await ws.connect();
-  await ws.subscribe("job");
-
-  ws.on("job.completed", (data) => {
-    get()._processMessage(data); // Update store
-  });
-};
+// In src/hooks/useJobsRealtime.jsx
+const { lastCompletedJob } = useJobsRealtime();
 ```
 
 ### 3. Server Data with React Query
@@ -129,11 +121,7 @@ const mutation = useMutation({
 
 ## Store Organization
 
-### jobStore.js
 
-- **Purpose**: Real-time job tracking via WebSocket
-- **State**: `jobs[]`, `activeJobs[]`, `lastCompletedJob`
-- **Methods**: `connect()`, `fetchJobs()`, `cancelJob()`, `deleteJob()`
 
 ### settingsStore.js
 
@@ -143,9 +131,9 @@ const mutation = useMutation({
 
 ### useStore.js
 
-- **Purpose**: Gallery UI state plus server-backed collection cache
-- **State**: `viewMode`, `favorites[]`, `collections{}`, `activeCollection`
-- **Methods**: `initCollections()`, `refreshCollections()`, `loadCollectionImages()`
+- **Purpose**: Gallery UI state
+- **State**: `viewMode`, `favorites[]`, `activeCollection`
+- **Methods**: `setViewMode()`, `toggleFavorite()`, `setActiveCollection()`
 
 ### useProvidersPageData.js
 

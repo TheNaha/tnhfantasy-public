@@ -63,6 +63,17 @@ function AnimatedRoutes() {
 
 let hasRequestedProviderWake = false;
 
+function GlobalHooks() {
+    // Initialize dynamic viewport height for iOS Safari
+    // This sets --vh CSS variable that works correctly with address bar
+    useViewportHeight();
+    
+    // Initialize global job notifications and WebSocket sync
+    useJobsRealtime();
+
+    return null;
+}
+
 function App() {
     const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
     const loadBranding = useBrandingStore((state) => state.loadBranding);
@@ -111,13 +122,6 @@ function App() {
         });
     }, [queryClient, queryUiSettings]);
 
-    // Initialize dynamic viewport height for iOS Safari
-    // This sets --vh CSS variable that works correctly with address bar
-    useViewportHeight();
-    
-    // Initialize global job notifications and WebSocket sync
-    useJobsRealtime();
-
     useEffect(() => {
         if (hasRequestedProviderWake) {
             return;
@@ -136,6 +140,7 @@ function App() {
     return (
         <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
+                <GlobalHooks />
                 <Router>
                     <Layout>
                         <Suspense fallback={

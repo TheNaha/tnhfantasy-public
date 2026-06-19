@@ -16,8 +16,7 @@ httpx[http2]>=0.25.0
 python-multipart>=0.0.6
 
 # SSE (legacy, being replaced by WebSocket)
-
-
+aiofiles>=23.2.1
 # WebSocket (Socket.IO for bidirectional realtime communication)
 python-socketio[asyncio_client]>=5.10.0
 

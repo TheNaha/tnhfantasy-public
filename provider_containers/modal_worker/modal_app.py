@@ -100,7 +100,7 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 image_base = (
     modal.Image.debian_slim(python_version="3.13")
     .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0", gpu="L4")
-    .uv_pip_install( "comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", gpu="L4")
+    .uv_pip_install("comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", "httpx", "aiofiles", gpu="L4")
     # Ensure shared provider_core utilities are present in cloud runtime.
     .add_local_dir(
         local_path=PROVIDER_CORE_LOCAL_PATH,

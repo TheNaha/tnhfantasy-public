@@ -5,9 +5,12 @@ from typing import List, Dict, Any
 
 from .utils import get_safe_path
 
+import aiofiles
+import asyncio
+
 logger = logging.getLogger(__name__)
 
-def list_models_with_metadata_internal(base_path: str, directory: str) -> List[Dict[str, Any]]:
+async def list_models_with_metadata_internal(base_path: str, directory: str) -> List[Dict[str, Any]]:
     """
     List models in a directory and attach metadata and preview URLs if they exist.
     """
@@ -20,39 +23,43 @@ def list_models_with_metadata_internal(base_path: str, directory: str) -> List[D
     if not os.path.exists(target_dir):
         return []
         
-    entries = os.listdir(target_dir)
+    # Use scandir to avoid stat overhead and block event loop less
+    try:
+        entries = await asyncio.to_thread(os.listdir, target_dir)
+    except Exception as e:
+        logger.warning(f"Failed to listdir {target_dir}: {e}")
+        return []
+        
     files = []
-    
-    # Create a map for quick lookup
     entry_set = set(entries)
     
     for name in entries:
-        # Skip metadata/preview files themselves
         if name.endswith('.json') or name.endswith('.preview.png'):
             continue
             
         full_path = os.path.join(target_dir, name)
-        if not os.path.isfile(full_path):
+        try:
+            file_size = await asyncio.to_thread(os.path.getsize, full_path)
+        except Exception:
             continue
             
         file_data = {
             "name": name,
             "type": "file",
-            "size": os.path.getsize(full_path)
+            "size": file_size
         }
         
-        # Check for preview
         preview_name = f"{os.path.splitext(name)[0]}.preview.png"
         if preview_name in entry_set:
             file_data["preview"] = f"/api/view/{directory}/{preview_name}"
             
-        # Check and READ metadata
         meta_name = f"{os.path.splitext(name)[0]}.json"
         if meta_name in entry_set:
             file_data["metadata_url"] = f"/api/view/{directory}/{meta_name}"
             try:
-                with open(os.path.join(target_dir, meta_name), 'r') as f:
-                    file_data["metadata"] = json.load(f)
+                async with aiofiles.open(os.path.join(target_dir, meta_name), 'r') as f:
+                    content = await f.read()
+                    file_data["metadata"] = json.loads(content)
             except Exception as e:
                 logger.warning(f"Failed to read metadata for {name}: {e}")
                 

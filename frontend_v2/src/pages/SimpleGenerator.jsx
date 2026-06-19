@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { FolderOpen, Loader2 } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
+import { useGeneratorCore } from '../hooks/useGeneratorCore';
+import toast from 'react-hot-toast';
+import useSettingsStore, { useSettings } from '../store/settingsStore';
+import { generateApi, createIdempotencyKey } from '../api';
+
 import { WorkflowBuilder } from '../utils/workflowBuilder';
-import { useGeneratorStore } from '../store/generatorStore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { useTrackJob } from '../hooks/useTrackJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -19,99 +22,40 @@ import ParametersPanel from '../components/generator/ParametersPanel';
 import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
-import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import useProvidersPageData from '../hooks/useProvidersPageData';
-import toast from 'react-hot-toast';
-import useSettingsStore, { useSettings } from '../store/settingsStore';
-import { generateApi, createIdempotencyKey } from '../api';
-
-const generatorSelector = (state) => ({
-    prompt: state.prompt,
-    negativePrompt: state.negativePrompt,
-    seed: state.seed,
-    steps: state.steps,
-    cfg: state.cfg,
-    sampler: state.sampler,
-    scheduler: state.scheduler,
-    width: state.width,
-    height: state.height,
-    batchSize: state.batchSize,
-    selectedCheckpoint: state.selectedCheckpoint,
-    selectedVae: state.selectedVae,
-    selectedClip: state.selectedClip,
-    selectedClip2: state.selectedClip2,
-    selectedLoras: state.selectedLoras,
-    controlnets: state.controlnets,
-    hiresFix: state.hiresFix,
-    hiresUpscaler: state.hiresUpscaler,
-    hiresDenoise: state.hiresDenoise,
-    hiresUpscale: state.hiresUpscale,
-    hiresSteps: state.hiresSteps,
-    adetailer: state.adetailer,
-    adetailerModel: state.adetailerModel,
-    adetailerPrompt: state.adetailerPrompt,
-    adetailerSteps: state.adetailerSteps,
-    adetailerDenoise: state.adetailerDenoise,
-    adetailerInpaintMasked: state.adetailerInpaintMasked,
-    setPrompt: state.setPrompt,
-    setNegativePrompt: state.setNegativePrompt,
-    setSeed: state.setSeed,
-    setSteps: state.setSteps,
-    setCfg: state.setCfg,
-    setSampler: state.setSampler,
-    setScheduler: state.setScheduler,
-    setWidth: state.setWidth,
-    setHeight: state.setHeight,
-    setBatchSize: state.setBatchSize,
-    setAspectRatioLocked: state.setAspectRatioLocked,
-    setSelectedCheckpoint: state.setSelectedCheckpoint,
-    setSelectedVae: state.setSelectedVae,
-    setSelectedClip: state.setSelectedClip,
-    setSelectedClip2: state.setSelectedClip2,
-    setHiresFix: state.setHiresFix,
-    setHiresUpscaler: state.setHiresUpscaler,
-    setHiresDenoise: state.setHiresDenoise,
-    setHiresUpscale: state.setHiresUpscale,
-    setHiresSteps: state.setHiresSteps,
-    setAdetailer: state.setAdetailer,
-    setAdetailerModel: state.setAdetailerModel,
-    setAdetailerPrompt: state.setAdetailerPrompt,
-    setAdetailerSteps: state.setAdetailerSteps,
-    setAdetailerDenoise: state.setAdetailerDenoise,
-    setAdetailerInpaintMasked: state.setAdetailerInpaintMasked,
-    randomizeSeed: state.randomizeSeed,
-    addLora: state.addLora,
-    removeLora: state.removeLora,
-    updateLora: state.updateLora,
-    addControlNet: state.addControlNet,
-    removeControlNet: state.removeControlNet,
-    updateControlNet: state.updateControlNet,
-    addTriggerWords: state.addTriggerWords,
-    aspectRatioLocked: state.aspectRatioLocked,
-});
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
     const settings = useSettings();
-    const [generating, setGenerating] = useState(false);
     const [viewingMetadata, setViewingMetadata] = useState(null);
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
 
     const {
-        prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
-        selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
-        hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
-        adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
-        setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
-        setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
-        setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
-        setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
-        randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords,
-        aspectRatioLocked
-    } = useGeneratorStore(useShallow(generatorSelector));
+        store: {
+            prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
+            selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
+            hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
+            adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
+            setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
+            setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
+            setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
+            setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
+            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords,
+            aspectRatioLocked
+        },
+        generating, setGenerating,
+        providers, providersLoading,
+        preflight: {
+            isChecking: preflightChecking,
+            validationResult,
+            summary: validationSummary,
+            isMissingModelsOpen,
+            setIsMissingModelsOpen,
+            runWithPreflight,
+        }
+    } = useGeneratorCore();
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
@@ -128,16 +72,6 @@ export default function SimpleGenerator() {
     const { data: trackedJob } = useTrackJob(currentJobId);
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
-
-    const { providers, isLoading: providersLoading } = useProvidersPageData();
-    const {
-        isChecking: preflightChecking,
-        validationResult,
-        summary: validationSummary,
-        isMissingModelsOpen,
-        setIsMissingModelsOpen,
-        runWithPreflight,
-    } = useGenerationPreflight();
 
     useKeyboardShortcuts();
 

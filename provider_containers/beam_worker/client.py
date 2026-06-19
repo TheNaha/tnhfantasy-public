@@ -12,10 +12,9 @@ from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
     build_error_response, build_status_response,
-    get_http_client, determine_download_token, get_job_tracker,
-    build_deploy_compatibility_response, get_reconciliation_state,
     get_logger
 )
+from provider_core.base_client import BaseProviderClient
 
 logger = get_logger("beam_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
@@ -40,11 +39,9 @@ def get_beam_headers() -> Dict[str, str]:
         headers["X-Beam-Workspace-Id"] = BEAM_WORKSPACE_ID
     return headers
 
-class BeamProviderClient:
+class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
-        self.runtime_config = runtime_config
-        self.job_tracker = get_job_tracker()
-        self.reconciliation_state = get_reconciliation_state(PROVIDER_ID)
+        super().__init__(PROVIDER_ID, runtime_config)
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -69,24 +66,14 @@ class BeamProviderClient:
             "storage_url_configured": bool(BEAM_STORAGE_URL),
         }
 
-    def get_config(self) -> Dict[str, Any]:
-        return {"config": self.runtime_config}
-
-    def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        updated = []
-        for key, value in updates.items():
-            if key in self.runtime_config:
-                self.runtime_config[key] = value
-                updated.append(key)
-                logger.info(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
-        return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
-
-    async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
-        job_id = request.job_id
-        cancelled = await self.job_tracker.cancel_job(job_id)
-        if cancelled:
-            return {"status": "cancelled", "job_id": job_id, "message": "Job marked for cancellation"}
-        return {"status": "not_found", "job_id": job_id, "message": "Job not currently active"}
+    async def get_info(self) -> Dict[str, Any]:
+        return {
+            "provider_id": PROVIDER_ID,
+            "type": "beam",
+            "gpu_type": BEAM_GPU_TYPE,
+            "gpu_url_configured": bool(BEAM_GPU_URL),
+            "storage_url_configured": bool(BEAM_STORAGE_URL),
+        }
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         job_id = request.job_id
@@ -270,6 +257,3 @@ class BeamProviderClient:
 
         asyncio.create_task(perform_reconciliation())
         return {"status": "started", "message": "Reconciliation started"}
-
-    def get_reconciliation_status(self) -> Dict[str, Any]:
-        return self.reconciliation_state.to_dict()

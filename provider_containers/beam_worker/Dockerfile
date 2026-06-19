@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir \
     python-multipart \
     httpx \
     websockets \
+    aiofiles \
     tenacity \
  && ln -sf /usr/local/bin/beta9 /usr/local/bin/beam
 
