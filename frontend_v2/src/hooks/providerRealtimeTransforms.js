@@ -1,17 +1,9 @@
 import { normalizeReconciliationStatus } from '../utils/providerStatus';
+import { unwrapPayload, normalizeObject, extractProviderId } from '../utils/providerUtils';
 
-function normalizeObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
+export { extractProviderId };
+export const unwrapEventData = unwrapPayload;
 
-export function unwrapEventData(payload) {
-    return payload?.data ?? payload ?? {};
-}
-
-export function extractProviderId(payload) {
-    const source = unwrapEventData(payload);
-    return source.provider_id ?? source.providerId ?? source.id ?? null;
-}
 
 
 

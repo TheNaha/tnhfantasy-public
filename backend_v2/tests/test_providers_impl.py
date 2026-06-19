@@ -4,8 +4,9 @@ import base64
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from infrastructure.providers.base import ServerlessProvider, FileProxyProvider
-from infrastructure.providers.beam_provider import BeamProvider, BeamFileProxy
-from infrastructure.providers.modal_provider import ModalProvider, ModalFileProxy
+from infrastructure.providers.beam_provider import BeamProvider
+from infrastructure.providers.modal_provider import ModalProvider
+from infrastructure.providers.provider_registry import HttpFileProxy
 
 
 class _FakeStreamResponse:
@@ -131,12 +132,12 @@ class TestFileProxyProviderBase:
 
 # ===== BEAM PROVIDER TESTS =====
 
-class TestBeamFileProxy:
+class TestHttpFileProxy:
     def get_proxy(self):
-        return BeamFileProxy("beam-1", {}, "http://comfy-provider-beam-1:8000")
+        return HttpFileProxy("beam-1", {}, "http://comfy-provider-beam-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = BeamFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
+        proxy = HttpFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
         assert proxy.base_url == "http://comfy-provider-p1:8000"
 
     def test_get_proxy_url(self):
@@ -238,7 +239,7 @@ class TestBeamProvider:
     def test_get_file_proxy(self):
         provider = self.get_provider()
         proxy = provider.get_file_proxy()
-        assert isinstance(proxy, BeamFileProxy)
+        assert isinstance(proxy, HttpFileProxy)
 
     def test_provider_type(self):
         provider = self.get_provider()
@@ -322,12 +323,12 @@ class TestBeamProvider:
 
 # ===== MODAL PROVIDER TESTS =====
 
-class TestModalFileProxy:
+class TestHttpFileProxy:
     def get_proxy(self):
-        return ModalFileProxy("modal-1", {}, "http://comfy-provider-modal-1:8000")
+        return HttpFileProxy("modal-1", {}, "http://comfy-provider-modal-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = ModalFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
+        proxy = HttpFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
         assert proxy.base_url == "http://comfy-provider-p1:8000"
 
     def test_get_proxy_url(self):
@@ -424,7 +425,7 @@ class TestModalProvider:
     def test_get_file_proxy(self):
         provider = self.get_provider()
         proxy = provider.get_file_proxy()
-        assert isinstance(proxy, ModalFileProxy)
+        assert isinstance(proxy, HttpFileProxy)
 
     def test_provider_type(self):
         provider = self.get_provider()

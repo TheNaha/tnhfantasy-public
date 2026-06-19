@@ -3,15 +3,8 @@
 
 from typing import Dict, Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry
+from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_dict
 from .modal_provider import ModalProvider
-
-
-def _clean_dict(d):
-    """Return a new dict with only string keys and non-None values."""
-    if not isinstance(d, dict):
-        return {}
-    return {k: v for k, v in d.items() if isinstance(k, str)}
 
 
 def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
@@ -53,8 +46,8 @@ def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) ->
         env_vars["ENABLE_MEMORY_SNAPSHOT"] = str(config["enable_memory_snapshot"]).lower()
 
     # Nested deploy_config: functions.comfyui
-    deploy = _clean_dict(config.get("deploy_config") or config)
-    comfyui = _clean_dict(_clean_dict(deploy.get("functions")).get("comfyui"))
+    deploy = clean_dict(config.get("deploy_config") or config)
+    comfyui = clean_dict(clean_dict(deploy.get("functions")).get("comfyui"))
     if "gpu_type" in comfyui:
         env_vars["MODAL_GPU_TYPE"] = comfyui["gpu_type"]
     if "cpu" in comfyui:
@@ -79,14 +72,14 @@ def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) ->
         env_vars["MODAL_COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS"] = str(comfyui["stall_diagnostics_max_chars"])
 
     # Nested deploy_config: functions.download
-    download = _clean_dict(_clean_dict(deploy.get("functions")).get("download"))
+    download = clean_dict(clean_dict(deploy.get("functions")).get("download"))
     if "timeout_seconds" in download:
         env_vars["MODAL_DOWNLOAD_TIMEOUT"] = str(download["timeout_seconds"])
     if "max_containers" in download:
         env_vars["MODAL_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
 
     # Nested deploy_config: functions.storage
-    storage = _clean_dict(_clean_dict(deploy.get("functions")).get("storage"))
+    storage = clean_dict(clean_dict(deploy.get("functions")).get("storage"))
     if "timeout_seconds" in storage:
         env_vars["MODAL_STORAGE_TIMEOUT"] = str(storage["timeout_seconds"])
     if "max_containers" in storage:

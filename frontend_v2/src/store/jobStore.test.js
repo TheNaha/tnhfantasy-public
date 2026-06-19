@@ -30,8 +30,6 @@ vi.mock('../api', () => ({
 
 describe('useJobStore', () => {
     let useJobStore;
-    let jobsApi;
-    let wsApi;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -67,9 +65,6 @@ describe('useJobStore', () => {
 
         const mod = await import('../store/jobStore.js');
         useJobStore = mod.useJobStore;
-        const apiMod = await import('../api');
-        jobsApi = apiMod.jobsApi;
-        wsApi = await import('../api/websocket');
     });
 
     describe('initial state', () => {

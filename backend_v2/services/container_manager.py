@@ -237,8 +237,8 @@ class ContainerManager:
                 backend_host_path: {"bind": "/backend", "mode": "ro"}
             }
         
-        # Always use comfy-network for container-to-container communication
-        target_network = "comfy-network"
+        # Use the compose-defined network name for container-to-container communication
+        target_network = "tnhcomfy"
         logger.debug("container_network", network=target_network)
         
         try:

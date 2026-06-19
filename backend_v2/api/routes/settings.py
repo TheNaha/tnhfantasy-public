@@ -136,19 +136,19 @@ async def get_settings_schema() -> Dict[str, Any]:
                 }
             }
         },
-        "sse": {
-            "description": "Server-Sent Events configuration",
+        "websocket": {
+            "description": "WebSocket configuration (realtime job updates via Socket.IO)",
             "fields": {
                 "poll_interval": {
                     "type": "number",
-                    "description": "Seconds between SSE updates",
+                    "description": "Seconds between mobile polling fallback updates",
                     "min": 0.1,
                     "max": 5,
                     "default": 0.5
                 },
-                "error_retry_delay": {
+                "reconnect_delay": {
                     "type": "integer",
-                    "description": "Seconds to wait after SSE error",
+                    "description": "Seconds to wait before reconnecting",
                     "min": 1,
                     "max": 30,
                     "default": 1

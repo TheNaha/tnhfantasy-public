@@ -85,7 +85,7 @@ class TestGenerationRoute:
 
         assert generate_response.status_code == 400
         assert jobs_response.status_code == 400
-        assert generate_response.json()["detail"] == jobs_response.json()["detail"]
+        assert generate_response.json()["error"] == jobs_response.json()["error"]
 
     def test_generate_and_jobs_routes_accept_same_workflow(self, client, sample_workflow):
         payload = {"workflow": sample_workflow, "metadata": {"prompt": "same contract"}}
@@ -156,4 +156,4 @@ def test_generate_and_jobs_share_missing_model_validation(client, session):
 
     assert generate_response.status_code == 400
     assert jobs_response.status_code == 400
-    assert generate_response.json()["detail"] == jobs_response.json()["detail"]
+    assert generate_response.json()["error"] == jobs_response.json()["error"]

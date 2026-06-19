@@ -206,13 +206,17 @@ class ModalProviderClient:
             return True
 
         async def perform_reconciliation():
-            await run_reconciliation_v2(
-                provider_id=PROVIDER_ID, backend_url=BACKEND_URL, reconciliation_state=self.reconciliation_state,
-                max_concurrent_downloads=self.runtime_config["max_concurrent_downloads"],
-                hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN, storage_label="Modal",
-                validate_existing=validate_existing, list_existing_files=list_existing_files,
-                download_file=download_file, delete_file=delete_file
-            )
+            try:
+                await run_reconciliation_v2(
+                    provider_id=PROVIDER_ID, backend_url=BACKEND_URL, reconciliation_state=self.reconciliation_state,
+                    max_concurrent_downloads=self.runtime_config["max_concurrent_downloads"],
+                    hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN, storage_label="Modal",
+                    validate_existing=validate_existing, list_existing_files=list_existing_files,
+                    download_file=download_file, delete_file=delete_file
+                )
+            except Exception as e:
+                print(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
+                self.reconciliation_state.status = "error"
 
         asyncio.create_task(perform_reconciliation())
         return {"status": "started", "message": "Reconciliation started"}

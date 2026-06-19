@@ -51,7 +51,6 @@ const generatorSelector = (state) => ({
     adetailer: state.adetailer,
     adetailerModel: state.adetailerModel,
     adetailerPrompt: state.adetailerPrompt,
-    adetailerNegative: state.adetailerNegative,
     adetailerSteps: state.adetailerSteps,
     adetailerDenoise: state.adetailerDenoise,
     adetailerInpaintMasked: state.adetailerInpaintMasked,
@@ -107,7 +106,7 @@ export default function SimpleGenerator() {
         prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
         selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
         hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
-        adetailer, adetailerModel, adetailerPrompt, adetailerNegative, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
+        adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
         setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
         setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
         setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
@@ -227,8 +226,7 @@ export default function SimpleGenerator() {
 
     const handleAddLora = () => {
         addLora();
-        // Auto-open the selector for the newly added LoRA
-        setAutoOpenLoraIndex(selectedLoras.length); // Will be the new index after addLora
+        setAutoOpenLoraIndex(selectedLoras.length);
     };
 
     const handleRemoveLora = (index) => {
@@ -238,14 +236,6 @@ export default function SimpleGenerator() {
     const handleLoraChange = (index, field, value) => {
         updateLora(index, field, value);
     };
-
-    // addTriggerWords is now handled by the store action directly in the effect
-    // But we still need the function for the UI buttons
-    // The store action is named addTriggerWords too, so it's already in scope!
-    // However, the UI calls addTriggerWords(words) which matches the store signature.
-    // So we don't need to redefine it, BUT we need to make sure the toast is shown.
-    // The store action doesn't show toast.
-    // Let's wrap it.
 
     const handleAddTriggerWordsUI = (words) => {
         addTriggerWords(words);
@@ -286,8 +276,6 @@ export default function SimpleGenerator() {
             error: 'Upload failed'
         });
     };
-
-    // const [progress, setProgress] = useState(null); // Moved to top level state
 
     // Helper to detect model types
     const isFluxModel = (model) => {
@@ -343,7 +331,6 @@ export default function SimpleGenerator() {
             adetailer,
             adetailerModel,
             adetailerPrompt,
-            adetailerNegative,
             adetailerSteps,
             adetailerDenoise,
             adetailerInpaintMasked,
@@ -373,8 +360,6 @@ export default function SimpleGenerator() {
 
         return { workflow, metadata };
     };
-
-// ...
 
     const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
         if (trackQueuedJob) {
@@ -668,10 +653,10 @@ export default function SimpleGenerator() {
                                                 key={emb.name}
                                                 onClick={() => {
                                                     if (isNegative) {
-                                                        setNegativePrompt(prev => prev + (prev ? ", " : "") + `embedding:${emb.name}`);
+                                                        setNegativePrompt(negativePrompt ? `${negativePrompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
                                                         toast.success(`Added ${emb.name} to Negative Prompt`, { icon: '🚫' });
                                                     } else {
-                                                        setPrompt(prev => prev + (prev ? ", " : "") + `embedding:${emb.name}`);
+                                                        setPrompt(prompt ? `${prompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
                                                         toast.success(`Added ${emb.name} to Positive Prompt`, { icon: '✨' });
                                                     }
                                                 }}

@@ -3,15 +3,8 @@
 
 from typing import Dict, Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry
+from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_dict
 from .beam_provider import BeamProvider
-
-
-def _clean_dict(d):
-    """Return a new dict with only string keys and non-None values."""
-    if not isinstance(d, dict):
-        return {}
-    return {k: v for k, v in d.items() if isinstance(k, str)}
 
 
 def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
@@ -53,7 +46,7 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     if credentials.get("civitai_token"):
         env_vars["CIVITAI_TOKEN"] = credentials["civitai_token"]
 
-    deploy = _clean_dict(config.get("deploy_config") or config)
+    deploy = clean_dict(config.get("deploy_config") or config)
 
     beta9_gateway_host = (
         deploy.get("beta9_gateway_host")
@@ -84,8 +77,8 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     if "gpu_type" in deploy:
         env_vars["BEAM_GPU_TYPE"] = deploy["gpu_type"]
 
-    beam_functions = _clean_dict(deploy.get("functions"))
-    gpu_func = _clean_dict(beam_functions.get("comfyui"))
+    beam_functions = clean_dict(deploy.get("functions"))
+    gpu_func = clean_dict(beam_functions.get("comfyui"))
     if "gpu_type" in gpu_func:
         env_vars["BEAM_GPU_TYPE"] = gpu_func["gpu_type"]
     if "cpu" in gpu_func:
@@ -99,7 +92,7 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     if "concurrent_requests" in gpu_func:
         env_vars["BEAM_GPU_CONCURRENT"] = str(gpu_func["concurrent_requests"])
 
-    download = _clean_dict(beam_functions.get("download"))
+    download = clean_dict(beam_functions.get("download"))
     if "cpu" in download:
         env_vars["BEAM_DOWNLOAD_CPU"] = str(download["cpu"])
     if "memory" in download:
@@ -109,7 +102,7 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     if "max_containers" in download:
         env_vars["BEAM_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
 
-    storage = _clean_dict(beam_functions.get("storage"))
+    storage = clean_dict(beam_functions.get("storage"))
     if "cpu" in storage:
         env_vars["BEAM_STORAGE_CPU"] = str(storage["cpu"])
     if "memory" in storage:

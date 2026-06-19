@@ -13,7 +13,6 @@ from infrastructure.providers.provider_registry import ProviderRegistry
 from api.provider_runtime import resolve_provider_runtime
 
 from services.provider_utils import (
-    ensure_provider_v2_shape,
     extract_runtime_config,
     extract_deploy_config,
     compose_config,
@@ -211,18 +210,18 @@ class ProviderService:
             {"status": "created", "enabled": provider.enabled}
         )
         
-        return ensure_provider_v2_shape(provider)
+        return provider
     
     async def get_provider(self, provider_id: str) -> Provider:
         provider = self.repo.get(provider_id)
         if not provider:
             logger.warning("provider_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
-        return ensure_provider_v2_shape(provider)
+        return provider
     
     async def list_providers(self) -> List[Dict[str, Any]]:
         providers = self.repo.get_all()
-        result = [self._provider_to_dict(ensure_provider_v2_shape(p)) for p in providers]
+        result = [self._provider_to_dict(p) for p in providers]
         # Sort: discovered (live) providers first, then by priority
         result.sort(key=lambda d: (
             0 if d.get("runtime_state", {}).get("discovered") else 1,
@@ -260,7 +259,7 @@ class ProviderService:
             {"status": "updated", "enabled": provider.enabled}
         )
         
-        return ensure_provider_v2_shape(provider)
+        return provider
     
     async def delete_provider(self, provider_id: str) -> bool:
         from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
@@ -307,20 +306,28 @@ class ProviderService:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
 
+        container_name = f"comfy-provider-{provider_id}"
+        container_config = {"container_name": container_name}
+
         existing = self.repo.get(provider_id)
         if existing:
+            updates: Dict[str, Any] = {}
             config = dict(existing.config or {})
             config["last_seen_at"] = now
             config["discovery_url"] = internal_url
-            self.repo.update(provider_id, {"config": config})
+            updates["config"] = config
+            if not existing.container_config:
+                updates["container_config"] = container_config
+            self.repo.update(provider_id, updates)
             logger.info("provider_discovery_updated", provider_id=provider_id, url=internal_url)
-            return ensure_provider_v2_shape(existing)
+            return existing
 
         provider = self.repo.create({
             "id": provider_id,
             "type": provider_type,
             "enabled": True,
             "priority": 1,
+            "container_config": container_config,
             "config": {
                 "last_seen_at": now,
                 "discovery_url": internal_url,
@@ -328,7 +335,7 @@ class ProviderService:
             },
         })
         logger.info("provider_discovery_created", provider_id=provider_id, type=provider_type, url=internal_url)
-        return ensure_provider_v2_shape(provider)
+        return provider
 
     def get_load_balancing_config(self) -> LoadBalancingConfig:
         return self.lb_repo.get()
@@ -337,7 +344,6 @@ class ProviderService:
         return self.lb_repo.update(**updates)
     
     def _provider_to_dict(self, provider: Provider) -> Dict[str, Any]:
-        provider = ensure_provider_v2_shape(provider)
         runtime = resolve_provider_runtime(provider)
         deploy_state = read_deploy_state(provider)
         reconciliation_state = read_reconciliation_state(provider)

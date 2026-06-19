@@ -1,8 +1,8 @@
 # Provider implementations
 from .base import ServerlessProvider, FileProxyProvider
-from .modal_provider import ModalProvider, ModalFileProxy
-from .beam_provider import BeamProvider, BeamFileProxy
-from .provider_registry import ProviderRegistry, ProviderTypeConfig
+from .modal_provider import ModalProvider
+from .beam_provider import BeamProvider
+from .provider_registry import ProviderRegistry, ProviderTypeConfig, HttpFileProxy, clean_dict
 from .runtime import get_provider_worker_base_url
 
 # Import provider configs to trigger auto-registration
@@ -23,9 +23,9 @@ __all__ = [
     "ServerlessProvider",
     "FileProxyProvider",
     "ModalProvider",
-    "ModalFileProxy",
     "BeamProvider",
-    "BeamFileProxy",
+    "HttpFileProxy",
+    "clean_dict",
     "create_provider_client",
     "get_provider_worker_base_url",
     "ProviderRegistry",

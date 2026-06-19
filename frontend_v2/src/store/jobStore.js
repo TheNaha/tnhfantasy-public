@@ -21,6 +21,7 @@ export const useJobStore = create((set, get) => ({
     lastCompletedJob: null,
     lastFailedJob: null,
     lastCancelledJob: null,
+    lastEventTimestamp: 0,
     isConnected: false,
     connectionError: null,
 
@@ -60,6 +61,7 @@ export const useJobStore = create((set, get) => ({
         if (data.type && data.data?.job) {
             const job = data.data.job;
             const eventType = data.type;
+            set({ lastEventTimestamp: Date.now() });
 
             if (eventType === 'job.created') {
                 set((state) => {
@@ -95,13 +97,17 @@ export const useJobStore = create((set, get) => ({
         }
 
         if (data.type === 'job_update' && data.job) {
+            set({ lastEventTimestamp: Date.now() });
             updateJob(data.job.id, data.job);
         }
     },
 
-    fetchJobs: async () => {
+    fetchJobs: async ({ skipIfEventAfter } = {}) => {
         try {
-            const data = await jobsApi.list();
+            if (skipIfEventAfter && get().lastEventTimestamp > skipIfEventAfter) {
+                return;
+            }
+            const data = await jobsApi.getActive();
             get().setJobs(filterActiveJobs(data.jobs || []));
             return data;
         } catch (error) {

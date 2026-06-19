@@ -196,9 +196,6 @@ def compose_config(
 
     return config
 
-def ensure_provider_v2_shape(provider: Provider) -> Provider:
-    return provider
-
 def read_deploy_state(provider: Provider) -> Dict[str, Any]:
     config = provider.config if isinstance(provider.config, dict) else {}
     state = config.get(DEPLOY_STATE_KEY)

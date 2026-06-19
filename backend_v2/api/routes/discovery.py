@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session
-from typing import Optional
 
 from api.deps import get_session
 from services.provider_service import ProviderService

@@ -3,7 +3,6 @@ from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
 from core.exceptions import NotFoundError
 from services.provider_utils import (
-    ensure_provider_v2_shape,
     read_reconciliation_state,
     normalize_reconciliation_status,
     RECONCILIATION_IN_PROGRESS_STATUSES,
@@ -23,7 +22,6 @@ class ProviderReconciliationService:
         self.repo = repo
 
     def _persist_reconciliation_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
-        provider = ensure_provider_v2_shape(provider)
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),

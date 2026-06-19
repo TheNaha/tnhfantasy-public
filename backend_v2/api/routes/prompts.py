@@ -21,6 +21,9 @@ from pydantic import BaseModel
 
 from api.deps import get_session
 from core.entities import Prompt
+from infrastructure.logging import get_logger
+
+logger = get_logger("prompts_route")
 
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"])
@@ -200,8 +203,8 @@ async def create_prompt(data: PromptCreate, session: Session = Depends(get_sessi
             "tags": ",".join(prompt.tags) if prompt.tags else ""
         })
         session.commit()
-    except Exception:
-        pass  # FTS5 might not exist yet
+    except Exception as e:
+        logger.warning("fts5_insert_failed", prompt_id=prompt.id, error=str(e))
     
     return prompt
 
@@ -239,8 +242,8 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
             "tags": ",".join(prompt.tags) if prompt.tags else ""
         })
         session.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("fts5_update_failed", prompt_id=prompt.id, error=str(e))
     
     return prompt
 
@@ -255,8 +258,8 @@ async def delete_prompt(prompt_id: int, session: Session = Depends(get_session))
     # Delete from FTS5 first
     try:
         session.execute(text("DELETE FROM prompts_fts WHERE rowid = :id"), {"id": prompt_id})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("fts5_delete_failed", prompt_id=prompt_id, error=str(e))
     
     session.delete(prompt)
     session.commit()
@@ -316,8 +319,8 @@ async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_
                 "description": prompt.description or "",
                 "tags": ",".join(prompt.tags) if prompt.tags else ""
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("fts5_bulk_insert_failed", prompt_id=prompt.id, error=str(e))
     
     session.commit()
     

@@ -13,7 +13,6 @@ Protocol:
 """
 
 import asyncio
-import logging
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -22,8 +21,9 @@ from api.job_processing import finalize_persisted_job_outputs, normalize_externa
 from core.exceptions import NotFoundError
 from api.provider_client import ProviderCallError
 from core.entities import JobStatus
+from infrastructure.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("worker_ws")
 
 router = APIRouter(tags=["worker-ws"])
 
@@ -77,9 +77,9 @@ def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
     heartbeat_age = (datetime.now(timezone.utc) - worker.last_heartbeat).total_seconds()
     if heartbeat_age > WORKER_HEARTBEAT_TIMEOUT_SECONDS:
         logger.warning(
-            "[Worker WS] Worker heartbeat stale: %s age=%.1fs",
-            provider_id,
-            heartbeat_age,
+            "worker_heartbeat_stale",
+            provider_id=provider_id,
+            age_seconds=round(heartbeat_age, 1),
         )
         connected_workers.pop(provider_id, None)
         return None
@@ -154,7 +154,7 @@ async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
         })
         return True
     except Exception as exc:
-        logger.warning(f"[Worker WS] Failed to send cancellation for {job_id} to {provider_id}: {exc}")
+        logger.warning("cancel_send_failed", job_id=job_id, provider_id=provider_id, error=str(exc))
         return False
 
 
@@ -199,7 +199,7 @@ async def worker_websocket(
     worker = ConnectedWorker(websocket, provider_id)
     connected_workers[provider_id] = worker
     
-    logger.info(f"[Worker WS] Worker connected: {provider_id}")
+    logger.info("worker_connected", provider_id=provider_id)
     
     # Send welcome message
     await websocket.send_json({
@@ -219,9 +219,9 @@ async def worker_websocket(
                     "type": "pending_models",
                     "models": pending
                 })
-                logger.info(f"[Worker WS] Pushed {len(pending)} pending downloads to {provider_id}")
+                logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
     except Exception as exc:
-        logger.warning(f"[Worker WS] Failed to push pending models to {provider_id}: {exc}")
+        logger.warning("pending_models_push_failed", provider_id=provider_id, error=str(exc))
     
     try:
         # Main message loop
@@ -236,7 +236,7 @@ async def worker_websocket(
             elif msg_type == "job_started":
                 job_id = data.get("job_id")
                 worker.current_job = job_id
-                logger.info(f"[Worker WS] Job started: {job_id}")
+                logger.info("job_started", job_id=job_id)
             
             elif msg_type == "job_progress":
                 payload = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
@@ -283,7 +283,7 @@ async def worker_websocket(
                         )
 
                     worker.current_job = None
-                    logger.error(f"[Worker WS] Invalid completed payload for {job_id}: {exc}")
+                    logger.error("invalid_completed_payload", job_id=job_id, error=str(exc))
                     continue
                 
                 try:
@@ -305,7 +305,7 @@ async def worker_websocket(
                         })
                     worker.current_job = None
                     worker.jobs_completed += 1
-                    logger.info(f"[Worker WS] Job entering post-processing: {job_id}")
+                    logger.info("job_post_processing", job_id=job_id)
 
             elif msg_type == "job_failed":
                 job_id = data.get("job_id")
@@ -332,7 +332,7 @@ async def worker_websocket(
                             )
                         )
                     worker.current_job = None
-                    logger.error(f"[Worker WS] Job failed: {job_id} - {error}")
+                    logger.error("job_failed", job_id=job_id, error=error)
             
             elif msg_type == "get_pending_models":
                 # Return models that need to be synced
@@ -346,9 +346,9 @@ async def worker_websocket(
                     })
     
     except WebSocketDisconnect:
-        logger.info(f"[Worker WS] Worker disconnected: {provider_id}")
+        logger.info("worker_disconnected", provider_id=provider_id)
     except Exception as e:
-        logger.error(f"[Worker WS] Error for {provider_id}: {e}")
+        logger.error("worker_error", provider_id=provider_id, error=str(e))
     finally:
         # Cleanup
         if worker.current_job:

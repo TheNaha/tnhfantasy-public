@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Image as ImageIcon, Loader2, Trash2, RefreshCw, Check, LayoutGrid, List, Square, Star, FolderOpen } from 'lucide-react';
+import { Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 // API Layer
 import { filesApi } from '../api';
+import { jobsApi } from '../api/jobs';
 
 import { useGallery } from '../hooks/useGallery';
 import { useDashboardItems } from '../hooks/useDashboardItems';
@@ -14,6 +15,9 @@ import { useSelectedImageState } from '../hooks/useSelectedImageState';
 import { useJobStore } from '../store/jobStore';
 import { useGeneratorStore } from '../store/generatorStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { useDashboardModals } from '../hooks/useDashboardModals';
+import { useDashboardSelection } from '../hooks/useDashboardSelection';
+
 import { GallerySkeleton } from '../components/Skeleton';
 import ConfirmationModal from '../components/ConfirmationModal';
 import useSettingsStore from '../store/settingsStore';
@@ -36,7 +40,6 @@ import { usePullToRefresh, PullToRefreshIndicator } from '../hooks/usePullToRefr
 import { useGalleryAutoRefresh } from '../hooks/useGalleryAutoRefresh';
 import { DashboardHeader } from '../components/dashboard/DashboardHeader';
 import { DashboardToolbar } from '../components/dashboard/DashboardToolbar';
-import { jobsApi } from '../api/jobs';
 import {
     buildGeneratorStateFromMetadata,
     hydrateGeneratorStateModelVisuals,
@@ -50,7 +53,8 @@ export default function Dashboard() {
     const autoRefreshOnJobComplete = useSettingsStore((state) => state.settings.gallery.autoRefreshOnJobComplete);
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
-    // Global State - now uses WebSocket for real-time updates
+    
+    // Global State
     const activeJobs = useJobStore((state) => state.jobs);
     const cancelJob = useJobStore((state) => state.cancelJob);
     const favorites = useStore((state) => state.favorites);
@@ -65,6 +69,7 @@ export default function Dashboard() {
 
     // Local State
     const [viewMode, setViewMode] = useState(() => defaultViewMode);
+    const [gridCols, setGridCols] = useState(defaultGridColumns);
 
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
@@ -75,66 +80,52 @@ export default function Dashboard() {
         aspect_ratio: ''
     });
 
-    // Confirmation Modal
-    const [confirmModal, setConfirmModal] = useState({
-        isOpen: false,
-        title: '',
-        message: '',
-        isDangerous: false,
-        confirmText: 'Confirm',
-        onConfirm: () => { }
+    const {
+        confirmModal,
+        setConfirmModal,
+        selectedJobId,
+        setSelectedJobId,
+        showCollectionsPanel,
+        setShowCollectionsPanel,
+        showSelectCollection,
+        setShowSelectCollection,
+        showStatsPanel,
+        setShowStatsPanel,
+        showComparison,
+        setShowComparison,
+        deleteJob,
+        retryJob,
+        handleJobDelete,
+        handleJobClick,
+        handleJobDetailsClose,
+    } = useDashboardModals({ queryClient, filters });
+
+    const {
+        selectionMode,
+        setSelectionMode,
+        selectedFiles,
+        setSelectedFiles,
+        toggleSelection,
+        handleBatchDownload,
+        handleBatchFavorite,
+        handleAddSelectionToCollection,
+        handleRemoveSelectionFromCollection,
+        handleBatchDelete,
+        handleCancelSelectionMode,
+    } = useDashboardSelection({
+        favorites,
+        toggleFavorite,
+        queryClient,
+        filters,
+        setConfirmModal,
+        activeCollection,
+        removeFromCollection,
+        setShowSelectCollection
     });
 
-    // Wrapped deleteJob to handle query invalidation
-    const deleteJob = useCallback(async (jobId) => {
-        try {
-            await jobsApi.delete(jobId);
-            useJobStore.setState(state => ({
-                jobs: state.jobs.filter(j => j.id !== jobId)
-            }));
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
-        } catch (error) {
-            console.error('Failed to delete job:', error);
-            throw error;
-        }
-    }, [queryClient, filters]);
-
-    const retryJob = useCallback(async (jobId) => {
-        try {
-            const result = await jobsApi.retry(jobId);
-            queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
-            return result;
-        } catch (error) {
-            console.error('Failed to retry job:', error);
-            throw error;
-        }
-    }, [queryClient, filters]);
-
-    // Wrapped deleteJob with confirmation modal for card dismiss button
-    const handleJobDelete = useCallback((jobId) => {
-        setConfirmModal({
-            isOpen: true,
-            title: 'Remove Job',
-            message: 'Are you sure you want to remove this job from history? The generated images will remain in your gallery.',
-            isDangerous: true,
-            confirmText: 'Remove',
-            onConfirm: async () => {
-                try {
-                    await deleteJob(jobId);
-                    toast.success('Job removed from history');
-                } catch (e) {
-                    toast.error(e.message || 'Failed to remove job');
-                }
-            }
-        });
-    }, [deleteJob]);
-    const [selectedJobId, setSelectedJobId] = useState(null);  // Store ID, not object
-    const [gridCols, setGridCols] = useState(defaultGridColumns);
-    const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
-    const [showSelectCollection, setShowSelectCollection] = useState(false);
-    const [showStatsPanel, setShowStatsPanel] = useState(false);
     const [isReusingParameters, setIsReusingParameters] = useState(false);
     const reuseParametersLockRef = useRef(false);
+    
     const {
         selectedImage,
         metadata,
@@ -153,39 +144,22 @@ export default function Dashboard() {
         }
     }, [selectImage, selectedImage]);
 
-    const handleJobDetailsClose = useCallback(() => setSelectedJobId(null), [setSelectedJobId]);
-
     const lightboxImages = useMemo(() => {
         if (!selectedImage) return [];
         return selectedImage.siblingImages || [selectedImage];
     }, [selectedImage]);
 
-    // Batch Operations
-    const [selectionMode, setSelectionMode] = useState(false);
-    const [selectedFiles, setSelectedFiles] = useState(new Set());
-    const [showComparison, setShowComparison] = useState(false);
-
-    // ⚡ Bolt: Pre-compute a Set of favorites to prevent O(N*M) performance degradation during rendering
-    // when calling `isFavorite` for every item in large galleries.
     const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
     const fastIsFavorite = useCallback((filename) => favoritesSet.has(filename), [favoritesSet]);
 
-    // Stable handler for toggling favorite
     const handleToggleFavorite = useCallback((filename) => {
         toggleFavorite(filename);
         toast.success(
             fastIsFavorite(filename) ? "Removed from favorites" : "Added to favorites",
-            { icon: fastIsFavorite(filename) ? '*' : '*' }
+            { icon: fastIsFavorite(filename) ? '⭐' : '⭐' }
         );
     }, [toggleFavorite, fastIsFavorite]);
 
-    // Stable handler for job click
-    const handleJobClick = useCallback((job) => {
-        const jobId = typeof job === 'string' ? job : job?.id;
-        if (jobId) setSelectedJobId(jobId);
-    }, []);
-
-    // Stable handler for image click
     const handleImageClick = useCallback((image) => {
         selectImage(image);
     }, [selectImage]);
@@ -200,34 +174,25 @@ export default function Dashboard() {
         refetch
     } = useGallery(filters);
 
-    // Infinite scroll sentinel
     const sentinelRef = useInfiniteScroll({
         hasMore: hasNextPage,
         onLoadMore: fetchNextPage,
         loading: isFetchingNextPage,
-        rootMargin: '600px' // Load 2 screens ahead
+        rootMargin: '600px'
     });
 
-    // Refetch gallery on mount to ensure fresh data.
     const hasInitializedRef = useRef(false);
     useEffect(() => {
-        if (hasInitializedRef.current) {
-            return;
-        }
+        if (hasInitializedRef.current) return;
         hasInitializedRef.current = true;
         void refetch();
         void initCollections();
     }, [initCollections, refetch]);
 
     useEffect(() => {
-        if (!activeCollection) {
-            return;
-        }
-
+        if (!activeCollection) return;
         const collection = collections[activeCollection];
-        if (!collection) {
-            return;
-        }
+        if (!collection) return;
 
         const imageCount = collection.imageCount ?? collection.images?.length ?? 0;
         if ((collection.images?.length ?? 0) === 0 && imageCount > 0) {
@@ -235,8 +200,6 @@ export default function Dashboard() {
         }
     }, [activeCollection, collections, loadCollectionImages]);
 
-    // Auto-refresh gallery when any job completes
-    // Use lastCompletedJob from store which gets set when job.completed WebSocket event fires
     const lastCompletedJob = useJobStore(state => state.lastCompletedJob);
     
     useGalleryAutoRefresh({
@@ -247,11 +210,10 @@ export default function Dashboard() {
         galleryQueryKey: ['gallery', filters],
     });
 
-    // Keyboard shortcuts (ESC to close modals)
     useKeyboardShortcuts({
         onEscape: () => {
             if (selectedImage) closeSelectedImage();
-            else if (selectedJob) setSelectedJobId(null);
+            else if (selectedJobId) setSelectedJobId(null);
         }
     });
 
@@ -271,7 +233,6 @@ export default function Dashboard() {
         favorites,
     });
 
-    // Handlers
     const handleDelete = useCallback((filename) => {
         setConfirmModal({
             isOpen: true,
@@ -296,13 +257,10 @@ export default function Dashboard() {
                 }
             }
         });
-    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters]);
+    }, [closeSelectedImage, queryClient, selectedImage, toastErrorDuration, toastSuccessDuration, filters, setConfirmModal]);
 
     const useParameters = useCallback(async () => {
-        if (reuseParametersLockRef.current) {
-            return;
-        }
-
+        if (reuseParametersLockRef.current) return;
         if (!metadata) return;
 
         reuseParametersLockRef.current = true;
@@ -318,9 +276,7 @@ export default function Dashboard() {
             }
 
             const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
-
             useGeneratorStore.getState().setAll(hydratedState);
-
             useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
 
             toast.success('Parameters loaded! Auto-randomize seed disabled for reproduction.', {
@@ -339,96 +295,6 @@ export default function Dashboard() {
         await new Promise(resolve => setTimeout(resolve, 500));
     }, [refetch]);
 
-    const toggleSelection = useCallback((filename) => {
-        setSelectedFiles(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(filename)) newSet.delete(filename);
-            else newSet.add(filename);
-            return newSet;
-        });
-    }, []);
-
-    const handleBatchDownload = useCallback(() => {
-        setConfirmModal({
-            isOpen: true,
-            title: 'Download Images',
-            message: `Download ${selectedFiles.size} images to your computer?`,
-            isDangerous: false,
-            confirmText: 'Download',
-            onConfirm: async () => {
-                const filesToDownload = Array.from(selectedFiles);
-                toast.promise(
-                    (async () => {
-                        for (const filename of filesToDownload) {
-                            const link = document.createElement('a');
-                            link.href = `/api/view/output/${filename}`;
-                            link.download = filename;
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    })(),
-                    {
-                        loading: `Downloading ${filesToDownload.length} images...`,
-                        success: `Downloaded ${filesToDownload.length} images!`,
-                        error: 'Download failed'
-                    }
-                );
-                setSelectionMode(false);
-                setSelectedFiles(new Set());
-            }
-        });
-    }, [selectedFiles]);
-
-    const handleBatchFavorite = useCallback(() => {
-        Array.from(selectedFiles).forEach(filename => {
-            if (!favorites.includes(filename)) {
-                toggleFavorite(filename);
-            }
-        });
-        toast.success(`Added ${selectedFiles.size} images to favorites`, { icon: '⭐' });
-    }, [favorites, selectedFiles, toggleFavorite]);
-
-    const handleAddSelectionToCollection = useCallback(() => {
-        setShowSelectCollection(true);
-    }, []);
-
-    const handleRemoveSelectionFromCollection = useCallback(() => {
-        selectedFiles.forEach(filename => {
-            removeFromCollection(activeCollection, filename);
-        });
-        toast.success(`Removed ${selectedFiles.size} images from collection`);
-        setSelectedFiles(new Set());
-    }, [activeCollection, removeFromCollection, selectedFiles]);
-
-    const handleBatchDelete = useCallback(() => {
-        setConfirmModal({
-            isOpen: true,
-            title: `Delete ${selectedFiles.size} Images`,
-            message: 'Are you sure you want to delete these images? This action cannot be undone.',
-            isDangerous: true,
-            confirmText: 'Delete Images',
-            onConfirm: async () => {
-                try {
-                    await filesApi.deleteMultiple(Array.from(selectedFiles));
-                    queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: true });
-                    setSelectedFiles(new Set());
-                    setSelectionMode(false);
-                    toast.success(`Deleted ${selectedFiles.size} images`);
-                } catch (e) {
-                    console.error(e);
-                    toast.error(`Failed to delete: ${e.message}`);
-                }
-            }
-        });
-    }, [queryClient, selectedFiles, filters]);
-
-    const handleCancelSelectionMode = useCallback(() => {
-        setSelectionMode(false);
-        setSelectedFiles(new Set());
-    }, []);
-
     const { containerRef, pullDistance, isRefreshing, isPulling } = usePullToRefresh({
         onRefresh: handlePullToRefresh,
         threshold: 80
@@ -440,7 +306,6 @@ export default function Dashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className=""
         >
             <PullToRefreshIndicator
                 pullDistance={pullDistance}
@@ -449,7 +314,6 @@ export default function Dashboard() {
                 threshold={80}
             />
             <div className="max-w-7xl mx-auto space-y-8">
-                {/* ⚡ Bolt: Pass stable reference handleJobClick to preserve QueueVisualization's React.memo */}
                 <QueueVisualization onJobClick={handleJobClick} />
 
                 <div className="flex flex-col gap-4">
@@ -509,7 +373,6 @@ export default function Dashboard() {
 
                 <FilterBar filters={filters} onFilterChange={setFilters} />
 
-                {/* Content */}
                 {isLoading ? (
                     <GallerySkeleton count={12} mode={viewMode} />
                 ) : !isLoading && displayedItems.length === 0 ? (
@@ -532,7 +395,6 @@ export default function Dashboard() {
                         showTutorialHint={!showFavorites && !activeCollection && allItems.length === 0}
                     />
                 ) : (
-                    // Timeline View - doesn't need date grouping since TimelineView handles it
                     viewMode === 'timeline' ? (
                         <TimelineView
                             items={displayedItems}
@@ -563,10 +425,8 @@ export default function Dashboard() {
                     )
                 )}
 
-                {/* Infinite Scroll Sentinel */}
                 <div ref={sentinelRef} className="h-4" />
 
-                {/* Infinite Scroll Loading Indicator */}
                 {isFetchingNextPage && (
                     <div className="flex justify-center py-8">
                         <Loader2 className="animate-spin text-gray-400" size={32} />
@@ -574,7 +434,6 @@ export default function Dashboard() {
                 )}
             </div>
 
-            {/* Lightbox - Using Enhanced ImageLightbox Component */}
             {selectedImage && (
                 <ImageLightbox
                     image={selectedImage}
@@ -591,7 +450,6 @@ export default function Dashboard() {
                 />
             )}
 
-            {/* Job Details Modal */}
             {selectedJob && (
                 <JobDetailsModal
                     job={selectedJob}
@@ -602,7 +460,6 @@ export default function Dashboard() {
                 />
             )}
 
-            {/* Confirmation Modal */}
             <ConfirmationModal
                 isOpen={confirmModal.isOpen}
                 title={confirmModal.title}
@@ -613,7 +470,6 @@ export default function Dashboard() {
                 onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
             />
 
-            {/* Image Comparison Modal */}
             {showComparison && (
                 <ImageComparison
                     images={allItems.filter(item => selectedFiles.has(item.name))}
@@ -621,13 +477,11 @@ export default function Dashboard() {
                 />
             )}
 
-            {/* Collections Panel */}
             <CollectionsPanel
                 isOpen={showCollectionsPanel}
                 onClose={() => setShowCollectionsPanel(false)}
             />
 
-            {/* Quick Nav to Generator (Mobile) */}
             <button
                 onClick={() => navigate('/generate')}
                 className="fixed bottom-6 right-6 z-40 md:hidden bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
@@ -637,7 +491,6 @@ export default function Dashboard() {
                 <ImageIcon size={24} />
             </button>
 
-            {/* Select Collection Modal */}
             <SelectCollectionModal
                 isOpen={showSelectCollection}
                 onClose={() => setShowSelectCollection(false)}
@@ -650,13 +503,10 @@ export default function Dashboard() {
                 }}
             />
 
-            {/* Statistics Panel */}
             <StatsPanel
                 isOpen={showStatsPanel}
                 onClose={() => setShowStatsPanel(false)}
             />
-
-
         </motion.div>
     );
 }

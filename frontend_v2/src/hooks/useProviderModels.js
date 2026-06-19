@@ -1,19 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { normalizeReconciliationStatus as normalizeRealtimeReconciliationStatus } from '../utils/providerStatus';
+import { unwrapPayload, normalizeObject, extractProviderId } from '../utils/providerUtils';
 
-function unwrapPayload(payload) {
-    return payload?.data ?? payload ?? {};
-}
-
-function normalizeObject(value) {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
-export function extractProviderId(payload) {
-    const source = unwrapPayload(payload);
-    return source.provider_id ?? source.providerId ?? source.id ?? null;
-}
+export { extractProviderId };
 
 export function normalizeProviderSyncStatus(payload) {
     const source = unwrapPayload(payload);

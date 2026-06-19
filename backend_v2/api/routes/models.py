@@ -386,10 +386,7 @@ async def get_generation_info(
     Returns storage path and other generation params.
     """
     service = get_model_service(session)
-    try:
-        return await service.get_version_for_generation(model_id, version_id)
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    return await service.get_version_for_generation(model_id, version_id)
 
 
 # ============================================================================
@@ -492,10 +489,7 @@ async def get_model(
 ):
     """Get model with versions, files, and images."""
     service = get_model_service(session)
-    try:
-        return await service.get_model(model_id)
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+    return await service.get_model(model_id)
 
 
 @router.delete("/{model_id}")
@@ -505,11 +499,8 @@ async def delete_model(
 ):
     """Delete a model and all related data."""
     service = get_model_service(session)
-    try:
-        await service.delete_model(model_id)
-        return {"status": "success"}
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+    await service.delete_model(model_id)
+    return {"status": "success"}
 
 
 
@@ -775,8 +766,6 @@ async def resync_model_from_civitai(
 
 import os
 import asyncio
-import time
-import random
 import httpx
 from fastapi import Response
 from infrastructure.http_client import get_http_client

@@ -9,7 +9,7 @@ from infrastructure.logging import get_logger
 from infrastructure.http_client import get_http_client
 from infrastructure.config_helpers import resolve_env_bool, resolve_env_int, resolve_env_float
 from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.database import get_session_sync
+from api.deps import get_session_sync
 
 logger = get_logger("model_preview_service")
 

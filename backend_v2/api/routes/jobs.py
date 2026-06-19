@@ -137,6 +137,32 @@ async def list_jobs(
 
 
 
+@router.get("/active")
+async def get_active_jobs(session: Session = Depends(get_session)):
+    """Get all active (pending/running) jobs to rehydrate frontend state."""
+    service = get_job_service(session)
+    pending = service.get_pending_jobs()
+    running = service.get_running_jobs()
+    
+    # Needs to be dictified and have queue position
+    jobs_data = []
+    
+    pending_job_ids = [job.id for job in pending]
+    queue_positions = {}
+    if pending_job_ids:
+        queue_positions = service.repo.get_queue_positions(pending_job_ids)
+
+    for job in running:
+        jobs_data.append(service._job_to_dict(job))
+        
+    for job in pending:
+        job_dict = service._job_to_dict(job)
+        job_dict["queue_position"] = queue_positions.get(job.id, 0)
+        jobs_data.append(job_dict)
+        
+    return {"jobs": jobs_data}
+
+
 @router.get("/queue")
 async def get_queue_status(session: Session = Depends(get_session)):
     """

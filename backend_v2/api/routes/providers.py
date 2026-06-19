@@ -516,39 +516,6 @@ async def delete_provider(
 # CONTAINER MANAGEMENT ENDPOINTS (provider-specific)
 # ============================================================================
 
-@router.post("/{provider_id}/container/start")
-async def start_provider_container(
-    provider_id: str,
-    session: Session = Depends(get_session)
-):
-    """Provider containers are compose-managed."""
-    raise HTTPException(
-        status_code=501,
-        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
-    )
-
-
-@router.post("/{provider_id}/container/stop")
-async def stop_provider_container(provider_id: str, session: Session = Depends(get_session)):
-    """Provider containers are compose-managed."""
-    raise HTTPException(
-        status_code=501,
-        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
-    )
-
-
-@router.post("/{provider_id}/container/restart")
-async def restart_provider_container(
-    provider_id: str,
-    session: Session = Depends(get_session)
-):
-    """Provider containers are compose-managed."""
-    raise HTTPException(
-        status_code=501,
-        detail="Provider containers are compose-managed. Use 'docker compose up/down' instead."
-    )
-
-
 @router.get("/{provider_id}/container/logs")
 def get_provider_container_logs(provider_id: str, tail: int = 100, session: Session = Depends(get_session)):
     """Get logs from a provider's container."""

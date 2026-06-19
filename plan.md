@@ -39,22 +39,22 @@ This is a repo-wide audit and staged remediation plan for TNHComfy. The recommen
 12. Phase 6: Make the repository collaboration-friendly. Add contributor documentation, architecture decision records, domain boundaries, and ownership conventions. Reduce shared mutable hotspot files, document allowed dependencies between domains, and define a standard module template for routes, services, stores, and hooks.
 
 **Relevant files**
-- c:/workspace/TNHComfy/backend_v2/api/deps.py — target single source of truth for request-scoped dependency injection.
-- c:/workspace/TNHComfy/backend_v2/api/main.py — currently overloaded with startup, orchestration, and background task concerns.
-- c:/workspace/TNHComfy/backend_v2/services/load_balancer.py — class-level state and async-safety hotspot.
-- c:/workspace/TNHComfy/backend_v2/infrastructure/request_dedup.py — dedup semantics, concurrency safety, and cache lifetime need redesign.
-- c:/workspace/TNHComfy/backend_v2/infrastructure/database.py — manual migration and startup DB handling hotspot.
-- c:/workspace/TNHComfy/backend_v2/core/events.py — event bus backpressure, queueing, and observability behavior.
-- c:/workspace/TNHComfy/backend_v2/api/routes/models.py — legacy V1 model API to deprecate.
-- c:/workspace/TNHComfy/backend_v2/api/routes/models_v2.py — oversized V2 route module and mixed transitional logic.
-- c:/workspace/TNHComfy/backend_v2/services/model_service.py — legacy V1 service to retire.
-- c:/workspace/TNHComfy/backend_v2/services/model_service_v2.py — oversized service to split by responsibility.
-- c:/workspace/TNHComfy/backend_v2/api/routes/providers.py — provider CRUD mixed with unrelated responsibilities.
-- c:/workspace/TNHComfy/frontend_v2/src/store/jobStore.js — websocket lifecycle and state-ownership hotspot.
-- c:/workspace/TNHComfy/frontend_v2/src/hooks/useGallery.js — React Query boundary with overlap against Zustand.
-- c:/workspace/TNHComfy/frontend_v2/src/pages/Dashboard.jsx — major UI hotspot blocking parallel frontend work.
-- c:/workspace/TNHComfy/provider_containers/provider_core/models.py — worker/backend contract should be treated as the canonical interface definition.
-- c:/workspace/TNHComfy/docker-compose.yml — deployment assumptions and security or portability cleanup.
+- backend_v2/api/deps.py — target single source of truth for request-scoped dependency injection.
+- backend_v2/api/main.py — currently overloaded with startup, orchestration, and background task concerns.
+- backend_v2/services/load_balancer.py — class-level state and async-safety hotspot.
+- backend_v2/infrastructure/request_dedup.py — dedup semantics, concurrency safety, and cache lifetime need redesign.
+- backend_v2/infrastructure/database.py — manual migration and startup DB handling hotspot.
+- backend_v2/core/events.py — event bus backpressure, queueing, and observability behavior.
+- backend_v2/api/routes/models.py — legacy V1 model API to deprecate.
+- backend_v2/api/routes/models_v2.py — oversized V2 route module and mixed transitional logic.
+- backend_v2/services/model_service.py — legacy V1 service to retire.
+- backend_v2/services/model_service_v2.py — oversized service to split by responsibility.
+- backend_v2/api/routes/providers.py — provider CRUD mixed with unrelated responsibilities.
+- frontend_v2/src/store/jobStore.js — websocket lifecycle and state-ownership hotspot.
+- frontend_v2/src/hooks/useGallery.js — React Query boundary with overlap against Zustand.
+- frontend_v2/src/pages/Dashboard.jsx — major UI hotspot blocking parallel frontend work.
+- provider_containers/provider_core/models.py — worker/backend contract should be treated as the canonical interface definition.
+- docker-compose.yml — deployment assumptions and security or portability cleanup.
 
 **Verification**
 1. Backend verification: run backend_v2 pytest suites plus new integration tests covering job creation, queue execution, provider failure, image saving, websocket propagation, and shutdown behavior.

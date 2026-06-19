@@ -63,19 +63,5 @@ describe('generateApi', () => {
         expect(createIdempotencyKeyMock).not.toHaveBeenCalled();
     });
 
-    it('reads and writes legacy local presets without calling unsupported endpoints', async () => {
-        const existing = [{ id: 1, name: 'preset-a' }];
-        window.localStorage.setItem('comfy-generator-presets', JSON.stringify(existing));
-
-        const loaded = await generateApi.getPresets();
-        expect(loaded).toEqual({ presets: existing });
-
-        const saved = await generateApi.savePreset({ name: 'preset-b' });
-        expect(saved.name).toBe('preset-b');
-
-        const afterSave = JSON.parse(window.localStorage.getItem('comfy-generator-presets'));
-        expect(afterSave).toHaveLength(2);
-        expect(afterSave[1].name).toBe('preset-b');
-        expect(postMock).not.toHaveBeenCalled();
-    });
 });
+

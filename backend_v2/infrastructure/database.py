@@ -1,9 +1,9 @@
 # Database setup with SQLModel
 import os
 from dataclasses import dataclass
-from typing import Callable, Generator
+from contextlib import asynccontextmanager
+from typing import Callable, Generator, AsyncGenerator
 
-from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from config import settings
@@ -392,9 +392,6 @@ def get_session_sync() -> Session:
     return Session(engine)
 
 
-from contextlib import asynccontextmanager
-
-
 @asynccontextmanager
 async def get_session_context():
     """
@@ -414,6 +411,7 @@ async def get_session_context():
 # For testing - create in-memory database
 def create_test_engine():
     """Create an in-memory SQLite engine for testing."""
+    from sqlalchemy.pool import StaticPool
     return create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

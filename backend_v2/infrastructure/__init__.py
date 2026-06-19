@@ -63,8 +63,9 @@ from .scheduler import (
 # Providers
 from .providers import (
     ServerlessProvider, FileProxyProvider,
-    ModalProvider, ModalFileProxy,
-    BeamProvider, BeamFileProxy,
+    ModalProvider,
+    BeamProvider,
+    HttpFileProxy, clean_dict,
     ProviderRegistry, ProviderTypeConfig,
     create_provider_client,
     get_provider_worker_base_url,
@@ -117,8 +118,9 @@ __all__ = [
     "schedule_cleanup",
     # Providers
     "ServerlessProvider", "FileProxyProvider",
-    "ModalProvider", "ModalFileProxy",
-    "BeamProvider", "BeamFileProxy",
+    "ModalProvider",
+    "BeamProvider",
+    "HttpFileProxy", "clean_dict",
     "ProviderRegistry", "ProviderTypeConfig",
     "create_provider_client",
     "get_provider_worker_base_url",

@@ -7,7 +7,6 @@ from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
 from core.exceptions import NotFoundError, ValidationError, ProviderError
 from services.provider_utils import (
-    ensure_provider_v2_shape,
     read_deploy_state,
     extract_runtime_config,
     extract_deploy_config,
@@ -71,7 +70,6 @@ class ProviderDeployService:
         return state
 
     def _persist_deploy_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
-        provider = ensure_provider_v2_shape(provider)
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
@@ -251,7 +249,6 @@ class ProviderDeployService:
     async def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
         attempt_id = str(uuid4())
         started_at = utcnow_iso()
-        provider = ensure_provider_v2_shape(provider)
         deploy_config = extract_deploy_config(provider.type, provider.config or {})
         deploy_mode = deploy_config.get("deploy_mode", default_deploy_mode(provider.type))
 

@@ -15,6 +15,9 @@ export const jobsApi = {
 
     // Get single job
     get: (jobId) => api.get(`/api/jobs/${jobId}`),
+    
+    // Get all active jobs (pending/running)
+    getActive: () => api.get('/api/jobs/active'),
 
     // Create job (generate image)
     create: (payload, options = {}) => api.post('/api/jobs', payload, {

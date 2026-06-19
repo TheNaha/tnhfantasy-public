@@ -3,7 +3,6 @@ from core.entities import Provider
 
 from infrastructure.providers.provider_registry import ProviderRegistry
 from services.provider_utils import (
-    ensure_provider_v2_shape,
     extract_runtime_config,
     extract_deploy_config,
     clean_dict,
@@ -18,7 +17,6 @@ def build_provider_environment(provider: Provider) -> Dict[str, str]:
     registry's ``env_builder`` callback so that each provider owns its own
     mapping in one place.
     """
-    provider = ensure_provider_v2_shape(provider)
     runtime_config = extract_runtime_config(
         provider.type, provider.container_config, provider.config or {}
     ) or {}

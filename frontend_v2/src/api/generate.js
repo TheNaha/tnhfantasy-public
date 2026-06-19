@@ -8,34 +8,6 @@
 
 import api, { createIdempotencyKey } from './client';
 
-const LEGACY_PRESET_STORAGE_KEY = 'comfy-generator-presets';
-
-function readLegacyPresets() {
-    if (typeof window === 'undefined') {
-        return [];
-    }
-
-    try {
-        const raw = window.localStorage.getItem(LEGACY_PRESET_STORAGE_KEY);
-        if (!raw) {
-            return [];
-        }
-
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
-}
-
-function writeLegacyPresets(presets) {
-    if (typeof window === 'undefined') {
-        return;
-    }
-
-    window.localStorage.setItem(LEGACY_PRESET_STORAGE_KEY, JSON.stringify(presets));
-}
-
 export const generateApi = {
     /**
      * Submit a simple generation request.
@@ -70,32 +42,6 @@ export const generateApi = {
         });
     },
 
-    /**
-     * Fetch available generation presets from the server.
-     *
-     * Presets bundle common parameter sets (model + steps + sampler + …) into
-     * a named configuration the user can apply with a single click.
-     *
-     * @returns {Promise<{presets: object[]}>}
-     */
-    getPresets: async () => ({ presets: readLegacyPresets() }),
-
-    /**
-     * Persist a new generation preset on the server.
-     *
-     * @param {object} preset - Preset object with `name`, `description`, and `data` fields.
-     * @returns {Promise<object>} Saved preset record.
-     */
-    savePreset: async (preset) => {
-        const presets = readLegacyPresets();
-        const savedPreset = {
-            ...preset,
-            id: preset?.id ?? Date.now(),
-        };
-        presets.push(savedPreset);
-        writeLegacyPresets(presets);
-        return savedPreset;
-    },
 };
 
 export default generateApi;

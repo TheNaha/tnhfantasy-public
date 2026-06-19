@@ -15,6 +15,10 @@ T = TypeVar('T')
 
 # Track in-flight requests to deduplicate concurrent identical requests
 _in_flight: dict[str, asyncio.Task] = {}
+# NOTE: threading.Lock is intentional here. All protected operations are synchronous
+# dict/cache mutations with no awaits inside the lock blocks. asyncio.Lock cannot be
+# used because clear_dedup_cache/get_dedup_stats/is_in_flight are called from
+# synchronous contexts (tests, health checks).
 _in_flight_lock = threading.Lock()
 
 

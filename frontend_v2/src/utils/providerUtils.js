@@ -1,6 +1,16 @@
+/**
+ * Shared provider utility functions used across hooks and components.
+ */
+
+export function unwrapPayload(payload) {
+    return payload?.data ?? payload ?? {};
+}
+
+export function normalizeObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 export function extractProviderId(payload) {
-    if (typeof payload === 'string') return payload;
-    if (payload?.provider_id) return payload.provider_id;
-    if (payload?.id) return payload.id;
-    return null;
+    const source = unwrapPayload(payload);
+    return source.provider_id ?? source.providerId ?? source.id ?? null;
 }
