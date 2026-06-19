@@ -13,7 +13,8 @@
 import os
 import json
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Request, Depends
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -45,7 +46,7 @@ async def get_settings() -> Dict[str, Any]:
             "settings": app_config.get_config()
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.get("/schema")
@@ -307,7 +308,7 @@ async def update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
         Updated configuration
         
     Raises:
-        HTTPException: If validation fails
+       : If validation fails
     """
     try:
         # Don't allow updating Modal settings
@@ -321,9 +322,9 @@ async def update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
             "settings": updated_config
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationError(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.post("/reset")
@@ -342,7 +343,7 @@ async def reset_settings() -> Dict[str, Any]:
             "settings": default_config
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 # ============================================================================

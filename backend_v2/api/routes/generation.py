@@ -67,14 +67,14 @@ async def save_generated_image(request: SaveImageRequest):
     Returns saved image info for frontend display.
     """
     import base64
-    from fastapi import HTTPException
+    from core.exceptions import ValidationError
     import asyncio
     from services.image_service import get_image_service
     
     try:
         image_data = base64.b64decode(request.image_base64, validate=True)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
+        raise ValidationError(f"Invalid base64 image data: {e}")
 
     service = get_image_service()
     

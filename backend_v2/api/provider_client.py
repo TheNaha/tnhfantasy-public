@@ -29,22 +29,7 @@ class JobCancelledError(Exception):
 
 def extract_worker_error_message(update: dict) -> str:
     """Normalize worker error payloads from different providers."""
-    detail = update.get("detail")
-    if detail is None:
-        detail = update.get("details")
-
-    if isinstance(detail, dict):
-        return detail.get("message") or detail.get("error") or json.dumps(detail)
-
-    if isinstance(detail, list):
-        return json.dumps(detail)
-
-    return (
-        update.get("message")
-        or update.get("error")
-        or detail
-        or "Unknown worker error"
-    )
+    return update.get("message", "Unknown worker error")
 
 
 def format_worker_http_error(status_code: int, error_text: str) -> str:

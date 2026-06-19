@@ -1,6 +1,7 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from core.exceptions import NotFoundError, ValidationError, ComfyError, ProviderError
 from pydantic import BaseModel
 
 from api.deps import get_external_model_service
@@ -22,7 +23,7 @@ async def parse_model_url(
     try:
         return await service.parse_model_url(request.url)
     except ExternalModelServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise ProviderError("ExternalModelService", exc.detail) from exc
 
 
 @router.get("/civitai")
@@ -35,7 +36,7 @@ async def search_civitai(
     try:
         return await service.search_civitai(query=query, limit=limit)
     except ExternalModelServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise ProviderError("ExternalModelService", exc.detail) from exc
 
 
 @router.get("/huggingface")
@@ -48,4 +49,4 @@ async def search_huggingface(
     try:
         return await service.search_huggingface(query=query, limit=limit)
     except ExternalModelServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise ProviderError("ExternalModelService", exc.detail) from exc

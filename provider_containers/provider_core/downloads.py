@@ -279,4 +279,4 @@ def download_model_to_path(
                 "message": error_message,
             },
         )
-        return {"status": "error", "message": error_message, "error": error_message}
+        return {"status": "error", "message": error_message, }

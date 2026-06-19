@@ -15,7 +15,8 @@
 import os
 import json
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Response, Depends, UploadFile, File
+from fastapi import APIRouter, Response, Depends, UploadFile, File
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from sqlmodel import Session
@@ -54,13 +55,13 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
         The absolute resolved path if valid.
 
     Raises:
-        HTTPException(403) if path traversal is detected.
+       (403) if path traversal is detected.
     """
     # Remove leading slashes to prevent absolute path interpretation
     clean_path = requested_path.lstrip("/\\")
 
     if not clean_path:
-        raise HTTPException(status_code=400, detail="Invalid path: path cannot be empty")
+        raise ValidationError("Invalid path: path cannot be empty")
 
     # Resolve full path
     full_path = os.path.abspath(os.path.join(base_dir, clean_path))
@@ -71,10 +72,10 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
         common = os.path.commonpath([full_path, base_path])
     except ValueError:
         # Happens when drives differ on Windows (e.g. C:\ vs D:\)
-        raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
+        raise ValidationError("Access denied: Path outside allowed directory")
 
     if common != base_path:
-        raise HTTPException(status_code=403, detail="Access denied: Path outside allowed directory")
+        raise ValidationError("Access denied: Path outside allowed directory")
 
     return full_path
 
@@ -124,7 +125,7 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         base_model_dir = os.path.join(CACHE_DIR, "models")
         try:
             model_cache_dir = get_safe_path(base_model_dir, model_type)
-        except HTTPException:
+        except ValidationError:
             return {"files": [], "total": 0}
 
         if not os.path.exists(model_cache_dir):
@@ -380,7 +381,7 @@ async def view_file_endpoint(path: str):
                     "Content-Disposition": f"attachment; {encode_filename_for_header(filename)}"
                 }
             )
-    except HTTPException:
+    except ValidationError:
         pass
     
     # Try input directory for Img2Img/Inpaint source images
@@ -398,7 +399,7 @@ async def view_file_endpoint(path: str):
                 }
             )
     
-    raise HTTPException(status_code=404, detail="File not found")
+    raise NotFoundError("Resource", "File not found")
 
 
 @router.get("/api/thumbnail/{size}/{filename:path}")
@@ -418,7 +419,7 @@ async def serve_thumbnail(size: str, filename: str):
     from services.gallery_indexer import gallery_indexer
     
     if size not in ("medium",):
-        raise HTTPException(status_code=400, detail="Size must be 'medium'")
+        raise ValidationError("Size must be 'medium'")
 
     # Strip leading slashes to prevent absolute path injection via os.path.join
     filename = filename.lstrip("/\\")
@@ -565,7 +566,7 @@ async def serve_thumbnail(size: str, filename: str):
             }
         )
     
-    raise HTTPException(status_code=404, detail="File not found")
+    raise NotFoundError("Resource", "File not found")
 
 
 @router.post("/api/upload")
@@ -588,7 +589,7 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
         
         return {"status": "success", "filename": filename}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.post("/api/upload/input")
@@ -735,7 +736,7 @@ async def upload_mask_image(
         source_filename = os.path.basename(source_filename)
 
     if not mask_data:
-        raise HTTPException(status_code=400, detail="mask_data is required")
+        raise ValidationError("mask_data is required")
     
     # Parse data URL: data:image/png;base64,iVBORw0KGgoAAAA...
     if ',' in mask_data:
@@ -746,7 +747,7 @@ async def upload_mask_image(
     try:
         content = base64.b64decode(b64_data)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid base64 data: {e}")
+        raise ValidationError(f"Invalid base64 data: {e}")
     
     # Generate filename linked to source
     source_base = os.path.splitext(source_filename)[0] if source_filename else "mask"
@@ -844,7 +845,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
             "models/motion_modules",
         ]
         if req.directory not in allowed_dirs:
-            raise HTTPException(status_code=400, detail="Invalid directory")
+            raise ValidationError("Invalid directory")
         
         success_count = 0
         for filename in req.files:
@@ -855,7 +856,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                 # First try direct path
                 try:
                     local_path = get_safe_path(OUTPUT_DIR, filename)
-                except HTTPException:
+                except ValidationError:
                     logger.warning("delete_path_traversal_blocked", filename=filename, directory="output")
                     continue
                 
@@ -902,7 +903,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                 try:
                     target_dir = os.path.join(CACHE_DIR, req.directory)
                     model_path = get_safe_path(target_dir, filename)
-                except HTTPException:
+                except ValidationError:
                     logger.warning("delete_path_traversal_blocked", filename=filename, directory="models")
                     continue
 
@@ -916,7 +917,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
         return {"status": "success", "deleted": success_count, "total": len(req.files)}
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 # Proxy endpoints for provider storage
@@ -957,7 +958,7 @@ async def proxy_file(
         return Response(content=content, media_type=media_type)
     
     except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise NotFoundError("Resource", str(e))
 
 
 class BatchMetadataRequest(BaseModel):
@@ -1022,7 +1023,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
             # Try direct path first
             try:
                 full_path = get_safe_path(OUTPUT_DIR, filename)
-            except HTTPException:
+            except ValidationError:
                 results[path] = {"error": "invalid_path"}
                 continue
 

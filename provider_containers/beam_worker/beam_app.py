@@ -264,7 +264,7 @@ async def download_model(request: Request):
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "error": "Invalid path"}
+        return {"status": "error", "message": "Invalid path"}
 
     return download_model_to_path(
         url=url,
@@ -408,7 +408,7 @@ async def validate_models(request: Request):
     try:
         target_dir = get_safe_path("/mnt/data", directory)
     except Exception as e:
-        return {"valid": [], "invalid": [], "partial": [], "total": 0, "error": f"Invalid directory: {e}"}
+        return {"valid": [], "invalid": [], "partial": [], "total": 0, "message": f"Invalid directory: {e}"}
 
     if not os.path.exists(target_dir):
         return {"valid": [], "invalid": [], "partial": [], "total": 0}
@@ -601,7 +601,7 @@ async def download_model_endpoint(request: Request):
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "error": "Invalid path"}
+        return {"status": "error", "message": "Invalid path"}
 
     result = download_model_to_path(
         url=url,

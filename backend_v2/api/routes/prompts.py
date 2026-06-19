@@ -12,7 +12,8 @@
 #   DELETE /api/prompts/{id}     – Delete a prompt
 #   POST   /api/prompts/{id}/use – Increment usage counter
 #   GET    /api/prompts/categories – List all distinct categories
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select, or_
 from sqlalchemy import text
 from typing import Optional, List
@@ -127,7 +128,7 @@ async def list_prompts(
         }
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 @router.get("/categories")
@@ -168,7 +169,7 @@ async def get_prompt(prompt_id: int, session: Session = Depends(get_session)):
     """Get a single prompt by ID."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     return prompt
 
 
@@ -214,7 +215,7 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
     """Update an existing prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     # Update only provided fields
     update_data = data.model_dump(exclude_unset=True)
@@ -253,7 +254,7 @@ async def delete_prompt(prompt_id: int, session: Session = Depends(get_session))
     """Delete a prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     # Delete from FTS5 first
     try:
@@ -272,7 +273,7 @@ async def increment_usage(prompt_id: int, session: Session = Depends(get_session
     """Increment usage count for a prompt (called when prompt is used)."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
-        raise HTTPException(status_code=404, detail="Prompt not found")
+        raise NotFoundError("Resource", "Prompt not found")
     
     prompt.usage_count += 1
     prompt.updated_at = datetime.now(timezone.utc)

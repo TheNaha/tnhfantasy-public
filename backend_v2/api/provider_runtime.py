@@ -4,7 +4,7 @@ from typing import Optional
 from types import SimpleNamespace
 
 from infrastructure.http_client import get_http_client
-from infrastructure.database import get_session_sync
+from api.deps import get_session_sync
 from infrastructure.logging import get_logger
 
 logger = get_logger("provider_runtime")

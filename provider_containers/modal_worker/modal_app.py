@@ -535,7 +535,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
         full_path = get_safe_path(base_path, path)
     except Exception as e:
         logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "error": "Invalid path"}
+        return {"status": "error", "message": "Invalid path"}
 
     # Progress tracking
     progress_dir = "/mnt/data/downloads"
@@ -600,7 +600,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
             update_progress("success", 100, message="Download complete")
             return
 
-        if status == "error":
+        if status == "message":
             update_progress("error", message=payload.get("message", "Download failed"))
 
     result = download_model_to_path(
@@ -753,7 +753,7 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
                 all_file_tasks.append((directory, name))
         except Exception as e:
             logger.error(f"Error listing {directory}: {e}")
-            validation_results["by_directory"][directory] = {"error": str(e)}
+            validation_results["by_directory"][directory] = {"message": str(e)}
 
     # Execute all file validations concurrently
     # Flattened list allows optimal thread pool usage across ALL directories

@@ -13,7 +13,7 @@
 #   POST   /api/collections/{id}/images          – Add images to collection
 #   DELETE /api/collections/{id}/images          – Remove images from collection
 #   POST   /api/collections/import               – Bulk import (for localStorage migration)
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 from sqlalchemy import text, func
 from typing import Optional, List
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from api.deps import get_session
 from core.entities import Collection, CollectionImage
+from core.exceptions import NotFoundError
 
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
@@ -123,7 +124,7 @@ async def get_collection(
     """Get a single collection with its images."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     result = {
         "id": collection.id,
@@ -171,7 +172,7 @@ async def update_collection(
     """Update a collection's name, color, or description."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -190,7 +191,7 @@ async def delete_collection(collection_id: int, session: Session = Depends(get_s
     """Delete a collection (images are NOT deleted, only the association)."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     # Delete all image associations first
     session.execute(
@@ -214,7 +215,7 @@ async def add_images_to_collection(
     """Add images to a collection."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     added = []
     for filename in data.images:
@@ -254,7 +255,7 @@ async def remove_images_from_collection(
     """Remove images from a collection."""
     collection = session.get(Collection, collection_id)
     if not collection:
-        raise HTTPException(status_code=404, detail="Collection not found")
+        raise NotFoundError("Collection", str(collection_id))
     
     removed = 0
     for filename in data.images:

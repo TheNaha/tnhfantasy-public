@@ -16,7 +16,8 @@
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
 from typing import Optional, Dict, List
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session
 from pydantic import BaseModel
 
@@ -245,10 +246,7 @@ async def retry_job(
     original_job = await service.get_job(job_id)
     
     if original_job.status != JobStatus.FAILED:
-        raise HTTPException(
-            status_code=400,
-            detail="Only failed jobs can be retried"
-        )
+        raise ValidationError("Only failed jobs can be retried")
     
     submission_service = JobSubmissionService(session)
     new_job = await submission_service.create_and_enqueue_job(

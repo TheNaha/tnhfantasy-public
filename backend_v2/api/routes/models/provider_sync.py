@@ -1,0 +1,379 @@
+from .schemas import *
+from typing import Dict, Any, Optional, List
+from fastapi import APIRouter, Depends
+
+from sqlmodel import Session
+from pydantic import BaseModel
+
+from api.deps import get_session, get_session_sync
+from services.model_service import ModelServiceV2
+from core.exceptions import NotFoundError, ValidationError, ComfyError
+from infrastructure.logging import model_logger
+
+logger = model_logger()
+
+router = APIRouter()
+
+def get_model_service(session: Session) -> ModelServiceV2:
+    return ModelServiceV2(session)
+from .crud import UpdateProviderStatusRequest
+
+
+# ============================================================================
+# PROVIDER STATUS ENDPOINTS
+# ============================================================================
+
+@router.get("/{model_id}/provider-status")
+async def get_provider_statuses(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Get provider download statuses for a model."""
+    service = get_model_service(session)
+    return await service.get_model_provider_statuses(model_id)
+
+
+@router.put("/files/{file_id}/providers/{provider_name}/status")
+async def update_file_provider_status(
+    file_id: int,
+    provider_name: str,
+    request: UpdateProviderStatusRequest,
+    session: Session = Depends(get_session)
+):
+    """Update provider status for a specific file."""
+    service = get_model_service(session)
+    result = await service.update_provider_file_status(
+        file_id=file_id,
+        provider_name=provider_name,
+        status=request.status,
+        storage_path=request.storage_path,
+        size_bytes=request.size_bytes,
+        error_message=request.error_message
+    )
+    
+    # Emit WebSocket event to replace polling
+    from core.events import emit_model_status_update
+    await emit_model_status_update(
+        provider_id=provider_name,
+        file_id=file_id,
+        status=request.status,
+        extra={"storage_path": request.storage_path, "size_bytes": request.size_bytes}
+    )
+    
+    return result
+
+
+class RegisterDiscoveredRequest(BaseModel):
+    provider_id: str
+    files: List[Dict[str, Any]]
+
+
+@router.post("/register-discovered")
+async def register_discovered_models(
+    request: RegisterDiscoveredRequest,
+    session: Session = Depends(get_session)
+):
+    """Register files discovered on a provider's storage as database models.
+    
+    Called by workers during reconciliation when files exist on provider
+    storage but have no corresponding database entries. Creates ModelV2,
+    ModelVersion, ModelFile, and ProviderVersionStatus entries so the
+    files are recognized as installed models on subsequent reconciliation runs.
+    """
+    service = get_model_service(session)
+    return await service.register_discovered_files(
+        provider_id=request.provider_id,
+        files=request.files,
+    )
+
+
+# ============================================================================
+# RECONCILIATION ENDPOINTS
+# ============================================================================
+
+@router.get("/providers/{provider_name}/pending-downloads")
+def get_pending_downloads(
+    provider_name: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Get files pending download for a provider.
+    Used by worker for reconciliation.
+    """
+    service = get_model_service(session)
+    pending = service.get_pending_downloads(provider_name)
+    return {"files": pending}
+
+
+@router.get("/cache")
+def get_model_cache(session: Session = Depends(get_session)):
+    """Get full model cache for reconciliation."""
+    service = get_model_service(session)
+    return {"models": service.get_full_cache()}
+
+
+@router.get("/{model_id}")
+async def get_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Get model with versions, files, and images."""
+    service = get_model_service(session)
+    return await service.get_model(model_id)
+
+
+@router.delete("/{model_id}")
+async def delete_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Delete a model and all related data."""
+    service = get_model_service(session)
+    await service.delete_model(model_id)
+    return {"status": "success"}
+
+
+
+
+
+# ============================================================================
+# BATCH UPDATES (for worker efficiency)
+# ============================================================================
+
+class BatchStatusUpdate(BaseModel):
+    """Single item in batch status update."""
+    file_id: Optional[int] = None  # Optional if storage_path provided
+    status: str
+    storage_path: Optional[str] = None  # Can be used to lookup file_id
+    size_bytes: Optional[int] = None
+
+
+class BatchUpdateRequest(BaseModel):
+    """Batch status update from worker."""
+    provider_name: Optional[str] = None
+    provider_id: Optional[str] = None
+    updates: List[BatchStatusUpdate]
+
+
+@router.post("/providers/batch-status-update")
+async def batch_update_status(
+    request: BatchUpdateRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Batch update provider statuses.
+    More efficient than individual calls during reconciliation.
+    
+    Supports two lookup modes:
+    - By file_id (preferred, faster)
+    - By storage_path (used when file_id unknown, e.g., reporting missing files)
+    """
+    from sqlmodel import select
+    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+    
+    service = get_model_service(session)
+    provider_key = request.provider_id or request.provider_name
+    if not provider_key:
+        raise ValidationError("provider_id or provider_name is required")
+    
+    # Build storage_path -> file_id lookup if needed
+    path_to_file_id = None
+    needs_path_lookup = any(u.file_id is None and u.storage_path for u in request.updates)
+    
+    if needs_path_lookup:
+        stmt = select(ModelFile, ModelVersion, ModelV2).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).join(
+            ModelV2, ModelVersion.model_id == ModelV2.id
+        )
+        path_to_file_id = {}
+        for file, version, model in session.exec(stmt).all():
+            storage_path = f"models/{model.directory}/{file.storage_filename}"
+            path_to_file_id[storage_path] = file.id
+    
+    updated = 0
+    failed = 0
+    
+    for update in request.updates:
+        try:
+            # Resolve file_id from storage_path if needed
+            file_id = update.file_id
+            if file_id is None and update.storage_path and path_to_file_id:
+                file_id = path_to_file_id.get(update.storage_path)
+            
+            if file_id is None:
+                failed += 1
+                continue
+            
+            await service.update_provider_file_status(
+                file_id=file_id,
+                provider_name=provider_key,
+                status=update.status,
+                storage_path=update.storage_path,
+                size_bytes=update.size_bytes
+            )
+            updated += 1
+        except Exception:
+            failed += 1
+    
+    return {"updated": updated, "failed": failed}
+
+
+@router.delete("/providers/{provider_name}/reset-status")
+def reset_provider_status(
+    provider_name: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Reset all provider statuses for a provider.
+    This will force re-download of ALL files on next reconciliation.
+    Use with caution!
+    """
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+
+    model_repo = ModelRepositoryV2(session)
+    count = model_repo.delete_all_statuses_for_provider(provider_name)
+    
+    return {
+        "status": "success",
+        "message": f"Reset {count} status entries for provider '{provider_name}'",
+        "deleted_count": count
+    }
+
+
+# ============================================================================
+# SYNC PROGRESS - Worker reports download progress
+# ============================================================================
+
+class SyncProgressRequest(BaseModel):
+    """Progress report from worker during model sync."""
+    provider_id: str
+    model_name: str
+    directory: str
+    progress: float  # 0-100
+    status: str  # downloading, completed, failed
+    message: Optional[str] = None
+    size_bytes: Optional[int] = None
+
+
+@router.post("/sync-progress")
+async def receive_sync_progress(
+    request: SyncProgressRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Receive sync progress from worker.
+    Worker calls this endpoint to report download progress.
+    Backend emits WebSocket event to frontend.
+    """
+    from core.events import event_bus, Event, EventType
+    
+    # Determine event type based on status
+    if request.status == "downloading":
+        event_type = EventType.MODEL_SYNC_PROGRESS
+    elif request.status == "completed":
+        event_type = EventType.MODEL_SYNC_COMPLETED
+    elif request.status == "failed":
+        event_type = EventType.MODEL_SYNC_FAILED
+    else:
+        event_type = EventType.MODEL_SYNC_STARTED
+    
+    # Emit event for WebSocket subscribers
+    event = Event(
+        type=event_type,
+        data={
+            "provider_id": request.provider_id,
+            "model_name": request.model_name,
+            "directory": request.directory,
+            "progress": request.progress,
+            "status": request.status,
+            "message": request.message,
+            "size_bytes": request.size_bytes
+        }
+    )
+    await event_bus.publish(event)
+    
+    return {"status": "ok"}
+
+
+class BatchSyncItem(BaseModel):
+    """Single item in batch sync request."""
+    model_name: str
+    directory: str
+    status: str  # completed, pending, failed
+    size_bytes: Optional[int] = None
+
+
+class BatchSyncProgressRequest(BaseModel):
+    """Batch sync progress from worker - updates multiple models at once."""
+    provider_id: str
+    models: List[BatchSyncItem]
+
+
+@router.post("/sync-progress/batch")
+async def receive_batch_sync_progress(
+    request: BatchSyncProgressRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Receive batch sync progress from worker.
+    Updates multiple model statuses in a single request.
+    """
+    from sqlmodel import select
+    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+
+    service = get_model_service(session)
+    file_id_by_key = {}
+    stmt = select(ModelFile, ModelVersion, ModelV2).join(
+        ModelVersion, ModelFile.version_id == ModelVersion.id
+    ).join(
+        ModelV2, ModelVersion.model_id == ModelV2.id
+    )
+    for file, _version, model in session.exec(stmt).all():
+        file_id_by_key[(model.directory, file.storage_filename)] = file.id
+    
+    updated = 0
+    failed = 0
+    
+    for item in request.models:
+        try:
+            file_id = file_id_by_key.get((item.directory, item.model_name))
+            if file_id is None:
+                failed += 1
+                continue
+
+            if item.status == "completed":
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="ready",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
+                    size_bytes=item.size_bytes,
+                )
+                updated += 1
+            elif item.status == "failed":
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="failed",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
+                )
+                updated += 1
+            elif item.status == "pending":
+                await service.update_provider_file_status(
+                    file_id=file_id,
+                    provider_name=request.provider_id,
+                    status="pending",
+                    storage_path=f"models/{item.directory}/{item.model_name}",
+                )
+                updated += 1
+        except Exception as e:
+            failed += 1
+    
+    return {
+        "status": "ok",
+        "updated": updated,
+        "failed": failed
+    }
+
+
