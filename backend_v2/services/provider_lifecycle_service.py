@@ -45,7 +45,7 @@ class ProviderLifecycleService:
                 f"Provider '{provider_id}' is not configured for containerized mode",
             )
 
-        container = container_manager.start_container(
+        container = await container_manager.start_container(
             provider_id=provider_id,
             provider_type=provider.type,
             port=container_config["port"],

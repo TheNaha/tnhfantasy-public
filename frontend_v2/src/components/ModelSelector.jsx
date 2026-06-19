@@ -161,11 +161,17 @@ const ModelSelector = memo(function ModelSelector({
     if (!isOpen) return;
     if (!directory && initialModels.length > 0) return;
     if (!directory) return;
+
+    if (initialModels.length > 0 && search === "" && sortBy === "name") {
+        offsetRef.current = initialModels.length;
+        return;
+    }
+
     offsetRef.current = 0;
     setHasMore(true);
     const timer = setTimeout(() => fetchModels(false), 300);
     return () => { clearTimeout(timer); if (abortControllerRef.current) abortControllerRef.current.abort(); };
-  }, [isOpen, directory, initialModels.length, fetchModels]);
+  }, [isOpen, directory, initialModels.length, search, sortBy, fetchModels]);
 
   const filteredAndSortedModels = useMemo(() => {
     let result = [...models];

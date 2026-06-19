@@ -310,8 +310,6 @@ class GalleryIndexer:
 
     def add_file(self, filepath: str):
         """Add a newly created file to the index."""
-        # Wait a tiny bit for the file to finish writing
-        time.sleep(0.1)
         data = self._process_file(filepath)
         if data:
             with self.lock:

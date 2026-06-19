@@ -844,7 +844,7 @@ class FileStorage:
             return f.read()
     
     @modal.method()
-    def delete_file(self, path: str) -> bool:
+    async def delete_file(self, path: str) -> bool:
         """
         Delete file from volume.
         
@@ -855,6 +855,7 @@ class FileStorage:
             True if successful
         """
         import os
+        import asyncio
         
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
@@ -863,8 +864,8 @@ class FileStorage:
             return False
         
         try:
-            os.remove(full_path)
-            vol.commit()  # Persist changes
+            await asyncio.to_thread(os.remove, full_path)
+            await asyncio.to_thread(vol.commit)  # Persist changes
             return True
         except Exception as e:
             logger.info(f"[FileStorage] Error deleting file: {e}")

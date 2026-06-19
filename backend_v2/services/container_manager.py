@@ -6,6 +6,7 @@ import docker
 import os
 import httpx
 import time
+import asyncio
 from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
 
@@ -164,7 +165,7 @@ class ContainerManager:
 
         return image_tags
     
-    def start_container(
+    async def start_container(
         self,
         provider_id: str,
         provider_type: str,
@@ -258,7 +259,7 @@ class ContainerManager:
             logger.debug("container_network_joined", network=target_network)
             
             # Wait for container to be healthy
-            self._wait_for_health(container, timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS)
+            await self._wait_for_health(container, timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS)
             
             self.running_containers[provider_id] = container
             logger.info("container_started", container_name=container_name, provider_id=provider_id)
@@ -307,14 +308,14 @@ class ContainerManager:
 
         return targets
 
-    def _wait_for_health(self, container: docker.models.containers.Container, timeout: int = 30):
+    async def _wait_for_health(self, container: docker.models.containers.Container, timeout: int = 30):
         """Wait for container to become healthy."""
         logger.debug("container_health_check_start", container=container.name, timeout=timeout)
         start_time = time.time()
         last_error = None
         
         while time.time() - start_time < timeout:
-            container.reload()
+            await asyncio.to_thread(container.reload)
             
             # Check if container is running
             if container.status != 'running':
@@ -326,8 +327,8 @@ class ContainerManager:
             else:
                 for method, url in probe_targets:
                     try:
-                        with httpx.Client(timeout=2.0) as client:
-                            response = client.get(url)
+                        async with httpx.AsyncClient(timeout=2.0) as client:
+                            response = await client.get(url)
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method=method)
                             return
@@ -335,9 +336,10 @@ class ContainerManager:
                     except Exception as exc:
                         last_error = f"{method} health probe failed ({exc.__class__.__name__})"
             
-            time.sleep(1)
+            await asyncio.sleep(1)
         
-        container.reload()
+        # We need to run reload in an executor to avoid blocking the event loop if it's slow
+        await asyncio.to_thread(container.reload)
         timeout_message = f"Container {container.name} did not become healthy within {timeout}s"
         if last_error:
             timeout_message = f"{timeout_message}: {last_error}"

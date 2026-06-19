@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from api.error_handlers import register_exception_handlers
 from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
 from api.routes import models, models_external, prompts, collections
-from api.routes import worker_ws, kaggle, discovery
+from api.routes import worker_ws, discovery
 from api.routes.websocket import socket_app
 from config import settings, get_cors_origins
 from infrastructure.logging import api_logger
@@ -90,7 +90,6 @@ def configure_app(app: FastAPI):
     app.include_router(prompts.router)
     app.include_router(collections.router)
     app.include_router(worker_ws.router)
-    app.include_router(kaggle.router)
     app.include_router(discovery.router)
 
     app.mount("/socket.io", socket_app)

@@ -162,6 +162,7 @@ async def test_run_reconciliation_v2_marks_existing_pending_files_ready(monkeypa
 
 @pytest.mark.asyncio
 async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans(monkeypatch):
+    monkeypatch.setenv("RECONCILIATION_DELETE_ORPHANS", "true")
     state = ReconciliationState("beam-primary")
     pending_file = {
         "file_id": 7,

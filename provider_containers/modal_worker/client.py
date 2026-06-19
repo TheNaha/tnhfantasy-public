@@ -79,7 +79,18 @@ class ModalProviderClient(BaseProviderClient):
             async def generate():
                 try:
                     async with asyncio.timeout(inference_timeout):
-                        async for update in comfy_instance.run.remote_gen.aio(request.workflow):
+                        iterator = comfy_instance.run.remote_gen.aio(request.workflow).__aiter__()
+                        while True:
+                            try:
+                                update = await asyncio.wait_for(iterator.__anext__(), timeout=2.0)
+                            except asyncio.TimeoutError:
+                                if job_id and await self.job_tracker.is_cancelled(job_id):
+                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                                    return
+                                continue
+                            except StopAsyncIteration:
+                                break
+
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                 return

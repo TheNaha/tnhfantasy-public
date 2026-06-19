@@ -133,6 +133,7 @@ export default function SimpleGenerator() {
     }, [
         trackedJob, currentJobId,
         navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
+        setGenerating, setProgress, setCurrentJobId
     ]);
 
     const buildSimpleWorkflowPayload = (jobSeed = seed) => {
@@ -151,7 +152,7 @@ export default function SimpleGenerator() {
             checkpoint: isUnet ? null : selectedCheckpoint?.name,
             unet: isUnet ? selectedCheckpoint?.name : null,
             clip: isUnet ? selectedClip : null,
-            clip2: (isUnet && (isFluxModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint))) ? selectedClip2 : null,
+            clip2: (isUnet && isFluxModel(selectedCheckpoint)) ? selectedClip2 : null,
             vae: effectiveVae,
             loras: selectedLoras, controlnets,
             hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,

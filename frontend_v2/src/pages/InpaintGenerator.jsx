@@ -19,7 +19,8 @@ import PromptPanel from '../components/generator/PromptPanel';
 import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
-import { useSettings } from '../store/settingsStore';
+import useSettingsStore, { useSettings } from '../store/settingsStore';
+import { useTrackJob } from '../hooks/useTrackJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
@@ -63,6 +64,57 @@ export default function InpaintGenerator() {
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
+    const [currentJobId, setCurrentJobId] = useState(null);
+    const [progress, setProgress] = useState(null);
+    const { data: trackedJob } = useTrackJob(currentJobId);
+    const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
+
+    useEffect(() => {
+        if (!currentJobId || !trackedJob) return;
+
+        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
+        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
+
+        if (trackedJob.status === 'completed') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.success('Generation complete!', { icon: '✨' });
+            if (settings.generator.redirectAfterGenerate) {
+                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
+            }
+            return;
+        }
+
+        if (trackedJob.status === 'failed') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
+            return;
+        }
+
+        if (trackedJob.status === 'cancelled') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast('Generation cancelled');
+            return;
+        }
+
+        setGenerating(true);
+        setProgress({
+            value: progressValue,
+            max: 100,
+            status: isQueued ? 'queued' : trackedJob.status,
+            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
+        });
+    }, [
+        trackedJob, currentJobId,
+        navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
+        setGenerating, setProgress, setCurrentJobId
+    ]);
+
     // Check for pre-loaded image from navigation state
     useEffect(() => {
         if (location.state?.sourceImage) {
@@ -95,7 +147,7 @@ export default function InpaintGenerator() {
         }
     }, [sourceImage, showCanvas]);
 
-    const handleGenerate = async () => {
+    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
         if (!sourceImage?.filename) {
             toast.error("Please upload a source image first");
             return;
@@ -111,7 +163,12 @@ export default function InpaintGenerator() {
             return;
         }
 
-        setGenerating(true);
+        if (trackQueuedJob) {
+            setGenerating(true);
+            setProgress({ value: 0, max: 100, status: 'starting', node: 'Uploading mask...' });
+        } else {
+            setGenerating(true);
+        }
 
         try {
             // Use inpaint model if detected, otherwise use selected
@@ -122,6 +179,10 @@ export default function InpaintGenerator() {
                 maskImage,
                 sourceImage.filename,
             );
+
+            if (trackQueuedJob) {
+                setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
+            }
 
             const builder = new WorkflowBuilder();
             const workflow = builder.buildInpaint({
@@ -169,24 +230,40 @@ export default function InpaintGenerator() {
                 }),
             });
             if (!submission.ok) {
+                if (trackQueuedJob) {
+                    setGenerating(false);
+                    setProgress(null);
+                }
                 return;
             }
 
-            if (settings.generator.redirectAfterGenerate) {
-                toast.success('Job queued! Redirecting to gallery...');
-                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
-            } else {
-                toast.success('Job added to queue!');
-                if (settings.generator.autoRandomizeSeed) {
-                    randomizeSeed();
+            const data = submission.submissionResult;
+
+            if (data && data.id) {
+                if (trackQueuedJob) {
+                    setCurrentJobId(data.id);
+                    setGenerating(true);
+                    setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
+                    toast.success('Job queued!', { icon: '⏳' });
+                } else {
+                    toast.success('Added to queue!', { icon: '➕' });
                 }
+
+                if (shouldRedirect) navigate('/');
+                if (autoRandomizeSeed) randomizeSeed();
             }
 
         } catch (e) {
             console.error(e);
             toast.error("Error: " + e.message);
+            if (trackQueuedJob) {
+                setGenerating(false);
+                setProgress(null);
+            }
         } finally {
-            setGenerating(false);
+            if (!trackQueuedJob) {
+                setGenerating(false);
+            }
         }
     };
 
@@ -512,27 +589,44 @@ export default function InpaintGenerator() {
                     </div>
 
                     {/* Generate Button */}
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name}
-                        className={`w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-3 transition-all
-                            ${generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name
-                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-900/30'}
-                        `}
-                    >
-                        {generating ? (
-                            <>
-                                <Loader2 className="animate-spin" size={20} />
-                                Generating...
-                            </>
-                        ) : (
-                            <>
-                                <Play size={20} />
-                                Generate Inpaint
-                            </>
-                        )}
-                    </button>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                            disabled={generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name}
+                            className={`flex-1 h-14 rounded-xl font-bold text-base shadow-lg transition-all border border-gray-700 flex items-center justify-center ${generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name
+                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
+                                }`}
+                            title="Add to queue"
+                        >
+                            <Plus size={20} />
+                        </button>
+
+                        <button
+                            onClick={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                            disabled={generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name}
+                            className={`flex-[4] relative overflow-hidden h-14 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all
+                                ${generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name
+                                    ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-900/30'}
+                            `}
+                        >
+                            {generating ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={20} />
+                                    {progress?.node || 'Generating...'}
+                                </>
+                            ) : (
+                                <>
+                                    <Play size={20} />
+                                    Generate Inpaint
+                                </>
+                            )}
+                            {generating && progress && (
+                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-purple-400 to-pink-400 transition-all duration-300 ease-out" style={{ width: `${progress.value}%` }} />
+                            )}
+                        </button>
+                    </div>
 
                     {/* Status */}
                     {sourceImage && !maskImage && (

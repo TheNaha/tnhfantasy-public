@@ -53,6 +53,37 @@ class _FakeWebSocketsModule:
         return self._websocket
 
 
+
+class _FakeAsyncClient:
+    def __init__(self, fake_urlopen):
+        self.fake_urlopen = fake_urlopen
+    async def __aenter__(self): return self
+    async def __aexit__(self, exc_type, exc, tb): pass
+    async def post(self, url, json=None, timeout=None, **kwargs):
+        import urllib.request, urllib.error
+        req = urllib.request.Request(url, data=b"fake")
+        try:
+            res = self.fake_urlopen(req, timeout)
+            res.json = lambda: __import__('json').loads(res.read())
+            res.raise_for_status = lambda: None
+            return res
+        except urllib.error.HTTPError as e:
+            import httpx
+            class MockResponse:
+                text = e.fp.read().decode('utf-8') if hasattr(e.fp, 'read') else str(e)
+            error = httpx.HTTPStatusError("error", request=httpx.Request("POST", url), response=MockResponse())
+            raise error
+
+    async def get(self, url, params=None, timeout=None, **kwargs):
+        if params:
+            import urllib.parse
+            url += "?" + urllib.parse.urlencode(params)
+        res = self.fake_urlopen(url, timeout)
+        res.json = lambda: __import__('json').loads(res.read())
+        res.content = res.read()
+        res.raise_for_status = lambda: None
+        return res
+
 class _BytesResponse:
     def __init__(self, payload):
         self._payload = payload
@@ -121,7 +152,7 @@ async def test_execute_comfy_workflow_filesystem_mode_streams_contract(monkeypat
         }
         return _BytesResponse(json.dumps(history_payload).encode("utf-8"))
 
-    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -136,7 +167,7 @@ async def test_execute_comfy_workflow_filesystem_mode_streams_contract(monkeypat
     statuses = [update["status"] for update in updates]
     assert statuses == ["queued", "executing", "progress", "success"]
     assert updates[-1]["images"][0]["filename"] == "result.png"
-    assert updates[-1]["images"][0]["data"] == b"image-bytes"
+    assert updates[-1]["images"][0]["data"] == "aW1hZ2UtYnl0ZXM="
     assert websocket.closed is True
 
 
@@ -185,7 +216,7 @@ async def test_execute_comfy_workflow_view_api_mode_streams_contract(monkeypatch
 
         raise AssertionError(f"Unexpected URL: {target}")
 
-    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -197,7 +228,7 @@ async def test_execute_comfy_workflow_view_api_mode_streams_contract(monkeypatch
 
     assert [update["status"] for update in updates] == ["queued", "success"]
     assert updates[-1]["images"][0]["filename"] == "beam-image.png"
-    assert updates[-1]["images"][0]["data"] == b"image-from-view"
+    assert updates[-1]["images"][0]["data"] == "aW1hZ2UtZnJvbS12aWV3"
     assert view_urls, "expected at least one /view request"
 
     parsed = urllib.parse.urlparse(view_urls[0])
@@ -226,7 +257,7 @@ async def test_execute_comfy_workflow_emits_execution_error_and_stops(monkeypatc
             return _BytesResponse(json.dumps({"prompt_id": prompt_id}).encode("utf-8"))
         raise AssertionError("History endpoint should not be called after execution_error")
 
-    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -265,7 +296,7 @@ async def test_execute_comfy_workflow_reports_prompt_rejection(monkeypatch):
             )
         raise AssertionError("History endpoint should not be called after prompt rejection")
 
-    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -301,7 +332,7 @@ async def test_execute_comfy_workflow_reports_stalled_prompt(monkeypatch):
 
         raise AssertionError(f"Unexpected URL: {target}")
 
-    monkeypatch.setattr("provider_core.workflow_executor.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(

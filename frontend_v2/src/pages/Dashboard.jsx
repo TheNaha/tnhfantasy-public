@@ -50,7 +50,6 @@ import {
 export default function Dashboard() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const defaultViewMode = useSettingsStore((state) => state.settings.ui.defaultViewMode);
     const defaultGridColumns = useSettingsStore((state) => state.settings.ui.defaultGridColumns);
     const autoRefreshOnJobComplete = useSettingsStore((state) => state.settings.gallery.autoRefreshOnJobComplete);
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
@@ -108,7 +107,10 @@ export default function Dashboard() {
     }, []);
 
     // Local State
-    const [viewMode, setViewMode] = useState(() => defaultViewMode);
+    const viewMode = useSettingsStore((state) => state.settings.ui.defaultViewMode);
+    const setViewMode = useCallback((mode) => {
+        useSettingsStore.getState().updateSetting('ui', 'defaultViewMode', mode);
+    }, []);
     const [gridCols, setGridCols] = useState(defaultGridColumns);
 
     // Filters

@@ -39,7 +39,7 @@ from config import (
     get_job_retry_base_delay,
     get_job_retry_max_delay
 )
-from api.deps import get_session
+from api.deps import get_session_context
 from services.job_queue import job_queue
 
 # Import routers
@@ -79,7 +79,7 @@ async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
     await execute_job(
         job_id,
         preferred_provider_id=preferred_provider_id,
-        session_factory=get_session,
+        session_context_manager=get_session_context,
         call_provider_fn=_call_provider,
         process_image_background_fn=_process_image_background,
         get_timeout_fn=get_job_timeout,

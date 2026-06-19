@@ -93,11 +93,21 @@ class BeamProviderClient(BaseProviderClient):
 
         async def generate():
             try:
-                headers = {"Authorization": f"Basic {BEAM_API_KEY}"}
+                headers = {"Authorization": f"Bearer {BEAM_API_KEY}"}
                 async with websockets.connect(BEAM_GPU_URL, max_size=WS_MAX_SIZE_MB * 1024 * 1024, additional_headers=headers, open_timeout=WS_OPEN_TIMEOUT) as ws:
-                    await ws.send(json.dumps(request.workflow))
+                    await ws.send(json.dumps({"workflow": request.workflow}))
                     async with asyncio.timeout(inference_timeout):
-                        async for message in ws:
+                        while True:
+                            try:
+                                message = await asyncio.wait_for(ws.recv(), timeout=2.0)
+                            except asyncio.TimeoutError:
+                                if job_id and await self.job_tracker.is_cancelled(job_id):
+                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                    return
+                                continue
+                            except websockets.exceptions.ConnectionClosed:
+                                break
+                                
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                 return

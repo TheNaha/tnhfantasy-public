@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from core.entities import Provider, LoadBalancerState
 from infrastructure.repositories import ProviderRepository
 from infrastructure.logging import get_logger
+from infrastructure.cache import TTLCache
 
 logger = get_logger("load_balancer")
 
@@ -41,6 +42,16 @@ MODEL_AVAILABILITY_CACHE_MAX_ENTRIES = _parse_positive_int(
     256,
 )
 
+_model_availability_cache = TTLCache(
+    maxsize=MODEL_AVAILABILITY_CACHE_MAX_ENTRIES,
+    ttl=MODEL_AVAILABILITY_CACHE_TTL_SECONDS
+)
+
+_provider_health_cache = TTLCache(
+    maxsize=100,
+    ttl=5.0
+)
+
 
 @dataclass
 class LoadBalancerRuntimeState:
@@ -49,8 +60,6 @@ class LoadBalancerRuntimeState:
     round_robin_index: int = 0
     provider_failures: Dict[str, int] = field(default_factory=dict)
     provider_job_counts: Dict[str, int] = field(default_factory=dict)
-    model_availability_cache: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
-    provider_health_cache: Dict[str, Tuple[bool, float]] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
     _lock: Optional[asyncio.Lock] = None
@@ -65,13 +74,6 @@ class LoadBalancerRuntimeState:
             "round_robin_index": self.round_robin_index,
             "provider_failures": dict(self.provider_failures),
             "provider_job_counts": dict(self.provider_job_counts),
-            "model_availability_cache": {
-                key: {
-                    "eligible_provider_ids": list(value.get("eligible_provider_ids", [])),
-                    "expires_at": value.get("expires_at"),
-                }
-                for key, value in self.model_availability_cache.items()
-            },
             "initialized": self.initialized,
         }
 
@@ -79,8 +81,6 @@ class LoadBalancerRuntimeState:
         self.round_robin_index = 0
         self.provider_failures = {}
         self.provider_job_counts = {}
-        self.model_availability_cache = {}
-        self.provider_health_cache = {}
         self.initialized = False
         self.initializing = False
 
@@ -102,9 +102,8 @@ class LoadBalancer:
         runtime_state: Optional[LoadBalancerRuntimeState] = None,
     ) -> None:
         """Clear cached model-availability lookups after model status changes."""
-        state = runtime_state or _global_runtime_state
-        cleared_entries = len(state.model_availability_cache)
-        state.model_availability_cache.clear()
+        cleared_entries = len(_model_availability_cache)
+        _model_availability_cache.clear()
 
         if cleared_entries:
             logger.debug(
@@ -132,40 +131,18 @@ class LoadBalancer:
 
     def _get_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]]) -> Optional[List[str]]:
         cache_key = self._build_model_availability_cache_key(required_models)
-        now = time.monotonic()
-
-        cache_entry = self.runtime_state.model_availability_cache.get(cache_key)
-        if not cache_entry:
-            return None
-
-        expires_at = cache_entry.get("expires_at", 0.0)
-        if expires_at <= now:
-            self.runtime_state.model_availability_cache.pop(cache_key, None)
-            return None
-
-        return list(cache_entry.get("eligible_provider_ids", []))
+        return list(_model_availability_cache[cache_key]) if cache_key in _model_availability_cache else None
 
     def _set_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]], eligible_provider_ids: List[str]) -> None:
         cache_key = self._build_model_availability_cache_key(required_models)
-        now = time.monotonic()
-
-        cache = self.runtime_state.model_availability_cache
-        if cache_key not in cache and len(cache) >= MODEL_AVAILABILITY_CACHE_MAX_ENTRIES:
-            oldest_key = min(
-                cache,
-                key=lambda key: cache[key].get("expires_at", 0.0),
-            )
-            cache.pop(oldest_key, None)
-
-        cache[cache_key] = {
-            "eligible_provider_ids": tuple(eligible_provider_ids),
-            "expires_at": now + MODEL_AVAILABILITY_CACHE_TTL_SECONDS,
-        }
+        _model_availability_cache[cache_key] = tuple(eligible_provider_ids)
 
     @classmethod
     def reset_state(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None):
         """Reset in-memory state. Intended for tests and controlled startup flows."""
         (runtime_state or _global_runtime_state).reset()
+        _model_availability_cache.clear()
+        _provider_health_cache.clear()
     
     @classmethod
     def load_state_from_db(
@@ -258,14 +235,11 @@ class LoadBalancer:
     
     async def _check_provider_health(self, provider: Provider) -> bool:
         """Probe the container's status or health endpoint, caching the result for 5 seconds."""
-        now = time.monotonic()
         cache_key = provider.id
         
         # Check cache
-        if cache_key in self.runtime_state.provider_health_cache:
-            is_healthy, expires_at = self.runtime_state.provider_health_cache[cache_key]
-            if now < expires_at:
-                return is_healthy
+        if cache_key in _provider_health_cache:
+            return _provider_health_cache[cache_key]
 
         is_healthy = False
         
@@ -321,7 +295,7 @@ class LoadBalancer:
             except Exception:
                 pass
 
-        self.runtime_state.provider_health_cache[cache_key] = (is_healthy, now + 5.0)
+        _provider_health_cache[cache_key] = is_healthy
         return is_healthy
 
     async def get_next_provider(
@@ -516,7 +490,7 @@ class LoadBalancer:
                     if is_now_healthy:
                         poll_success = True
                         # Cache the success
-                        self.runtime_state.provider_health_cache[selected_provider.id] = (True, time.monotonic() + 5.0)
+                        _provider_health_cache[selected_provider.id] = True
                         break
                     
                     await asyncio.sleep(1.0)

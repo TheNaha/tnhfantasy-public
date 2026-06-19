@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from services.container_manager import ContainerManager
 import docker
 
@@ -176,18 +176,19 @@ class TestContainerManager:
         assert cm.runtime == "unknown"
 
     def _create_mock_httpx_client(self, status_code=200, side_effect=None):
-        """Create a mock httpx.Client that works as a context manager."""
+        """Create a mock httpx.AsyncClient that works as an async context manager."""
         mock_response = MagicMock()
         mock_response.status_code = status_code
-        mock_client_instance = MagicMock()
+        mock_client_instance = AsyncMock()
         mock_client_instance.get.return_value = mock_response
         if side_effect:
             mock_client_instance.get.side_effect = side_effect
-        mock_client_class = MagicMock()
-        mock_client_class.__enter__.return_value = mock_client_instance
+        mock_client_class = AsyncMock()
+        mock_client_class.__aenter__.return_value = mock_client_instance
         return mock_client_class, mock_client_instance
 
-    def test_wait_for_health_succeeds_on_http_200(self):
+    @pytest.mark.asyncio
+    async def test_wait_for_health_succeeds_on_http_200(self):
         cm = ContainerManager.__new__(ContainerManager)
         container = MagicMock()
         container.name = "test-container"
@@ -196,11 +197,12 @@ class TestContainerManager:
 
         mock_client_class, _ = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
-             patch("services.container_manager.time.sleep", return_value=None):
-            cm._wait_for_health(container, timeout=1)
+        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+             patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock):
+            await cm._wait_for_health(container, timeout=1)
 
-    def test_wait_for_health_uses_container_dns_probe_first(self):
+    @pytest.mark.asyncio
+    async def test_wait_for_health_uses_container_dns_probe_first(self):
         cm = ContainerManager.__new__(ContainerManager)
         container = MagicMock()
         container.name = "test-container"
@@ -218,13 +220,14 @@ class TestContainerManager:
 
         mock_client_class, mock_instance = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
-             patch("services.container_manager.time.sleep", return_value=None):
-            cm._wait_for_health(container, timeout=1)
+        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+             patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock):
+            await cm._wait_for_health(container, timeout=1)
 
         mock_instance.get.assert_called_once_with("http://test-container:8000/health")
 
-    def test_wait_for_health_times_out_when_only_running(self):
+    @pytest.mark.asyncio
+    async def test_wait_for_health_times_out_when_only_running(self):
         cm = ContainerManager.__new__(ContainerManager)
         container = MagicMock()
         container.name = "test-container"
@@ -233,10 +236,10 @@ class TestContainerManager:
 
         mock_client_class, _ = self._create_mock_httpx_client(side_effect=Exception("probe failed"))
 
-        with patch("services.container_manager.httpx.Client", return_value=mock_client_class), \
-             patch("services.container_manager.time.sleep", return_value=None), \
+        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+             patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock), \
              patch("services.container_manager.time.time", side_effect=[0, 0.1, 1.1]):
             with pytest.raises(TimeoutError) as excinfo:
-                cm._wait_for_health(container, timeout=1)
+                await cm._wait_for_health(container, timeout=1)
 
         assert "did not become healthy" in str(excinfo.value)

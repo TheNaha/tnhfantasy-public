@@ -74,7 +74,6 @@ class TestProviderModels:
             "message": "boom",
             "retryable": True,
             "code": 503,
-            "error": "boom",
         }
 
     def test_build_status_response(self):

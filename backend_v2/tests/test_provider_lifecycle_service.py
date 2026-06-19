@@ -23,7 +23,7 @@ async def test_start_container_emits_event_and_invalidates_cache():
 
     container = MagicMock(short_id="container-123")
     container_manager = MagicMock()
-    container_manager.start_container.return_value = container
+    container_manager.start_container = AsyncMock(return_value=container)
 
     invalidate = MagicMock()
 
