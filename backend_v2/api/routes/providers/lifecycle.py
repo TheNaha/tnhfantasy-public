@@ -319,8 +319,21 @@ async def get_provider_deploy_status(
     provider_id: str,
     session: Session = Depends(get_session)
 ):
-    """Get persisted backend deploy state for a provider."""
+    """Get persisted backend deploy state for a provider or proxy from worker."""
     service = get_provider_service(session)
+    provider = await service.get_provider(provider_id)
+    from api.provider_runtime import resolve_provider_runtime
+    runtime = resolve_provider_runtime(provider)
+    
+    if runtime.mode == "discovery":
+        http_client = get_http_client()
+        try:
+            response = await http_client.get(f"{runtime.worker_url}/deploy-status", timeout=5.0)
+            if response.status_code == 200:
+                return response.json()
+        except Exception:
+            pass
+            
     return await service.get_provider_deploy_state(provider_id)
 
 @router.post("/{provider_id}/deploy")

@@ -79,19 +79,38 @@ class ModalProviderClient(BaseProviderClient):
             async def generate():
                 try:
                     async with asyncio.timeout(inference_timeout):
-                        iterator = comfy_instance.run.remote_gen.aio(request.workflow).__aiter__()
+                        q = asyncio.Queue()
+                        
+                        async def fetcher():
+                            try:
+                                async for update in comfy_instance.run.remote_gen.aio(request.workflow):
+                                    await q.put(update)
+                                await q.put(None)
+                            except Exception as e:
+                                await q.put(e)
+                                
+                        task = asyncio.create_task(fetcher())
+                        
                         while True:
                             try:
-                                update = await asyncio.wait_for(iterator.__anext__(), timeout=2.0)
+                                item = await asyncio.wait_for(q.get(), timeout=2.0)
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
+                                    task.cancel()
                                     yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                     return
                                 continue
-                            except StopAsyncIteration:
+                            
+                            if item is None:
                                 break
+                                
+                            if isinstance(item, Exception):
+                                raise item
+                                
+                            update = item
 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
+                                task.cancel()
                                 yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                 return
 
@@ -168,7 +187,36 @@ class ModalProviderClient(BaseProviderClient):
         return {"status": "success", "path": path, "size": len(content)}
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return build_deploy_compatibility_response(backend_url=BACKEND_URL, provider_id=PROVIDER_ID, provider_type="modal")
+        from provider_core.base_client import _DEPLOY_STATE
+        import subprocess
+        import asyncio
+        from datetime import datetime
+
+        _DEPLOY_STATE.clear()
+        _DEPLOY_STATE.update({
+            "status": "deploying",
+            "message": "Deployment started",
+            "started_at": datetime.utcnow().isoformat()
+        })
+
+        async def _run():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "modal", "deploy", "/backend/modal_app.py",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
+                )
+                stdout, _ = await proc.communicate()
+                out_str = stdout.decode('utf-8', errors='replace')
+                if proc.returncode == 0:
+                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                else:
+                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with code {proc.returncode}", "logs": out_str})
+            except Exception as e:
+                _DEPLOY_STATE.update({"status": "failed", "message": str(e)})
+        
+        asyncio.create_task(_run())
+        return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         validate_fn = get_modal_function("validate_models")
@@ -179,10 +227,6 @@ class ModalProviderClient(BaseProviderClient):
         return await validate_fn.remote.aio(MODEL_DIRECTORIES, False)
 
     async def run_reconciliation(self) -> Dict[str, Any]:
-        from provider_core.reconciliation import run_reconciliation_v2
-        if self.reconciliation_state.status == "reconciling":
-            return {"status": "already_running", "message": "Reconciliation already in progress"}
-        
         async def validate_existing(delete_invalid: bool):
             validate_fn = get_modal_function("validate_models")
             timeout_seconds = max(1.0, float(self.runtime_config.get("validation_timeout_seconds", 300.0)))
@@ -208,18 +252,13 @@ class ModalProviderClient(BaseProviderClient):
             await delete_file_func.remote.aio(storage_path)
             return True
 
-        async def perform_reconciliation():
-            try:
-                await run_reconciliation_v2(
-                    provider_id=PROVIDER_ID, backend_url=BACKEND_URL, reconciliation_state=self.reconciliation_state,
-                    max_concurrent_downloads=self.runtime_config["max_concurrent_downloads"],
-                    hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN, storage_label="Modal",
-                    validate_existing=validate_existing, list_existing_files=list_existing_files,
-                    download_file=download_file, delete_file=delete_file
-                )
-            except Exception as e:
-                logger.exception(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
-                self.reconciliation_state.status = "error"
-
-        asyncio.create_task(perform_reconciliation())
-        return {"status": "started", "message": "Reconciliation started"}
+        return await self._start_reconciliation_task(
+            backend_url=BACKEND_URL,
+            hf_token=HF_TOKEN,
+            civitai_token=CIVITAI_TOKEN,
+            storage_label="Modal",
+            validate_existing_fn=validate_existing,
+            list_existing_files_fn=list_existing_files,
+            download_file_fn=download_file,
+            delete_file_fn=delete_file
+        )

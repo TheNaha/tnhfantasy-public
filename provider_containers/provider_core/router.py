@@ -129,6 +129,10 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     async def deploy(payload: dict):
         return await client.deploy(payload)
 
+    @app.get("/deploy-status")
+    async def deploy_status():
+        return await client.get_deploy_status()
+
     @app.post("/validate-models")
     async def validate_models(request: ValidateModelsRequest):
         return await client.validate_models(request)

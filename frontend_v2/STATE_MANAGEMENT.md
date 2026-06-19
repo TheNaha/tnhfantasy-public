@@ -62,37 +62,44 @@ const { data: models } = useQuery({
 
 ## Patterns
 
-### 1. Optimistic Updates (Zustand)
+### 1. Optimistic Updates (React Query)
 
-For immediate UI feedback before server confirmation:
+For immediate UI feedback before server confirmation, use React Query's `onMutate`:
 
 ```javascript
-// In jobStore.js
-deleteJob: async (jobId) => {
-  const previousJobs = get().jobs;
+const queryClient = useQueryClient();
 
-  // Optimistic: remove immediately
-  set((state) => ({
-    jobs: state.jobs.filter((j) => j.id !== jobId),
-  }));
-
-  try {
-    await jobsApi.delete(jobId);
-  } catch (error) {
+const deleteMutation = useMutation({
+  mutationFn: (jobId) => jobsApi.delete(jobId),
+  onMutate: async (jobId) => {
+    await queryClient.cancelQueries({ queryKey: ['jobs', 'active'] });
+    const previousJobs = queryClient.getQueryData(['jobs', 'active']);
+    
+    // Optimistic: remove immediately
+    queryClient.setQueryData(['jobs', 'active'], old => 
+      old?.filter(j => j.id !== jobId)
+    );
+    
+    return { previousJobs };
+  },
+  onError: (err, jobId, context) => {
     // Rollback on failure
-    set({ jobs: previousJobs });
-    throw error;
+    queryClient.setQueryData(['jobs', 'active'], context.previousJobs);
+  },
+  onSettled: () => {
+    queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
   }
-};
+});
 ```
 
-### 2. WebSocket Integration (Zustand)
+### 2. WebSocket Integration (React Query & Hooks)
 
-Real-time updates via WebSocket are handled in Zustand:
+Real-time updates via WebSocket are handled by bridging events into the React Query cache:
 
 ```javascript
 // In src/hooks/useJobsRealtime.jsx
-const { lastCompletedJob } = useJobsRealtime();
+// Listens to WebSocket events and mutates the ['jobs', 'active'] query cache directly
+useJobsRealtime();
 ```
 
 ### 3. Server Data with React Query
@@ -135,11 +142,17 @@ const mutation = useMutation({
 - **State**: `viewMode`, `favorites[]`, `activeCollection`
 - **Methods**: `setViewMode()`, `toggleFavorite()`, `setActiveCollection()`
 
-### useProvidersPageData.js
+### generatorStore.js
 
-- **Purpose**: Canonical provider server-state hook
-- **State**: React Query cache for provider records and load-balancer config
-- **Realtime**: Shares one websocket bridge between layout and providers page consumers
+- **Purpose**: Image generation parameters and user presets (persisted)
+- **State**: `prompt`, `seed`, `steps`, `selectedCheckpoint`, `hiresFix`, etc.
+- **Methods**: `updateParams()`, `setCheckpoint()`, `savePreset()`
+
+### React Query Hooks
+
+- `useActiveJobs.js`: Fetches the active job queue.
+- `useJobsRealtime.jsx`: Manages WebSocket connections and optimistically updates active jobs in the React Query cache.
+- `useProvidersPageData.js`: Canonical provider server-state hook sharing a WebSocket bridge for layout/provider consumers.
 
 ## Best Practices
 

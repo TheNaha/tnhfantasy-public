@@ -1,5 +1,9 @@
 import abc
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Callable
+import asyncio
+from datetime import datetime
+
+_DEPLOY_STATE: Dict[str, Any] = {}
 
 from provider_core import (
     CancelJobRequest,
@@ -38,6 +42,44 @@ class BaseProviderClient(abc.ABC):
 
     def get_reconciliation_status(self) -> Dict[str, Any]:
         return self.reconciliation_state.to_dict()
+
+    async def _start_reconciliation_task(
+        self,
+        backend_url: str,
+        hf_token: str,
+        civitai_token: str,
+        storage_label: str,
+        validate_existing_fn,
+        list_existing_files_fn,
+        download_file_fn,
+        delete_file_fn,
+    ) -> Dict[str, Any]:
+        from provider_core.reconciliation import run_reconciliation_v2
+        import asyncio
+        if self.reconciliation_state.status == "reconciling":
+            return {"status": "already_running", "message": "Reconciliation already in progress"}
+
+        async def perform_reconciliation():
+            try:
+                await run_reconciliation_v2(
+                    provider_id=self.provider_id,
+                    backend_url=backend_url,
+                    reconciliation_state=self.reconciliation_state,
+                    max_concurrent_downloads=self.runtime_config.get("max_concurrent_downloads", 2),
+                    hf_token=hf_token,
+                    civitai_token=civitai_token,
+                    storage_label=storage_label,
+                    validate_existing=validate_existing_fn,
+                    list_existing_files=list_existing_files_fn,
+                    download_file=download_file_fn,
+                    delete_file=delete_file_fn
+                )
+            except Exception as e:
+                logger.exception(f"[{self.provider_id}] Fatal error in reconciliation task: {e}")
+                self.reconciliation_state.status = "error"
+
+        asyncio.create_task(perform_reconciliation())
+        return {"status": "started", "message": "Reconciliation started"}
 
     @abc.abstractmethod
     async def get_health(self) -> Dict[str, Any]:
@@ -85,7 +127,10 @@ class BaseProviderClient(abc.ABC):
 
     @abc.abstractmethod
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        pass
+        return {}
+
+    async def get_deploy_status(self) -> Dict[str, Any]:
+        return _DEPLOY_STATE or {"status": "unknown"}
 
     @abc.abstractmethod
     async def validate_models(self, request: Any) -> Dict[str, Any]:

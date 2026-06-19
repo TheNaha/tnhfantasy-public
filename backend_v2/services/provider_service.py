@@ -96,7 +96,7 @@ class ProviderService:
             "config": config,
         }
 
-    def _summarize_credentials(self, provider_type: str, credentials: Dict[str, Any], deploy_config: Dict[str, Any]) -> Dict[str, Any]:
+    def _summarize_credentials(self, provider_type: str, credentials: Dict[str, Any], deploy_config: Dict[str, Any], runtime: Any) -> Dict[str, Any]:
         validation = ProviderRegistry.validate_provider(provider_type, credentials, deploy_config)
         configured_fields = sorted(
             key for key, value in credentials.items()
@@ -108,13 +108,16 @@ class ProviderService:
             or mask_secret(credentials.get("api_key"))
             or mask_secret(credentials.get("token_id"))
         )
+        is_discovery = runtime and getattr(runtime, "mode", None) == "discovery"
+        missing_credentials = [] if is_discovery else validation.get("credentials", [])
+        missing_config = [] if is_discovery else validation.get("config", [])
         return {
             "configured_fields": configured_fields,
-            "missing_required_credentials": validation.get("credentials", []),
-            "missing_required_config": validation.get("config", []),
+            "missing_required_credentials": missing_credentials,
+            "missing_required_config": missing_config,
             "account_label": account_label,
-            "has_credentials": bool(configured_fields),
-            "ready": not validation.get("credentials") and not validation.get("config"),
+            "has_credentials": bool(configured_fields) or is_discovery,
+            "ready": not missing_credentials and not missing_config,
         }
 
     def _build_capabilities(
@@ -131,17 +134,17 @@ class ProviderService:
 
         capabilities = {
             "container": runtime_available,
-            "start_container": runtime_available,
-            "stop_container": runtime_available,
-            "restart_container": runtime_available,
-            "view_logs": runtime_available,
-            "deploy": managed_deploy,
+            "start_container": False,
+            "stop_container": False,
+            "restart_container": False,
+            "view_logs": False,
+            "deploy": runtime_available,
             "setup": provider.type == "modal" and runtime_available,
             "reconcile": runtime.supports_reconciliation,
             "reset_status": True,
             "manual_deploy": deploy_mode == "manual",
-            "managed_deploy": managed_deploy,
-            "runtime_only": runtime_available and not managed_deploy,
+            "managed_deploy": False,
+            "runtime_only": runtime_available,
         }
 
         reasons = {
@@ -380,7 +383,7 @@ class ProviderService:
             },
             "capabilities": capabilities,
             "capability_reasons": capability_reasons,
-            "credential_summary": self._summarize_credentials(provider.type, clean_dict(provider.credentials), deploy_config),
+            "credential_summary": self._summarize_credentials(provider.type, clean_dict(provider.credentials), deploy_config, runtime),
         }
     
     def get_model_cache(self) -> Dict[str, Any]:

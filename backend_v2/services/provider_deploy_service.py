@@ -207,8 +207,26 @@ class ProviderDeployService:
         return state
 
     async def deploy_provider_app(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
-        if not container_manager:
-            raise ProviderError(provider.id, "Container manager not initialized")
+        from api.provider_runtime import resolve_provider_runtime
+        runtime = resolve_provider_runtime(provider)
+        
+        if runtime.mode == "discovery" or not container_manager:
+            if runtime.mode not in ("container_http", "discovery"):
+                raise ProviderError(provider.id, "Cannot deploy without a running worker")
+            
+            http_client = get_http_client()
+            try:
+                response = await http_client.post(
+                    f"{runtime.worker_url}/deploy",
+                    json={"provider_id": provider.id},
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.TimeoutException as exc:
+                raise ProviderError(provider.id, "Deploy request timed out") from exc
+            except (httpx.HTTPError, ValueError) as exc:
+                raise ProviderError(provider.id, f"Deploy failed: {str(exc)}") from exc
 
         current_state = read_deploy_state(provider)
         if self._is_deploy_in_progress(current_state):

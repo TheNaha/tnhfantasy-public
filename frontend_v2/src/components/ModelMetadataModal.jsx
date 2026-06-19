@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected']);
 const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
@@ -88,6 +89,29 @@ function ModelMetadataHeader({
 export default function ModelMetadataModal({ metadata, onClose, providers = [], providersLoading = false }) {
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
+    const queryClient = useQueryClient();
+
+    const autopopulateMutation = useMutation({
+        mutationFn: async () => {
+            const modelId = metadata.id || metadata.model_id;
+            const res = await fetch(`/api/v2/models/${modelId}/autopopulate`, { method: 'POST' });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Failed to autopopulate');
+            }
+            return res.json();
+        },
+        onSuccess: () => {
+            const modelId = metadata.id || metadata.model_id;
+            toast.success("Model details autopopulated!");
+            queryClient.invalidateQueries(['models']);
+            queryClient.invalidateQueries(['model', modelId]);
+            onClose(); // Close modal to refresh data
+        },
+        onError: (err) => {
+            toast.error(err.message);
+        }
+    });
 
     if (!metadata) return null;
 
@@ -285,6 +309,20 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
 
                     {/* Content */}
                     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+                        {metadata?.description?.includes("Auto-discovered") && (
+                            <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-xl flex items-center justify-between">
+                                <div className="text-sm text-blue-200">
+                                    This model was auto-discovered from storage and is missing details.
+                                </div>
+                                <button 
+                                    onClick={() => autopopulateMutation.mutate()}
+                                    disabled={autopopulateMutation.isPending}
+                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                                >
+                                    {autopopulateMutation.isPending ? 'Fetching...' : 'Fetch Metadata'}
+                                </button>
+                            </div>
+                        )}
                         {/* Stats */}
                         <div className="grid grid-cols-3 gap-4 bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
                             <div className="text-center">

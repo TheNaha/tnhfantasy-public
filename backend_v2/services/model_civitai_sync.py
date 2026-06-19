@@ -70,3 +70,45 @@ class ModelCivitaiSyncService:
         await self.downloader.check_and_trigger_dependencies(civitai_data=civitai_data)
 
         return self.repo.model_to_dict(model)
+
+    async def autopopulate_model(self, model_id: str) -> Dict[str, Any]:
+        from services.external_model_service import ExternalModelService
+        model = self.repo.get_model(model_id)
+        if not model:
+            raise ValueError("Model not found")
+
+        external = ExternalModelService()
+        search_result = await external.search_civitai(model.name, limit=1)
+        items = search_result.get("items", [])
+        if not items:
+            raise ValueError(f"No match found on CivitAI for '{model.name}'")
+
+        civitai_data = items[0]
+        model.civitai_model_id = civitai_data.get("id")
+        if not model.description or "Auto-discovered" in model.description:
+            model.description = civitai_data.get("description", model.description)
+        model.nsfw = civitai_data.get("nsfw", False)
+
+        if civitai_data.get("modelVersions") and model.versions:
+            civitai_version = civitai_data["modelVersions"][0]
+            version = model.versions[0]
+            version.civitai_version_id = civitai_version.get("id")
+            if "Auto-discovered" in version.description:
+                version.description = civitai_version.get("description", version.description)
+            version.base_model = civitai_version.get("baseModel", version.base_model)
+            
+            # Save first image if missing
+            images = civitai_version.get("images", [])
+            if images and not version.images:
+                from core.entities import ModelImage
+                image_data = images[0]
+                img = ModelImage(
+                    version_id=version.id,
+                    url=image_data.get("url", ""),
+                    nsfw=image_data.get("nsfw", "None") != "None",
+                    sort_order=0
+                )
+                self.session.add(img)
+
+        self.session.commit()
+        return self.repo.model_to_dict(model)

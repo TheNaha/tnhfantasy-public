@@ -140,8 +140,13 @@ class ModelDownloader:
             storage_path = f"models/{model.directory}/{file.storage_filename}"
             
             for provider in providers:
-                container_name = f"comfy-provider-{provider.id}"
-                worker_url = f"http://{container_name}:8000"
+                from api.provider_runtime import resolve_provider_runtime
+                runtime = resolve_provider_runtime(provider)
+                
+                if not runtime.worker_url:
+                    continue
+                
+                worker_url = runtime.worker_url
                 
                 try:
                     import urllib.parse

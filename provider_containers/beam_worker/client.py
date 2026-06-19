@@ -208,7 +208,44 @@ class BeamProviderClient(BaseProviderClient):
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return build_deploy_compatibility_response(backend_url=BACKEND_URL, provider_id=PROVIDER_ID, provider_type="beam")
+        from provider_core.base_client import _DEPLOY_STATE
+        import subprocess
+        import asyncio
+        from datetime import datetime
+
+        _DEPLOY_STATE.clear()
+        _DEPLOY_STATE.update({
+            "status": "deploying",
+            "message": "Deployment started",
+            "started_at": datetime.utcnow().isoformat()
+        })
+
+        async def _run():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "beam", "deploy", "/backend/beam_app.py:comfy_gpu",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
+                )
+                stdout, _ = await proc.communicate()
+                
+                proc2 = await asyncio.create_subprocess_exec(
+                    "beam", "deploy", "/backend/beam_app.py:comfy_storage",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
+                )
+                stdout2, _ = await proc2.communicate()
+
+                out_str = stdout.decode('utf-8', errors='replace') + "\n" + stdout2.decode('utf-8', errors='replace')
+                if proc.returncode == 0 and proc2.returncode == 0:
+                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                else:
+                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with codes {proc.returncode}, {proc2.returncode}", "logs": out_str})
+            except Exception as e:
+                _DEPLOY_STATE.update({"status": "failed", "message": str(e)})
+        
+        asyncio.create_task(_run())
+        return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         client = get_http_client()
@@ -230,10 +267,6 @@ class BeamProviderClient(BaseProviderClient):
         return {"error": f"HTTP {response.status_code}", "total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
 
     async def run_reconciliation(self) -> Dict[str, Any]:
-        from provider_core.reconciliation import run_reconciliation_v2
-        if self.reconciliation_state.status == "reconciling":
-            return {"status": "already_running", "message": "Reconciliation already in progress"}
-        
         async def validate_existing(delete_invalid: bool):
             client = get_http_client()
             response = await client.post(f"{BEAM_STORAGE_URL}/validate-all-models", json={"delete_invalid": delete_invalid}, headers=get_beam_headers(), timeout=120.0)
@@ -251,28 +284,31 @@ class BeamProviderClient(BaseProviderClient):
 
         async def download_file(download_url: str, storage_path: str, token: str = None):
             client = get_http_client()
-            url = BEAM_DOWNLOAD_URL or BEAM_STORAGE_URL
-            response = await client.post(f"{url}/download-model", json={"url": download_url, "path": storage_path, "token": token}, headers=get_beam_headers(), timeout=1800.0)
-            if response.status_code != 200:
-                raise Exception(response.text)
-
+            download_endpoint = BEAM_DOWNLOAD_URL or BEAM_STORAGE_URL
+            response = await client.post(
+                f"{download_endpoint}/download-model",
+                json={
+                    "url": download_url, "path": storage_path,
+                    "token": token or determine_download_token(download_url, HF_TOKEN, CIVITAI_TOKEN),
+                },
+                headers=get_beam_headers(),
+                timeout=1800.0
+            )
+            response.raise_for_status()
+            
         async def delete_file(storage_path: str):
             client = get_http_client()
             response = await client.post(f"{BEAM_STORAGE_URL}/delete-model", json={"path": storage_path}, headers=get_beam_headers(), timeout=60.0)
-            return response.status_code == 200
+            response.raise_for_status()
+            return True
 
-        async def perform_reconciliation():
-            try:
-                await run_reconciliation_v2(
-                    provider_id=PROVIDER_ID, backend_url=BACKEND_URL, reconciliation_state=self.reconciliation_state,
-                    max_concurrent_downloads=self.runtime_config["max_concurrent_downloads"],
-                    hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN, storage_label="Beam",
-                    validate_existing=validate_existing, list_existing_files=list_existing_files,
-                    download_file=download_file, delete_file=delete_file
-                )
-            except Exception as e:
-                logger.exception(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
-                self.reconciliation_state.status = "error"
-
-        asyncio.create_task(perform_reconciliation())
-        return {"status": "started", "message": "Reconciliation started"}
+        return await self._start_reconciliation_task(
+            backend_url=BACKEND_URL,
+            hf_token=HF_TOKEN,
+            civitai_token=CIVITAI_TOKEN,
+            storage_label="Beam",
+            validate_existing_fn=validate_existing,
+            list_existing_files_fn=list_existing_files,
+            download_file_fn=download_file,
+            delete_file_fn=delete_file
+        )

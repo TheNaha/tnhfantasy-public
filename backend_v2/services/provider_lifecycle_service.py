@@ -141,10 +141,10 @@ class ProviderLifecycleService:
     async def setup_provider(self, provider_id: str) -> Dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
-        if not runtime.supports_setup or runtime.mode != "container_http":
+        if not runtime.supports_setup or runtime.mode not in ("container_http", "discovery"):
             raise ProviderError(
                 provider_id,
-                "Setup requires a Modal provider with container-backed worker runtime",
+                "Setup requires a provider with a reachable worker runtime",
             )
 
         http_client = get_http_client()

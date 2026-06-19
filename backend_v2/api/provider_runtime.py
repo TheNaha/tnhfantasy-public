@@ -97,7 +97,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             provider_id=provider_id,
             mode="discovery",
             worker_url=discovery_url,
-            supports_setup=False,
+            supports_setup=provider_type == "modal",
             supports_reconciliation=True,
             connected=True,
             status="discovered",
