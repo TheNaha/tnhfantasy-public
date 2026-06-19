@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.exceptions import (
     ComfyError,
@@ -97,4 +98,20 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=500,
             content={"error": exc.message, "code": exc.code},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        logger.warning("http_exception", path=request.url.path, detail=exc.detail, status_code=exc.status_code)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.detail, "code": "HTTP_ERROR"},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.error("unhandled_exception", path=request.url.path, error=str(exc), exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "An unexpected error occurred", "code": "INTERNAL_SERVER_ERROR"},
         )

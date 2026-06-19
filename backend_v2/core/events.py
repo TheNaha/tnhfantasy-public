@@ -73,15 +73,15 @@ class Event:
     type: EventType
     data: Dict[str, Any]
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    
-
+    sequence_number: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
             "type": self.type.value,
             "data": self.data,
-            "timestamp": self.timestamp.isoformat()
+            "timestamp": self.timestamp.isoformat(),
+            "sequence_number": self.sequence_number
         }
 
 
@@ -109,6 +109,7 @@ class EventBus:
         self._terminal_events_dropped = 0
         self._evicted_events_for_terminal = 0
         self._last_drop: Optional[Dict[str, Any]] = None
+        self._sequence_counter = 0
 
     def _record_drop(
         self,
@@ -156,6 +157,8 @@ class EventBus:
         topic = event.type.value.split(".")[0]
         
         async with self._lock:
+            self._sequence_counter += 1
+            event.sequence_number = self._sequence_counter
             # Add to replay buffer
             if self._replay_enabled:
                 self._replay_buffer.append(event)

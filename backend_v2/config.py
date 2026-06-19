@@ -24,7 +24,7 @@ import os
 import json
 from typing import Dict, Any, List, Optional
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from functools import lru_cache
 
 from infrastructure.logging import config_logger
@@ -133,7 +133,33 @@ class Settings(BaseSettings):
     # Model Sync
     model_sync_interval: int = 300
     reconciliation_interval: int = 120
-    
+
+    # Directories
+    output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../output"))
+    input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../input"))
+
+    @model_validator(mode="before")
+    @classmethod
+    def load_directories_with_fallback(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "output_dir" not in data or data.get("output_dir") is None:
+                comfy_out = os.environ.get("COMFY_OUTPUT_DIR")
+                if comfy_out is not None:
+                    data["output_dir"] = comfy_out
+                else:
+                    out = os.environ.get("OUTPUT_DIR")
+                    if out is not None:
+                        data["output_dir"] = out
+            if "input_dir" not in data or data.get("input_dir") is None:
+                comfy_in = os.environ.get("COMFY_INPUT_DIR")
+                if comfy_in is not None:
+                    data["input_dir"] = comfy_in
+                else:
+                    in_dir = os.environ.get("INPUT_DIR")
+                    if in_dir is not None:
+                        data["input_dir"] = in_dir
+        return data
+
     class Config:
         env_prefix = "COMFY_"
         env_file = ".env"

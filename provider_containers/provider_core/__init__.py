@@ -47,8 +47,10 @@ from .validation import (
 )
 from .models_utils import list_models_with_metadata_internal
 from .router import attach_provider_routes, ProviderClient
+from .logging import get_logger
 
 __all__ = [
+    "get_logger",
     "get_safe_path",
     # Models
     "InferenceRequest",

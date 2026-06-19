@@ -226,6 +226,24 @@ class TestEventBus:
         types = {event.type for event in received}
         assert EventType.DOWNLOAD_STARTED in types
 
+    @pytest.mark.asyncio
+    async def test_event_sequence_numbers(self, bus):
+        """Test that event bus assigns sequential numbers starting at 1."""
+        event1 = Event(type=EventType.JOB_CREATED, data={})
+        event2 = Event(type=EventType.JOB_COMPLETED, data={})
+        assert event1.sequence_number is None
+        assert event2.sequence_number is None
+        
+        await bus.publish(event1)
+        await bus.publish(event2)
+        
+        assert event1.sequence_number == 1
+        assert event2.sequence_number == 2
+        
+        # Test event to_dict includes sequence_number
+        d = event1.to_dict()
+        assert d["sequence_number"] == 1
+
 
 class TestEmitConvenienceFunctions:
     """Tests for module-level emit convenience functions."""
@@ -397,20 +415,24 @@ class TestEventBusQueueFull:
 class TestEmitProviderFunctions:
     """Tests for provider/model emit functions (lines 205, 213-219)."""
 
+    @pytest.mark.asyncio
     async def test_emit_provider_event(self):
         from core.events import emit_provider_event, EventType
         await emit_provider_event(
             EventType.JOB_CREATED, "modal-primary", {"status": "connected"}
         )
 
+    @pytest.mark.asyncio
     async def test_emit_provider_stats(self):
         from core.events import emit_provider_stats
         await emit_provider_stats("modal-primary", {"active_jobs": 5, "gpu_util": 0.8})
 
+    @pytest.mark.asyncio
     async def test_emit_model_status_update_basic(self):
         from core.events import emit_model_status_update
         await emit_model_status_update("modal-primary", file_id=42, status="ready")
 
+    @pytest.mark.asyncio
     async def test_emit_model_status_update_with_extra(self):
         from core.events import emit_model_status_update
         await emit_model_status_update(
@@ -418,6 +440,7 @@ class TestEmitProviderFunctions:
             extra={"error": "disk full", "retry": 1}
         )
 
+    @pytest.mark.asyncio
     async def test_emit_model_status_update_none_extra(self):
         from core.events import emit_model_status_update
         await emit_model_status_update(

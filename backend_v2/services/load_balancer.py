@@ -4,7 +4,7 @@ import random
 import time
 from dataclasses import dataclass, field
 import asyncio
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Tuple
 from datetime import datetime, timezone
 
 from sqlmodel import Session, select
@@ -50,6 +50,7 @@ class LoadBalancerRuntimeState:
     provider_failures: Dict[str, int] = field(default_factory=dict)
     provider_job_counts: Dict[str, int] = field(default_factory=dict)
     model_availability_cache: Dict[Any, Dict[str, Any]] = field(default_factory=dict)
+    provider_health_cache: Dict[str, Tuple[bool, float]] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
     _lock: Optional[asyncio.Lock] = None
@@ -79,6 +80,7 @@ class LoadBalancerRuntimeState:
         self.provider_failures = {}
         self.provider_job_counts = {}
         self.model_availability_cache = {}
+        self.provider_health_cache = {}
         self.initialized = False
         self.initializing = False
 
@@ -248,9 +250,80 @@ class LoadBalancer:
         self.strategy = strategy
         self.runtime_state = runtime_state or get_global_runtime_state()
 
+        import sys
+        self.health_check_enabled = not ("pytest" in sys.modules)
+
         # Load shared state once per process/runtime container.
         LoadBalancer.load_state_from_db(session, self.runtime_state)
     
+    async def _check_provider_health(self, provider: Provider) -> bool:
+        """Probe the container's status or health endpoint, caching the result for 5 seconds."""
+        now = time.monotonic()
+        cache_key = provider.id
+        
+        # Check cache
+        if cache_key in self.runtime_state.provider_health_cache:
+            is_healthy, expires_at = self.runtime_state.provider_health_cache[cache_key]
+            if now < expires_at:
+                return is_healthy
+
+        is_healthy = False
+        
+        # 1. First try container_manager container status (if containerized)
+        if provider.container_config:
+            try:
+                from services.container_manager import get_container_manager
+                cm = get_container_manager()
+                if cm and cm.client:
+                    container_name = f"comfy-provider-{provider.id}"
+                    try:
+                        container = cm.client.containers.get(container_name)
+                        if container.status != "running":
+                            self.runtime_state.provider_health_cache[cache_key] = (False, now + 5.0)
+                            return False
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 2. Probe /health endpoint via HTTP
+        try:
+            import httpx
+            port = 8000
+            if provider.container_config and "port" in provider.container_config:
+                port = provider.container_config["port"]
+            
+            # Default target name (inside Docker network / container DNS)
+            url = f"http://comfy-provider-{provider.id}:{port}/health"
+            
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(url)
+                if response.status_code == 200:
+                    is_healthy = True
+        except Exception:
+            # Try localhost fallback via Docker host port mapping
+            try:
+                from services.container_manager import get_container_manager
+                cm = get_container_manager()
+                if cm and cm.client:
+                    container_name = f"comfy-provider-{provider.id}"
+                    container = cm.client.containers.get(container_name)
+                    ports = container.ports
+                    tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
+                    if tcp_port_info:
+                        host_port = tcp_port_info[0].get("HostPort")
+                        if host_port:
+                            import httpx
+                            async with httpx.AsyncClient(timeout=2.0) as client:
+                                response = await client.get(f"http://localhost:{host_port}/health")
+                                if response.status_code == 200:
+                                    is_healthy = True
+            except Exception:
+                pass
+
+        self.runtime_state.provider_health_cache[cache_key] = (is_healthy, now + 5.0)
+        return is_healthy
+
     async def get_next_provider(
         self, 
         preferred_provider_id: Optional[str] = None,
@@ -294,37 +367,171 @@ class LoadBalancer:
             if not providers:
                 return None
         
-        # If specific provider requested, try to use it
+        # Non-health-aware routing
+        if not getattr(self, "health_check_enabled", True):
+            # If specific provider requested, try to use it
+            if preferred_provider_id:
+                provider = self.repo.get(preferred_provider_id)
+                if provider and provider.enabled and provider.id not in excluded:
+                    # Check if preferred provider is in eligible list (if filtering)
+                    if required_models and provider.id not in [p.id for p in providers]:
+                        # Preferred provider doesn't have required models
+                        return None
+                    await self._track_job(provider.id)
+                    return provider
+            
+            # Apply load balancing strategy
+            if self.strategy == "round-robin":
+                provider = await self._round_robin(providers)
+            elif self.strategy == "random":
+                provider = await self._random(providers)
+            elif self.strategy == "priority":
+                provider = await self._priority(providers)
+            elif self.strategy == "least-connections":
+                provider = await self._least_connections(providers)
+            elif self.strategy == "priority-round-robin":
+                provider = await self._priority_round_robin(providers)
+            elif self.strategy == "priority-least-connections":
+                provider = await self._priority_least_connections(providers)
+            else:
+                provider = await self._round_robin(providers)
+            
+            # Track job assigned to this provider
+            await self._track_job(provider.id)
+            return provider
+
+        # Health-aware routing
+        candidates = providers
         if preferred_provider_id:
             provider = self.repo.get(preferred_provider_id)
             if provider and provider.enabled and provider.id not in excluded:
-                # Check if preferred provider is in eligible list (if filtering)
                 if required_models and provider.id not in [p.id for p in providers]:
-                    # Preferred provider doesn't have required models
                     return None
-                await self._track_job(provider.id)
-                return provider
-        
-        # Apply load balancing strategy
-        if self.strategy == "round-robin":
-            provider = await self._round_robin(providers)
-        elif self.strategy == "random":
-            provider = await self._random(providers)
-        elif self.strategy == "priority":
-            provider = await self._priority(providers)
-        elif self.strategy == "least-connections":
-            provider = await self._least_connections(providers)
-        elif self.strategy == "priority-round-robin":
-            provider = await self._priority_round_robin(providers)
-        elif self.strategy == "priority-least-connections":
-            provider = await self._priority_least_connections(providers)
-        else:
-            provider = await self._round_robin(providers)
-        
-        # Track job assigned to this provider
-        await self._track_job(provider.id)
-        
-        return provider
+                candidates = [provider]
+            else:
+                return None
+
+        # Check health and separate candidates into warm and cold
+        warm_candidates = []
+        cold_candidates = []
+        for p in candidates:
+            if await self._check_provider_health(p):
+                warm_candidates.append(p)
+            else:
+                cold_candidates.append(p)
+
+        selected_provider = None
+        if warm_candidates:
+            # Route only among warm candidates using the strategy
+            if len(warm_candidates) == 1:
+                selected_provider = warm_candidates[0]
+            else:
+                if self.strategy == "round-robin":
+                    selected_provider = await self._round_robin(warm_candidates)
+                elif self.strategy == "random":
+                    selected_provider = await self._random(warm_candidates)
+                elif self.strategy == "priority":
+                    selected_provider = await self._priority(warm_candidates)
+                elif self.strategy == "least-connections":
+                    selected_provider = await self._least_connections(warm_candidates)
+                elif self.strategy == "priority-round-robin":
+                    selected_provider = await self._priority_round_robin(warm_candidates)
+                elif self.strategy == "priority-least-connections":
+                    selected_provider = await self._priority_least_connections(warm_candidates)
+                else:
+                    selected_provider = await self._round_robin(warm_candidates)
+        elif cold_candidates:
+            # Route among cold candidates using the strategy
+            if len(cold_candidates) == 1:
+                selected_provider = cold_candidates[0]
+            else:
+                if self.strategy == "round-robin":
+                    selected_provider = await self._round_robin(cold_candidates)
+                elif self.strategy == "random":
+                    selected_provider = await self._random(cold_candidates)
+                elif self.strategy == "priority":
+                    selected_provider = await self._priority(cold_candidates)
+                elif self.strategy == "least-connections":
+                    selected_provider = await self._least_connections(cold_candidates)
+                elif self.strategy == "priority-round-robin":
+                    selected_provider = await self._priority_round_robin(cold_candidates)
+                elif self.strategy == "priority-least-connections":
+                    selected_provider = await self._priority_least_connections(cold_candidates)
+                else:
+                    selected_provider = await self._round_robin(cold_candidates)
+            
+            # Since the selected provider is cold, trigger container startup and poll/wait
+            if selected_provider:
+                try:
+                    from services.provider_lifecycle_service import ProviderLifecycleService
+                    from services.container_manager import get_container_manager
+                    
+                    lifecycle_service = ProviderLifecycleService(
+                        self.session,
+                        container_manager=get_container_manager(),
+                        invalidate_caches=self.invalidate_model_availability_cache,
+                    )
+                    # Trigger startup
+                    await lifecycle_service.start_container(selected_provider.id)
+                except Exception as start_err:
+                    logger.warning("lb_cold_start_trigger_failed", provider_id=selected_provider.id, error=str(start_err))
+                
+                # Poll health up to 30 seconds
+                start_time = time.monotonic()
+                poll_success = False
+                while time.monotonic() - start_time < 30.0:
+                    is_now_healthy = False
+                    try:
+                        port = 8000
+                        if selected_provider.container_config and "port" in selected_provider.container_config:
+                            port = selected_provider.container_config["port"]
+                        
+                        url = f"http://comfy-provider-{selected_provider.id}:{port}/health"
+                        import httpx
+                        async with httpx.AsyncClient(timeout=1.0) as client:
+                            res = await client.get(url)
+                            if res.status_code == 200:
+                                is_now_healthy = True
+                    except Exception:
+                        try:
+                            # Local fallback
+                            from services.container_manager import get_container_manager
+                            cm = get_container_manager()
+                            if cm and cm.client:
+                                container_name = f"comfy-provider-{selected_provider.id}"
+                                container = cm.client.containers.get(container_name)
+                                ports = container.ports
+                                tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
+                                if tcp_port_info:
+                                    host_port = tcp_port_info[0].get("HostPort")
+                                    if host_port:
+                                        import httpx
+                                        async with httpx.AsyncClient(timeout=1.0) as client:
+                                            res = await client.get(f"http://localhost:{host_port}/health")
+                                            if res.status_code == 200:
+                                                is_now_healthy = True
+                        except Exception:
+                            pass
+                    
+                    if is_now_healthy:
+                        poll_success = True
+                        # Cache the success
+                        self.runtime_state.provider_health_cache[selected_provider.id] = (True, time.monotonic() + 5.0)
+                        break
+                    
+                    await asyncio.sleep(1.0)
+                
+                logger.info(
+                    "lb_cold_start_polled",
+                    provider_id=selected_provider.id,
+                    success=poll_success,
+                    duration=time.monotonic() - start_time,
+                )
+
+        if selected_provider:
+            await self._track_job(selected_provider.id)
+            return selected_provider
+        return None
 
     
     async def _track_job(self, provider_id: str):

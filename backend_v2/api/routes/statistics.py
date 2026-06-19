@@ -16,13 +16,14 @@ from fastapi import APIRouter
 from infrastructure.cache import cache_stats
 from infrastructure.logging import get_logger
 from services.gallery_indexer import gallery_indexer
+from config import settings
 
 logger = get_logger("statistics_route")
 
 router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 
 # Output directory - will be configured via environment or settings
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
+OUTPUT_DIR = settings.output_dir
 
 
 def _calculate_statistics() -> Dict[str, Any]:

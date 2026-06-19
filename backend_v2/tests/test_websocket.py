@@ -154,3 +154,40 @@ async def test_cancel_job_active(mock_get_session, mock_get_http, mock_provider_
     mock_http.post.assert_called_once()
     mock_job_service.update_job.assert_called_once()
     mock_sio.emit.assert_called_with('cancel_job_ack', ANY, room=sid)
+
+
+@pytest.mark.asyncio
+async def test_request_replay(mock_sio):
+    sid = "test_sid"
+    from core.events import Event, EventType
+    event1 = Event(type=EventType.JOB_CREATED, data={"i": 1})
+    event1.sequence_number = 1
+    event2 = Event(type=EventType.JOB_COMPLETED, data={"i": 2})
+    event2.sequence_number = 2
+    
+    with patch("core.events.event_bus.get_replay_buffer") as mock_get_replay:
+        mock_get_replay.return_value = [event1, event2]
+        
+        from api.routes.websocket import request_replay
+        await request_replay(sid, {"last_sequence_number": 1})
+        mock_sio.emit.assert_called_with(
+            "replay_events",
+            {"events": [event2.to_dict()]},
+            room=sid
+        )
+
+
+@pytest.mark.asyncio
+async def test_request_replay_missing_last_sequence_number(mock_sio):
+    sid = "test_sid"
+    from api.routes.websocket import request_replay
+    await request_replay(sid, {})
+    mock_sio.emit.assert_called_with("error", {"message": "last_sequence_number is required"}, room=sid)
+
+
+@pytest.mark.asyncio
+async def test_request_replay_invalid_last_sequence_number(mock_sio):
+    sid = "test_sid"
+    from api.routes.websocket import request_replay
+    await request_replay(sid, {"last_sequence_number": "not_an_int"})
+    mock_sio.emit.assert_called_with("error", {"message": "last_sequence_number must be an integer"}, room=sid)

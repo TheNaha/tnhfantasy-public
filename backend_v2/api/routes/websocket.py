@@ -265,6 +265,37 @@ async def ping(sid, data):
     await sio.emit('pong', {'timestamp': datetime.now(timezone.utc).isoformat()}, room=sid)
 
 
+@sio.event
+async def request_replay(sid, data):
+    """
+    Handle replay request from client.
+    Allows clients to request events from the replay buffer having a sequence number 
+    greater than a client-provided last_sequence_number.
+    """
+    if not isinstance(data, dict):
+        last_seq = data
+    else:
+        last_seq = data.get('last_sequence_number')
+        
+    if last_seq is None:
+        await sio.emit('error', {'message': 'last_sequence_number is required'}, room=sid)
+        return
+        
+    try:
+        last_seq = int(last_seq)
+    except (ValueError, TypeError):
+        await sio.emit('error', {'message': 'last_sequence_number must be an integer'}, room=sid)
+        return
+        
+    events = event_bus.get_replay_buffer()
+    filtered_events = [
+        event.to_dict() for event in events
+        if event.sequence_number is not None and event.sequence_number > last_seq
+    ]
+    
+    await sio.emit('replay_events', {'events': filtered_events}, room=sid)
+
+
 # ============================================================================
 # Utility Functions
 # ============================================================================

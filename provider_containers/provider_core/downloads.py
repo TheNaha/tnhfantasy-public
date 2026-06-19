@@ -14,6 +14,9 @@ except ImportError:
     requests = None
 
 from .validation import validate_downloaded_file
+from .logging import get_logger
+
+logger = get_logger("provider_core.downloads")
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
 LogCallback = Callable[[str], None]
@@ -83,7 +86,7 @@ def _safe_progress_emit(callback: Optional[ProgressCallback], payload: Dict[str,
 
 
 def _default_log(message: str) -> None:
-    print(message)
+    logger.info(message)
 
 
 def download_model_to_path(

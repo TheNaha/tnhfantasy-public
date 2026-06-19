@@ -6,6 +6,9 @@ import os
 import struct
 import json
 from typing import Any, Dict, Optional
+from .logging import get_logger
+
+logger = get_logger("provider_core.validation")
 
 # Minimum model size in bytes (10KB).
 MIN_MODEL_SIZE = 10 * 1024
@@ -79,7 +82,7 @@ def validate_downloaded_file(
                         "Downloaded HTML instead of model (possible auth error)"
                     )
                 elif unknown_header_log_prefix:
-                    print(
+                    logger.warning(
                         f"[{unknown_header_log_prefix}] Unknown format: "
                         f"header={header[:8].hex()}"
                     )

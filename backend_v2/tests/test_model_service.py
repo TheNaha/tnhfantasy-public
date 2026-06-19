@@ -69,16 +69,16 @@ def civitai_data():
 
 class TestModelServiceV2AddModel:
     async def test_add_model_from_civitai(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 result = await service.add_model_from_civitai(civitai_data, [67890])
         assert result is not None
         assert result["name"] == "Test Checkpoint"
 
     async def test_add_existing_model_adds_versions(self, service, civitai_data):
         """Adding a model that already exists should add new versions."""
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 # First add
                 first_result = await service.add_model_from_civitai(civitai_data, [67890])
         
@@ -107,8 +107,8 @@ class TestModelServiceV2AddModel:
             }
         ]
         
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 second_result = await service.add_model_from_civitai(civitai_data_v2, [67891])
         
         assert "added_versions" in second_result
@@ -116,8 +116,8 @@ class TestModelServiceV2AddModel:
 
 class TestModelServiceV2GetModel:
     async def test_get_model(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 created = await service.add_model_from_civitai(civitai_data, [67890])
         result = await service.get_model(created["id"])
         assert result["id"] == created["id"]
@@ -131,22 +131,22 @@ class TestModelServiceV2GetModel:
         assert result == []
 
     async def test_list_models(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
         result = await service.list_models()
         assert len(result) == 1
 
     async def test_list_models_by_directory(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
         result = await service.list_models_by_directory("checkpoints")
         assert len(result) >= 1
 
     async def test_get_models_grouped(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
         result = await service.get_models_grouped()
         assert "checkpoints" in result
@@ -154,10 +154,10 @@ class TestModelServiceV2GetModel:
 
 class TestModelServiceV2DeleteModel:
     async def test_delete_model(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 created = await service.add_model_from_civitai(civitai_data, [67890])
-        with patch.object(service, "trigger_delete_from_providers", new=AsyncMock(return_value={})):
+        with patch.object(service.downloader, "trigger_delete_from_providers", new=AsyncMock(return_value={})):
             result = await service.delete_model(created["id"])
         assert result is True
 
@@ -168,15 +168,15 @@ class TestModelServiceV2DeleteModel:
 
 class TestModelServiceV2Versions:
     async def test_get_versions(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 created = await service.add_model_from_civitai(civitai_data, [67890])
         versions = await service.get_versions(created["id"])
         assert len(versions) == 1
 
     async def test_set_default_version(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 created = await service.add_model_from_civitai(civitai_data, [67890])
         version_id = created["versions"][0]["id"]
         result = await service.set_default_version(created["id"], version_id)
@@ -185,8 +185,8 @@ class TestModelServiceV2Versions:
 
 class TestModelServiceV2Cache:
     async def test_get_full_cache(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
         cache = service.get_full_cache()
         assert isinstance(cache, dict)
@@ -225,8 +225,8 @@ class TestModelServiceV2ProviderStatus:
 
 class TestModelServiceV2Search:
     async def test_search_by_tag(self, service, civitai_data):
-        with patch.object(service, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service, "check_and_trigger_dependencies", new=AsyncMock()):
+        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
+            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 await service.add_model_from_civitai(civitai_data, [67890])
         results = await service.search_by_tag("anime")
         assert len(results) >= 1
@@ -271,7 +271,7 @@ class TestModelServiceV2NetworkEfficiency:
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
         fake_http_client = _FakeHttpClient()
-        with patch("services.model_service.get_http_client", return_value=fake_http_client):
+        with patch("services.model_downloader.get_http_client", return_value=fake_http_client):
             result = await service.trigger_download_to_providers(model_id=1)
 
         assert _FakeHttpClient.created == 1
@@ -294,7 +294,7 @@ class TestModelServiceV2NetworkEfficiency:
         service.session.exec = lambda *args, **kwargs: SimpleNamespace(all=lambda: providers)
 
         fake_http_client = _FakeHttpClient()
-        with patch("services.model_service.get_http_client", return_value=fake_http_client):
+        with patch("services.model_downloader.get_http_client", return_value=fake_http_client):
             result = await service.trigger_delete_from_providers(model_id=1)
 
         assert _FakeHttpClient.created == 1

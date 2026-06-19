@@ -31,6 +31,9 @@ import time
 # source context. Deploying beam_app.py from only beam_worker/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.utils import get_safe_path
+from provider_core.logging import get_logger
+
+logger = get_logger("beam_worker.beam_app")
 from provider_core.downloads import download_model_to_path
 from provider_core.validation import (
     MIN_MODEL_SIZE,
@@ -142,27 +145,27 @@ def _ensure_comfyui_running():
     try:
         response = requests.get(f"http://127.0.0.1:{_comfy_port}", timeout=2)
         if response.status_code == 200:
-            print("[ComfyUI] Server already running")
+            logger.info("[ComfyUI] Server already running")
             return True
     except Exception:
         pass
     
-    print("[ComfyUI] Starting server via comfy-cli...")
+    logger.info("[ComfyUI] Starting server via comfy-cli...")
     cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(_comfy_port)]
     _comfy_process = subprocess.Popen(cmd)
     
-    print("[ComfyUI] Waiting for server to be ready...")
+    logger.info("[ComfyUI] Waiting for server to be ready...")
     for i in range(120):
         try:
             response = requests.get(f"http://127.0.0.1:{_comfy_port}", timeout=2)
             if response.status_code == 200:
-                print("[ComfyUI] Server is ready!")
+                logger.info("[ComfyUI] Server is ready!")
                 return True
         except Exception:
             pass
         time.sleep(1)
     
-    print("[ComfyUI] Warning - Server did not respond within 120 seconds")
+    logger.warning("[ComfyUI] Warning - Server did not respond within 120 seconds")
     return False
 
 
@@ -173,16 +176,16 @@ def init_comfyui():
     This runs during on_start and is captured by checkpoint_enabled,
     so cold starts will resume from this point with ComfyUI already running.
     """
-    print("[on_start] Pre-starting ComfyUI server...")
+    logger.info("[on_start] Pre-starting ComfyUI server...")
     
     # Ensure volume directories exist (symlinks point here)
     volume_dirs = ["/mnt/data/models", "/mnt/data/output", "/mnt/data/input"]
     for dir_path in volume_dirs:
         os.makedirs(dir_path, exist_ok=True)
-        print(f"[on_start] Ensured directory exists: {dir_path}")
+        logger.info(f"[on_start] Ensured directory exists: {dir_path}")
     
     _ensure_comfyui_running()
-    print("[on_start] ComfyUI ready for inference")
+    logger.info("[on_start] ComfyUI ready for inference")
 
 
 async def _execute_workflow(workflow_json: Dict[str, Any], port: int = 8188):
@@ -222,7 +225,7 @@ async def _run_inference_realtime(workflow: Dict[str, Any]):
         
         # Log what we're yielding
         status = update.get("status", "unknown")
-        print(f"[_run_inference_realtime] Yielding: status={status}")
+        logger.info(f"[_run_inference_realtime] Yielding: status={status}")
         
         # Yield update as JSON string (Beam realtime expects strings)
         yield json.dumps(update)
@@ -291,7 +294,7 @@ async def list_models(request: Request):
     try:
         target_dir = get_safe_path("/mnt/data", directory)
     except Exception:
-        print(f"[ListModels] Path traversal blocked: {directory}")
+        logger.warning(f"[ListModels] Path traversal blocked: {directory}")
         return {"files": []}
 
     if not os.path.exists(target_dir):
@@ -545,15 +548,15 @@ async def comfy_gpu(event):
         yield {"status": "error", "message": "No workflow provided"}
         return  # Exit generator early
     
-    print(f"[comfy_gpu] Received workflow with {len(workflow)} nodes")
+    logger.info(f"[comfy_gpu] Received workflow with {len(workflow)} nodes")
     
     # Stream progress updates through WebSocket
     # Note: _run_inference_realtime yields JSON strings
     async for update_json in _run_inference_realtime(workflow):
-        print(f"[comfy_gpu] Sending update through WebSocket")
+        logger.info(f"[comfy_gpu] Sending update through WebSocket")
         yield update_json
     
-    print("[comfy_gpu] Inference complete")
+    logger.info("[comfy_gpu] Inference complete")
 
 
 @asgi(

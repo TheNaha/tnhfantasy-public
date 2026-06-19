@@ -25,7 +25,7 @@ def get_output_path(base_dir: str = None, subdir: str = None) -> str:
         Path to date-based directory (created if doesn't exist)
     """
     if base_dir is None:
-        base_dir = os.environ.get("OUTPUT_DIR", "./output")
+        base_dir = app_config.settings.output_dir
     
     if subdir:
         base_dir = os.path.join(base_dir, subdir)

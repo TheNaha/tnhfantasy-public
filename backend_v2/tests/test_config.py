@@ -80,6 +80,30 @@ class TestSettings:
         s = Settings()
         assert isinstance(s.cors_origins, list)
 
+    def test_directories_env_fallback(self, monkeypatch):
+        # 1. Test defaults when nothing is set in env
+        monkeypatch.delenv("COMFY_OUTPUT_DIR", raising=False)
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.delenv("COMFY_INPUT_DIR", raising=False)
+        monkeypatch.delenv("INPUT_DIR", raising=False)
+        s1 = Settings()
+        assert s1.output_dir.endswith("output")
+        assert s1.input_dir.endswith("input")
+
+        # 2. Test fallback to OUTPUT_DIR / INPUT_DIR (non-prefixed)
+        monkeypatch.setenv("OUTPUT_DIR", "/tmp/non_prefixed_out")
+        monkeypatch.setenv("INPUT_DIR", "/tmp/non_prefixed_in")
+        s2 = Settings()
+        assert s2.output_dir == "/tmp/non_prefixed_out"
+        assert s2.input_dir == "/tmp/non_prefixed_in"
+
+        # 3. Test COMFY_ prefixed takes precedence over non-prefixed
+        monkeypatch.setenv("COMFY_OUTPUT_DIR", "/tmp/prefixed_out")
+        monkeypatch.setenv("COMFY_INPUT_DIR", "/tmp/prefixed_in")
+        s3 = Settings()
+        assert s3.output_dir == "/tmp/prefixed_out"
+        assert s3.input_dir == "/tmp/prefixed_in"
+
 
 class TestDeepMerge:
     def test_simple_merge(self):

@@ -1,11 +1,13 @@
 from typing import Protocol, Any, Dict, Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
-    build_status_response
+    build_status_response, build_error_response
 )
 
 class ProviderClient(Protocol):
@@ -29,6 +31,44 @@ class ProviderClient(Protocol):
     def update_config(self, new_config: Dict[str, Any]) -> Dict[str, Any]: ...
 
 def attach_provider_routes(app: FastAPI, client: ProviderClient):
+    @app.exception_handler(StarletteHTTPException)
+    async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            message = detail.get("message") or detail.get("detail") or str(detail)
+        else:
+            message = str(detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=build_error_response(
+                message=message,
+                retryable=exc.status_code >= 500,
+                code=exc.status_code,
+            )
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content=build_error_response(
+                message=f"Validation error: {exc.errors()}",
+                retryable=False,
+                code=422,
+            )
+        )
+
+    @app.exception_handler(Exception)
+    async def general_exception_handler(request: Request, exc: Exception):
+        return JSONResponse(
+            status_code=500,
+            content=build_error_response(
+                message=str(exc),
+                retryable=True,
+                code=500,
+            )
+        )
+
     @app.get("/health")
     async def health():
         return await client.get_health()

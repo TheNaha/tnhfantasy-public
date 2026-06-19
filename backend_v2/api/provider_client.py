@@ -219,10 +219,18 @@ async def call_provider(
                     )
 
                 error_text = await response.aread()
+                is_retryable = response.status_code >= 500
+                try:
+                    payload = json.loads(error_text.decode())
+                    if isinstance(payload, dict) and "retryable" in payload:
+                        is_retryable = bool(payload["retryable"])
+                except Exception:
+                    pass
+
                 raise ProviderCallError(
                     format_worker_http_error(response.status_code, error_text.decode()),
                     provider_id=provider_id,
-                    is_retryable=response.status_code >= 500,
+                    is_retryable=is_retryable,
                 )
 
         except httpx.TimeoutException:

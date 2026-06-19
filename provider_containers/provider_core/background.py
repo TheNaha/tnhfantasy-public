@@ -8,6 +8,9 @@ import os
 import platform
 import socket
 from typing import Callable, Awaitable, Optional
+from .logging import get_logger
+
+logger = get_logger("provider_core.background")
 
 
 async def auto_discovery_loop(
@@ -24,10 +27,10 @@ async def auto_discovery_loop(
     import httpx
     
     if not provider_id:
-        print("[Auto-Discovery] PROVIDER_ID not set, skipping discovery loop")
+        logger.warning("[Auto-Discovery] PROVIDER_ID not set, skipping discovery loop")
         return
         
-    print(f"[Auto-Discovery] Starting loop for provider: {provider_id} ({provider_type})")
+    logger.info(f"[Auto-Discovery] Starting loop for provider: {provider_id} ({provider_type})")
     discovery_url = f"{backend_url}/api/v2/providers/discovery"
     
     # Try to determine internal hostname or IP for the backend to reach us
@@ -54,9 +57,9 @@ async def auto_discovery_loop(
             if response.status_code in (200, 201):
                 pass # Silent success
             else:
-                print(f"[Auto-Discovery] Failed to register. Status: {response.status_code}")
+                logger.error(f"[Auto-Discovery] Failed to register. Status: {response.status_code}")
         except Exception as e:
-            print(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}")
+            logger.error(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}")
             
         await asyncio.sleep(interval_seconds)
 
@@ -81,18 +84,18 @@ async def reconciliation_loop(
     import httpx
     
     if not provider_id:
-        print("[Worker Reconciliation] PROVIDER_ID not set, skipping reconciliation loop")
+        logger.warning("[Worker Reconciliation] PROVIDER_ID not set, skipping reconciliation loop")
         return
     
-    print(f"[Worker Reconciliation] Starting loop for provider: {provider_id}")
-    print(f"[Worker Reconciliation] Backend URL: {backend_url}")
+    logger.info(f"[Worker Reconciliation] Starting loop for provider: {provider_id}")
+    logger.info(f"[Worker Reconciliation] Backend URL: {backend_url}")
     
     await asyncio.sleep(startup_delay_seconds)
     
     while True:
         try:
             reconcile_url = f"{backend_url}/api/providers/{provider_id}/reconcile"
-            print(f"[Worker Reconciliation] Attempting to reconcile...")
+            logger.info(f"[Worker Reconciliation] Attempting to reconcile...")
             
             if http_client:
                 response = await http_client.post(reconcile_url, timeout=30.0)
@@ -101,24 +104,24 @@ async def reconciliation_loop(
                     response = await client.post(reconcile_url)
             
             status = response.status_code
-            print(f"[Worker Reconciliation] Response status: {status}")
+            logger.info(f"[Worker Reconciliation] Response status: {status}")
             
             if status == 200:
                 result = response.json()
                 if isinstance(result, dict) and result.get("status") == "already_running":
-                    print("[Worker Reconciliation] ℹ Reconciliation already running; skipping duplicate trigger")
+                    logger.info("[Worker Reconciliation] ℹ Reconciliation already running; skipping duplicate trigger")
                 else:
-                    print(f"[Worker Reconciliation] ✓ Success: {result}")
+                    logger.info(f"[Worker Reconciliation] ✓ Success: {result}")
             elif status == 409:
                 # Backend lock says reconciliation is already in progress.
-                print("[Worker Reconciliation] ℹ Reconciliation already in progress (backend lock)")
+                logger.info("[Worker Reconciliation] ℹ Reconciliation already in progress (backend lock)")
             else:
-                print(f"[Worker Reconciliation] ✗ Failed: {status}")
+                logger.error(f"[Worker Reconciliation] ✗ Failed: {status}")
         
         except Exception as e:
-            print(f"[Worker Reconciliation] ✗ Error: {type(e).__name__}: {e}")
+            logger.error(f"[Worker Reconciliation] ✗ Error: {type(e).__name__}: {e}")
         
-        print(f"[Worker Reconciliation] Waiting {interval_seconds // 3600}h until next reconciliation...")
+        logger.info(f"[Worker Reconciliation] Waiting {interval_seconds // 3600}h until next reconciliation...")
         await asyncio.sleep(interval_seconds)
 
 
@@ -140,25 +143,25 @@ def log_startup_info(
     hf_token = os.getenv("HF_TOKEN", "")
     civitai_token = os.getenv("CIVITAI_TOKEN", "")
     
-    print(f"[Worker] Starting up...")
-    print(f"[Worker] PROVIDER_ID: {provider_id}")
-    print(f"[Worker] PROVIDER_TYPE: {provider_type}")
-    print(f"[Worker] BACKEND_URL: {backend_url}")
-    print(f"[Worker] HF_TOKEN: {'✓ Set' if hf_token else '✗ Not set'}")
-    print(f"[Worker] CIVITAI_TOKEN: {'✓ Set' if civitai_token else '✗ Not set'}")
+    logger.info(f"[Worker] Starting up...")
+    logger.info(f"[Worker] PROVIDER_ID: {provider_id}")
+    logger.info(f"[Worker] PROVIDER_TYPE: {provider_type}")
+    logger.info(f"[Worker] BACKEND_URL: {backend_url}")
+    logger.info(f"[Worker] HF_TOKEN: {'✓ Set' if hf_token else '✗ Not set'}")
+    logger.info(f"[Worker] CIVITAI_TOKEN: {'✓ Set' if civitai_token else '✗ Not set'}")
     
     if extra_vars:
         for key, value in extra_vars.items():
             if value:
                 # Mask sensitive values
                 if "TOKEN" in key.upper() or "SECRET" in key.upper() or "KEY" in key.upper():
-                    print(f"[Worker] {key}: ✓ Set")
+                    logger.info(f"[Worker] {key}: ✓ Set")
                 else:
-                    print(f"[Worker] {key}: {value}")
+                    logger.info(f"[Worker] {key}: {value}")
             else:
-                print(f"[Worker] {key}: ✗ Not set")
+                logger.info(f"[Worker] {key}: ✗ Not set")
     
-    print(f"[Worker] Startup complete")
+    logger.info(f"[Worker] Startup complete")
 
 
 class JobCancellationTracker:

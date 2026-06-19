@@ -27,14 +27,15 @@ import asyncio
 
 from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
 from infrastructure.logging import get_logger
+from config import settings
 
 logger = get_logger("files_route")
 
 router = APIRouter(tags=["files"])
 
 # Output directory - defaults to backend output folder
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
-INPUT_DIR = os.environ.get("INPUT_DIR", os.path.join(os.path.dirname(__file__), "../../input"))
+OUTPUT_DIR = settings.output_dir
+INPUT_DIR = settings.input_dir
 CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(os.path.dirname(__file__), "../../cache"))
 
 

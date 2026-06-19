@@ -9,6 +9,7 @@ from core.events import EventType, emit_job_event
 from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
+from config import settings
 
 logger = get_logger("job_processing")
 
@@ -64,10 +65,7 @@ def normalize_persisted_output(output: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     if not normalized["relative_path"] and normalized["path"]:
-        base_output_dir = os.environ.get(
-            "OUTPUT_DIR",
-            os.path.join(os.path.dirname(__file__), "../output"),
-        )
+        base_output_dir = settings.output_dir
         try:
             normalized["relative_path"] = os.path.relpath(
                 normalized["path"],
@@ -112,10 +110,7 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> Li
     )
 
     outputs: List[Dict[str, Any]] = []
-    base_output_dir = os.environ.get(
-        "OUTPUT_DIR",
-        os.path.join(os.path.dirname(__file__), "../output"),
-    )
+    base_output_dir = settings.output_dir
     final_output_dir = get_output_path(base_output_dir)
 
     for img in images:

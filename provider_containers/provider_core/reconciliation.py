@@ -11,6 +11,9 @@ from datetime import datetime
 
 from .state import ReconciliationState
 from .http_client import get_http_client
+from .logging import get_logger
+
+logger = get_logger("provider_core.reconciliation")
 
 EVENT_PUSH_MAX_ATTEMPTS = 3
 EVENT_PUSH_INITIAL_BACKOFF_SECONDS = 0.5
@@ -61,9 +64,9 @@ async def report_file_status_v2(
         response = await client.put(url, json=payload, timeout=10.0)
         
         if response.status_code != 200:
-            print(f"[V2 Reconciliation] Warning: Failed to update status for file {file_id}: {response.status_code}")
+            logger.warning(f"[V2 Reconciliation] Warning: Failed to update status for file {file_id}: {response.status_code}")
     except Exception as e:
-        print(f"[V2 Reconciliation] Warning: Error updating status for file {file_id}: {e}")
+        logger.warning(f"[V2 Reconciliation] Warning: Error updating status for file {file_id}: {e}")
 
 
 async def batch_update_file_status_v2(
@@ -105,16 +108,16 @@ async def batch_update_file_status_v2(
                 failed = result.get("failed", 0)
                 total_updated += updated
                 total_failed += failed
-                print(f"[V2 Reconciliation] Batch update: {updated} updated, {failed} failed")
+                logger.info(f"[V2 Reconciliation] Batch update: {updated} updated, {failed} failed")
             else:
                 total_failed += len(batch)
-                print(f"[V2 Reconciliation] Warning: Batch update failed: {response.status_code}")
+                logger.warning(f"[V2 Reconciliation] Warning: Batch update failed: {response.status_code}")
         except Exception as e:
             total_failed += len(batch)
-            print(f"[V2 Reconciliation] Warning: Batch update error: {e}")
+            logger.warning(f"[V2 Reconciliation] Warning: Batch update error: {e}")
     
     if len(updates) > chunk_size:
-        print(
+        logger.info(
             f"[V2 Reconciliation] Batch update complete: {total_updated} updated, {total_failed} failed across {len(updates)} updates"
         )
 
@@ -175,14 +178,14 @@ async def push_reconciliation_event(
         except Exception as e:
             if attempt >= attempts:
                 # Don't fail reconciliation if event push fails.
-                print(
+                logger.warning(
                     f"[Reconciliation] Warning: Failed to push event "
                     f"for provider {provider_id} after {attempts} attempts: {e}"
                 )
                 return False
 
             delay = max(0.0, retry_backoff_seconds) * (2 ** (attempt - 1))
-            print(
+            logger.warning(
                 f"[Reconciliation] Warning: Event push attempt {attempt}/{attempts} "
                 f"failed for provider {provider_id}: {e}. Retrying in {delay:.2f}s"
             )
@@ -212,10 +215,10 @@ async def get_pending_downloads(
             data = response.json()
             return data.get("files", [])
         else:
-            print(f"[V2 Reconciliation] V2 API returned {response.status_code}")
+            logger.error(f"[V2 Reconciliation] V2 API returned {response.status_code}")
             return []
     except Exception as e:
-        print(f"[V2 Reconciliation] Error fetching pending downloads: {e}")
+        logger.error(f"[V2 Reconciliation] Error fetching pending downloads: {e}")
         return []
 
 
@@ -239,10 +242,10 @@ async def get_all_expected_paths(
             data = response.json()
             return set(data.get("paths", []))
         else:
-            print(f"[V2 Reconciliation] Warning: Could not get all paths: {response.status_code}")
+            logger.warning(f"[V2 Reconciliation] Warning: Could not get all paths: {response.status_code}")
             return set()
     except Exception as e:
-        print(f"[V2 Reconciliation] Error fetching expected paths: {e}")
+        logger.error(f"[V2 Reconciliation] Error fetching expected paths: {e}")
         return set()
 
 
@@ -282,8 +285,8 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
     """
     max_deletions = max(1, total_files // 10)
     if orphaned_count > max_deletions and max_deletions > 0:
-        print(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 10% of files!")
-        print(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
+        logger.warning(f"[V2 Reconciliation] ⚠️ SAFETY: {orphaned_count} orphans > 10% of files!")
+        logger.warning(f"[V2 Reconciliation]    Limiting to {max_deletions} deletions max")
         return max_deletions
     return orphaned_count
 
@@ -319,16 +322,16 @@ async def register_discovered_files(
             imported = result.get("imported", 0)
             skipped = result.get("skipped", 0)
             errors = result.get("errors", 0)
-            print(
+            logger.info(
                 f"[V2 Reconciliation] Registered provider files: "
                 f"{imported} imported, {skipped} skipped, {errors} errors"
             )
             return result
         else:
-            print(f"[V2 Reconciliation] Warning: Failed to register discovered files: {response.status_code}")
+            logger.warning(f"[V2 Reconciliation] Warning: Failed to register discovered files: {response.status_code}")
             return {"imported": 0, "skipped": 0, "errors": len(orphaned_files), "total": len(orphaned_files), "files": []}
     except Exception as e:
-        print(f"[V2 Reconciliation] Warning: Error registering discovered files: {e}")
+        logger.warning(f"[V2 Reconciliation] Warning: Error registering discovered files: {e}")
         return {"imported": 0, "skipped": 0, "errors": len(orphaned_files), "total": len(orphaned_files), "files": []}
 
 
@@ -349,7 +352,7 @@ async def run_reconciliation_v2(
     """Run the shared V2 reconciliation flow with provider-specific callbacks."""
     reconciliation_state.start_reconciliation()
     shared_http_client = get_http_client()
-    print(f"[V2 Reconciliation] Starting version-aware reconciliation for {provider_id}")
+    logger.info(f"[V2 Reconciliation] Starting version-aware reconciliation for {provider_id}")
 
     async def push_state(phase: str, message: str = None, active_downloads: list = None):
         reconciliation_state.set_phase(phase)
@@ -368,7 +371,7 @@ async def run_reconciliation_v2(
             http_client=shared_http_client,
         )
 
-    print("[V2 Reconciliation] Step 0: Validating existing models...")
+    logger.info("[V2 Reconciliation] Step 0: Validating existing models...")
     await push_state("validating", "Checking for invalid or partial downloads...")
 
     try:
@@ -378,14 +381,14 @@ async def run_reconciliation_v2(
         reconciliation_state.set_invalid_cleaned(invalid_count + partial_count)
 
         if invalid_count > 0 or partial_count > 0:
-            print(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
+            logger.info(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
         else:
-            print("[V2 Reconciliation] ✓ All existing models are valid")
+            logger.info("[V2 Reconciliation] ✓ All existing models are valid")
     except Exception as exc:
-        print(f"[V2 Reconciliation] ⚠ Validation step failed: {exc}")
+        logger.warning(f"[V2 Reconciliation] ⚠ Validation step failed: {exc}")
 
     try:
-        print("[V2 Reconciliation] Step 1: Querying pending downloads...")
+        logger.info("[V2 Reconciliation] Step 1: Querying pending downloads...")
         await push_state("fetching", "Querying pending downloads from backend...")
 
         pending_downloads = await get_pending_downloads(
@@ -393,25 +396,25 @@ async def run_reconciliation_v2(
             provider_id,
             http_client=shared_http_client,
         )
-        print(f"[V2 Reconciliation] Found {len(pending_downloads)} files pending download")
+        logger.info(f"[V2 Reconciliation] Found {len(pending_downloads)} files pending download")
 
-        print("[V2 Reconciliation] Step 2: Getting all expected storage paths...")
+        logger.info("[V2 Reconciliation] Step 2: Getting all expected storage paths...")
         all_expected_paths = await get_all_expected_paths(
             backend_url,
             http_client=shared_http_client,
         )
-        print(f"[V2 Reconciliation] {len(all_expected_paths)} total expected paths in database")
+        logger.info(f"[V2 Reconciliation] {len(all_expected_paths)} total expected paths in database")
 
-        print(f"[V2 Reconciliation] Step 3: Checking existing files on {storage_label}...")
+        logger.info(f"[V2 Reconciliation] Step 3: Checking existing files on {storage_label}...")
         await push_state("fetching", f"Checking existing files on {storage_label} storage...")
 
         existing_files = set(await list_existing_files())
         reconciliation_state.set_total_models(len(existing_files))
-        print(f"[V2 Reconciliation] Found {len(existing_files)} existing files on {storage_label}")
+        logger.info(f"[V2 Reconciliation] Found {len(existing_files)} existing files on {storage_label}")
 
         missing_files = all_expected_paths - existing_files
         if missing_files:
-            print(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from {storage_label}")
+            logger.warning(f"[V2 Reconciliation] ⚠ {len(missing_files)} files missing from {storage_label}")
             missing_updates = [{"storage_path": path, "status": "pending"} for path in sorted(missing_files)]
             await batch_update_file_status_v2(
                 backend_url,
@@ -424,7 +427,7 @@ async def run_reconciliation_v2(
                 provider_id,
                 http_client=shared_http_client,
             )
-            print(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
+            logger.info(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
 
         downloads_needed = []
         already_ready = []
@@ -440,7 +443,7 @@ async def run_reconciliation_v2(
                 downloads_needed.append(file_info)
 
         if already_ready:
-            print(f"[V2 Reconciliation] Updating {len(already_ready)} already-existing files as ready...")
+            logger.info(f"[V2 Reconciliation] Updating {len(already_ready)} already-existing files as ready...")
             await batch_update_file_status_v2(
                 backend_url,
                 provider_id,
@@ -450,9 +453,9 @@ async def run_reconciliation_v2(
 
         reconciliation_state.set_download_queue(downloads_needed)
         reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)
-        print(f"[V2 Reconciliation] {len(downloads_needed)} files need downloading, {len(already_ready)} already ready")
+        logger.info(f"[V2 Reconciliation] {len(downloads_needed)} files need downloading, {len(already_ready)} already ready")
 
-        print(f"[V2 Reconciliation] Step 4: Processing downloads ({max_concurrent_downloads} concurrent)...")
+        logger.info(f"[V2 Reconciliation] Step 4: Processing downloads ({max_concurrent_downloads} concurrent)...")
         semaphore = asyncio.Semaphore(max_concurrent_downloads)
         total_downloads = len(downloads_needed)
         active_downloads_list = []
@@ -481,7 +484,7 @@ async def run_reconciliation_v2(
                 reconciliation_state.set_current_download(download_info)
                 await push_state("downloading", f"Downloading {display_name}...", active_downloads_list.copy())
 
-                print(f"[V2 Reconciliation] [{index + 1}/{total_downloads}] ⬇ Starting: {display_name}")
+                logger.info(f"[V2 Reconciliation] [{index + 1}/{total_downloads}] ⬇ Starting: {display_name}")
                 await report_file_status_v2(
                     backend_url,
                     provider_id,
@@ -496,7 +499,7 @@ async def run_reconciliation_v2(
 
                     reconciliation_state.increment_downloads_completed()
                     stats = reconciliation_state.get_stats()
-                    print(f"[V2 Reconciliation] [{stats['downloads_completed']}/{total_downloads}] ✓ Completed: {display_name}")
+                    logger.info(f"[V2 Reconciliation] [{stats['downloads_completed']}/{total_downloads}] ✓ Completed: {display_name}")
 
                     await report_file_status_v2(
                         backend_url,
@@ -510,7 +513,7 @@ async def run_reconciliation_v2(
                 except Exception as exc:
                     reconciliation_state.increment_downloads_failed()
                     reconciliation_state.add_error(f"{display_name}: {str(exc)}")
-                    print(f"[V2 Reconciliation] ✗ Failed: {display_name}: {exc}")
+                    logger.error(f"[V2 Reconciliation] ✗ Failed: {display_name}: {exc}")
                     await report_file_status_v2(
                         backend_url,
                         provider_id,
@@ -533,16 +536,16 @@ async def run_reconciliation_v2(
 
         reconciliation_state.set_current_download(None)
 
-        print("[V2 Reconciliation] Step 5: Checking for orphaned files...")
+        logger.info("[V2 Reconciliation] Step 5: Checking for orphaned files...")
         await push_state("deleting", "Checking for orphaned files...")
 
         if not all_expected_paths:
-            print("[V2 Reconciliation] ⚠️ SAFETY: No expected paths - skipping deletion!")
+            logger.warning("[V2 Reconciliation] ⚠️ SAFETY: No expected paths - skipping deletion!")
         else:
             orphaned_files = [path for path in existing_files if path not in all_expected_paths]
 
             if orphaned_files:
-                print(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files")
+                logger.info(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files")
 
                 # Register orphaned files as database models so they persist across restarts
                 registration_result = await register_discovered_files(
@@ -566,30 +569,28 @@ async def run_reconciliation_v2(
                             try:
                                 deleted = await delete_file(orphan_path)
                                 if deleted is False:
-                                    print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
+                                    logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
                                     continue
                                 reconciliation_state.increment_deletions_completed()
-                                print(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
+                                logger.info(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
                             except Exception as exc:
-                                print(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                                logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
                     else:
-                        print(f"[V2 Reconciliation] Dry-run: would delete {len(unregistered)} orphaned files")
-                        print(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
+                        logger.info(f"[V2 Reconciliation] Dry-run: would delete {len(unregistered)} orphaned files")
+                        logger.info(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
             else:
-                print("[V2 Reconciliation] No orphaned files to delete")
+                logger.info("[V2 Reconciliation] No orphaned files to delete")
 
         reconciliation_state.complete_reconciliation(success=True)
         stats = reconciliation_state.get_stats()
-        print(
+        logger.info(
             f"[V2 Reconciliation] Complete! {stats['downloads_completed']} downloads, "
             f"{stats['downloads_failed']} failed, {stats['deletions_completed']} deleted"
         )
         await push_state("completed", "Reconciliation complete!")
 
     except Exception as exc:
-        print(f"[V2 Reconciliation] Fatal error: {exc}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"[V2 Reconciliation] Fatal error: {exc}")
         reconciliation_state.add_error(f"Fatal error: {str(exc)}")
         reconciliation_state.complete_reconciliation(success=False)
         await push_state("failed", f"Reconciliation failed: {str(exc)}")

@@ -12,8 +12,11 @@ from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
     build_error_response, build_status_response,
-    get_job_tracker, build_deploy_compatibility_response, get_reconciliation_state
+    get_job_tracker, build_deploy_compatibility_response, get_reconciliation_state,
+    get_logger
 )
+
+logger = get_logger("modal_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
 
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
@@ -28,7 +31,7 @@ _function_cache = {}
 def get_modal_function(func_name: str):
     key = f"{MODAL_APP_NAME}.{func_name}"
     if key not in _function_cache:
-        print(f"[{PROVIDER_ID}] Caching Modal function: {key}")
+        logger.info(f"[{PROVIDER_ID}] Caching Modal function: {key}")
         _function_cache[key] = modal.Function.from_name(MODAL_APP_NAME, func_name)
     return _function_cache[key]
 
@@ -62,7 +65,7 @@ class ModalProviderClient:
             if key in self.runtime_config:
                 self.runtime_config[key] = value
                 updated.append(key)
-                print(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
+                logger.info(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
         return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
 
     async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
@@ -215,7 +218,7 @@ class ModalProviderClient:
                     download_file=download_file, delete_file=delete_file
                 )
             except Exception as e:
-                print(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
+                logger.exception(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
                 self.reconciliation_state.status = "error"
 
         asyncio.create_task(perform_reconciliation())

@@ -173,12 +173,14 @@ class TestRunMigrations:
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
 
-        with patch.object(db_module, "engine", engine):
-            db_module._run_migrations()
+        from infrastructure.migrations import run_migrations
+        from infrastructure.migrations.steps import _get_table_columns, _get_applied_migrations
+
+        run_migrations(engine)
 
         with engine.connect() as conn:
-            columns = db_module._get_table_columns(conn, "jobs")
-            applied = db_module._get_applied_migrations(conn)
+            columns = _get_table_columns(conn, "jobs")
+            applied = _get_applied_migrations(conn)
 
         assert "started_at" in columns
         assert "completed_at" in columns
@@ -207,17 +209,19 @@ class TestRunMigrations:
                 VALUES (1, 'modal-primary', 'ready')
             """))
 
-        with patch.object(db_module, "engine", engine):
-            db_module._run_migrations()
+        from infrastructure.migrations import run_migrations
+        from infrastructure.migrations.steps import _get_table_columns, _get_applied_migrations
+
+        run_migrations(engine)
 
         with engine.connect() as conn:
-            columns = db_module._get_table_columns(conn, "provider_version_status")
+            columns = _get_table_columns(conn, "provider_version_status")
             migrated = conn.execute(
                 text(
                     "SELECT provider_id, provider_name FROM provider_version_status WHERE file_id = 1"
                 )
             ).first()
-            applied = db_module._get_applied_migrations(conn)
+            applied = _get_applied_migrations(conn)
 
         assert "provider_id" in columns
         assert migrated is not None
@@ -237,11 +241,13 @@ class TestRunMigrations:
                 )
             )
 
-        with patch.object(db_module, "engine", engine):
-            db_module._run_migrations()
+        from infrastructure.migrations import run_migrations
+        from infrastructure.migrations.steps import _get_applied_migrations
+
+        run_migrations(engine)
 
         with engine.connect() as conn:
-            applied = db_module._get_applied_migrations(conn)
+            applied = _get_applied_migrations(conn)
 
         assert "001_jobs_started_completed" in applied
         assert "002_prompts_fts" in applied
@@ -259,9 +265,10 @@ class TestRunMigrations:
                 )
             )
 
-        with patch.object(db_module, "engine", engine):
-            db_module._run_migrations()
-            db_module._run_migrations()
+        from infrastructure.migrations import run_migrations
+
+        run_migrations(engine)
+        run_migrations(engine)
 
         with engine.connect() as conn:
             rows = conn.execute(
@@ -292,12 +299,14 @@ class TestRunMigrations:
                 text("INSERT INTO jobs (id, status) VALUES ('job-running', 'running')")
             )
 
-        with patch.object(db_module, "engine", engine):
-            db_module._run_migrations()
+        from infrastructure.migrations import run_migrations
+        from infrastructure.migrations.steps import _get_applied_migrations
+
+        run_migrations(engine)
 
         with engine.connect() as conn:
             statuses = dict(conn.execute(text("SELECT id, status FROM jobs")).all())
-            applied = db_module._get_applied_migrations(conn)
+            applied = _get_applied_migrations(conn)
 
         assert statuses["job-queued"] == "pending"
         assert statuses["job-processing"] == "running"
@@ -311,9 +320,12 @@ class TestRunMigrations:
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
 
+        from infrastructure.migrations.steps import _verify_required_columns
+
         with engine.connect() as conn:
             with pytest.raises(RuntimeError, match="missing columns started_at"):
-                db_module._verify_required_columns(conn, "jobs", {"started_at"})
+                _verify_required_columns(conn, "jobs", {"started_at"})
+
 
 
 class TestEngine:

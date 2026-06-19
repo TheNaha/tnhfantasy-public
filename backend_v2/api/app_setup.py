@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response as FastAPIResponse
+from urllib.parse import urlparse
 
 from api.error_handlers import register_exception_handlers
 from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
@@ -37,6 +38,14 @@ def configure_app(app: FastAPI):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # Fix redirect Location headers that use internal hostnames (e.g. localhost:8002)
+        # which are unreachable from the browser. Convert to relative paths.
+        if response.status_code in (301, 302, 307, 308):
+            location = response.headers.get("location", "")
+            if location and "://" in location:
+                parsed = urlparse(location)
+                if parsed.path:
+                    response.headers["location"] = parsed.path
         return response
 
     @app.middleware("http")

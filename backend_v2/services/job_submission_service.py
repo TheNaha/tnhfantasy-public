@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import HTTPException
 from sqlmodel import Session
 
 from core.exceptions import JobError, MissingModelsError

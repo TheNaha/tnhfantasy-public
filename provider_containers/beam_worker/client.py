@@ -13,8 +13,11 @@ from provider_core import (
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
     build_error_response, build_status_response,
     get_http_client, determine_download_token, get_job_tracker,
-    build_deploy_compatibility_response, get_reconciliation_state
+    build_deploy_compatibility_response, get_reconciliation_state,
+    get_logger
 )
+
+logger = get_logger("beam_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
 
 BEAM_API_KEY = os.getenv("BEAM_API_KEY", "")
@@ -75,7 +78,7 @@ class BeamProviderClient:
             if key in self.runtime_config:
                 self.runtime_config[key] = value
                 updated.append(key)
-                print(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
+                logger.info(f"[{PROVIDER_ID}] Config updated: {key} = {value}")
         return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
 
     async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:
@@ -262,7 +265,7 @@ class BeamProviderClient:
                     download_file=download_file, delete_file=delete_file
                 )
             except Exception as e:
-                print(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
+                logger.exception(f"[{PROVIDER_ID}] Fatal error in reconciliation task: {e}")
                 self.reconciliation_state.status = "error"
 
         asyncio.create_task(perform_reconciliation())
