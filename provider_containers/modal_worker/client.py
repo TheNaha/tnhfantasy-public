@@ -11,9 +11,19 @@ import modal
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
+    build_error_response, build_status_response, build_deploy_compatibility_response,
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            try:
+                return obj.decode('utf-8')
+            except UnicodeDecodeError:
+                return base64.b64encode(obj).decode('utf-8')
+        return super().default(obj)
 
 logger = get_logger("modal_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
@@ -74,7 +84,16 @@ class ModalProviderClient(BaseProviderClient):
                                 yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
                                 return
 
-                            yield json.dumps(update) + "\n"
+                            # Backwards compatibility for old Modal deployments
+                            if update.get("status") == "success" and "images" in update:
+                                for img in update["images"]:
+                                    if isinstance(img.get("data"), bytes):
+                                        img["data"] = base64.b64encode(img["data"]).decode("utf-8")
+                                        img["_base64_encoded"] = True
+                                    if "subfolder" not in img:
+                                        img["subfolder"] = ""
+
+                            yield json.dumps(update, cls=CustomJSONEncoder) + "\n"
 
                 except TimeoutError:
                     yield json.dumps(build_error_response(f"Inference timed out after {int(inference_timeout)}s", retryable=True, code=408)) + "\n"

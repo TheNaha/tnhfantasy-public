@@ -11,10 +11,19 @@ import json
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
-    build_error_response, build_status_response,
+    build_error_response, build_status_response, build_deploy_compatibility_response,
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            try:
+                return obj.decode('utf-8')
+            except UnicodeDecodeError:
+                return base64.b64encode(obj).decode('utf-8')
+        return super().default(obj)
 
 logger = get_logger("beam_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
@@ -94,7 +103,7 @@ class BeamProviderClient(BaseProviderClient):
                                 return
                             try:
                                 update = json.loads(message)
-                                yield json.dumps(update) + "\n"
+                                yield json.dumps(update, cls=CustomJSONEncoder) + "\n"
                             except json.JSONDecodeError:
                                 pass
             except asyncio.TimeoutError:

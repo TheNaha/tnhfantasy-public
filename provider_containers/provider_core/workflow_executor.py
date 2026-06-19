@@ -130,6 +130,7 @@ def _collect_images_from_filesystem(
                             "data": b64_data,
                             "_base64_encoded": True,
                             "type": folder_type,
+                            "subfolder": subfolder,
                         }
                     )
             except Exception as error:
@@ -175,6 +176,7 @@ async def _collect_images_via_view_api(
                             "data": b64_data,
                             "_base64_encoded": True,
                             "type": folder_type,
+                            "subfolder": subfolder,
                         }
                     )
                 except Exception as error:
