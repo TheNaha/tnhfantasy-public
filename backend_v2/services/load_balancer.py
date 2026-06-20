@@ -253,7 +253,7 @@ class LoadBalancer:
                     try:
                         container = cm.client.containers.get(container_name)
                         if container.status != "running":
-                            self.runtime_state.provider_health_cache[cache_key] = (False, now + 5.0)
+                            _provider_health_cache[cache_key] = (False, now + 5.0)
                             return False
                     except Exception:
                         pass

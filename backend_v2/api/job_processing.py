@@ -99,9 +99,10 @@ def normalize_external_outputs(outputs) -> List[Dict[str, Any]]:
     return normalized
 
 
-def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> List[Dict[str, Any]]:
+def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str, duration_seconds: float = None) -> List[Dict[str, Any]]:
     """Persist worker images and return normalized job outputs."""
     from PIL import Image
+    from datetime import datetime, timezone
 
     from infrastructure.image_processor import (
         get_output_path,
@@ -112,6 +113,16 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> Li
     outputs: List[Dict[str, Any]] = []
     base_output_dir = settings.output_dir
     final_output_dir = get_output_path(base_output_dir)
+
+    # Calculate duration if not provided and job has timing info
+    if duration_seconds is None:
+        job_started_at = getattr(job, "started_at", None)
+        if job_started_at:
+            now = datetime.now(timezone.utc)
+            # Handle both naive and aware datetimes
+            if job_started_at.tzinfo is None:
+                job_started_at = job_started_at.replace(tzinfo=timezone.utc)
+            duration_seconds = (now - job_started_at).total_seconds()
 
     for img in images:
         filename = img.get("filename", "output.png")
@@ -137,6 +148,9 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str) -> Li
                 # Persist a stable timeline anchor so replacement ordering survives reloads.
                 full_metadata["job_created_at"] = job_created_at
                 full_metadata["job_timeline_anchor"] = job_created_at
+            # Add generation duration for statistics
+            if duration_seconds is not None:
+                full_metadata["job"] = {"duration_seconds": round(duration_seconds, 2)}
             if job.metadata_:
                 for key in [
                     "prompt",
@@ -217,6 +231,8 @@ async def complete_job(
     provider_id: Optional[str] = None,
     load_balancer=None,
 ) -> None:
+    # Note: duration_seconds is already saved to image metadata in build_job_outputs
+    # via full_metadata["job"] = {"duration_seconds": ...}
     await job_service.update_job(
         job_id,
         status=JobStatus.COMPLETED,

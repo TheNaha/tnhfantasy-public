@@ -205,13 +205,13 @@ class ReconciliationState:
             return self._errors.copy()
 
 
-# Global state instance (initialized per worker)
-_reconciliation_state: Optional[ReconciliationState] = None
+# Global state instances (keyed by provider_id for multi-provider support)
+_reconciliation_states: Dict[str, ReconciliationState] = {}
 
 
 def get_reconciliation_state(provider_id: str) -> ReconciliationState:
-    """Get or create the global reconciliation state."""
-    global _reconciliation_state
-    if _reconciliation_state is None:
-        _reconciliation_state = ReconciliationState(provider_id)
-    return _reconciliation_state
+    """Get or create a reconciliation state for the given provider_id."""
+    global _reconciliation_states
+    if provider_id not in _reconciliation_states:
+        _reconciliation_states[provider_id] = ReconciliationState(provider_id)
+    return _reconciliation_states[provider_id]

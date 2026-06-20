@@ -89,26 +89,35 @@ class ModelCivitaiSyncService:
             model.description = civitai_data.get("description", model.description)
         model.nsfw = civitai_data.get("nsfw", False)
 
-        if civitai_data.get("modelVersions") and model.versions:
-            civitai_version = civitai_data["modelVersions"][0]
-            version = model.versions[0]
-            version.civitai_version_id = civitai_version.get("id")
-            if "Auto-discovered" in version.description:
-                version.description = civitai_version.get("description", version.description)
-            version.base_model = civitai_version.get("baseModel", version.base_model)
-            
-            # Save first image if missing
-            images = civitai_version.get("images", [])
-            if images and not version.images:
-                from core.entities import ModelImage
-                image_data = images[0]
-                img = ModelImage(
-                    version_id=version.id,
-                    url=image_data.get("url", ""),
-                    nsfw=image_data.get("nsfw", "None") != "None",
-                    sort_order=0
-                )
-                self.session.add(img)
+        if civitai_data.get("modelVersions"):
+            versions = self.repo.get_versions_for_model(model.id)
+            if versions:
+                civitai_version = civitai_data["modelVersions"][0]
+                version = versions[0]
+                version.civitai_version_id = civitai_version.get("id")
+                if "Auto-discovered" in version.description:
+                    version.description = civitai_version.get("description", version.description)
+                version.base_model = civitai_version.get("baseModel", version.base_model)
+                
+                # Save first image if missing
+                images = civitai_version.get("images", [])
+                
+                # Check if version already has images
+                from core.entities_v2 import ModelImage
+                from sqlmodel import select
+                existing_images = self.session.exec(
+                    select(ModelImage).where(ModelImage.version_id == version.id)
+                ).all()
+                
+                if images and not existing_images:
+                    image_data = images[0]
+                    img = ModelImage(
+                        version_id=version.id,
+                        url=image_data.get("url", ""),
+                        nsfw=image_data.get("nsfw", "None") != "None",
+                        sort_order=0
+                    )
+                    self.session.add(img)
 
         self.session.commit()
         return self.repo.model_to_dict(model)

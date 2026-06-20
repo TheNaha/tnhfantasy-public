@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Optional
+import re
 
 from sqlmodel import Session
 
@@ -21,6 +22,46 @@ _DIRECTORY_TO_MODEL_TYPE = {
     "ultralytics/bbox": "Other",
     "motion_modules": "MotionModule",
 }
+
+
+def _clean_filename_for_display(filename: str) -> str:
+    """
+    Convert a storage filename to a cleaner, more readable display name.
+    E.g., "akali_league_of_legends_nsfwsf_v10_413394" -> "Akali League Of Legends (NSFW) v10"
+    """
+    # Remove extension
+    name = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+    # Replace common separators with spaces
+    name = name.replace("_", " ").replace("-", " ")
+
+    # Handle version patterns like "v10", "v1.0", "version_10"
+    name = re.sub(r'\bv(\d+(?:\.\d+)?)\b', r'v\1', name, flags=re.IGNORECASE)
+
+    # Remove common hash/id suffixes (long alphanumeric sequences)
+    name = re.sub(r'[\s_]?[a-f0-9]{6,}$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'[\s_]?\d{5,}$', '', name)  # Remove long numeric suffixes
+
+    # Clean up duplicate whitespace
+    name = re.sub(r'\s+', ' ', name).strip()
+
+    # Capitalize each word
+    name = name.title()
+
+    # Handle common abbreviations and markers
+    name = re.sub(r'\bNsfw\b', '(NSFW)', name)
+    name = re.sub(r'\bSfw\b', '(SFW)', name)
+    name = re.sub(r'\bLora\b', 'LoRA', name)
+    name = re.sub(r'\bSdxl\b', 'SDXL', name)
+    name = re.sub(r'\bSd\b', 'SD', name)
+    name = re.sub(r'\bFp8\b', 'FP8', name)
+    name = re.sub(r'\bFp16\b', 'FP16', name)
+    name = re.sub(r'\bBf16\b', 'BF16', name)
+
+    # Clean up any double spaces or weird spacing
+    name = re.sub(r'\s+', ' ', name).strip()
+
+    return name
 
 
 class ModelReconciliationService:
@@ -74,11 +115,13 @@ class ModelReconciliationService:
                     skipped += 1
                     results.append({"path": storage_path, "file_id": existing_file.id, "status": "skipped"})
                 else:
-                    name = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    # Generate a clean display name from filename
+                    raw_name = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    display_name = _clean_filename_for_display(raw_name)
                     resolved_type = _DIRECTORY_TO_MODEL_TYPE.get(directory, "Other")
 
                     model = ModelV2(
-                        name=name,
+                        name=display_name,
                         type=resolved_type,
                         directory=directory,
                         description=f"Auto-discovered from {provider_id} storage",

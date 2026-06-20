@@ -40,7 +40,7 @@ function modelStatusTone(status) {
 }
 
 function availabilityTone(availability) {
-    if (availability === 'Available') {
+    if (availability === 'Available' || availability === 'Available (offline)') {
         return 'text-green-300 bg-green-500/15 border-green-500/30';
     }
     if (availability === 'Partial') {
@@ -48,6 +48,9 @@ function availabilityTone(availability) {
     }
     if (availability === 'Unavailable') {
         return 'text-red-300 bg-red-500/15 border-red-500/30';
+    }
+    if (availability === 'Loading providers') {
+        return 'text-blue-300 bg-blue-500/15 border-blue-500/30';
     }
     return 'text-gray-300 bg-gray-500/15 border-gray-500/30';
 }
@@ -213,18 +216,40 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
     ).length;
 
     let modelAvailability = providersLoading ? 'Loading providers' : 'Unknown';
+    // Determine availability based on ALL providers (not just online ones)
+    // Provider statuses indicate what models are available on which providers
     if (providersLoading) {
         modelAvailability = 'Loading providers';
-    } else if (onlineProviderCount > 0) {
-        if (availableOnlineCount === onlineProviderCount) {
-            modelAvailability = 'Available';
-        } else if (availableOnlineCount > 0) {
-            modelAvailability = 'Partial';
-        } else {
+    } else {
+        // Check ALL providers that have this model (whether online or not)
+        const allProvidersWithModel = Object.entries(providerStatuses)
+            .filter(([, statusData]) => {
+                const status = normalizeModelStatus(statusData);
+                return AVAILABLE_MODEL_STATES.has(status);
+            })
+            .map(([providerId]) => providerId);
+
+        // Count how many of those providers are currently online
+        const availableAndOnline = allProvidersWithModel.filter(id => onlineProviderIds.has(id)).length;
+        const availableTotal = allProvidersWithModel.length;
+
+        if (onlineProviderCount > 0) {
+            // We have online providers - show real-time availability
+            if (availableAndOnline === onlineProviderCount) {
+                modelAvailability = 'Available';
+            } else if (availableAndOnline > 0) {
+                modelAvailability = 'Partial';
+            } else {
+                modelAvailability = 'Unavailable';
+            }
+        } else if (availableTotal > 0) {
+            // No providers currently online, but model is available on some providers
+            modelAvailability = 'Available (offline)';
+        } else if (Object.keys(providerStatuses).length > 0) {
+            // No providers online and model not available on any
             modelAvailability = 'Unavailable';
         }
-    } else if (Object.keys(providerStatuses).length > 0) {
-        modelAvailability = 'No providers online';
+        // If both are 0, keep 'Unknown'
     }
 
 

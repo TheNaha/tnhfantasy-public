@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe } from 'lucide-react';
+import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -298,6 +298,36 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         aria-label="Refresh List"
                     >
                         <RotateCw size={20} />
+                    </button>
+
+                    <button
+                        onClick={async () => {
+                            try {
+                                const statusRes = await api.get('/api/v2/models/autopopulate-status');
+                                if (statusRes.needs_population === 0) {
+                                    toast.success("All models are already populated!");
+                                    return;
+                                }
+                                const confirmed = await openConfirm({
+                                    title: "Autopopulate Models",
+                                    message: `This will fetch metadata from CivitAI for ${statusRes.needs_population} auto-discovered models. Continue?`,
+                                    confirmText: "Autopopulate"
+                                });
+                                if (!confirmed) return;
+
+                                const res = await api.post('/api/v2/models/autopopulate-all');
+                                toast.success(res.message || "Autopopulation started!");
+                                setTimeout(() => fetchFiles(true), 2000);
+                            } catch (e) {
+                                console.error(e);
+                                toast.error("Failed to autopopulate models");
+                            }
+                        }}
+                        className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
+                        title="Autopopulate All Models"
+                        aria-label="Autopopulate All Models"
+                    >
+                        <Wand2 size={20} />
                     </button>
 
                     {availableTags.length > 0 && (

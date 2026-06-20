@@ -29,7 +29,7 @@ export function formatAvailabilityBadgeLabel(label) {
     if (label === 'Loading providers') {
         return 'Loading';
     }
-    if (label === 'No providers online') {
+    if (label === 'No providers online' || label === 'Available (offline)') {
         return 'Offline';
     }
     return label;

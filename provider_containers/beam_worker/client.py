@@ -12,7 +12,7 @@ from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
     build_error_response, build_status_response, build_deploy_compatibility_response,
-    get_logger
+    get_logger, get_http_client
 )
 from provider_core.base_client import BaseProviderClient
 
@@ -65,15 +65,6 @@ class BeamProviderClient(BaseProviderClient):
             )
 
         return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True}
-
-    async def get_info(self) -> Dict[str, Any]:
-        return {
-            "provider_id": PROVIDER_ID,
-            "type": "beam",
-            "gpu_type": BEAM_GPU_TYPE,
-            "gpu_url_configured": bool(BEAM_GPU_URL),
-            "storage_url_configured": bool(BEAM_STORAGE_URL),
-        }
 
     async def get_info(self) -> Dict[str, Any]:
         return {
