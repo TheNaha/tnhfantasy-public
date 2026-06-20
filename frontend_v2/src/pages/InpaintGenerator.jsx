@@ -46,7 +46,6 @@ export default function InpaintGenerator() {
             setSelectedCheckpoint, setSelectedVae,
             randomizeSeed, addLora, removeLora, updateLora
         },
-        generating, setGenerating,
         providers, providersLoading,
         preflight: {
             isChecking: preflightChecking,
@@ -64,7 +63,7 @@ export default function InpaintGenerator() {
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
-    const { setCurrentJobId, progress, setProgress } = useTrackGenerationJob(setGenerating);
+    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
     // Check for pre-loaded image from navigation state

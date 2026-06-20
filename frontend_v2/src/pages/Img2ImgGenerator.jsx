@@ -40,7 +40,6 @@ export default function Img2ImgGenerator() {
             setSelectedCheckpoint, setSelectedVae,
             randomizeSeed, addLora, removeLora, updateLora
         },
-        generating, setGenerating,
         providers, providersLoading,
         preflight: {
             isChecking: preflightChecking,
@@ -59,7 +58,7 @@ export default function Img2ImgGenerator() {
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
 
-    const { setCurrentJobId, progress, setProgress } = useTrackGenerationJob(setGenerating);
+    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 

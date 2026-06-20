@@ -1,24 +1,76 @@
 # docker-compose.dev.yml
-# Dev mode override for frontend debugging
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build frontend_v2
-
-# This runs the frontend Vite dev server instead of the production nginx build.
-# Access the app at http://localhost:5174 to get non-minified error messages.
-# For live reload during development, add a volume mount:
-#   volumes:
-#     - ./frontend_v2/src:/app/src
+# Development override — hot-reload, source mounts, debug-friendly
+#
+# Usage:
+#   Core only (backend + frontend):
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+#   With providers:
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build
+#
+#   Backend only (no Docker, faster iteration):
+#     bash setup_jules.sh
+#
+# Access:
+#   Via Traefik:  https://comfy.lan.thenaha.my.id  (Vite HMR over WSS)
+#   Direct:       http://localhost:5174              (Vite HMR over WS)
+#   Backend:      http://localhost:8002              (uvicorn --reload)
 
 services:
+  # ─── Backend ─────────────────────────────────────────────
+  backend_v2:
+    environment:
+      - COMFY_UVICORN_RELOAD=1
+      - PYTHONUNBUFFERED=1
+    # Expose backend directly for API testing / curl / Postman
+    ports:
+      - "8002:8002"
+    # Mount source code — uvicorn --reload watches /app for changes
+    # pip packages live in system site-packages, not /app, so this is safe
+    volumes:
+      - ./backend_v2:/app
+      - ./data:/data
+
+  # ─── Frontend ────────────────────────────────────────────
   frontend_v2:
     build:
       target: dev
+    # Vite listens on port 80 inside the container (matching production nginx).
+    # This means the base compose's Traefik labels (port=80) just work.
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]
     ports:
-      - "5174:5174"
+      # Host port 5174 → container port 80 (for direct localhost access)
+      - "5174:80"
     environment:
-      VITE_PROXY_TARGET: http://backend_v2:8002
+      - VITE_PROXY_TARGET=http://backend_v2:8002
+      # HMR config — connects through Traefik (HTTPS/WSS)
+      # Without these, HMR falls back to localhost:5174 (direct access)
+      - HMR_HOST=comfy.lan.thenaha.my.id
+      - HMR_PORT=443
+      - HMR_CLIENT_PORT=443
+    # Mount source for Vite HMR (usePolling: true in vite.config.js)
+    volumes:
+      - ./frontend_v2/src:/app/src
+      - ./frontend_v2/public:/app/public
+      - ./frontend_v2/index.html:/app/index.html
+      - ./frontend_v2/vite.config.js:/app/vite.config.js
+      # Preserve node_modules from the build (don't mount over it)
+      - /app/node_modules
+    # Healthcheck on port 80 (same as production nginx)
     healthcheck:
-      test: ["CMD", "node", "-e", "const h=require('http');h.get('http://localhost:5174/',r=>{process.exit(r.statusCode>=200&&r.statusCode<400?0:1)}).on('error',()=>process.exit(1))"]
-      interval: 10s
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 3
+      start_period: 20s
+
+  # ─── Provider (opt-in: --profile providers) ─────────────
+  provider-modal:
+    profiles:
+      - providers
+    # Generous limits for dev — remove to inherit base compose limits
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+          cpus: "8"

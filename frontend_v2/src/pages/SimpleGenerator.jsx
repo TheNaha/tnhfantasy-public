@@ -28,7 +28,7 @@ export default function SimpleGenerator() {
     const navigate = useNavigate();
     const [viewingMetadata, setViewingMetadata] = useState(null);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
-    const { setCurrentJobId, progress, setProgress } = useTrackGenerationJob(setGenerating);
+    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
 
     const {
         store: {
@@ -43,7 +43,6 @@ export default function SimpleGenerator() {
             randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords,
             aspectRatioLocked
         },
-        generating, setGenerating,
         providers, providersLoading,
         preflight: {
             isChecking: preflightChecking,

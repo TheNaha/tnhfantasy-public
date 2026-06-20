@@ -4,11 +4,12 @@ import toast from 'react-hot-toast';
 import { useSettings } from '../store/settingsStore';
 import { useTrackJob } from './useTrackJob';
 
-export function useTrackGenerationJob(setGenerating) {
+export function useTrackGenerationJob() {
     const navigate = useNavigate();
     const settings = useSettings();
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
+    const [generating, setGenerating] = useState(false);
     const { data: trackedJob } = useTrackJob(currentJobId);
 
     // legitimate: syncing state from external WebSocket subscription
@@ -56,7 +57,6 @@ export function useTrackGenerationJob(setGenerating) {
     }, [
         trackedJob, currentJobId,
         navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
-        setGenerating,
     ]);
     /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -65,5 +65,7 @@ export function useTrackGenerationJob(setGenerating) {
         setCurrentJobId,
         progress,
         setProgress,
+        generating,
+        setGenerating,
     };
 }

@@ -139,6 +139,8 @@ networks:
     name: tnhcomfy
     driver: bridge
   metrics:
+    name: metrics
     external: true
   proxy:
+    name: proxy
     external: true
