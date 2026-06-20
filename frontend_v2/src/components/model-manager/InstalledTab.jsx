@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -16,6 +17,7 @@ import ModelDetailsModal from './ModelDetailsModal';
 const CATEGORIES = MODEL_MANAGER_CATEGORIES;
 
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
+    const queryClient = useQueryClient();
     const [category, setCategory] = useState("checkpoints");
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -302,6 +304,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
                                 const res = await api.post('/api/v2/models/autopopulate-all');
                                 toast.success(res.message || "Autopopulation started!");
+                                queryClient.invalidateQueries({ queryKey: ['models'] });
                                 setTimeout(() => fetchFiles(true), 2000);
                             } catch (e) {
                                 console.error(e);

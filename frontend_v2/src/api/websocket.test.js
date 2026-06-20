@@ -16,6 +16,14 @@ class FakeSocket {
         return this;
     }
 
+    once(event, callback) {
+        const wrapper = (payload) => {
+            this.off(event, wrapper);
+            callback(payload);
+        };
+        return this.on(event, wrapper);
+    }
+
     off(event, callback) {
         if (!this._listeners.has(event)) {
             return this;

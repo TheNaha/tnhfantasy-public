@@ -87,7 +87,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
                     className={`
                         transition-opacity duration-500
                         ${isLoaded ? 'opacity-100' : 'opacity-0'}
-                        ${aspectRatio !== 'auto' ? 'absolute inset-0 w-full h-full object-cover' : 'w-full h-auto object-contain'}
+                        ${aspectRatio !== 'auto' ? 'absolute inset-0 w-full h-full object-cover' : 'max-w-full max-h-full object-contain'}
                     `}
                     loading="lazy"
                 />

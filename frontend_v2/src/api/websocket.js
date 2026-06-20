@@ -58,6 +58,25 @@ export function connect() {
         return connectionPromise;
     }
 
+    // If socket exists but isn't connected, it's reconnecting — wait for it
+    if (socket && !isConnected) {
+        connectionPromise = new Promise((resolve, reject) => {
+            let settled = false;
+            const settle = (fn, value) => {
+                if (!settled) { settled = true; fn(value); }
+            };
+            const onConnect = () => settle(resolve, socket);
+            const onError = (err) => settle(reject, err instanceof Error ? err : new Error(err?.message || 'reconnect error'));
+            socket.once('connect', onConnect);
+            socket.once('connect_error', onError);
+        });
+        return connectionPromise;
+    }
+
+    if (socket && isConnected) {
+        return Promise.resolve(socket);
+    }
+
     connectionPromise = new Promise((resolve, reject) => {
         if (socket && isConnected) {
             resolve(socket);
@@ -126,18 +145,12 @@ export function connect() {
 
         socket.on('connect_error', (error) => {
             console.warn('[WebSocket] Connection error:', error.message);
-            // Clear connectionPromise so future connect() calls can retry
-            connectionPromise = null;
             emitLocal('connection', { connected: false, error: error.message });
 
-            // Reject initial connection attempts so callers don't hang forever.
-            if (!isConnected) {
-                try {
-                    socket?.disconnect();
-                } catch {
-                    // Ignore cleanup failures for best-effort socket teardown.
-                }
-                socket = null;
+            // Reject the initial connection promise if it hasn't resolved yet.
+            // Do NOT destroy the socket — let Socket.IO's built-in reconnection handle retries.
+            if (!settled) {
+                connectionPromise = null;
                 rejectConnection(error instanceof Error ? error : new Error(error?.message || 'WebSocket connection error'));
             }
         });

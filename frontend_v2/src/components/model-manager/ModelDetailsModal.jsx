@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, AlertCircle, ExternalLink, Wand2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { api } from '../../api';
@@ -7,6 +8,7 @@ import { api } from '../../api';
 export default function ModelDetailsModal({ file, onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
+    const queryClient = useQueryClient();
     
     if (!file) return null;
 
@@ -96,7 +98,9 @@ export default function ModelDetailsModal({ file, onClose }) {
         try {
             await api.post(`/api/v2/models/${file.model_id}/autopopulate`);
             toast.success("Model details autopopulated!");
-            setTimeout(() => window.location.reload(), 1500);
+            queryClient.invalidateQueries({ queryKey: ['models'] });
+            queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+            onClose();
         } catch (e) {
             toast.error("Failed to autopopulate: " + (e.message || "Unknown error"));
         }
