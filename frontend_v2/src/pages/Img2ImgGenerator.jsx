@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ImageIcon, Wand2, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, ArrowLeft, RefreshCw } from 'lucide-react';
+import { ImageIcon, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';

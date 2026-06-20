@@ -194,10 +194,11 @@ export default function Dashboard() {
     const fastIsFavorite = useCallback((filename) => favoritesSet.has(filename), [favoritesSet]);
 
     const handleToggleFavorite = useCallback((filename) => {
+        const wasFavorite = fastIsFavorite(filename);
         toggleFavorite(filename);
         toast.success(
-            fastIsFavorite(filename) ? "Removed from favorites" : "Added to favorites",
-            { icon: fastIsFavorite(filename) ? '⭐' : '⭐' }
+            wasFavorite ? "Removed from favorites" : "Added to favorites",
+            { icon: '⭐' }
         );
     }, [toggleFavorite, fastIsFavorite]);
 

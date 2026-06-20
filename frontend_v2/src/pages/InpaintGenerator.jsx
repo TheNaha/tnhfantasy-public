@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Paintbrush, Wand2, Settings2, Play, Trash2, Plus, Loader2, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
+import { Paintbrush, Settings2, Play, Trash2, Plus, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';

@@ -147,23 +147,8 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             return matchesTags && matchesBaseModel && matchesType && matchesNSFW;
         });
 
-        result.sort((a, b) => {
-            switch (sortBy) {
-                case 'name':
-                    return (a.name || '').localeCompare(b.name || '');
-                case 'date':
-                    return (b.modified_time || 0) - (a.modified_time || 0);
-                case 'size':
-                    return (b.size || 0) - (a.size || 0);
-                case 'rating':
-                    return (b.stats?.thumbsUp || 0) - (a.stats?.thumbsUp || 0);
-                default:
-                    return 0;
-            }
-        });
-
         return result;
-    }, [files, selectedTags, sortBy, filterBaseModel, filterType, showNSFW]);
+    }, [files, selectedTags, filterBaseModel, filterType, showNSFW]);
 
     const handleDelete = async (file) => {
         const displayName = file.display_name || file.name;
@@ -445,6 +430,11 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                     <h3 className="text-sm font-medium text-white line-clamp-2 mb-1" title={file.display_name || file.name}>
                                         {file.display_name || file.name}
                                     </h3>
+                                    {file.description?.includes("Auto-discovered") && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/50 mb-1">
+                                            Auto-discovered
+                                        </span>
+                                    )}
                                     <div className="flex items-center justify-between text-xs text-gray-400 gap-2">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <span>{(file.size / 1024 / 1024).toFixed(0)} MB</span>

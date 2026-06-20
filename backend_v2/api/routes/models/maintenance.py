@@ -183,6 +183,7 @@ async def backfill_provider_statuses(
     from sqlmodel import select
     from api.provider_runtime import resolve_provider_runtime
     from infrastructure.http_client import get_http_client
+    from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
 
     service = get_model_service(session)
 
@@ -208,22 +209,8 @@ async def backfill_provider_statuses(
     
     http_client = get_http_client()
     
-    # Model directories matching provider_core/models.py MODEL_DIRECTORIES
     MODEL_DIRECTORIES = [
-        "models/checkpoints",
-        "models/loras",
-        "models/vae",
-        "models/controlnet",
-        "models/unet",
-        "models/clip",
-        "models/upscale_models",
-        "models/embeddings",
-        "models/hypernetworks",
-        "models/aesthetics",
-        "models/poses",
-        "models/wildcards",
-        "models/ultralytics/bbox",
-        "models/motion_modules",
+        f"models/{d}" for d in _DIRECTORY_TO_MODEL_TYPE
     ]
     
     import asyncio

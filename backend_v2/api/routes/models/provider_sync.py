@@ -1,14 +1,13 @@
-from .schemas import *
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends
 
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_session_sync
+from api.deps import get_session
 from services.model_service import ModelServiceV2
-from core.exceptions import NotFoundError, ValidationError, ComfyError
 from infrastructure.logging import model_logger
+from .schemas import UpdateProviderStatusRequest
 
 logger = model_logger()
 
@@ -16,7 +15,6 @@ router = APIRouter()
 
 def get_model_service(session: Session) -> ModelServiceV2:
     return ModelServiceV2(session)
-from .crud import UpdateProviderStatusRequest
 
 
 # ============================================================================

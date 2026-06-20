@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { X, AlertCircle, ExternalLink } from 'lucide-react';
+import { X, AlertCircle, ExternalLink, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import { api } from '../../api';
 
 export default function ModelDetailsModal({ file, onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
@@ -85,6 +86,22 @@ export default function ModelDetailsModal({ file, onClose }) {
         || null
     );
 
+    const isAutoDiscovered = modelDescription?.includes("Auto-discovered");
+
+    const handleAutopopulate = async () => {
+        if (!file.model_id) {
+            toast.error("Model has no database ID");
+            return;
+        }
+        try {
+            await api.post(`/api/v2/models/${file.model_id}/autopopulate`);
+            toast.success("Model details autopopulated!");
+            setTimeout(() => window.location.reload(), 1500);
+        } catch (e) {
+            toast.error("Failed to autopopulate: " + (e.message || "Unknown error"));
+        }
+    };
+
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
 
@@ -159,9 +176,21 @@ export default function ModelDetailsModal({ file, onClose }) {
                                 )}
                             </div>
                         </div>
-                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors" aria-label="Close modal">
-                            <X size={24} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {isAutoDiscovered && file.model_id && (
+                                <button
+                                    onClick={handleAutopopulate}
+                                    className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
+                                    title="Fetch metadata from CivitAI"
+                                    aria-label="Autopopulate model metadata"
+                                >
+                                    <Wand2 size={20} />
+                                </button>
+                            )}
+                            <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors" aria-label="Close modal">
+                                <X size={24} />
+                            </button>
+                        </div>
                     </div>
 
                     {/* Version Selector - only show if multiple versions */}
@@ -272,6 +301,26 @@ export default function ModelDetailsModal({ file, onClose }) {
                                 </div>
                             )}
 
+                            {/* Autopopulate prompt for auto-discovered models with partial data */}
+                            {isAutoDiscovered && file.model_id && (
+                                <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-4">
+                                    <div className="flex items-start gap-3">
+                                        <AlertCircle className="text-yellow-400 mt-0.5 shrink-0" size={18} />
+                                        <div className="flex-1">
+                                            <p className="text-sm text-yellow-300 font-medium">Auto-discovered Model</p>
+                                            <p className="text-xs text-yellow-400/70 mt-1">This model was auto-discovered from provider storage. Some details may be incomplete.</p>
+                                            <button
+                                                onClick={handleAutopopulate}
+                                                className="mt-2 text-xs px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors inline-flex items-center gap-1"
+                                            >
+                                                <Wand2 size={12} />
+                                                Fetch Full Metadata
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Tags */}
                             {tags.length > 0 && (
                                 <div>
@@ -307,6 +356,15 @@ export default function ModelDetailsModal({ file, onClose }) {
                             <AlertCircle className="mx-auto mb-2 opacity-50" />
                             <p>No metadata available for this model.</p>
                             <p className="text-xs mt-2">This model may have been added before V2 migration.</p>
+                            {file.model_id && (
+                                <button
+                                    onClick={handleAutopopulate}
+                                    className="mt-4 px-4 py-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors text-sm"
+                                >
+                                    <Wand2 size={16} className="inline mr-2" />
+                                    Fetch Metadata from CivitAI
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>

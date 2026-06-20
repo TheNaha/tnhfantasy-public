@@ -111,10 +111,7 @@ export default function Layout({ children }) {
                     {/* Close button only for mobile overlay mode */}
                     <button
                         onClick={() => setIsMobileMenuOpen(false)}
-                        className={clsx(
-                            "lg:hidden text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg p-1",
-                            !isMobileMenuOpen && "hidden" // Ensure it's hidden when not in mobile menu mode if standard media queries fail
-                        )}
+                        className="lg:hidden text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg p-1"
                         aria-label="Close mobile menu"
                     >
                         <X size={24} aria-hidden="true" />

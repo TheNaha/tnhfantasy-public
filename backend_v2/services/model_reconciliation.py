@@ -38,9 +38,10 @@ def _clean_filename_for_display(filename: str) -> str:
     # Handle version patterns like "v10", "v1.0", "version_10"
     name = re.sub(r'\bv(\d+(?:\.\d+)?)\b', r'v\1', name, flags=re.IGNORECASE)
 
-    # Remove common hash/id suffixes (long alphanumeric sequences)
-    name = re.sub(r'[\s_]?[a-f0-9]{6,}$', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'[\s_]?\d{5,}$', '', name)  # Remove long numeric suffixes
+    # Remove common hash/id suffixes (long hex patterns, typically 8+ chars)
+    name = re.sub(r'[\s_]?[a-f0-9]{8,}$', '', name, flags=re.IGNORECASE)
+    # Remove trailing version IDs that look like civitai-style suffixes: _413394
+    name = re.sub(r'[\s_]?\d{6,}$', '', name)
 
     # Clean up duplicate whitespace
     name = re.sub(r'\s+', ' ', name).strip()
@@ -124,7 +125,7 @@ class ModelReconciliationService:
                         name=display_name,
                         type=resolved_type,
                         directory=directory,
-                        description=f"Auto-discovered from {provider_id} storage",
+                        description="Auto-discovered from provider storage",
                         source="custom",
                         nsfw=False,
                         nsfw_level=1,
