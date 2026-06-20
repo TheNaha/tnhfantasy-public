@@ -5,6 +5,8 @@
 
 import { getApiUrl, DEFAULT_API_URL } from './config';
 
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+
 // Use relative URLs when no explicit API URL is configured.
 // In production, nginx proxies /api/ to the backend.
 // In development, Vite's proxy handles CORS.
@@ -72,7 +74,7 @@ export function createIdempotencyKey(scope = 'request') {
 async function request(endpoint, options = {}) {
     const url = `${getBaseUrl()}${endpoint}`;
 
-    const { idempotencyKey, ...requestOptions } = options;
+    const { idempotencyKey, timeout, signal: userSignal, ...requestOptions } = options;
 
     const config = {
         headers: {
@@ -91,8 +93,22 @@ async function request(endpoint, options = {}) {
         delete config.headers['Content-Type'];
     }
 
+    // Timeout guard: only create AbortController when no manual signal is provided
+    let abortTimeout;
+    if (!userSignal) {
+        const timeoutMs = typeof timeout === 'number' ? timeout : DEFAULT_TIMEOUT;
+        if (timeoutMs > 0) {
+            const controller = new AbortController();
+            abortTimeout = setTimeout(() => controller.abort(), timeoutMs);
+            config.signal = controller.signal;
+        }
+    } else {
+        config.signal = userSignal;
+    }
+
     try {
         const response = await fetch(url, config);
+        clearTimeout(abortTimeout);
 
         // Handle non-JSON responses (like file downloads)
         const contentType = response.headers.get('content-type');
@@ -115,7 +131,11 @@ async function request(endpoint, options = {}) {
 
         return data;
     } catch (error) {
+        clearTimeout(abortTimeout);
         if (error instanceof ApiError) throw error;
+        if (abortTimeout !== undefined && error.name === 'AbortError') {
+            throw new ApiError('Request timed out', 408);
+        }
         throw new ApiError(error.message, 0);
     }
 }

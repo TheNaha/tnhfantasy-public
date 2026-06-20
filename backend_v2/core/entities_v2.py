@@ -82,8 +82,8 @@ class ModelV2(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships (for eager loading)
-    # versions: List["ModelVersion"] = Relationship(back_populates="model")
-    # tags: List["ModelTag"] = Relationship(back_populates="model")
+    versions: List["ModelVersion"] = Relationship(back_populates="model")
+    tags: List["ModelTag"] = Relationship(back_populates="model")
 
 
 # ============================================================================
@@ -126,9 +126,9 @@ class ModelVersion(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
-    # model: Optional["ModelV2"] = Relationship(back_populates="versions")
-    # files: List["ModelFile"] = Relationship(back_populates="version")
-    # images: List["ModelImage"] = Relationship(back_populates="version")
+    model: Optional["ModelV2"] = Relationship(back_populates="versions")
+    files: List["ModelFile"] = Relationship(back_populates="version")
+    images: List["ModelImage"] = Relationship(back_populates="version")
 
 
 # ============================================================================
@@ -169,8 +169,8 @@ class ModelFile(SQLModel, table=True):
     file_type: str = Field(default="Model")  # Model, Config, VAE, etc.
     
     # Relationships
-    # version: Optional["ModelVersion"] = Relationship(back_populates="files")
-    # provider_statuses: List["ProviderVersionStatus"] = Relationship(back_populates="file")
+    version: Optional["ModelVersion"] = Relationship(back_populates="files")
+    provider_statuses: List["ProviderVersionStatus"] = Relationship(back_populates="file")
 
 
 # ============================================================================
@@ -208,7 +208,7 @@ class ModelImage(SQLModel, table=True):
     sort_order: int = Field(default=0)
     
     # Relationships
-    # version: Optional["ModelVersion"] = Relationship(back_populates="images")
+    version: Optional["ModelVersion"] = Relationship(back_populates="images")
 
 
 # ============================================================================
@@ -247,7 +247,7 @@ class ProviderVersionStatus(SQLModel, table=True):
     retry_count: int = Field(default=0)
     
     # Relationships
-    # file: Optional["ModelFile"] = Relationship(back_populates="provider_statuses")
+    file: Optional["ModelFile"] = Relationship(back_populates="provider_statuses")
 
     @property
     def provider_key(self) -> Optional[str]:
@@ -275,7 +275,7 @@ class ModelTag(SQLModel, table=True):
     tag: str = Field(index=True)
     
     # Relationships
-    # model: Optional["ModelV2"] = Relationship(back_populates="tags")
+    model: Optional["ModelV2"] = Relationship(back_populates="tags")
 
 
 # ============================================================================

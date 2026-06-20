@@ -15,7 +15,7 @@
  *     top-right with a dark theme matching the overall UI.
  */
 
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -61,8 +61,6 @@ function AnimatedRoutes() {
     );
 }
 
-let hasRequestedProviderWake = false;
-
 function GlobalHooks() {
     // Initialize dynamic viewport height for iOS Safari
     // This sets --vh CSS variable that works correctly with address bar
@@ -70,6 +68,20 @@ function GlobalHooks() {
     
     // Initialize global job notifications and WebSocket sync
     useJobsRealtime();
+
+    // Gate to ensure provider wake is only called once per mount
+    const hasRequestedProviderWake = useRef(false);
+
+    useEffect(() => {
+        if (hasRequestedProviderWake.current) {
+            return;
+        }
+        hasRequestedProviderWake.current = true;
+
+        api.post('/api/providers/wake').catch((error) => {
+            console.warn('Failed to warm providers:', error);
+        });
+    }, []);
 
     return null;
 }
@@ -121,17 +133,6 @@ function App() {
             },
         });
     }, [queryClient, queryUiSettings]);
-
-    useEffect(() => {
-        if (hasRequestedProviderWake) {
-            return;
-        }
-        hasRequestedProviderWake = true;
-
-        api.post('/api/providers/wake').catch((error) => {
-            console.warn('Failed to warm providers:', error);
-        });
-    }, []);
 
     useEffect(() => {
         loadBranding();

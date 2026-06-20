@@ -940,7 +940,7 @@ class FileStorage:
 )
 def storage_get_file(path: str) -> bytes:
     """Get file from volume (serverless function)."""
-    return FileStorage().get_file.remote(path)
+    return FileStorage().read_file.remote(path)
 
 
 @app.function(
@@ -960,7 +960,7 @@ def storage_delete_file(path: str) -> bool:
 )
 def storage_list_files(directory: str = "models") -> list:
     """List files in directory (serverless function)."""
-    return FileStorage().list_files.remote(directory)
+    return FileStorage().list_directory.remote(directory)
 
 
 @app.function(
@@ -983,6 +983,8 @@ def storage_file_exists(path: str) -> bool:
 def setup_models():
     vol.reload()
     import os
+    import requests
+    import time
     from provider_core.models import MODEL_DIRECTORIES
     dirs = ["/mnt/data/output", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]
     for d in dirs:
@@ -990,10 +992,6 @@ def setup_models():
         logger.debug(f"Ensured directory: {d}")
         
     logger.info("Setup complete. Volume ready.")
-
-    import os
-    import requests
-    import time
 
     models = [
         # Upscalers

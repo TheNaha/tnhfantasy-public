@@ -517,9 +517,8 @@ class LoadBalancer:
                 
             # Persist state periodically (every 5 jobs)
             total_jobs = sum(self.runtime_state.provider_job_counts.values())
-
-        if total_jobs % 5 == 0:
-            LoadBalancer.save_state_to_db(self.session, self.runtime_state)
+            if total_jobs % 5 == 0:
+                LoadBalancer.save_state_to_db(self.session, self.runtime_state)
     
     async def _round_robin(self, providers: List[Provider]) -> Provider:
         """Round-robin selection."""

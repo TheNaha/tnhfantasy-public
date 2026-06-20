@@ -30,7 +30,7 @@ def _get_ws_cors_origins():
     """Get CORS origins for WebSocket. Returns '*' if settings allow all origins."""
     origins = settings.cors_origins
     # If settings contains wildcard patterns or is empty, allow all
-    if not origins or '*' in origins or 'http://*' in origins:
+    if not origins or '*' in origins:
         return '*'
     return origins
 
