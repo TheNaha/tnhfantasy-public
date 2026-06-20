@@ -14,6 +14,7 @@ export function useJobsRealtime() {
     const mobilePollingIntervalRef = useRef(null);
     const connectionToastIdRef = useRef(null);
     const initializedRef = useRef(false);
+    const lastSequenceNumberRef = useRef(0);
 
     const markEventReceived = useCallback(() => {
         lastEventTimeRef.current = Date.now();
@@ -84,18 +85,22 @@ export function useJobsRealtime() {
             await ws.connect();
             await ws.subscribe('job');
             initializedRef.current = true;
+
+            // Request replay of any events missed during disconnection
+            if (lastSequenceNumberRef.current > 0) {
+                console.log(`[useJobsRealtime] Requesting replay from sequence ${lastSequenceNumberRef.current}`);
+                const missedEvents = await ws.requestReplay(lastSequenceNumberRef.current);
+                if (missedEvents.length > 0) {
+                    console.log(`[useJobsRealtime] Received ${missedEvents.length} replayed events`);
+                    ws.dispatchReplayEvents(missedEvents);
+                }
+                // After replay, invalidate active jobs to ensure consistency
+                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+            }
         } catch (error) {
             console.error('[useJobsRealtime] WebSocket connect/subscribe failed:', error);
         }
-    }, []);
-
-    const reconnect = useCallback(async () => {
-        console.log('[useJobsRealtime] Force reconnecting WebSocket...');
-        ws.disconnect();
-        initializedRef.current = false;
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await connectAndSubscribe();
-    }, [connectAndSubscribe]);
+    }, [queryClient]);
 
     useEffect(() => {
         // Initial setup
@@ -108,6 +113,7 @@ export function useJobsRealtime() {
         unsubs.push(ws.on(ws.EventTypes.JOB_CREATED, (event) => {
             const job = event.data?.job || event;
             markEventReceived();
+            if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
                 if (old.some(j => j.id === job.id)) return old;
                 return [job, ...old];
@@ -118,6 +124,7 @@ export function useJobsRealtime() {
         const handleUpdate = (event) => {
             const job = event.data?.job || event;
             markEventReceived();
+            if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
             queryClient.setQueryData(['jobs', 'active'], (old = []) =>
                 old.map(j => j.id === job.id ? { ...j, ...job } : j)
             );
@@ -134,6 +141,7 @@ export function useJobsRealtime() {
         const handleTermination = (event, type) => {
             const job = event.data?.job || event;
             markEventReceived();
+            if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
 
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
                 const remaining = old.filter(j => j.id !== job.id);
@@ -194,8 +202,10 @@ export function useJobsRealtime() {
                 console.log('[useJobsRealtime] Page became visible, checking WebSocket connection...');
 
                 if (isMobile()) {
-                    console.log('[useJobsRealtime] Mobile detected, forcing WebSocket reconnect...');
-                    reconnect();
+                    console.log('[useJobsRealtime] Mobile detected, checking WebSocket...');
+                    if (!ws.getConnectionStatus()) {
+                        void connectAndSubscribe();
+                    }
                     const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
                     if (activeJobs.length > 0) startMobilePolling();
                 } else if (!ws.getConnectionStatus()) {
@@ -209,12 +219,17 @@ export function useJobsRealtime() {
         };
 
         const onOnline = () => {
-            console.log('[useJobsRealtime] Network online, reconnecting WebSocket...');
+            console.log('[useJobsRealtime] Network online, checking WebSocket...');
             dismissConnectionToast();
-            reconnect();
+            // Only reconnect if actually disconnected — don't destroy a working socket
+            if (!ws.getConnectionStatus()) {
+                void connectAndSubscribe();
+            }
             queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-            const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
-            if (isMobile() && activeJobs.length > 0) startMobilePolling();
+            if (isMobile()) {
+                const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
+                if (activeJobs.length > 0) startMobilePolling();
+            }
         };
 
         const onOffline = () => {
@@ -229,14 +244,16 @@ export function useJobsRealtime() {
         return () => {
             unsubs.forEach(unsub => unsub?.());
             ws.unsubscribe('job');
-            ws.disconnect();
+            // Do NOT call ws.disconnect() — the socket is a module-level singleton
+            // that should persist for the lifetime of the page. Destroying it here
+            // causes events to be lost during the reconnection window.
             stopMobilePolling();
             dismissConnectionToast();
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
             window.removeEventListener('offline', onOffline);
         };
-    }, [queryClient, connectAndSubscribe, reconnect, startMobilePolling, stopMobilePolling, dismissConnectionToast, markEventReceived]);
+    }, [queryClient, connectAndSubscribe, startMobilePolling, stopMobilePolling, dismissConnectionToast, markEventReceived]);
 }
 
 export default useJobsRealtime;

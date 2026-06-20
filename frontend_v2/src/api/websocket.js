@@ -320,6 +320,61 @@ export async function emit(event, data) {
 }
 
 /**
+ * Request replay of missed events from the server's replay buffer.
+ * @param {number} lastSequenceNumber - The last sequence number the client received
+ * @returns {Promise} Resolves with the replay events array
+ */
+export function requestReplay(lastSequenceNumber) {
+    return connect().then(() => new Promise((resolve, reject) => {
+        if (!socket) {
+            reject(new Error('Not connected'));
+            return;
+        }
+
+        let timeoutId = null;
+
+        const cleanup = () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            socket.off('replay_events', handler);
+            socket.off('error', errorHandler);
+        };
+
+        const handler = (data) => {
+            cleanup();
+            resolve(data?.events || []);
+        };
+
+        const errorHandler = (data) => {
+            cleanup();
+            reject(new Error(data?.message || 'Replay request failed'));
+        };
+
+        socket.on('replay_events', handler);
+        socket.on('error', errorHandler);
+        socket.emit('request_replay', { last_sequence_number: lastSequenceNumber });
+
+        timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error('Replay request timeout'));
+        }, 10000);
+    }));
+}
+
+/**
+ * Dispatch replayed events to registered listeners.
+ * Re-emits each event locally so that handlers registered via on() receive them.
+ * @param {Array} events - Array of replayed event objects
+ */
+export function dispatchReplayEvents(events) {
+    if (!events || events.length === 0) return;
+    events.forEach(event => {
+        if (event?.type) {
+            emitLocal(event.type, event);
+        }
+    });
+}
+
+/**
  * Request job cancellation via WebSocket
  * @param {string} jobId - Job ID to cancel
  * @returns {Promise} Resolves with acknowledgment
@@ -465,6 +520,8 @@ export default {
     off,
     emit,
     cancelJob,
+    requestReplay,
+    dispatchReplayEvents,
     getConnectionStatus,
     EventTypes,
     useWebSocket,
