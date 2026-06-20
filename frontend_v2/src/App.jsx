@@ -30,7 +30,7 @@ import { useSettings } from './store/settingsStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { api } from './api';
-
+// Lazy-loaded pages to minimise initial JS bundle
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
 const AdvancedGenerator = lazy(() => import('./pages/AdvancedGenerator'));

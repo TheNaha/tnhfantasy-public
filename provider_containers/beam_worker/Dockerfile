@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
     websockets \
     aiofiles \
     tenacity \
+    requests \
  && ln -sf /usr/local/bin/beta9 /usr/local/bin/beam
 
 # Copy shared provider_core package (available since build context is provider_containers/)

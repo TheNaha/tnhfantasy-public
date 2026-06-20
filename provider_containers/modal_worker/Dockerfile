@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir \
     httpx \
     python-multipart \
     aiofiles \
-    tenacity
+    tenacity \
+    requests
 
 # Copy shared provider_core package (available since build context is provider_containers/)
 COPY provider_core/ /app/provider_core/

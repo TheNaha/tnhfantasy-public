@@ -1,0 +1,24 @@
+# docker-compose.dev.yml
+# Dev mode override for frontend debugging
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build frontend_v2
+
+# This runs the frontend Vite dev server instead of the production nginx build.
+# Access the app at http://localhost:5174 to get non-minified error messages.
+# For live reload during development, add a volume mount:
+#   volumes:
+#     - ./frontend_v2/src:/app/src
+
+services:
+  frontend_v2:
+    build:
+      target: dev
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_PROXY_TARGET: http://backend_v2:8002
+    healthcheck:
+      test: ["CMD", "node", "-e", "const h=require('http');h.get('http://localhost:5174/',r=>{process.exit(r.statusCode>=200&&r.statusCode<400?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
