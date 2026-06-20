@@ -285,42 +285,8 @@ async def list_models(request: Request):
     data = await request.json()
     directory = data.get("directory", "models/checkpoints")
     
-    from provider_core.utils import get_safe_path
-    try:
-        target_dir = get_safe_path("/mnt/data", directory)
-    except Exception:
-        logger.warning(f"[ListModels] Path traversal blocked: {directory}")
-        return {"files": []}
-
-    if not os.path.exists(target_dir):
-        return {"files": []}
-        
-    entries = os.listdir(target_dir)
-    files = []
-    entry_set = set(entries)
-    
-    for name in entries:
-        if name.endswith('.json') or name.endswith('.preview.png'):
-            continue
-        full_path = os.path.join(target_dir, name)
-        if not os.path.isfile(full_path):
-            continue
-            
-        file_data = {"name": name, "type": "file", "size": os.path.getsize(full_path)}
-        
-        preview_name = f"{os.path.splitext(name)[0]}.preview.png"
-        if preview_name in entry_set:
-            file_data["preview"] = f"/api/view/{directory}/{preview_name}"
-            
-        meta_name = f"{os.path.splitext(name)[0]}.json"
-        if meta_name in entry_set:
-            try:
-                with open(os.path.join(target_dir, meta_name), 'r') as f:
-                    file_data["metadata"] = json.load(f)
-            except Exception:
-                pass
-                
-        files.append(file_data)
+    from provider_core.models_utils import list_models_with_metadata_internal
+    files = await list_models_with_metadata_internal("/mnt/data", directory)
     
     return {"files": files}
 
@@ -398,6 +364,7 @@ async def upload_file(request: Request):
 async def validate_models(request: Request):
     from provider_core.utils import get_safe_path
     from provider_core.validation import validate_downloaded_file
+    import asyncio
     
     data = await request.json()
     directory = data.get("directory", "models/checkpoints")
@@ -411,50 +378,49 @@ async def validate_models(request: Request):
     if not os.path.exists(target_dir):
         return {"valid": [], "invalid": [], "partial": [], "total": 0}
     
-    valid_models = []
-    invalid_models = []
-    partial_downloads = []
-    
-    entries = os.listdir(target_dir)
-    for name in entries:
-        if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
-            continue
-        
-        full_path = os.path.join(target_dir, name)
-        if not os.path.isfile(full_path):
-            continue
-            
-        if name.endswith('.downloading'):
-            partial_downloads.append({
-                "name": name,
-                "size": os.path.getsize(full_path),
-                "issue": "Incomplete download (temp file)"
-            })
-            if delete_invalid:
-                os.remove(full_path)
-            continue
-            
-        file_size = os.path.getsize(full_path)
-        validation = validate_downloaded_file(full_path)
-        
-        model_info = {
-            "name": name,
-            "size": file_size,
-            "size_mb": round(file_size / (1024 * 1024), 1),
-            "format": validation.get("format", "unknown")
-        }
-        
-        if not validation["valid"]:
-            model_info["issues"] = [validation["error"]]
-            invalid_models.append(model_info)
-            if delete_invalid:
-                os.remove(full_path)
-                for ext in [".json", ".preview.png"]:
-                    side_file = os.path.splitext(full_path)[0] + ext
-                    if os.path.exists(side_file):
-                        os.remove(side_file)
-        else:
-            valid_models.append(model_info)
+    def _validate_dir():
+        valid_models = []
+        invalid_models = []
+        partial_downloads = []
+        with os.scandir(target_dir) as entries:
+            for entry in entries:
+                name = entry.name
+                if name.endswith(('.json', '.preview.png', '.txt', '.yaml', '.yml')):
+                    continue
+                if not entry.is_file():
+                    continue
+                full_path = entry.path
+                if name.endswith('.downloading'):
+                    partial_downloads.append({
+                        "name": name,
+                        "size": entry.stat().st_size,
+                        "issue": "Incomplete download (temp file)"
+                    })
+                    if delete_invalid:
+                        os.remove(full_path)
+                    continue
+                file_size = entry.stat().st_size
+                validation = validate_downloaded_file(full_path)
+                model_info = {
+                    "name": name,
+                    "size": file_size,
+                    "size_mb": round(file_size / (1024 * 1024), 1),
+                    "format": validation.get("format", "unknown")
+                }
+                if not validation["valid"]:
+                    model_info["issues"] = [validation["error"]]
+                    invalid_models.append(model_info)
+                    if delete_invalid:
+                        os.remove(full_path)
+                        for ext in [".json", ".preview.png"]:
+                            side_file = os.path.splitext(full_path)[0] + ext
+                            if os.path.exists(side_file):
+                                os.remove(side_file)
+                else:
+                    valid_models.append(model_info)
+        return valid_models, invalid_models, partial_downloads
+
+    valid_models, invalid_models, partial_downloads = await asyncio.to_thread(_validate_dir)
             
     return {
         "directory": directory,

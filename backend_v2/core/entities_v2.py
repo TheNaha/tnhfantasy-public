@@ -462,3 +462,9 @@ POPULAR_VAE_OPTIONS = {
         }
     ]
 }
+
+class DeletedFileTombstone(SQLModel, table=True):
+    __tablename__ = "deleted_file_tombstones"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    storage_path: str = Field(index=True, unique=True)
+    deleted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

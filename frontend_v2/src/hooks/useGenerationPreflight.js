@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { jobsApi } from '../api';
+import { useGeneratorStore } from '../store/generatorStore';
 
 function countModelEntries(modelGroups = {}) {
     return Object.values(modelGroups).reduce((total, filenames) => (
@@ -9,7 +10,10 @@ function countModelEntries(modelGroups = {}) {
 
 export function useGenerationPreflight() {
     const [isChecking, setIsChecking] = useState(false);
-    const [validationResult, setValidationResult] = useState(null);
+    const { preflightResult: validationResult, setPreflightResult: setValidationResult } = useGeneratorStore(state => ({
+        preflightResult: state.preflightResult,
+        setPreflightResult: state.setPreflightResult
+    }));
     const [isMissingModelsOpen, setIsMissingModelsOpen] = useState(false);
 
     const validateWorkflow = useCallback(async (workflow, preferredProviderId = null) => {

@@ -304,7 +304,7 @@ async def execute_comfy_workflow(
                         "prompt_id": prompt_id,
                     }
             elif msg_type == "progress":
-                if msg_prompt_id == prompt_id:
+                if msg_prompt_id is None or msg_prompt_id == prompt_id:
                     yield {
                         "status": "progress",
                         "value": msg_data.get("value", 0),

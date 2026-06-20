@@ -9,7 +9,7 @@ import json
 from core.entities_v2 import (
     ModelV2, ModelVersion, ModelFile, ModelImage, 
     ProviderVersionStatus, ModelTag, compute_storage_filename, get_directory_from_type,
-    is_unet_only_model, FLUX_DEFAULT_COMPONENTS
+    is_unet_only_model, FLUX_DEFAULT_COMPONENTS, DeletedFileTombstone
 )
 from infrastructure.logging import get_logger
 
@@ -482,6 +482,15 @@ class ModelRepositoryV2:
         )
         return self.session.exec(stmt).first()
     
+    def add_tombstone(self, storage_path: str):
+        existing = self.session.exec(select(DeletedFileTombstone).where(DeletedFileTombstone.storage_path == storage_path)).first()
+        if not existing:
+            self.session.add(DeletedFileTombstone(storage_path=storage_path))
+            self.session.commit()
+            
+    def is_tombstoned(self, storage_path: str) -> bool:
+        return self.session.exec(select(DeletedFileTombstone).where(DeletedFileTombstone.storage_path == storage_path)).first() is not None
+    
     def create_system_dependency(
         self,
         name: str,
@@ -581,42 +590,38 @@ class ModelRepositoryV2:
         Get files pending download for a provider.
         Returns file info with version and model context.
         """
-        # Find files that don't have a 'ready' status for this provider
-        # This uses a subquery to find files without status entries
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
+        ).outerjoin(
+            ProviderVersionStatus,
+            and_(
+                ProviderVersionStatus.file_id == ModelFile.id,
+                self._provider_match_clause(provider_name)
+            )
         ).where(
-            ModelVersion.is_enabled == True
+            ModelVersion.is_enabled == True,
+            or_(
+                ProviderVersionStatus.id == None,
+                ProviderVersionStatus.status != "ready"
+            )
         )
         
         results = []
         for file, version, model in self.session.exec(stmt).all():
-            # Check if there's a ready status for this provider
-            status_stmt = select(ProviderVersionStatus).where(
-                and_(
-                    ProviderVersionStatus.file_id == file.id,
-                    self._provider_match_clause(provider_name),
-                    ProviderVersionStatus.status == "ready"
-                )
-            )
-            existing_status = self.session.exec(status_stmt).first()
-            
-            if not existing_status:
-                results.append({
-                    "file_id": file.id,
-                    "version_id": version.id,
-                    "model_id": model.id,
-                    "model_name": model.name,
-                    "version_name": version.name,
-                    "storage_filename": file.storage_filename,
-                    "storage_path": f"models/{model.directory}/{file.storage_filename}",
-                    "download_url": file.download_url,
-                    "size_kb": file.size_kb,
-                    "hash_sha256": file.hash_sha256
-                })
-        
+            results.append({
+                "file_id": file.id,
+                "version_id": version.id,
+                "model_id": model.id,
+                "model_name": model.name,
+                "version_name": version.name,
+                "storage_filename": file.storage_filename,
+                "storage_path": f"models/{model.directory}/{file.storage_filename}",
+                "download_url": file.download_url,
+                "size_kb": file.size_kb,
+                "hash_sha256": file.hash_sha256
+            })
         return results
     
     def get_provider_status(
@@ -1183,4 +1188,25 @@ class ModelRepositoryV2:
         
         logger.info("migration_complete", migrated_count=len(migrated))
         return {"migrated": migrated, "count": len(migrated)}
+
+    def garbage_collect_auto_discovered(self) -> int:
+        stmt = select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
+        models = self.session.exec(stmt).all()
+        deleted = 0
+        for m in models:
+            has_active = False
+            for v in m.versions:
+                for f in v.files:
+                    status_stmt = select(ProviderVersionStatus).where(
+                        ProviderVersionStatus.file_id == f.id,
+                        ProviderVersionStatus.status.in_(["ready", "downloading", "pending"])
+                    )
+                    if self.session.exec(status_stmt).first():
+                        has_active = True
+                        break
+                if has_active: break
+            if not has_active:
+                self.delete_model(m.id)
+                deleted += 1
+        return deleted
 

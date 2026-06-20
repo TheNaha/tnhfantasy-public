@@ -174,16 +174,18 @@ async def batch_update_status(
     if not provider_key:
         raise ValidationError("provider_id or provider_name is required")
     
-    # Build storage_path -> file_id lookup if needed
+    paths = [u.storage_path for u in request.updates if u.file_id is None and u.storage_path]
     path_to_file_id = None
-    needs_path_lookup = any(u.file_id is None and u.storage_path for u in request.updates)
     
-    if needs_path_lookup:
+    if paths:
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
         )
+        filenames = [p.split('/')[-1] for p in paths]
+        stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
+        
         path_to_file_id = {}
         for file, version, model in session.exec(stmt).all():
             storage_path = f"models/{model.directory}/{file.storage_filename}"
@@ -213,6 +215,9 @@ async def batch_update_status(
             updated += 1
         except Exception:
             failed += 1
+    
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+    ModelRepositoryV2(session).garbage_collect_auto_discovered()
     
     return {"updated": updated, "failed": failed}
 

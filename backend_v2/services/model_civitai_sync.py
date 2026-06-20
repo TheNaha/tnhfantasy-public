@@ -110,6 +110,9 @@ class ModelCivitaiSyncService:
         # Update model-level fields
         model.civitai_model_id = civitai_data.get("id")
         model.nsfw = civitai_data.get("nsfw", False)
+        
+        if civitai_data.get("name"):
+            model.name = civitai_data.get("name")
 
         # Update description (always replace "Auto-discovered" stubs)
         new_desc = civitai_data.get("description", "")

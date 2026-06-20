@@ -83,29 +83,6 @@ class Provider(SQLModel, table=True):
     container_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 
-class Download(SQLModel, table=True):
-    """
-    Represents an active model download.
-    Tracks progress for UI display.
-    """
-    __tablename__ = "downloads"
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    name: str  # Display name
-    url: str
-    path: str  # Target path
-    provider_id: str
-    
-    # Progress tracking
-    status: str = Field(default="pending")  # pending, downloading, completed, failed
-    progress: float = Field(default=0.0)
-    speed: Optional[str] = Field(default=None)
-    downloaded_size: Optional[str] = Field(default=None)
-    total_size: Optional[str] = Field(default=None)
-    message: Optional[str] = Field(default=None)
-    
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
 
 class LoadBalancingConfig(SQLModel, table=True):
     """Load balancing configuration singleton."""

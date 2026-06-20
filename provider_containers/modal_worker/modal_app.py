@@ -530,6 +530,7 @@ class ComfyUISnapshot:
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, info: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
+    vol.reload()
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
@@ -632,9 +633,10 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
     max_containers=STORAGE_MAX_CONTAINERS
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
-def list_models_with_metadata(directory: str):
+async def list_models_with_metadata(directory: str):
+    vol.reload()
     from provider_core.models_utils import list_models_with_metadata_internal
-    return list_models_with_metadata_internal("/mnt/data", directory)
+    return await list_models_with_metadata_internal("/mnt/data", directory)
 
 
 # ============================================
@@ -649,6 +651,7 @@ def list_models_with_metadata(directory: str):
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 def validate_models(directories: list[str] = ["models/checkpoints"], delete_invalid: bool = False):
+    vol.reload()
     """
     Validate all models in specified directories.
     Checks: minimum size, magic bytes, partial downloads.
@@ -822,18 +825,13 @@ class FileStorage:
     """
     
     @modal.method()
-    def get_file(self, path: str) -> bytes:
+    def read_file(self, path: str) -> bytes:
         """
-        Get file contents from volume.
-        
-        Args:
-            path: File path relative to /mnt/data (e.g., "models/checkpoints/model.safetensors")
-            
-        Returns:
-            File contents as bytes
+        Read file contents from the volume.
         """
         import os
         
+        vol.reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Reading file: {full_path}")
         
@@ -846,17 +844,12 @@ class FileStorage:
     @modal.method()
     async def delete_file(self, path: str) -> bool:
         """
-        Delete file from volume.
-        
-        Args:
-            path: File path relative to /mnt/data
-            
-        Returns:
-            True if successful
+        Delete a file from the volume.
         """
         import os
         import asyncio
         
+        vol.reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
         
@@ -872,18 +865,13 @@ class FileStorage:
             return False
     
     @modal.method()
-    def list_files(self, directory: str = "models") -> list:
+    def list_directory(self, directory: str) -> list[dict]:
         """
-        List files in directory.
-        
-        Args:
-            directory: Directory path relative to /mnt/data
-            
-        Returns:
-            List of file paths
+        List all files in a directory.
         """
         import os
         
+        vol.reload()
         full_path = get_safe_path("/mnt/data", directory)
         logger.info(f"[FileStorage] Listing directory: {full_path}")
         
@@ -904,6 +892,7 @@ class FileStorage:
     def file_exists(self, path: str) -> bool:
         """Check if file exists in volume."""
         import os
+        vol.reload()
         full_path = get_safe_path("/mnt/data", path)
         return os.path.exists(full_path)
     
@@ -911,6 +900,7 @@ class FileStorage:
     def get_file_size(self, path: str) -> int:
         """Get file size in bytes."""
         import os
+        vol.reload()
         full_path = get_safe_path("/mnt/data", path)
         if os.path.exists(full_path):
             return os.path.getsize(full_path)
@@ -991,6 +981,7 @@ def storage_file_exists(path: str) -> bool:
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 def setup_models():
+    vol.reload()
     import os
     from provider_core.models import MODEL_DIRECTORIES
     dirs = ["/mnt/data/output", "/mnt/data/downloads"] + [f"/mnt/data/{d}" for d in MODEL_DIRECTORIES]

@@ -1,5 +1,6 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select
 from api.deps import get_session
 from services.model_civitai_sync import ModelCivitaiSyncService
@@ -23,8 +24,10 @@ async def autopopulate_model_details(model_id: str, session: Session = Depends(g
     repo = ModelCivitaiSyncService(session)
     try:
         return await repo.autopopulate_model(model_id)
+    except ValueError as e:
+        raise NotFoundError("Model", model_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationError(str(e))
 
 
 @router.post("/autopopulate-all")
@@ -64,7 +67,7 @@ async def autopopulate_all_models(
                 "results": results
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise ComfyError(str(e))
     else:
         asyncio.create_task(process_models())
         return {

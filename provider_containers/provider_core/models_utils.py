@@ -23,26 +23,27 @@ async def list_models_with_metadata_internal(base_path: str, directory: str) -> 
     if not os.path.exists(target_dir):
         return []
         
-    # Use scandir to avoid stat overhead and block event loop less
-    try:
-        entries = await asyncio.to_thread(os.listdir, target_dir)
-    except Exception as e:
-        logger.warning(f"Failed to listdir {target_dir}: {e}")
+    def _scan_directory():
+        file_entries = []
+        entry_set = set()
+        try:
+            with os.scandir(target_dir) as it:
+                for entry in it:
+                    if entry.is_file():
+                        entry_set.add(entry.name)
+                        if not (entry.name.endswith('.json') or entry.name.endswith('.preview.png')):
+                            file_entries.append((entry.name, entry.stat().st_size))
+        except Exception as e:
+            logger.warning(f"Failed to scandir {target_dir}: {e}")
+            return [], set()
+        return file_entries, entry_set
+
+    file_entries, entry_set = await asyncio.to_thread(_scan_directory)
+    if not file_entries:
         return []
         
     files = []
-    entry_set = set(entries)
-    
-    for name in entries:
-        if name.endswith('.json') or name.endswith('.preview.png'):
-            continue
-            
-        full_path = os.path.join(target_dir, name)
-        try:
-            file_size = await asyncio.to_thread(os.path.getsize, full_path)
-        except Exception:
-            continue
-            
+    for name, file_size in file_entries:
         file_data = {
             "name": name,
             "type": "file",

@@ -5,7 +5,6 @@ from sqlmodel import SQLModel
 from core.entities import (
     Job, JobStatus,
     Provider,
-    Download,
     LoadBalancingConfig,
     LoadBalancerState,
     Prompt,
@@ -83,26 +82,6 @@ def test_provider_defaults():
     assert provider.config == {}
     assert provider.container_config is None
 
-
-# ============================================================================
-# Download Tests
-# ============================================================================
-
-def test_download_defaults():
-    """Test default values for Download entity."""
-    # Download requires name, url, path, provider_id
-    download = Download(
-        name="test-download",
-        url="http://example.com",
-        path="/tmp",
-        provider_id="p1"
-    )
-
-    assert download.id is not None
-    assert download.status == "pending"
-    assert download.progress == 0.0
-    assert download.speed is None
-    assert isinstance(download.created_at, datetime)
 
 
 # ============================================================================

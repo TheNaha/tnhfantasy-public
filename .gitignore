@@ -36,3 +36,6 @@ backend_v2/patch_*.py
 provider_containers/**/.env.*
 !provider_containers/**/.env.example
 data/db/comfy.db
+
+.ocx/
+.opencode/

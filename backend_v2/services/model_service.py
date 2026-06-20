@@ -69,8 +69,14 @@ class ModelServiceV2:
 
     async def delete_model(self, model_id: int) -> bool:
         """Delete a model and all related data, including from providers."""
-        if not self.repo.get_model(model_id):
+        model = self.repo.get_model(model_id)
+        if not model:
             raise NotFoundError("Model", str(model_id))
+            
+        for v in self.repo.get_versions_for_model(model_id):
+            for f in self.repo.get_files_for_version(v.id):
+                storage_path = f"models/{model.directory}/{f.storage_filename}"
+                self.repo.add_tombstone(storage_path)
 
         # Trigger deletion from all providers BEFORE removing from DB
         await self.downloader.trigger_delete_from_providers(model_id)

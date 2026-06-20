@@ -78,12 +78,12 @@ else:
 def create_db_and_tables() -> None:
     """Create all tables in the database."""
     # Import V1 entities to register them with SQLModel
-    from core.entities import (Collection, CollectionImage, Download, Job,
+    from core.entities import (Collection, CollectionImage, Job,
                                LoadBalancerState, LoadBalancingConfig,
                                Prompt, Provider)
     # Import V2 entities (normalized schema)
     from core.entities_v2 import (ModelFile, ModelImage, ModelTag, ModelV2,
-                                  ModelVersion, ProviderVersionStatus)
+                                  ModelVersion, ProviderVersionStatus, DeletedFileTombstone)
 
     SQLModel.metadata.create_all(engine)
 

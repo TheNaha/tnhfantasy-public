@@ -94,6 +94,11 @@ class ModelReconciliationService:
                 results.append({"path": "", "file_id": None, "status": "error", "reason": "empty path"})
                 continue
 
+            if self.repo.is_tombstoned(storage_path):
+                skipped += 1
+                results.append({"path": storage_path, "file_id": None, "status": "deleted", "reason": "Tombstoned"})
+                continue
+
             parts = storage_path.replace("models/", "", 1).split("/")
             if len(parts) < 2:
                 errors += 1

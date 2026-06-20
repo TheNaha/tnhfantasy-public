@@ -120,17 +120,16 @@ export function useJobsRealtime() {
             });
         }));
 
-        // 2. Job Progress/Updated -> Update in active list & specific query
+        // 2. Job Progress/Updated -> Update in Zustand store to prevent expensive re-renders
         const handleUpdate = (event) => {
             const job = event.data?.job || event;
             markEventReceived();
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
-            queryClient.setQueryData(['jobs', 'active'], (old = []) =>
-                old.map(j => j.id === job.id ? { ...j, ...job } : j)
-            );
-            queryClient.setQueryData(['jobs', job.id], (old) =>
-                old ? { ...old, ...job } : job
-            );
+            
+            // Push high-frequency updates to the lightweight Zustand store
+            import('../store/jobStore').then(({ default: useJobStore }) => {
+                useJobStore.getState().updateJob(job.id, job);
+            });
         };
 
         unsubs.push(ws.on(ws.EventTypes.JOB_PROGRESS, handleUpdate));

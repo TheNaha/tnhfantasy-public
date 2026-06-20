@@ -295,7 +295,9 @@ class TestModelServiceV2NetworkEfficiency:
 
         fake_http_client = _FakeHttpClient()
         with patch("services.model_downloader.get_http_client", return_value=fake_http_client):
-            result = await service.trigger_delete_from_providers(model_id=1)
+            with patch("api.provider_runtime.resolve_provider_runtime") as mock_resolve:
+                mock_resolve.return_value = SimpleNamespace(worker_url="http://fake:8000")
+                result = await service.trigger_delete_from_providers(model_id=1)
 
         assert _FakeHttpClient.created == 1
         assert result["deleted"] == 2

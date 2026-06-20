@@ -2,9 +2,13 @@ import { memo, useState, useEffect, useCallback } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
+import useJobStore from '../../store/jobStore';
 
-const JobCard = memo(function JobCard({ job, onClick, onDelete }) {
+const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const [, setCurrentTime] = useState(() => Date.now());
+
+    const realtimeJob = useJobStore(state => state.jobs[initialJob.id]);
+    const job = realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob;
 
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';

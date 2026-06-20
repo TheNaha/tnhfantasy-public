@@ -115,6 +115,7 @@ export const useGeneratorStore = create(
             height: 1024,
             batchSize: 1,
             aspectRatioLocked: false,
+            preflightResult: null,
 
             // Models
             selectedCheckpoint: null,
@@ -174,23 +175,24 @@ export const useGeneratorStore = create(
             ],
 
             // Actions
-            setPrompt: (prompt) => set({ prompt }),
-            setNegativePrompt: (negativePrompt) => set({ negativePrompt }),
-            setSeed: (seed) => set({ seed }),
-            setSteps: (steps) => set({ steps }),
-            setCfg: (cfg) => set({ cfg }),
-            setSampler: (sampler) => set({ sampler }),
-            setScheduler: (scheduler) => set({ scheduler }),
-            setWidth: (width) => set({ width }),
-            setHeight: (height) => set({ height }),
-            setBatchSize: (batchSize) => set({ batchSize }),
-            setAspectRatioLocked: (aspectRatioLocked) => set({ aspectRatioLocked }),
-            setAutoApplyModelSettings: (autoApplyModelSettings) => set({ autoApplyModelSettings }),
+            setPreflightResult: (result) => set({ preflightResult: result }),
+            setPrompt: (prompt) => set({ prompt, preflightResult: null }),
+            setNegativePrompt: (negativePrompt) => set({ negativePrompt, preflightResult: null }),
+            setSeed: (seed) => set({ seed, preflightResult: null }),
+            setSteps: (steps) => set({ steps, preflightResult: null }),
+            setCfg: (cfg) => set({ cfg, preflightResult: null }),
+            setSampler: (sampler) => set({ sampler, preflightResult: null }),
+            setScheduler: (scheduler) => set({ scheduler, preflightResult: null }),
+            setWidth: (width) => set({ width, preflightResult: null }),
+            setHeight: (height) => set({ height, preflightResult: null }),
+            setBatchSize: (batchSize) => set({ batchSize, preflightResult: null }),
+            setAspectRatioLocked: (aspectRatioLocked) => set({ aspectRatioLocked, preflightResult: null }),
+            setAutoApplyModelSettings: (autoApplyModelSettings) => set({ autoApplyModelSettings, preflightResult: null }),
 
             // Enhanced checkpoint selection with auto-apply
             setSelectedCheckpoint: (checkpoint) => {
                 const state = get();
-                const newState = { selectedCheckpoint: checkpoint };
+                const newState = { selectedCheckpoint: checkpoint, preflightResult: null };
 
                 // Auto-apply settings if enabled and checkpoint has metadata
                 if (state.autoApplyModelSettings && checkpoint) {
@@ -207,11 +209,11 @@ export const useGeneratorStore = create(
                 set(newState);
             },
 
-            setSelectedVae: (selectedVae) => set({ selectedVae }),
-            setSelectedClip: (selectedClip) => set({ selectedClip }),
-            setSelectedClip2: (selectedClip2) => set({ selectedClip2 }),
-            setSelectedLoras: (selectedLoras) => set({ selectedLoras }),
-            setControlnets: (controlnets) => set({ controlnets }),
+            setSelectedVae: (selectedVae) => set({ selectedVae, preflightResult: null }),
+            setSelectedClip: (selectedClip) => set({ selectedClip, preflightResult: null }),
+            setSelectedClip2: (selectedClip2) => set({ selectedClip2, preflightResult: null }),
+            setSelectedLoras: (selectedLoras) => set({ selectedLoras, preflightResult: null }),
+            setControlnets: (controlnets) => set({ controlnets, preflightResult: null }),
 
             setHiresFix: (hiresFix) => set({ hiresFix }),
             setHiresUpscaler: (hiresUpscaler) => set({ hiresUpscaler }),
@@ -248,13 +250,13 @@ export const useGeneratorStore = create(
             randomizeSeed: () => set({ seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) }),
 
             addLora: () => set((state) => ({
-                selectedLoras: [...state.selectedLoras, { name: "", strength: 1.0 }]
+                selectedLoras: [...state.selectedLoras, { name: "", strength: 1.0 }], preflightResult: null
             })),
 
             removeLora: (index) => set((state) => {
                 const newLoras = [...state.selectedLoras];
                 newLoras.splice(index, 1);
-                return { selectedLoras: newLoras };
+                return { selectedLoras: newLoras, preflightResult: null };
             }),
 
             updateLora: (index, field, value) => set((state) => {
@@ -270,7 +272,7 @@ export const useGeneratorStore = create(
                 } else {
                     newLoras[index][field] = value;
                 }
-                return { selectedLoras: newLoras };
+                return { selectedLoras: newLoras, preflightResult: null };
             }),
 
             addControlNet: (defaultModelName) => set((state) => ({
