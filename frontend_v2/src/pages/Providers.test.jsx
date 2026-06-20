@@ -7,9 +7,6 @@ const mockUseProvidersPageData = vi.hoisted(() => vi.fn());
 
 const mutationsState = vi.hoisted(() => ({
     actionLoading: {},
-    startContainer: vi.fn(),
-    stopContainer: vi.fn(),
-    restartContainer: vi.fn(),
     deployProvider: vi.fn(),
     reconcileProvider: vi.fn(),
     setupProvider: vi.fn(),

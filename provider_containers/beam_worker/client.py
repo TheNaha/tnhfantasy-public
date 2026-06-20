@@ -15,6 +15,7 @@ from provider_core import (
     get_logger, get_http_client
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.reconciliation import determine_download_token
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):

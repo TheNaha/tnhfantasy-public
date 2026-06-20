@@ -5,20 +5,16 @@ import {
     Circle,
     Download,
     Eye,
-    FileText,
     Loader2,
-    Play,
     RefreshCw,
     Rocket,
     RotateCcw,
     Server,
-    Square,
     Wrench,
     X,
     XCircle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { useProviderLogs } from '../../hooks/useProvidersPageData';
 import ReconciliationStatus from './ReconciliationStatus';
 import { providerBadgeToneClass, summarizeProviderStatus } from '../../utils/providerStatus';
 
@@ -63,16 +59,13 @@ export default function ProviderDetailPanel({
     provider,
     onClose,
     loading,
-    onStart, onStop, onRestart, onDeploy, onReconcile,
+    onDeploy, onReconcile,
     onResetStatus, onSetup,
     providerFailures = 0,
     jobsAssigned = 0,
 }) {
     const [activeTab, setActiveTab] = useState('runtime');
-    const [showLogs, setShowLogs] = useState(false);
     const [showReconciliation, setShowReconciliation] = useState(false);
-    const [logsError, setLogsError] = useState('');
-    const { logs, fetchLogs, isLoading: loadingLogs } = useProviderLogs(provider.id);
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
     const deploy = provider.deploy_state ?? EMPTY_OBJECT;
@@ -101,17 +94,6 @@ export default function ProviderDetailPanel({
         }),
         [jobsAssigned, loading, provider, providerFailures],
     );
-
-    const fetchProviderLogs = async () => {
-        try {
-            await fetchLogs();
-            setLogsError('');
-            setShowLogs(true);
-        } catch (error) {
-            setLogsError(`Failed to fetch logs: ${error.message}`);
-            setShowLogs(true);
-        }
-    };
 
     return (
         <>
@@ -237,17 +219,9 @@ export default function ProviderDetailPanel({
                             provider={provider}
                             capabilities={capabilities}
                             loading={loading}
-                            loadingLogs={loadingLogs}
-                            showLogs={showLogs}
-                            onStart={onStart}
-                            onStop={onStop}
-                            onRestart={onRestart}
                             onSetup={onSetup}
-                            fetchLogs={fetchProviderLogs}
-                            setShowLogs={setShowLogs}
                             jobsAssigned={jobsAssigned}
                             providerFailures={providerFailures}
-                            logs={logsError || logs || 'No logs available'}
                         />
                     )}
                     {activeTab === 'deploy' && (
@@ -352,8 +326,8 @@ function Notice({ tone, message }) {
 
 function RuntimeTab({
     runtime, runtimeStatus, provider, capabilities, loading,
-    loadingLogs, showLogs, logs, onStart, onStop, onRestart, onSetup,
-    fetchLogs, setShowLogs, jobsAssigned, providerFailures,
+    onSetup,
+    jobsAssigned, providerFailures,
 }) {
     return (
         <>
@@ -367,36 +341,10 @@ function RuntimeTab({
             </div>
 
             <div className="flex flex-wrap gap-2">
-                {capabilities.start_container && runtimeStatus !== 'running' && (
-                    <ActionBtn onClick={onStart} disabled={Boolean(loading)} tone="green" icon={Play} label="Start" />
-                )}
-                {capabilities.stop_container && runtimeStatus === 'running' && (
-                    <ActionBtn onClick={onStop} disabled={Boolean(loading)} tone="red" icon={Square} label="Stop" />
-                )}
-                {capabilities.restart_container && runtimeStatus === 'running' && (
-                    <ActionBtn onClick={onRestart} disabled={Boolean(loading)} tone="blue" icon={RefreshCw} label="Restart" />
-                )}
-                {capabilities.view_logs && (
-                    <ActionBtn onClick={fetchLogs} disabled={loadingLogs} tone="blue" icon={FileText} label="Logs" />
-                )}
                 {capabilities.setup && (
                     <ActionBtn onClick={onSetup} disabled={Boolean(loading)} tone="blue" icon={Wrench} label="Setup" />
                 )}
             </div>
-
-            {showLogs && (
-                <div className="rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
-                    <div className="flex items-center justify-between border-b border-gray-800 px-4 py-2">
-                        <span className="text-xs font-medium text-gray-400">Container Logs</span>
-                        <button onClick={() => setShowLogs(false)} className="text-gray-500 hover:text-white" aria-label="Close container logs">
-                            <X size={14} />
-                        </button>
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words p-4 text-xs text-gray-300 max-h-[300px] overflow-y-auto">
-                        {logs}
-                    </pre>
-                </div>
-            )}
         </>
     );
 }

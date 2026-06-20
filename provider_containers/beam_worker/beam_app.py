@@ -47,9 +47,6 @@ from typing import Dict, Any
 import base64
 
 
-logger = logging.getLogger(__name__)
-
-
 # =============================================================================
 # Per-Deployment Configuration from Environment (set during beam deploy)
 # =============================================================================
@@ -444,7 +441,7 @@ async def validate_models(request: Request):
             "name": name,
             "size": file_size,
             "size_mb": round(file_size / (1024 * 1024), 1),
-            "format": "unknown"  # Extracted format wasn't returned by validate_downloaded_file but we can ignore it
+            "format": validation.get("format", "unknown")
         }
         
         if not validation["valid"]:

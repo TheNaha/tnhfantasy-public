@@ -40,9 +40,6 @@ export default function Providers() {
     } = useProvidersPageData();
     const {
         actionLoading,
-        startContainer,
-        stopContainer,
-        restartContainer,
         deployProvider,
         reconcileProvider,
         setupProvider,
@@ -102,18 +99,6 @@ export default function Providers() {
 
     // ── Actions ──
 
-    const handleStart = async (providerId) => {
-        try { await startContainer(providerId); }
-        catch (error) { toast.error(`Failed to start container: ${error.message}`); }
-    };
-    const handleStop = async (providerId) => {
-        try { await stopContainer(providerId); }
-        catch (error) { toast.error(`Failed to stop container: ${error.message}`); }
-    };
-    const handleRestart = async (providerId) => {
-        try { await restartContainer(providerId); }
-        catch (error) { toast.error(`Failed to restart container: ${error.message}`); }
-    };
     const handleDeploy = async (providerId) => {
         try {
             const result = await deployProvider(providerId);
@@ -297,9 +282,6 @@ export default function Providers() {
                         provider={selectedProvider}
                         onClose={() => setSelectedProviderId(null)}
                         loading={actionLoading[selectedProvider.id]}
-                        onStart={() => handleStart(selectedProvider.id)}
-                        onStop={() => handleStop(selectedProvider.id)}
-                        onRestart={() => handleRestart(selectedProvider.id)}
                         onDeploy={() => handleDeploy(selectedProvider.id)}
                         onReconcile={() => handleReconcile(selectedProvider.id)}
                         onResetStatus={async () => {

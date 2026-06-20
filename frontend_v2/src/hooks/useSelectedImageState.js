@@ -48,16 +48,12 @@ export function useSelectedImageState() {
                 setMetadata(mergedMetadata);
                 setLoadingMeta(false);
             })
-            .catch((error) => {
+            .catch(() => {
                 if (isCancelled) {
                     return;
                 }
 
-                if (error instanceof ApiError && error.status === 404) {
-                    setMetadata(embeddedMetadata);
-                } else {
-                    setMetadata(embeddedMetadata);
-                }
+                setMetadata(embeddedMetadata);
 
                 setLoadingMeta(false);
             });

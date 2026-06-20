@@ -71,7 +71,7 @@ export default defineConfig({
           // Animation library
           'vendor-motion': ['framer-motion'],
           // Visualization/Charts
-          'vendor-viz': ['react-virtuoso', 'react-hot-toast'],
+          'vendor-viz': ['react-hot-toast'],
           // Blurhash for progressive images
           'vendor-blurhash': ['blurhash', 'react-blurhash'],
           // Lucide icons (tree-shakeable, but still sizeable)

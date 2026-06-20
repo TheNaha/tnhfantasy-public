@@ -4,9 +4,6 @@
  * A "provider" is a serverless compute backend (e.g. Modal, Beam) that runs
  * ComfyUI inside a container.  Multiple providers can be configured, and the
  * load balancer routes jobs between them.
- *
- * Container lifecycle (start / stop / restart / logs) is also managed here.
- * Modal-specific deployment operations use dedicated endpoints.
  */
 
 import api from './client';
@@ -79,28 +76,8 @@ export const providersApi = {
     updateLoadBalancerConfig: (config) => providersApi.updateLoadBalancing(config),
 
     // -------------------------------------------------------------------------
-    // Container management
+    // Model reconciliation & status
     // -------------------------------------------------------------------------
-
-    /** Get the running/stopped status of a single provider's container. */
-    getContainerStatus: (providerId) => api.get(`/api/providers/${providerId}/container/status`),
-
-    /** Get container statuses for all providers in a single request. */
-    getAllContainerStatuses: () => api.get('/api/providers/containers/status'),
-
-    /** Start the Docker/Podman container for a provider. */
-    startContainer: (providerId) => api.post(`/api/providers/${providerId}/container/start`),
-
-    /** Stop the container for a provider. */
-    stopContainer: (providerId) => api.post(`/api/providers/${providerId}/container/stop`),
-
-    /** Restart the container for a provider (stop then start). */
-    restartContainer: (providerId) => api.post(`/api/providers/${providerId}/container/restart`),
-
-    /** Tail recent container logs (useful for debugging startup failures). */
-    getContainerLogs: (providerId, tail) => api.get(
-        `/api/providers/${providerId}/container/logs${tail ? `?tail=${tail}` : ''}`
-    ),
 
     /** Read current model reconciliation status for a provider. */
     getReconciliationStatus: (providerId) => api.get(`/api/providers/${providerId}/reconciliation-status`),

@@ -12,11 +12,9 @@ import { mergeProviderSyncStatus } from './useProviderModels';
 export const PROVIDERS_PAGE_QUERY_KEYS = {
     providers: ['providers-page', 'providers'],
     loadBalancer: ['providers-page', 'load-balancer'],
-    providerLogs: (providerId, tail = 200) => ['providers-page', 'provider-logs', providerId, tail],
 };
 
 const PROVIDERS_STALE_TIME = 15 * 1000;
-const PROVIDER_LOGS_STALE_TIME = 30 * 1000;
 
 const PROVIDER_REALTIME_TOPICS = ['provider', 'reconciliation', 'model'];
 const providersRealtimeByClient = new WeakMap();
@@ -330,34 +328,6 @@ export function useProviderReconciliationState(providerId, { realtime = true } =
     };
 }
 
-export function useProviderLogs(providerId, { tail = 200 } = {}) {
-    const queryKey = PROVIDERS_PAGE_QUERY_KEYS.providerLogs(providerId, tail);
-
-    const logsQuery = useQuery({
-        queryKey,
-        queryFn: () => providersApi.getContainerLogs(providerId, tail),
-        enabled: false,
-        staleTime: PROVIDER_LOGS_STALE_TIME,
-    });
-
-    const fetchLogs = async () => {
-        if (!providerId) {
-            return { logs: '' };
-        }
-        const result = await logsQuery.refetch();
-        if (result.error) {
-            throw result.error;
-        }
-        return result.data || { logs: '' };
-    };
-
-    return {
-        logs: logsQuery.data?.logs || '',
-        fetchLogs,
-        isLoading: logsQuery.isFetching,
-    };
-}
-
 export function useProviderMutations() {
     const queryClient = useQueryClient();
     const [actionLoading, setActionLoading] = useState({});
@@ -395,27 +365,6 @@ export function useProviderMutations() {
 
     return {
         actionLoading,
-        async startContainer(providerId) {
-            return mutate.mutateAsync({
-                providerId,
-                action: 'starting',
-                callback: () => providersApi.startContainer(providerId),
-            });
-        },
-        async stopContainer(providerId) {
-            return mutate.mutateAsync({
-                providerId,
-                action: 'stopping',
-                callback: () => providersApi.stopContainer(providerId),
-            });
-        },
-        async restartContainer(providerId) {
-            return mutate.mutateAsync({
-                providerId,
-                action: 'restarting',
-                callback: () => providersApi.restartContainer(providerId),
-            });
-        },
         async deployProvider(providerId) {
             return mutate.mutateAsync({
                 providerId,

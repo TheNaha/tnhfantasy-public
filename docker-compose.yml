@@ -62,7 +62,7 @@ services:
       dockerfile: modal_worker/Dockerfile
     container_name: comfy-provider-modal-zetsuke
     depends_on:
-      frontend_v2:
+      backend_v2:
         condition: service_healthy
     env_file:
       - .env

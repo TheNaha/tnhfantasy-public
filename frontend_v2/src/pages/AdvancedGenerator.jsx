@@ -1,15 +1,24 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Play, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import useProvidersPageData from '../hooks/useProvidersPageData';
+import { useTrackJob } from '../hooks/useTrackJob';
+import useSettingsStore from '../store/settingsStore';
 import { generateApi, createIdempotencyKey } from '../api';
 
 export default function AdvancedGenerator() {
+    const navigate = useNavigate();
     const [workflowJson, setWorkflowJson] = useState("");
     const [generating, setGenerating] = useState(false);
+    const [currentJobId, setCurrentJobId] = useState(null);
+    const [progress, setProgress] = useState(null);
+    const { data: trackedJob } = useTrackJob(currentJobId);
+    const redirectAfterGenerate = useSettingsStore(state => state.settings.generator.redirectAfterGenerate);
+    const redirectDelay = useSettingsStore(state => state.settings.generator.redirectDelay);
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const {
         isChecking: preflightChecking,
@@ -20,10 +29,56 @@ export default function AdvancedGenerator() {
         runWithPreflight,
     } = useGenerationPreflight();
 
+    // legitimate: syncing state from external WebSocket subscription
+    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        if (!currentJobId || !trackedJob) return;
+
+        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
+        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
+
+        if (trackedJob.status === 'completed') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.success('Generation complete!', { icon: '✨' });
+            if (redirectAfterGenerate) {
+                setTimeout(() => navigate('/'), redirectDelay);
+            }
+            return;
+        }
+
+        if (trackedJob.status === 'failed') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
+            return;
+        }
+
+        if (trackedJob.status === 'cancelled') {
+            setGenerating(false);
+            setProgress(null);
+            setCurrentJobId(null);
+            toast('Generation cancelled');
+            return;
+        }
+
+        setGenerating(true);
+        setProgress({
+            value: progressValue,
+            max: 100,
+            status: isQueued ? 'queued' : trackedJob.status,
+            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
+        });
+    }, [trackedJob, currentJobId, navigate, redirectAfterGenerate, redirectDelay]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
     const handleGenerate = async () => {
         try {
             const workflow = JSON.parse(workflowJson);
             setGenerating(true);
+            setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
 
             const submission = await runWithPreflight(workflow, {
                 onValid: async () => generateApi.workflow(workflow, {}, {
@@ -31,14 +86,25 @@ export default function AdvancedGenerator() {
                 }),
             });
             if (!submission.ok) {
+                setGenerating(false);
+                setProgress(null);
                 return;
             }
 
-            toast.success("Job queued!");
+            const data = submission.submissionResult;
+            if (data && data.id) {
+                setCurrentJobId(data.id);
+                setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
+                toast.success('Job queued!', { icon: '⏳' });
+            } else {
+                toast.success("Job queued!");
+                setGenerating(false);
+                setProgress(null);
+            }
         } catch (e) {
             toast.error(e instanceof SyntaxError ? "Error: Invalid JSON" : `Error: ${e.message}`);
-        } finally {
             setGenerating(false);
+            setProgress(null);
         }
     };
 
@@ -56,6 +122,21 @@ export default function AdvancedGenerator() {
                     Run Workflow
                 </button>
             </div>
+
+            {progress && (
+                <div className="mb-4 bg-gray-900 rounded-lg border border-gray-800 p-3">
+                    <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
+                        <span>{progress.node}</span>
+                        <span>{progress.value}%</span>
+                    </div>
+                    <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                        <div
+                            className="h-full bg-green-500 rounded-full transition-all duration-300"
+                            style={{ width: `${progress.value}%` }}
+                        />
+                    </div>
+                </div>
+            )}
 
             <div className="flex-1 bg-gray-950 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
                 <div className="bg-gray-900 px-4 py-2 border-b border-gray-800 text-xs text-gray-400 font-mono">

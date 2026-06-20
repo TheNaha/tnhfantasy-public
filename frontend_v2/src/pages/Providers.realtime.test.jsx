@@ -14,7 +14,6 @@ function emitWsEvent(eventType, payload) {
 const providersApiMock = vi.hoisted(() => ({
     list: vi.fn(),
     getLoadBalancing: vi.fn(),
-    getContainerLogs: vi.fn(),
 }));
 
 vi.mock('../api', () => ({

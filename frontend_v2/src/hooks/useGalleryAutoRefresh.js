@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react';
-import toast from 'react-hot-toast';
 
 export function useGalleryAutoRefresh({
     lastCompletedJob,
     autoRefreshOnJobComplete,
     queryClient,
-    toastSuccessDuration,
     galleryQueryKey = ['gallery'],
 }) {
     const lastCompletedJobRef = useRef(null);
@@ -26,15 +24,11 @@ export function useGalleryAutoRefresh({
         }
 
         queryClient.invalidateQueries({ queryKey: galleryQueryKey });
-        toast.success('🎉 Generation complete! Gallery updated.', {
-            duration: toastSuccessDuration,
-        });
     }, [
         lastCompletedJob,
         autoRefreshOnJobComplete,
         galleryQueryKey,
         queryClient,
-        toastSuccessDuration,
     ]);
 }
 

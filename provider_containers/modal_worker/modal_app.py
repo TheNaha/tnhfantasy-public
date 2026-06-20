@@ -703,7 +703,7 @@ def validate_models(directories: list[str] = ["models/checkpoints"], delete_inva
         validation = validate_downloaded_file(full_path)
         issues = [] if validation["valid"] else [validation["error"]]
         should_delete = not validation["valid"]
-        detected_format = "unknown"
+        detected_format = validation.get("format", "unknown")
                 
         model_info = {
             "name": name,

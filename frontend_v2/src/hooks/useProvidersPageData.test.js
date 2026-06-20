@@ -32,7 +32,6 @@ vi.mock('../api', () => ({
     providersApi: {
         list: vi.fn(),
         getLoadBalancing: vi.fn(),
-        getContainerLogs: vi.fn(),
     },
 }));
 
@@ -63,7 +62,6 @@ describe('useProvidersPageData', () => {
     let providersApi;
     let useProvidersPageData;
     let useProviderReconciliationState;
-    let useProviderLogs;
 
     beforeEach(async () => {
         vi.resetModules();
@@ -79,7 +77,6 @@ describe('useProvidersPageData', () => {
         const hookMod = await import('./useProvidersPageData');
         useProvidersPageData = hookMod.default;
         useProviderReconciliationState = hookMod.useProviderReconciliationState;
-        useProviderLogs = hookMod.useProviderLogs;
 
         providersApi.list.mockResolvedValue({
             providers: [{
@@ -111,7 +108,6 @@ describe('useProvidersPageData', () => {
             config: { strategy: 'round-robin', fallback_enabled: true },
             stats: { total_providers: 1, provider_stats: [] },
         });
-        providersApi.getContainerLogs.mockResolvedValue({ logs: 'provider logs' });
     });
 
     afterEach(() => {
@@ -186,26 +182,6 @@ describe('useProvidersPageData', () => {
         await waitFor(() => {
             expect(result.result.current.reconciliationState?.status).toBe('queued');
             expect(result.result.current.reconciliationState?.phase).toBe('downloading');
-        });
-    });
-
-    it('fetches provider logs through a React Query hook on demand', async () => {
-        const queryClient = new QueryClient({
-            defaultOptions: {
-                queries: { retry: false },
-            },
-        });
-        const wrapper = createWrapper(queryClient);
-
-        const result = renderHook(() => useProviderLogs('provider-1'), { wrapper });
-
-        await act(async () => {
-            await result.result.current.fetchLogs();
-        });
-
-        expect(providersApi.getContainerLogs).toHaveBeenCalledWith('provider-1', 200);
-        await waitFor(() => {
-            expect(result.result.current.logs).toBe('provider logs');
         });
     });
 
