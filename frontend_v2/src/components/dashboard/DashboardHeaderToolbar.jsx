@@ -1,4 +1,3 @@
-import React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { DashboardHeader } from './DashboardHeader';
 import { DashboardToolbar } from './DashboardToolbar';

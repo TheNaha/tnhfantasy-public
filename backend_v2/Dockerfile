@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create unprivileged user
-RUN useradd -r -s /bin/false comfy && \
+RUN useradd -r -u 1000 -s /bin/false comfy && \
     mkdir -p /data/db /data/input /data/output && \
     chown -R comfy:comfy /app /data
 

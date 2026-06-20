@@ -152,7 +152,7 @@ async def test_execute_comfy_workflow_filesystem_mode_streams_contract(monkeypat
         }
         return _BytesResponse(json.dumps(history_payload).encode("utf-8"))
 
-    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
+    monkeypatch.setattr("provider_core.workflow_executor.get_http_client", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -216,7 +216,7 @@ async def test_execute_comfy_workflow_view_api_mode_streams_contract(monkeypatch
 
         raise AssertionError(f"Unexpected URL: {target}")
 
-    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
+    monkeypatch.setattr("provider_core.workflow_executor.get_http_client", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -257,7 +257,7 @@ async def test_execute_comfy_workflow_emits_execution_error_and_stops(monkeypatc
             return _BytesResponse(json.dumps({"prompt_id": prompt_id}).encode("utf-8"))
         raise AssertionError("History endpoint should not be called after execution_error")
 
-    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
+    monkeypatch.setattr("provider_core.workflow_executor.get_http_client", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -296,7 +296,7 @@ async def test_execute_comfy_workflow_reports_prompt_rejection(monkeypatch):
             )
         raise AssertionError("History endpoint should not be called after prompt rejection")
 
-    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
+    monkeypatch.setattr("provider_core.workflow_executor.get_http_client", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(
@@ -332,7 +332,7 @@ async def test_execute_comfy_workflow_reports_stalled_prompt(monkeypatch):
 
         raise AssertionError(f"Unexpected URL: {target}")
 
-    monkeypatch.setattr("provider_core.workflow_executor.httpx.AsyncClient", lambda: _FakeAsyncClient(fake_urlopen))
+    monkeypatch.setattr("provider_core.workflow_executor.get_http_client", lambda: _FakeAsyncClient(fake_urlopen))
 
     updates = await _collect_updates(
         execute_comfy_workflow(

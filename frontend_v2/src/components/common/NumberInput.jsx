@@ -1,4 +1,4 @@
-import React, { memo, useId } from 'react';
+import { memo, useId } from 'react';
 
 export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, className = "" }) => {
     const inputId = useId();

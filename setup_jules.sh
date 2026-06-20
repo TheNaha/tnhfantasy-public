@@ -22,11 +22,13 @@ source venv/bin/activate
 # Load environment variables from root .env if it exists
 if [ -f "../.env" ]; then
     echo "Loading environment variables from root .env..."
-    while IFS= read -r line || [ -n "$line" ]; do
-        # Skip comments and empty lines
-        [[ "$line" =~ ^#.*$ ]] && continue
-        [[ -z "$line" ]] && continue
-        export "$line"
+    while IFS='=' read -r key value; do
+        # skip comments and empty lines
+        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+        # trim whitespace
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | xargs)
+        export "$key=$value"
     done < ../.env
 fi
 
@@ -56,6 +58,8 @@ npm run dev -- --host 0.0.0.0 --port 5174 &
 FRONTEND_PID=$!
 
 cd ..
+
+trap 'kill $BACKEND_PID $FRONTEND_PID 2>/dev/null' EXIT
 
 echo "==================================="
 echo "Setup complete! Services are running:"

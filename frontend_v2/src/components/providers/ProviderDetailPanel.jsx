@@ -72,6 +72,7 @@ export default function ProviderDetailPanel({
     const reconciliation = provider.reconciliation_state ?? EMPTY_OBJECT;
     const modelSync = provider.model_sync ?? EMPTY_OBJECT;
     const storage = provider.storage ?? EMPTY_OBJECT;
+    const storageLoaded = provider.storage != null;
     const diagnostics = provider.diagnostics ?? EMPTY_OBJECT;
     const capabilities = provider.capabilities ?? EMPTY_OBJECT;
     const capabilityReasons = provider.capability_reasons ?? EMPTY_OBJECT;
@@ -238,6 +239,7 @@ export default function ProviderDetailPanel({
                         <SyncTab
                             modelSync={modelSync}
                             storage={storage}
+                            storageLoaded={storageLoaded}
                             reconciliation={reconciliation}
                             capabilities={capabilities}
                             loading={loading}
@@ -405,7 +407,7 @@ function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loadi
 }
 
 function SyncTab({
-    modelSync, storage, reconciliation, capabilities, loading,
+    modelSync, storage, storageLoaded, reconciliation, capabilities, loading,
     onReconcile, onResetStatus, showReconciliation, setShowReconciliation, providerId,
 }) {
     const dbModels = modelSync.total_models || 0;
@@ -453,22 +455,29 @@ function SyncTab({
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4">
                 <div className="mb-3 flex items-center justify-between gap-4">
                     <span className="text-xs uppercase tracking-wide text-gray-500">Directory Breakdown</span>
-                    <span className="text-xs text-gray-500">{storageEntries.length} directories</span>
+                    <span className="text-xs text-gray-500">{storageLoaded ? `${storageEntries.length} directories` : 'Loading…'}</span>
                 </div>
 
-                {storageEntries.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                        {storageEntries.map(([dir, count]) => (
-                            <span
-                                key={dir}
-                                className="rounded-full border border-gray-700 bg-gray-800/70 px-2.5 py-1 text-xs text-gray-300"
-                            >
-                                {capitalize(dir)}: {count}
-                            </span>
-                        ))}
-                    </div>
+                {storageLoaded ? (
+                    storageEntries.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                            {storageEntries.map(([dir, count]) => (
+                                <span
+                                    key={dir}
+                                    className="rounded-full border border-gray-700 bg-gray-800/70 px-2.5 py-1 text-xs text-gray-300"
+                                >
+                                    {capitalize(dir)}: {count}
+                                </span>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-sm text-gray-500">No storage data yet</div>
+                    )
                 ) : (
-                    <div className="text-sm text-gray-500">No storage data yet</div>
+                    <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Loader2 size={14} className="animate-spin" />
+                        Loading storage data…
+                    </div>
                 )}
             </div>
 

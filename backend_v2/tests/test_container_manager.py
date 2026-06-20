@@ -176,16 +176,14 @@ class TestContainerManager:
         assert cm.runtime == "unknown"
 
     def _create_mock_httpx_client(self, status_code=200, side_effect=None):
-        """Create a mock httpx.AsyncClient that works as an async context manager."""
+        """Create a mock httpx.AsyncClient for use with get_http_client()."""
         mock_response = MagicMock()
         mock_response.status_code = status_code
         mock_client_instance = AsyncMock()
         mock_client_instance.get.return_value = mock_response
         if side_effect:
             mock_client_instance.get.side_effect = side_effect
-        mock_client_class = AsyncMock()
-        mock_client_class.__aenter__.return_value = mock_client_instance
-        return mock_client_class, mock_client_instance
+        return mock_client_instance
 
     @pytest.mark.asyncio
     async def test_wait_for_health_succeeds_on_http_200(self):
@@ -195,9 +193,9 @@ class TestContainerManager:
         container.status = "running"
         container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
 
-        mock_client_class, _ = self._create_mock_httpx_client()
+        mock_instance = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+        with patch("services.container_manager.get_http_client", return_value=mock_instance), \
              patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock):
             await cm._wait_for_health(container, timeout=1)
 
@@ -218,13 +216,13 @@ class TestContainerManager:
             }
         }
 
-        mock_client_class, mock_instance = self._create_mock_httpx_client()
+        mock_instance = self._create_mock_httpx_client()
 
-        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+        with patch("services.container_manager.get_http_client", return_value=mock_instance), \
              patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock):
             await cm._wait_for_health(container, timeout=1)
 
-        mock_instance.get.assert_called_once_with("http://test-container:8000/health")
+        mock_instance.get.assert_called_once_with("http://test-container:8000/health", timeout=2.0)
 
     @pytest.mark.asyncio
     async def test_wait_for_health_times_out_when_only_running(self):
@@ -234,9 +232,9 @@ class TestContainerManager:
         container.status = "running"
         container.ports = {"8000/tcp": [{"HostPort": "8123"}]}
 
-        mock_client_class, _ = self._create_mock_httpx_client(side_effect=Exception("probe failed"))
+        mock_instance = self._create_mock_httpx_client(side_effect=Exception("probe failed"))
 
-        with patch("services.container_manager.httpx.AsyncClient", return_value=mock_client_class), \
+        with patch("services.container_manager.get_http_client", return_value=mock_instance), \
              patch("services.container_manager.asyncio.sleep", new_callable=AsyncMock), \
              patch("services.container_manager.time.time", side_effect=[0, 0.1, 1.1]):
             with pytest.raises(TimeoutError) as excinfo:

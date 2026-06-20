@@ -46,15 +46,15 @@ function AnimatedRoutes() {
     return (
         <AnimatePresence mode="wait">
             <Routes location={location} key={location.pathname}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/generate" element={<SimpleGenerator />} />
-                <Route path="/img2img" element={<Img2ImgGenerator />} />
-                <Route path="/inpaint" element={<InpaintGenerator />} />
-                <Route path="/advanced" element={<AdvancedGenerator />} />
-                <Route path="/models" element={<ModelManager />} />
-                <Route path="/providers" element={<Providers />} />
-                <Route path="/statistics" element={<Statistics />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+                <Route path="/generate" element={<ErrorBoundary><SimpleGenerator /></ErrorBoundary>} />
+                <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
+                <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />
+                <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
+                <Route path="/models" element={<ErrorBoundary><ModelManager /></ErrorBoundary>} />
+                <Route path="/providers" element={<ErrorBoundary><Providers /></ErrorBoundary>} />
+                <Route path="/statistics" element={<ErrorBoundary><Statistics /></ErrorBoundary>} />
+                <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         </AnimatePresence>

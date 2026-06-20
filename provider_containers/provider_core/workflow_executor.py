@@ -9,6 +9,8 @@ import base64
 import uuid
 from typing import Any, AsyncGenerator, Dict, List
 
+from provider_core.http_client import get_http_client
+
 
 IMAGE_FETCH_FILESYSTEM = "filesystem"
 IMAGE_FETCH_VIEW_API = "view_api"
@@ -58,12 +60,12 @@ async def _queue_prompt(
     client_id: str,
 ) -> tuple[str | None, Dict[str, Any] | None]:
     payload = {"prompt": workflow_json, "client_id": client_id}
-    
+
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(f"http://{server_address}/prompt", json=payload, timeout=10.0)
-            response.raise_for_status()
-            response_data = response.json()
+        client = get_http_client()
+        response = await client.post(f"http://{server_address}/prompt", json=payload, timeout=10.0)
+        response.raise_for_status()
+        response_data = response.json()
     except httpx.HTTPStatusError as error:
         body = error.response.text
         message = body or str(error)
@@ -87,10 +89,10 @@ async def _queue_prompt(
 
 async def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"http://{server_address}/history/{prompt_id}", timeout=10.0)
-            response.raise_for_status()
-            history = response.json()
+        client = get_http_client()
+        response = await client.get(f"http://{server_address}/history/{prompt_id}", timeout=10.0)
+        response.raise_for_status()
+        history = response.json()
     except Exception as error:
         return None, f"Failed to fetch history: {error}"
 
@@ -148,39 +150,39 @@ async def _collect_images_via_view_api(
 ) -> List[Dict[str, Any]]:
     images_output: List[Dict[str, Any]] = []
 
-    async with httpx.AsyncClient() as client:
-        for node_output in history_data.get("outputs", {}).values():
-            for image in node_output.get("images", []):
-                filename = image.get("filename")
-                if not filename:
-                    continue
+    client = get_http_client()
+    for node_output in history_data.get("outputs", {}).values():
+        for image in node_output.get("images", []):
+            filename = image.get("filename")
+            if not filename:
+                continue
 
-                subfolder = image.get("subfolder") or ""
-                folder_type = image.get("type", "output")
-                
-                params = {
-                    "filename": filename,
-                    "subfolder": subfolder,
-                    "type": folder_type,
-                }
-                view_url = f"http://{server_address}/view"
+            subfolder = image.get("subfolder") or ""
+            folder_type = image.get("type", "output")
 
-                try:
-                    response = await client.get(view_url, params=params, timeout=view_timeout_seconds)
-                    response.raise_for_status()
-                    data = response.content
-                    b64_data = base64.b64encode(data).decode('utf-8')
-                    images_output.append(
-                        {
-                            "filename": filename,
-                            "data": b64_data,
-                            "_base64_encoded": True,
-                            "type": folder_type,
-                            "subfolder": subfolder,
-                        }
-                    )
-                except Exception as error:
-                    _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
+            params = {
+                "filename": filename,
+                "subfolder": subfolder,
+                "type": folder_type,
+            }
+            view_url = f"http://{server_address}/view"
+
+            try:
+                response = await client.get(view_url, params=params, timeout=view_timeout_seconds)
+                response.raise_for_status()
+                data = response.content
+                b64_data = base64.b64encode(data).decode('utf-8')
+                images_output.append(
+                    {
+                        "filename": filename,
+                        "data": b64_data,
+                        "_base64_encoded": True,
+                        "type": folder_type,
+                        "subfolder": subfolder,
+                    }
+                )
+            except Exception as error:
+                _log(logger, logging.ERROR, f"Failed to fetch image via /view ({filename}): {error}")
 
     return images_output
 

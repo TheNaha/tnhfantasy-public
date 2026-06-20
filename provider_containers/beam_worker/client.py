@@ -29,6 +29,13 @@ class CustomJSONEncoder(json.JSONEncoder):
 logger = get_logger("beam_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
 
+
+def _log_deploy_done(task: asyncio.Task):
+    if task.cancelled():
+        logger.warning("Beam deploy task was cancelled")
+    elif task.exception():
+        logger.error(f"Beam deploy task failed with unhandled exception: {task.exception()}", exc_info=task.exception())
+
 BEAM_API_KEY = os.getenv("BEAM_API_KEY", "")
 BEAM_WORKSPACE_ID = os.getenv("BEAM_WORKSPACE_ID", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "beam-worker")
@@ -52,6 +59,7 @@ def get_beam_headers() -> Dict[str, str]:
 class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
+        self._deploy_task: Optional[asyncio.Task] = None
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -180,7 +188,11 @@ class BeamProviderClient(BaseProviderClient):
                 except Exception:
                     pass
             return Response(content=response.content, media_type=content_type or "application/octet-stream")
-        raise HTTPException(status_code=404, detail="File not found")
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail="File not found")
+        if response.status_code >= 500:
+            raise HTTPException(status_code=502, detail=f"Upstream storage error ({response.status_code})")
+        raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         client = get_http_client()
@@ -203,26 +215,26 @@ class BeamProviderClient(BaseProviderClient):
         from provider_core.base_client import _DEPLOY_STATE
         import subprocess
         import asyncio
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         _DEPLOY_STATE.clear()
         _DEPLOY_STATE.update({
             "status": "deploying",
             "message": "Deployment started",
-            "started_at": datetime.utcnow().isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         })
 
         async def _run():
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "beam", "deploy", "/backend/beam_app.py:comfy_gpu",
+                    "beam", "deploy", "/app/beam_app.py:comfy_gpu",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
                 stdout, _ = await proc.communicate()
                 
                 proc2 = await asyncio.create_subprocess_exec(
-                    "beam", "deploy", "/backend/beam_app.py:comfy_storage",
+                    "beam", "deploy", "/app/beam_app.py:comfy_storage",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
@@ -231,12 +243,16 @@ class BeamProviderClient(BaseProviderClient):
                 out_str = stdout.decode('utf-8', errors='replace') + "\n" + stdout2.decode('utf-8', errors='replace')
                 if proc.returncode == 0 and proc2.returncode == 0:
                     _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                    logger.info("Beam deployment completed successfully")
                 else:
                     _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with codes {proc.returncode}, {proc2.returncode}", "logs": out_str})
+                    logger.error(f"Beam deployment failed with codes {proc.returncode}, {proc2.returncode}: {out_str[-500:]}")
             except Exception as e:
                 _DEPLOY_STATE.update({"status": "failed", "message": str(e)})
-        
-        asyncio.create_task(_run())
+                logger.error(f"Beam deployment error: {e}", exc_info=True)
+
+        self._deploy_task = asyncio.create_task(_run())
+        self._deploy_task.add_done_callback(_log_deploy_done)
         return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:

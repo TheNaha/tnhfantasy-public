@@ -29,13 +29,10 @@ class JobSubmissionService:
         required_models = extract_models_from_workflow(workflow)
         availability = self.availability_service.check_availability(required_models)
 
-        if (
-            preferred_provider_id
-            and preferred_provider_id not in availability.eligible_providers
-        ):
-            preferred_missing = availability.missing_models.get(preferred_provider_id, {})
-            if preferred_missing:
-                availability.missing_models[preferred_provider_id] = preferred_missing
+        if preferred_provider_id and preferred_provider_id not in availability.eligible_providers:
+            availability.missing_models = {
+                preferred_provider_id: availability.missing_models.get(preferred_provider_id, {})
+            }
 
         return required_models, availability
 

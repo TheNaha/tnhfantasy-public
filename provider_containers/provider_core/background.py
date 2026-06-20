@@ -7,6 +7,7 @@ import asyncio
 import os
 import platform
 import socket
+import traceback
 from typing import Callable, Awaitable, Optional
 from .logging import get_logger
 
@@ -57,9 +58,9 @@ async def auto_discovery_loop(
             if response.status_code in (200, 201):
                 pass # Silent success
             else:
-                logger.error(f"[Auto-Discovery] Failed to register. Status: {response.status_code}")
+                logger.error(f"[Auto-Discovery] Failed to register. Status: {response.status_code}, Body: {response.text[:500]}")
         except Exception as e:
-            logger.error(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}")
+            logger.error(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}: {e}\n{traceback.format_exc()}")
             
         await asyncio.sleep(interval_seconds)
 

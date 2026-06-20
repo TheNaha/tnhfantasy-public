@@ -378,6 +378,11 @@ class GalleryIndexer:
         Blocks for up to 5 seconds if the initial scan is still in progress,
         then returns whatever is available.
 
+        IMPORTANT: This method uses time.sleep and may block for up to 5s.
+        When called from an async context (e.g. FastAPI async route handlers),
+        callers MUST wrap this call with ``await asyncio.to_thread(...)`` to
+        avoid blocking the event loop.
+
         Args:
             limit:  Maximum number of file records to return (page size).
             offset: Number of records to skip (for cursor-style pagination).
@@ -448,6 +453,11 @@ class GalleryIndexer:
         """
         Get all file metadata from the index.
         Thread-safe method for statistics generation.
+
+        IMPORTANT: This method uses time.sleep and may block for up to 5s.
+        When called from an async context (e.g. FastAPI async route handlers),
+        callers MUST wrap this call with ``await asyncio.to_thread(...)`` to
+        avoid blocking the event loop.
 
         Returns:
             List[Dict]: List of all file metadata dictionaries (shallow copies)

@@ -28,6 +28,13 @@ class CustomJSONEncoder(json.JSONEncoder):
 logger = get_logger("modal_worker.client")
 from provider_core.models import MODEL_DIRECTORIES
 
+
+def _log_deploy_done(task: asyncio.Task):
+    if task.cancelled():
+        logger.warning("Modal deploy task was cancelled")
+    elif task.exception():
+        logger.error(f"Modal deploy task failed with unhandled exception: {task.exception()}", exc_info=task.exception())
+
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
 MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
@@ -47,6 +54,7 @@ def get_modal_function(func_name: str):
 class ModalProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
+        self._deploy_task: Optional[asyncio.Task] = None
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -190,19 +198,19 @@ class ModalProviderClient(BaseProviderClient):
         from provider_core.base_client import _DEPLOY_STATE
         import subprocess
         import asyncio
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         _DEPLOY_STATE.clear()
         _DEPLOY_STATE.update({
             "status": "deploying",
             "message": "Deployment started",
-            "started_at": datetime.utcnow().isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         })
 
         async def _run():
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "modal", "deploy", "/backend/modal_app.py",
+                    "modal", "deploy", "/app/modal_app.py",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
@@ -210,12 +218,16 @@ class ModalProviderClient(BaseProviderClient):
                 out_str = stdout.decode('utf-8', errors='replace')
                 if proc.returncode == 0:
                     _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                    logger.info("Modal deployment completed successfully")
                 else:
                     _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with code {proc.returncode}", "logs": out_str})
+                    logger.error(f"Modal deployment failed with code {proc.returncode}: {out_str[-500:]}")
             except Exception as e:
                 _DEPLOY_STATE.update({"status": "failed", "message": str(e)})
-        
-        asyncio.create_task(_run())
+                logger.error(f"Modal deployment error: {e}", exc_info=True)
+
+        self._deploy_task = asyncio.create_task(_run())
+        self._deploy_task.add_done_callback(_log_deploy_done)
         return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:

@@ -202,7 +202,7 @@ export const useGeneratorStore = create(
                         const settings = BASE_MODEL_SETTINGS[modelType];
                         Object.assign(newState, settings);
                         newState.lastAppliedModelType = modelType;
-                        console.log(`[Generator] Auto-applied ${modelType} settings`);
+
                     }
                 }
 

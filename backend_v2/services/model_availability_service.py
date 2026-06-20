@@ -209,21 +209,27 @@ class ModelAvailabilityService:
         Returns True if at least one missing model exists in the model library
         and just needs to be downloaded to providers.
         """
-        for directory, filenames in global_missing.items():
-            for filename in filenames:
-                # Check if file exists in ModelFile table
-                stmt = select(ModelFile, ModelVersion, ModelV2).join(
-                    ModelVersion, ModelFile.version_id == ModelVersion.id
-                ).join(
-                    ModelV2, ModelVersion.model_id == ModelV2.id
-                ).where(
-                    ModelFile.storage_filename == filename,
-                    ModelV2.directory == directory
-                )
-                file = self.session.exec(stmt).first()
-                if file:
-                    return True
-        return False
+        file_filters = [
+            and_(
+                ModelV2.directory == directory,
+                ModelFile.storage_filename == filename,
+            )
+            for directory, filenames in global_missing.items()
+            for filename in filenames
+        ]
+        
+        if not file_filters:
+            return False
+        
+        stmt = select(ModelFile.id).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).join(
+            ModelV2, ModelVersion.model_id == ModelV2.id
+        ).where(
+            or_(*file_filters)
+        ).limit(1)
+        
+        return self.session.exec(stmt).first() is not None
     
     def get_providers_with_models(
         self,

@@ -30,7 +30,10 @@ class BaseProviderClient(abc.ABC):
             if key in self.runtime_config:
                 self.runtime_config[key] = value
                 updated.append(key)
-                logger.info(f"[{self.provider_id}] Config updated: {key} = {value}")
+                if "TOKEN" in key.upper() or "SECRET" in key.upper() or "KEY" in key.upper():
+                    logger.info(f"[{self.provider_id}] Config updated: {key} = ✓ Set")
+                else:
+                    logger.info(f"[{self.provider_id}] Config updated: {key} = {value}")
         return {"status": "updated", "updated_keys": updated, "config": self.runtime_config}
 
     async def cancel_job(self, request: CancelJobRequest) -> Dict[str, Any]:

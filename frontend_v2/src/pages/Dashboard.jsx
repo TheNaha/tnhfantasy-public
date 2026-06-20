@@ -95,6 +95,7 @@ export default function Dashboard() {
             queryClient.setQueryData(['jobs', 'active'], (old = []) => old.filter(j => j.id !== jobId));
         } catch (error) {
             console.error('Failed to cancel job:', error);
+            toast.error('Failed to cancel job');
         }
     }, [queryClient]);
 

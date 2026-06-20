@@ -191,7 +191,9 @@ async def list_files_endpoint(
     if directory == "output" or directory.startswith("output/"):
         try:
             from services.gallery_indexer import gallery_indexer
-            return gallery_indexer.get_files(limit=limit, offset=offset, sort=sort, search=search)
+            return await asyncio.to_thread(
+                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search
+            )
             
         except Exception as e:
             logger.warning("local_file_list_failed", error=str(e))

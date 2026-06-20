@@ -111,7 +111,6 @@ export function connect() {
         });
 
         socket.on('connect', () => {
-            console.log('[WebSocket] Connected:', socket.id);
             isConnected = true;
 
             // Re-subscribe to topics after reconnection
@@ -137,7 +136,6 @@ export function connect() {
         });
 
         socket.on('disconnect', (reason) => {
-            console.log('[WebSocket] Disconnected:', reason);
             isConnected = false;
             connectionPromise = null;
             emitLocal('connection', { connected: false, reason });
@@ -155,16 +153,13 @@ export function connect() {
             }
         });
 
-        socket.on('connected', ({ message }) => {
-            console.log('[WebSocket] Server welcome:', message);
+        socket.on('connected', () => {
         });
 
-        socket.on('subscribed', (data) => {
-            console.log('[WebSocket] Subscribed to:', data.topics);
+        socket.on('subscribed', () => {
         });
 
-        socket.on('unsubscribed', (data) => {
-            console.log('[WebSocket] Unsubscribed from:', data.topics);
+        socket.on('unsubscribed', () => {
         });
 
         socket.on('error', (data) => {

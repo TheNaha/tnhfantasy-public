@@ -13,6 +13,7 @@ from core.entities import Provider, LoadBalancerState
 from infrastructure.repositories import ProviderRepository
 from infrastructure.logging import get_logger
 from infrastructure.cache import TTLCache
+from infrastructure.http_client import get_http_client
 
 logger = get_logger("load_balancer")
 
@@ -262,7 +263,6 @@ class LoadBalancer:
 
         # 2. Probe /health endpoint via HTTP
         try:
-            import httpx
             port = 8000
             if provider.container_config and "port" in provider.container_config:
                 port = provider.container_config["port"]
@@ -270,10 +270,10 @@ class LoadBalancer:
             # Default target name (inside Docker network / container DNS)
             url = f"http://comfy-provider-{provider.id}:{port}/health"
             
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                response = await client.get(url)
-                if response.status_code == 200:
-                    is_healthy = True
+            client = get_http_client()
+            response = await client.get(url, timeout=2.0)
+            if response.status_code == 200:
+                is_healthy = True
         except Exception:
             # Try localhost fallback via Docker host port mapping
             try:
@@ -287,11 +287,10 @@ class LoadBalancer:
                     if tcp_port_info:
                         host_port = tcp_port_info[0].get("HostPort")
                         if host_port:
-                            import httpx
-                            async with httpx.AsyncClient(timeout=2.0) as client:
-                                response = await client.get(f"http://localhost:{host_port}/health")
-                                if response.status_code == 200:
-                                    is_healthy = True
+                            client = get_http_client()
+                            response = await client.get(f"http://localhost:{host_port}/health", timeout=2.0)
+                            if response.status_code == 200:
+                                is_healthy = True
             except Exception:
                 pass
 
@@ -355,20 +354,7 @@ class LoadBalancer:
                     return provider
             
             # Apply load balancing strategy
-            if self.strategy == "round-robin":
-                provider = await self._round_robin(providers)
-            elif self.strategy == "random":
-                provider = await self._random(providers)
-            elif self.strategy == "priority":
-                provider = await self._priority(providers)
-            elif self.strategy == "least-connections":
-                provider = await self._least_connections(providers)
-            elif self.strategy == "priority-round-robin":
-                provider = await self._priority_round_robin(providers)
-            elif self.strategy == "priority-least-connections":
-                provider = await self._priority_least_connections(providers)
-            else:
-                provider = await self._round_robin(providers)
+            provider = await self._select_by_strategy(providers)
             
             # Track job assigned to this provider
             await self._track_job(provider.id)
@@ -400,39 +386,13 @@ class LoadBalancer:
             if len(warm_candidates) == 1:
                 selected_provider = warm_candidates[0]
             else:
-                if self.strategy == "round-robin":
-                    selected_provider = await self._round_robin(warm_candidates)
-                elif self.strategy == "random":
-                    selected_provider = await self._random(warm_candidates)
-                elif self.strategy == "priority":
-                    selected_provider = await self._priority(warm_candidates)
-                elif self.strategy == "least-connections":
-                    selected_provider = await self._least_connections(warm_candidates)
-                elif self.strategy == "priority-round-robin":
-                    selected_provider = await self._priority_round_robin(warm_candidates)
-                elif self.strategy == "priority-least-connections":
-                    selected_provider = await self._priority_least_connections(warm_candidates)
-                else:
-                    selected_provider = await self._round_robin(warm_candidates)
+                selected_provider = await self._select_by_strategy(warm_candidates)
         elif cold_candidates:
             # Route among cold candidates using the strategy
             if len(cold_candidates) == 1:
                 selected_provider = cold_candidates[0]
             else:
-                if self.strategy == "round-robin":
-                    selected_provider = await self._round_robin(cold_candidates)
-                elif self.strategy == "random":
-                    selected_provider = await self._random(cold_candidates)
-                elif self.strategy == "priority":
-                    selected_provider = await self._priority(cold_candidates)
-                elif self.strategy == "least-connections":
-                    selected_provider = await self._least_connections(cold_candidates)
-                elif self.strategy == "priority-round-robin":
-                    selected_provider = await self._priority_round_robin(cold_candidates)
-                elif self.strategy == "priority-least-connections":
-                    selected_provider = await self._priority_least_connections(cold_candidates)
-                else:
-                    selected_provider = await self._round_robin(cold_candidates)
+                selected_provider = await self._select_by_strategy(cold_candidates)
             
             # Since the selected provider is cold, trigger container startup and poll/wait
             if selected_provider:
@@ -461,11 +421,10 @@ class LoadBalancer:
                             port = selected_provider.container_config["port"]
                         
                         url = f"http://comfy-provider-{selected_provider.id}:{port}/health"
-                        import httpx
-                        async with httpx.AsyncClient(timeout=1.0) as client:
-                            res = await client.get(url)
-                            if res.status_code == 200:
-                                is_now_healthy = True
+                        client = get_http_client()
+                        res = await client.get(url, timeout=1.0)
+                        if res.status_code == 200:
+                            is_now_healthy = True
                     except Exception:
                         try:
                             # Local fallback
@@ -479,11 +438,10 @@ class LoadBalancer:
                                 if tcp_port_info:
                                     host_port = tcp_port_info[0].get("HostPort")
                                     if host_port:
-                                        import httpx
-                                        async with httpx.AsyncClient(timeout=1.0) as client:
-                                            res = await client.get(f"http://localhost:{host_port}/health")
-                                            if res.status_code == 200:
-                                                is_now_healthy = True
+                                        client = get_http_client()
+                                        res = await client.get(f"http://localhost:{host_port}/health", timeout=1.0)
+                                        if res.status_code == 200:
+                                            is_now_healthy = True
                         except Exception:
                             pass
                     
@@ -537,8 +495,9 @@ class LoadBalancer:
         """
         Priority-based selection.
         Lower priority number = higher priority.
+        Uses provider ID as tiebreaker for deterministic ordering.
         """
-        sorted_providers = sorted(providers, key=lambda p: p.priority)
+        sorted_providers = sorted(providers, key=lambda p: (p.priority, p.id))
         return sorted_providers[0]
     
     async def _least_connections(self, providers: List[Provider]) -> Provider:
@@ -616,6 +575,22 @@ class LoadBalancer:
 
         logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
+    
+    async def _select_by_strategy(self, providers: List[Provider]) -> Provider:
+        """Dispatch to the configured load-balancing strategy."""
+        if self.strategy == "round-robin":
+            return await self._round_robin(providers)
+        elif self.strategy == "random":
+            return await self._random(providers)
+        elif self.strategy == "priority":
+            return await self._priority(providers)
+        elif self.strategy == "least-connections":
+            return await self._least_connections(providers)
+        elif self.strategy == "priority-round-robin":
+            return await self._priority_round_robin(providers)
+        elif self.strategy == "priority-least-connections":
+            return await self._priority_least_connections(providers)
+        return await self._round_robin(providers)
     
     async def report_success(self, provider_id: str):
         """Report successful job completion for a provider."""

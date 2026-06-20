@@ -19,11 +19,12 @@ import PromptPanel from '../components/generator/PromptPanel';
 import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
-import useSettingsStore, { useSettings } from '../store/settingsStore';
-import { useTrackJob } from '../hooks/useTrackJob';
+import useSettingsStore from '../store/settingsStore';
+import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
+import { SAMPLERS, SCHEDULERS } from '../constants/generation';
 import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 
@@ -32,7 +33,6 @@ const EMPTY_MODELS = [];
 export default function InpaintGenerator() {
     const navigate = useNavigate();
     const location = useLocation();
-    const settings = useSettings();
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
     const [showCanvas, setShowCanvas] = useState(false);
 
@@ -64,56 +64,8 @@ export default function InpaintGenerator() {
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
-    const [currentJobId, setCurrentJobId] = useState(null);
-    const [progress, setProgress] = useState(null);
-    const { data: trackedJob } = useTrackJob(currentJobId);
+    const { setCurrentJobId, progress, setProgress } = useTrackGenerationJob(setGenerating);
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
-
-    useEffect(() => {
-        if (!currentJobId || !trackedJob) return;
-
-        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
-        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
-
-        if (trackedJob.status === 'completed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.success('Generation complete!', { icon: '✨' });
-            if (settings.generator.redirectAfterGenerate) {
-                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
-            }
-            return;
-        }
-
-        if (trackedJob.status === 'failed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
-            return;
-        }
-
-        if (trackedJob.status === 'cancelled') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast('Generation cancelled');
-            return;
-        }
-
-        setGenerating(true);
-        setProgress({
-            value: progressValue,
-            max: 100,
-            status: isQueued ? 'queued' : trackedJob.status,
-            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
-        });
-    }, [
-        trackedJob, currentJobId,
-        navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
-        setGenerating, setProgress, setCurrentJobId
-    ]);
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
@@ -271,10 +223,6 @@ export default function InpaintGenerator() {
         clearSourceImage();
         setShowCanvas(false);
     };
-
-    // Sampler options
-    const samplers = ['euler', 'euler_ancestral', 'dpmpp_2m', 'dpmpp_sde', 'ddim', 'uni_pc'];
-    const schedulers = ['normal', 'karras', 'exponential', 'sgm_uniform'];
 
     return (
         <div className="pb-24">
@@ -549,7 +497,7 @@ export default function InpaintGenerator() {
                                 onChange={(e) => setSampler(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
                             >
-                                {samplers.map(s => (
+                                {SAMPLERS.map(s => (
                                     <option key={s} value={s}>{s}</option>
                                 ))}
                             </select>
@@ -562,7 +510,7 @@ export default function InpaintGenerator() {
                                 onChange={(e) => setScheduler(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
                             >
-                                {schedulers.map(s => (
+                                {SCHEDULERS.map(s => (
                                     <option key={s} value={s}>{s}</option>
                                 ))}
                             </select>

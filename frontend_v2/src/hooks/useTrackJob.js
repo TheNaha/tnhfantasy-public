@@ -10,7 +10,7 @@ export function useTrackJob(jobId) {
             return data?.job || data;
         },
         enabled: !!jobId,
-        staleTime: Infinity, // updated reactively by WebSocket
+        staleTime: 30_000,
     });
 }
 

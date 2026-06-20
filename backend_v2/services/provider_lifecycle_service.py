@@ -118,9 +118,9 @@ class ProviderLifecycleService:
                 if port:
                     host_port = port[0].get("HostPort")
                     if host_port:
-                        async with httpx.AsyncClient(timeout=2.0) as client:
-                            response = await client.get(f"http://localhost:{host_port}/health")
-                            healthy = response.status_code == 200
+                        client = get_http_client()
+                        response = await client.get(f"http://localhost:{host_port}/health", timeout=2.0)
+                        healthy = response.status_code == 200
         except Exception:
             pass
 

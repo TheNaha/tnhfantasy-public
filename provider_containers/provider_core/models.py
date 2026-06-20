@@ -28,7 +28,7 @@ class DownloadRequest(BaseModel):
     token: Optional[str] = None
     preview_url: Optional[str] = None
     metadata: Optional[Dict] = None
-    info: Optional[Dict] = None
+    info: Optional[Dict] = None  # Deprecated: use `metadata` instead. Kept for backwards compatibility.
 
 
 class ListModelsRequest(BaseModel):

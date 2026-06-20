@@ -1,3 +1,5 @@
+# Historical migration script — one-off tool used to patch test_workflow_executor.py
+# after the httpx.AsyncClient refactor. Not part of the test suite; kept for reference only.
 import re
 import os
 

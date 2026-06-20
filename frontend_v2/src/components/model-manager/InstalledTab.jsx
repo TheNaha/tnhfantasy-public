@@ -53,11 +53,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             if (!path) return;
 
             const currentOffset = reset ? 0 : offsetRef.current;
+            const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
             const params = {
                 directory: path,
                 limit: itemsPerPage,
                 offset: currentOffset,
-                sort: sortBy  // Use the sortBy state
+                sort: sortMap[sortBy] || "name_asc"
             };
             if (search) params.search = search;
 

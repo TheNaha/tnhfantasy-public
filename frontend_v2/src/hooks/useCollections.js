@@ -14,7 +14,6 @@ async function migrateIfNeeded() {
                 const oldCollections = parsed.state?.collections;
 
                 if (oldCollections && Object.keys(oldCollections).length > 0) {
-                    console.log('[Store] Migrating', Object.keys(oldCollections).length, 'collections from localStorage');
 
                     // Format for API
                     const collectionsToMigrate = Object.values(oldCollections).map(c => ({
@@ -25,7 +24,6 @@ async function migrateIfNeeded() {
                     }));
 
                     await collectionsApi.importCollections(collectionsToMigrate);
-                    console.log('[Store] Collection migration complete');
                 }
                 localStorage.setItem(MIGRATION_KEY, 'true');
             } catch (e) {

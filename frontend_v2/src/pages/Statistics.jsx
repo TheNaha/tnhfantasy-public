@@ -31,7 +31,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 const Statistics = () => {
 
     // Fetch detailed statistics
-    const { data, isLoading, error } = useQuery({
+    const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['statistics', 'detailed'],
         queryFn: () => api.get('/api/statistics/detailed'),
         staleTime: 60000, // Cache for 1 minute
@@ -50,62 +50,74 @@ const Statistics = () => {
             <div className="flex items-center justify-center h-screen bg-neutral-900">
                 <div className="text-center">
                     <TrendingUp className="mx-auto mb-4 text-gray-600" size={64} />
-                    <h2 className="text-2xl font-bold text-white mb-2">No Statistics Available</h2>
-                    <p className="text-gray-400">
-                        Generate images with enriched metadata to see comprehensive analytics
+                    <h2 className="text-2xl font-bold text-white mb-2">
+                        {error ? 'Failed to Load Statistics' : 'No Statistics Available'}
+                    </h2>
+                    <p className="text-gray-400 mb-4">
+                        {error
+                            ? 'Something went wrong while fetching statistics. Please try again.'
+                            : 'Generate images with enriched metadata to see comprehensive analytics'}
                     </p>
+                    {error && (
+                        <button
+                            onClick={() => refetch()}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+                        >
+                            Retry
+                        </button>
+                    )}
                 </div>
             </div>
         );
     }
 
     // Prepare timeline data for charts
-    const timelineDaily = Object.entries(data.timeline.daily).map(([date, count]) => ({
+    const timelineDaily = Object.entries(data?.timeline?.daily ?? {}).map(([date, count]) => ({
         date,
         count
     }));
 
-    const timelineHourly = Object.entries(data.timeline.hourly).map(([hour, count]) => ({
+    const timelineHourly = Object.entries(data?.timeline?.hourly ?? {}).map(([hour, count]) => ({
         hour: `${hour}:00`,
         count
     }));
 
     // Prepare model data
-    const checkpointsData = Object.entries(data.models.checkpoints).map(([name, count]) => ({
+    const checkpointsData = Object.entries(data?.models?.checkpoints ?? {}).map(([name, count]) => ({
         name: name.length > 25 ? name.substring(0, 25) + '...' : name,
         fullName: name,
         count
     })).sort((a, b) => b.count - a.count).slice(0, 10);
 
-    const samplersData = Object.entries(data.models.samplers).map(([name, count]) => ({
+    const samplersData = Object.entries(data?.models?.samplers ?? {}).map(([name, count]) => ({
         name,
         count
     }));
 
 
     // Prepare settings data
-    const stepsData = Object.entries(data.settings.steps).map(([steps, count]) => ({
+    const stepsData = Object.entries(data?.settings?.steps ?? {}).map(([steps, count]) => ({
         steps: parseInt(steps),
         count
     })).sort((a, b) => a.steps - b.steps);
 
-    const cfgData = Object.entries(data.settings.cfg).map(([cfg, count]) => ({
+    const cfgData = Object.entries(data?.settings?.cfg ?? {}).map(([cfg, count]) => ({
         cfg: parseFloat(cfg),
         count
     })).sort((a, b) => a.cfg - b.cfg);
 
-    const resolutionsData = Object.entries(data.settings.resolutions).map(([res, count]) => ({
+    const resolutionsData = Object.entries(data?.settings?.resolutions ?? {}).map(([res, count]) => ({
         resolution: res,
         count
     })).sort((a, b) => b.count - a.count).slice(0, 8);
 
     // Prepare performance data
-    const perfByModel = Object.entries(data.performance.by_model).map(([name, stats]) => ({
+    const perfByModel = Object.entries(data?.performance?.by_model ?? {}).map(([name, stats]) => ({
         name: name.length > 20 ? name.substring(0, 20) + '...' : name,
         avg: stats.avg
     })).sort((a, b) => b.avg - a.avg).slice(0, 8);
 
-    const perfByRes = Object.entries(data.performance.by_resolution).map(([res, stats]) => ({
+    const perfByRes = Object.entries(data?.performance?.by_resolution ?? {}).map(([res, stats]) => ({
         resolution: res,
         avg: stats.avg
     })).sort((a, b) => a.avg - b.avg);
@@ -120,8 +132,8 @@ const Statistics = () => {
                             Generation Analytics
                         </h1>
                         <p className="text-gray-400">
-                            Comprehensive insights from {data.total_images} generated images
-                            {data.enriched_count > 0 && ` (${data.enriched_count} with full metadata)`}
+                            Comprehensive insights from {data.total_images ?? 0} generated images
+                            {(data.enriched_count ?? 0) > 0 && ` (${data.enriched_count} with full metadata)`}
                         </p>
                     </div>
                 </div>
@@ -133,7 +145,7 @@ const Statistics = () => {
                             <Image className="text-blue-500" size={24} />
                             <span className="text-sm text-gray-400">Total Images</span>
                         </div>
-                        <div className="text-3xl font-bold">{data.total_images}</div>
+                        <div className="text-3xl font-bold">{data.total_images ?? 0}</div>
                     </div>
 
                     <div className="glass p-6 rounded-2xl">
@@ -141,7 +153,7 @@ const Statistics = () => {
                             <Clock className="text-purple-500" size={24} />
                             <span className="text-sm text-gray-400">Avg Time</span>
                         </div>
-                        <div className="text-3xl font-bold">{data.performance.avg_time || 0}s</div>
+                        <div className="text-3xl font-bold">{data?.performance?.avg_time || 0}s</div>
                     </div>
 
                     <div className="glass p-6 rounded-2xl">
@@ -150,7 +162,7 @@ const Statistics = () => {
                             <span className="text-sm text-gray-400">Total Time</span>
                         </div>
                         <div className="text-3xl font-bold">
-                            {Math.floor((data.performance.total_time || 0) / 60)}m
+                            {Math.floor((data?.performance?.total_time || 0) / 60)}m
                         </div>
                     </div>
 
@@ -160,7 +172,7 @@ const Statistics = () => {
                             <span className="text-sm text-gray-400">Keywords</span>
                         </div>
                         <div className="text-3xl font-bold">
-                            {Object.keys(data.prompts.keywords || {}).length}
+                            {Object.keys(data?.prompts?.keywords || {}).length}
                         </div>
                     </div>
                 </div>

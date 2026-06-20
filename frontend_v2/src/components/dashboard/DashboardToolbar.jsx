@@ -1,4 +1,3 @@
-import React from 'react';
 import { Star, FolderOpen, BarChart3, Trash2 } from 'lucide-react';
 
 export function DashboardToolbar({

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Wand2, BookOpen } from 'lucide-react';
 import { useGeneratorStore } from '../../store/generatorStore';
 import PromptLibrary from './PromptLibrary';

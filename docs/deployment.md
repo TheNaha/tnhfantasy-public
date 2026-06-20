@@ -24,7 +24,7 @@ The provided `docker-compose.yml` orchestrates the backend, frontend, and provid
 ### Architecture
 - **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Health check hits `/api/health`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
-- **provider-modal** (and other providers): Serverless worker containers. Container names must be `comfy-provider-{PROVIDER_ID}` for backend auto-detection. Depends on frontend health.
+- **provider-modal** (and other providers): Serverless worker containers. Container names must be `comfy-provider-{PROVIDER_ID}` for backend auto-detection. Depends on backend health.
 
 ### Data Volumes
 The `./data` directory is mounted into all containers at `/data`. This shared volume contains:
@@ -58,7 +58,7 @@ docker-compose down
 - **Security:** Ensure that `.env`, `backend_v2/data/db/comfy.db`, and generated images (`output` directory) are protected and not publicly accessible.
 - **Reverse Proxy:** The `docker-compose.yml` includes Traefik labels for routing. Configure Traefik according to your domain setup.
 - **Persistent Data:** The `./data` directory is mapped to the host filesystem via volumes, ensuring data persists across container restarts.
-- **Frontend Polling:** Docker frontend file watching requires polling mode (`CHOKIDAR_USEPOLLING=true` is set in the Dockerfile).
+- **Frontend Polling:** Docker frontend file watching requires polling mode (`usePolling: true` in `vite.config.js`).
 
 ## Logs
 To view the logs for the entire application:

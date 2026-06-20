@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { FolderOpen, Loader2 } from 'lucide-react';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import toast from 'react-hot-toast';
-import useSettingsStore, { useSettings } from '../store/settingsStore';
+import useSettingsStore from '../store/settingsStore';
 import { generateApi, createIdempotencyKey } from '../api';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useActiveJobs } from '../hooks/useActiveJobs';
-import { useTrackJob } from '../hooks/useTrackJob';
+import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
@@ -26,11 +26,9 @@ import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
-    const settings = useSettings();
     const [viewingMetadata, setViewingMetadata] = useState(null);
-    const [currentJobId, setCurrentJobId] = useState(null);
-    const [progress, setProgress] = useState(null);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
+    const { setCurrentJobId, progress, setProgress } = useTrackGenerationJob(setGenerating);
 
     const {
         store: {
@@ -69,8 +67,6 @@ export default function SimpleGenerator() {
 
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
-    const { data: trackedJob } = useTrackJob(currentJobId);
-
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
     useKeyboardShortcuts();
@@ -88,53 +84,6 @@ export default function SimpleGenerator() {
         }
         return { positive, negative };
     };
-
-    useEffect(() => {
-        if (!currentJobId || !trackedJob) return;
-
-        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
-        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
-
-        if (trackedJob.status === 'completed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.success('Generation complete!', { icon: '✨' });
-            if (settings.generator.redirectAfterGenerate) {
-                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
-            }
-            return;
-        }
-
-        if (trackedJob.status === 'failed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
-            return;
-        }
-
-        if (trackedJob.status === 'cancelled') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast('Generation cancelled');
-            return;
-        }
-
-        // Otherwise it is active
-        setGenerating(true);
-        setProgress({
-            value: progressValue,
-            max: 100,
-            status: isQueued ? 'queued' : trackedJob.status,
-            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
-        });
-    }, [
-        trackedJob, currentJobId,
-        navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
-        setGenerating, setProgress, setCurrentJobId
-    ]);
 
     const buildSimpleWorkflowPayload = (jobSeed = seed) => {
         const builder = new WorkflowBuilder();

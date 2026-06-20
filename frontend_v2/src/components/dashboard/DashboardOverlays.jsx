@@ -1,4 +1,3 @@
-import React from 'react';
 import ImageLightbox from './ImageLightbox';
 import JobDetailsModal from './JobDetailsModal';
 import { ImageComparison } from './ImageComparison';

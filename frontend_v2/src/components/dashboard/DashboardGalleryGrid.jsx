@@ -1,4 +1,3 @@
-import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { GallerySkeleton } from '../Skeleton';
 import EmptyState from '../EmptyState';

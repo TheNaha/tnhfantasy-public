@@ -12,7 +12,6 @@ async function migrateIfNeeded() {
             try {
                 const parsed = JSON.parse(oldData);
                 if (parsed.state?.prompts?.length > 0) {
-                    console.log('[PromptStore] Migrating', parsed.state.prompts.length, 'prompts from localStorage');
 
                     // Format for API
                     const promptsToMigrate = parsed.state.prompts.map(p => ({
@@ -27,7 +26,6 @@ async function migrateIfNeeded() {
                     }));
 
                     await promptsApi.importPrompts(promptsToMigrate);
-                    console.log('[PromptStore] Migration complete');
                 }
                 localStorage.setItem(MIGRATION_KEY, 'true');
                 localStorage.removeItem(OLD_STORAGE_KEY);

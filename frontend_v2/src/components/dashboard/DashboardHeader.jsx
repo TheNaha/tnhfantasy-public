@@ -1,4 +1,3 @@
-import React from 'react';
 import { LayoutGrid, List, Square, LineChart, Check, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import useSettingsStore from '../../store/settingsStore';

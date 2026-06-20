@@ -190,20 +190,16 @@ async def test_get_container_status_uses_async_health_probe_when_container_is_ru
     async_client = MagicMock()
     async_client.get = AsyncMock(return_value=response)
 
-    async_context = MagicMock()
-    async_context.__aenter__ = AsyncMock(return_value=async_client)
-    async_context.__aexit__ = AsyncMock(return_value=None)
-
     service = ProviderLifecycleService(
         session=MagicMock(),
         provider_service=provider_service,
         container_manager=container_manager,
     )
 
-    with patch("services.provider_lifecycle_service.httpx.AsyncClient", return_value=async_context):
+    with patch("services.provider_lifecycle_service.get_http_client", return_value=async_client):
         result = await service.get_container_status("provider-1")
 
     assert result["status"] == "running"
     assert result["running"] is True
     assert result["healthy"] is True
-    async_client.get.assert_awaited_once_with("http://localhost:18000/health")
+    async_client.get.assert_awaited_once_with("http://localhost:18000/health", timeout=2.0)

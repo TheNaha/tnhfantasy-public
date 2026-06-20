@@ -4,13 +4,13 @@ Manages Docker containers for provider workers with isolated credentials.
 """
 import docker
 import os
-import httpx
 import time
 import asyncio
 from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
 
 from config import get_worker_backend_url
+from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
 
@@ -231,15 +231,18 @@ class ContainerManager:
         # Get host backend directory path from environment
         backend_host_path = os.getenv("HOST_BACKEND_PATH")
         if not backend_host_path:
-            logger.warning("backend_path_missing", provider_id=provider_id)
-            volumes = {}
-        else:
-            volumes = {
-                backend_host_path: {"bind": "/backend", "mode": "ro"}
-            }
+            raise ValueError(
+                f"HOST_BACKEND_PATH environment variable is not set. "
+                f"Worker container for provider '{provider_id}' requires access to "
+                f"backend code and models. Set HOST_BACKEND_PATH to the host path "
+                f"where the backend directory is mounted."
+            )
+        volumes = {
+            backend_host_path: {"bind": "/backend", "mode": "ro"}
+        }
         
         # Use the compose-defined network name for container-to-container communication
-        target_network = "tnhcomfy"
+        target_network = os.getenv("COMFY_DOCKER_NETWORK", "tnhcomfy")
         logger.debug("container_network", network=target_network)
         
         try:
@@ -327,8 +330,8 @@ class ContainerManager:
             else:
                 for method, url in probe_targets:
                     try:
-                        async with httpx.AsyncClient(timeout=2.0) as client:
-                            response = await client.get(url)
+                        client = get_http_client()
+                        response = await client.get(url, timeout=2.0)
                         if response.status_code == 200:
                             logger.info("container_healthy", container=container.name, method=method)
                             return

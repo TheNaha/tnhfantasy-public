@@ -39,3 +39,6 @@ data/db/comfy.db
 
 .ocx/
 .opencode/
+.agents/
+test_async_gen.py
+provider_fixes.patch
