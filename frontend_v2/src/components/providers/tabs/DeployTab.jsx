@@ -1,10 +1,9 @@
-import { useState } from 'react';
+
 import { Rocket, Loader2 } from 'lucide-react';
-import { DataRow, StatusRow, ActionBtn, Notice, STATUS_TONE, humanize } from './Shared';
+import { DataRow, StatusRow, ActionBtn, Notice } from './Shared';
+import { STATUS_TONE, humanize } from './utils';
 
 export default function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy, provider }) {
-    const [showSteps, setShowSteps] = useState(false);
-
     return (
         <>
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">

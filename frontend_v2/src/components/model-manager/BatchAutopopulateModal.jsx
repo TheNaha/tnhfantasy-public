@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Loader2, Check, ExternalLink, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
+import * as ws from '../../api/websocket';
 
 function CandidateSelector({ model, isAllowedToFetch, onFetchComplete, onDecision }) {
     const [candidates, setCandidates] = useState([]);
@@ -136,6 +137,24 @@ export default function BatchAutopopulateModal({ onClose }) {
     const [loading, setLoading] = useState(true);
     const [processingId, setProcessingId] = useState(null);
     const [allowedToFetchCount, setAllowedToFetchCount] = useState(1);
+    const [autoProgress, setAutoProgress] = useState(null);
+    const [isAutoPopulatingAll, setIsAutoPopulatingAll] = useState(false);
+
+    useEffect(() => {
+        const handleProgress = (payload) => {
+            setAutoProgress(payload);
+            if (payload.status === 'completed') {
+                toast.success('Batch autopopulation complete!');
+                setIsAutoPopulatingAll(false);
+                setTimeout(() => {
+                    onClose(); // close modal when done
+                }, 1500);
+            }
+        };
+
+        ws.on('AUTOPOPULATE_PROGRESS', handleProgress);
+        return () => ws.off('AUTOPOPULATE_PROGRESS', handleProgress);
+    }, [onClose]);
 
     useEffect(() => {
         api.get('/api/v2/models/autopopulate-pending')
@@ -171,6 +190,23 @@ export default function BatchAutopopulateModal({ onClose }) {
         setAllowedToFetchCount(prev => prev + 1);
     }, []);
 
+    const handleAutoPopulateAll = async () => {
+        setIsAutoPopulatingAll(true);
+        try {
+            const res = await api.post('/api/v2/models/autopopulate-all');
+            if (res.status === 'completed') {
+                toast.success('Batch autopopulation complete!');
+                setIsAutoPopulatingAll(false);
+                onClose();
+            } else if (res.status === 'processing') {
+                setAutoProgress({ status: 'processing', processed: 0, total: pendingModels.length, current_model: 'Starting...' });
+            }
+        } catch (err) {
+            toast.error('Failed to start batch autopopulation: ' + err.message);
+            setIsAutoPopulatingAll(false);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -184,13 +220,54 @@ export default function BatchAutopopulateModal({ onClose }) {
                             Review and approve matching candidates for your auto-discovered models.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
-                        <X size={20} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                        {!autoProgress && pendingModels.length > 0 && (
+                            <button
+                                onClick={handleAutoPopulateAll}
+                                disabled={isAutoPopulatingAll || loading}
+                                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                            >
+                                {isAutoPopulatingAll ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                                Auto-Populate All
+                            </button>
+                        )}
+                        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors">
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5">
-                    {loading ? (
+                    {autoProgress ? (
+                        <div className="flex flex-col items-center justify-center py-12">
+                            <Wand2 className="text-purple-500 mb-6 animate-pulse" size={48} />
+                            <h3 className="text-white text-xl font-bold mb-2">Populating Metadata...</h3>
+                            <p className="text-gray-400 mb-8">{autoProgress.current_model}</p>
+                            
+                            <div className="w-full max-w-md bg-gray-800 rounded-full h-3 mb-2 overflow-hidden border border-gray-700">
+                                <div 
+                                    className="bg-purple-500 h-full transition-all duration-300"
+                                    style={{ width: `${Math.max(5, (autoProgress.processed / Math.max(1, autoProgress.total)) * 100)}%` }}
+                                ></div>
+                            </div>
+                            <div className="flex justify-between w-full max-w-md text-xs text-gray-500">
+                                <span>{autoProgress.processed} / {autoProgress.total} processed</span>
+                                <span>{Math.round((autoProgress.processed / Math.max(1, autoProgress.total)) * 100)}%</span>
+                            </div>
+
+                            <div className="mt-8 flex gap-4 text-sm">
+                                <div className="bg-gray-800/50 px-4 py-2 rounded-lg border border-green-900/30">
+                                    <span className="text-green-400 font-bold">{autoProgress.results?.success || 0}</span> Success
+                                </div>
+                                <div className="bg-gray-800/50 px-4 py-2 rounded-lg border border-red-900/30">
+                                    <span className="text-red-400 font-bold">{autoProgress.results?.failed || 0}</span> Failed
+                                </div>
+                                <div className="bg-gray-800/50 px-4 py-2 rounded-lg border border-yellow-900/30">
+                                    <span className="text-yellow-400 font-bold">{autoProgress.results?.not_found || 0}</span> Not Found
+                                </div>
+                            </div>
+                        </div>
+                    ) : loading ? (
                         <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                             <Loader2 className="animate-spin mb-4" size={32} />
                             <p>Finding models that need metadata...</p>

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import {
@@ -179,22 +179,11 @@ const Statistics = () => {
         steps: parseInt(steps), count
     })).sort((a, b) => a.steps - b.steps);
 
-    const cfgData = Object.entries(data?.settings?.cfg ?? {}).map(([cfg, count]) => ({
-        cfg: parseFloat(cfg), count
-    })).sort((a, b) => a.cfg - b.cfg);
+
 
     const resolutionsData = Object.entries(data?.settings?.resolutions ?? {}).map(([res, count]) => ({
         resolution: res, count
     })).sort((a, b) => b.count - a.count).slice(0, 8);
-
-    const loraData = Object.entries(data?.models?.loras ?? {}).map(([name, count]) => ({
-        name: name.length > 20 ? name.substring(0, 20) + '...' : name,
-        count
-    })).sort((a, b) => b.count - a.count).slice(0, 10);
-
-    const providerData = Object.entries(data?.providers ?? {}).map(([name, count]) => ({
-        name, count
-    })).sort((a, b) => b.count - a.count);
 
     const TOTAL_HOURS = (data?.performance?.total_time || 0) / 3600;
     const KWH = TOTAL_HOURS * 0.35; 

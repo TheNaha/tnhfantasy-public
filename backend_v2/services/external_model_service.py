@@ -51,14 +51,20 @@ class ExternalModelService:
         nsfw: bool = None,
         period: str = None,
         page: int = None,
+        cursor: str = None,
         username: str = None,
         tag: str = None,
     ) -> Dict[str, Any]:
         params = {"limit": limit}
         if query:
             params["query"] = query
-        if page:
-            params["page"] = page
+        
+        # CivitAI returns 400 if 'page' is used with 'query'
+        if cursor:
+            params["cursor"] = str(cursor)
+        elif page:
+            if not query:
+                params["page"] = page
         if username:
             params["username"] = username
         if tag:

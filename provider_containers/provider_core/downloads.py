@@ -100,6 +100,9 @@ def download_model_to_path(
     label = path or os.path.basename(full_path)
     temp_path = full_path + ".downloading"
 
+    if not url:
+        raise ValueError("Cannot download model because download_url is missing or empty")
+
     resolved_url, headers, auth_info = build_authenticated_download_request(
         url,
         token,

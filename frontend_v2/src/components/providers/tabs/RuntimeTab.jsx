@@ -1,6 +1,7 @@
 import { Wrench, Zap } from 'lucide-react';
 import { useState } from 'react';
-import { DataRow, StatusRow, ActionBtn, STATUS_TONE, humanize } from './Shared';
+import { DataRow, StatusRow, ActionBtn } from './Shared';
+import { STATUS_TONE, humanize } from './utils';
 
 export default function RuntimeTab({
     runtime, runtimeStatus, provider, capabilities, loading,
@@ -25,7 +26,7 @@ export default function RuntimeTab({
             } else {
                 throw new Error('Ping failed');
             }
-        } catch (error) {
+        } catch {
             setPingStatus('error');
             setTimeout(() => setPingStatus(null), 3000);
         }

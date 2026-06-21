@@ -1,11 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
-import { jobsApi } from '../api';
 import useJobStore from '../store/jobStore';
 import toast from 'react-hot-toast';
-
-const isMobile = () => typeof navigator !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 export function useJobsRealtime() {
     const queryClient = useQueryClient();

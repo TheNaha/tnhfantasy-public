@@ -11,6 +11,8 @@ from infrastructure.logging import get_logger
 from pydantic import BaseModel
 from typing import Optional
 
+from api.routes.websocket import broadcast_to_all
+
 logger = get_logger("autopopulate")
 router = APIRouter(prefix="", tags=["Models"])
 
@@ -132,9 +134,27 @@ async def autopopulate_all_models(
         }
 
     async def process_models(session: Session):
+        total = len(models_to_process)
         results = {"success": 0, "failed": 0, "not_found": 0, "errors": []}
-        for model in models_to_process:
+        
+        await broadcast_to_all("AUTOPOPULATE_PROGRESS", {
+            "status": "started",
+            "processed": 0,
+            "total": total,
+            "results": results,
+            "current_model": "Starting..."
+        })
+        
+        for i, model in enumerate(models_to_process):
             try:
+                await broadcast_to_all("AUTOPOPULATE_PROGRESS", {
+                    "status": "processing",
+                    "processed": i,
+                    "total": total,
+                    "results": results,
+                    "current_model": model.name
+                })
+                
                 service = ModelCivitaiSyncService(session)
                 await service.autopopulate_model(str(model.id))
                 results["success"] += 1
@@ -143,6 +163,14 @@ async def autopopulate_all_models(
             except Exception as exc:
                 results["failed"] += 1
                 results["errors"].append({"model_id": str(model.id), "error": str(exc)})
+                
+        await broadcast_to_all("AUTOPOPULATE_PROGRESS", {
+            "status": "completed",
+            "processed": total,
+            "total": total,
+            "results": results,
+            "current_model": "Done"
+        })
         return results
 
     if len(models_to_process) <= 5:

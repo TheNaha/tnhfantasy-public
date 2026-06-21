@@ -13,6 +13,7 @@ import {
 } from '../../utils/modelAvailability';
 import ModelDetailsModal from './ModelDetailsModal';
 import BatchAutopopulateModal from './BatchAutopopulateModal';
+import BatchResyncModal from './BatchResyncModal';
 
 const CATEGORIES = MODEL_MANAGER_CATEGORIES;
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
@@ -28,6 +29,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [selectedModel, setSelectedModel] = useState(null);
     const [showBatchModal, setShowBatchModal] = useState(false);
+    const [showBatchResyncModal, setShowBatchResyncModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedTags, setSelectedTags] = useState([]);
 
@@ -302,6 +304,15 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <Wand2 size={16} className="text-gray-400 hover:text-white" />
                     </button>
 
+                    <button
+                        onClick={() => setShowBatchResyncModal(true)}
+                        className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 transition-colors"
+                        title="Resync All Metadata"
+                        aria-label="Resync All Metadata"
+                    >
+                        <RotateCw size={16} className="text-blue-400 hover:text-blue-300" />
+                    </button>
+
                     {availableTags.length > 0 && (
                         <div className="relative group">
                             <button className="flex items-center gap-2 px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500">
@@ -514,8 +525,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             {showBatchModal && (
                 <BatchAutopopulateModal onClose={() => {
                     setShowBatchModal(false);
-                    fetchFiles(true, searchTerm); // Refresh list to reflect populated models
+                    handleRefresh();
                 }} />
+            )}
+
+            {showBatchResyncModal && (
+                <BatchResyncModal onClose={() => setShowBatchResyncModal(false)} />
             )}
         </div>
     );

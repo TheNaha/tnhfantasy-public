@@ -14,7 +14,7 @@ import DeployTab from './tabs/DeployTab';
 import SyncTab from './tabs/SyncTab';
 import DiagnosticsTab from './tabs/DiagnosticsTab';
 import LiveConsoleTab from './tabs/LiveConsoleTab';
-import { statusDotClass, humanize } from './tabs/Shared';
+import { statusDotClass, humanize } from './tabs/utils';
 
 const EMPTY_OBJECT = Object.freeze({});
 

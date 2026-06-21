@@ -46,6 +46,7 @@ async def search_civitai(
     nsfw: bool = None,
     period: str = None,
     page: int = None,
+    cursor: str = None,
     username: str = None,
     tag: str = None,
     service: ExternalModelService = Depends(get_external_model_service),
@@ -61,6 +62,7 @@ async def search_civitai(
             nsfw=nsfw,
             period=period,
             page=page,
+            cursor=cursor,
             username=username,
             tag=tag
         )

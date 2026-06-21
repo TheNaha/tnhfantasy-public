@@ -120,9 +120,7 @@ export default function ModelDetailsModal({ file, onClose }) {
         }
         setRefreshing(true);
         try {
-            const payload = {};
-            if (civitaiId) payload.civitai_id = civitaiId;
-            await api.post(`/api/v2/models/${file.model_id}/autopopulate`, payload);
+            await api.post(`/api/v2/models/maintenance/${file.model_id}/resync`);
             toast.success("Model metadata refreshed from CivitAI!");
             queryClient.invalidateQueries({ queryKey: ['models'] });
             queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });

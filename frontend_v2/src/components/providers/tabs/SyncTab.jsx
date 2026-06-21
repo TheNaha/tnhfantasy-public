@@ -1,6 +1,7 @@
-import { RefreshCw, RotateCcw, Server, Download, Circle, Loader2 } from 'lucide-react';
+import { HardDrive, RefreshCw, RotateCcw, Server, Download, Circle, Loader2 } from 'lucide-react';
 import ReconciliationStatus from '../ReconciliationStatus';
-import { ActionBtn, Notice, STATUS_TONE, statusDotClass, humanize, capitalize } from './Shared';
+import { ActionBtn, Notice } from './Shared';
+import { STATUS_TONE, statusDotClass, humanize, capitalize } from './utils';
 
 export default function SyncTab({
     modelSync, storage, storageLoaded, reconciliation, capabilities, loading,

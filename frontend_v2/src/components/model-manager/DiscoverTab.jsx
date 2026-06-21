@@ -91,7 +91,8 @@ export default function DiscoverTab() {
         localStorage.setItem('civitai_discover_tag', JSON.stringify(filterTag));
     }, [query, source, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag]);
     const [page, setPage] = useState(1);
-    const [hasMore, setHasMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
 
     const [civitaiEnums, setCivitaiEnums] = useState({ ModelType: [], BaseModel: [] });
@@ -126,7 +127,7 @@ export default function DiscoverTab() {
         loadTags();
     }, []);
 
-    const buildSearchUrl = useCallback((targetPage = 1) => {
+    const buildSearchUrl = useCallback((targetPage = 1, targetCursor = null) => {
         const endpoint = `/api/v2/models/external/${source}`;
         const params = new URLSearchParams({ query, limit: '20' });
         if (source === 'civitai') {
@@ -137,6 +138,12 @@ export default function DiscoverTab() {
             if (filterPeriod) params.append('period', filterPeriod);
             if (filterUsername) params.append('username', filterUsername);
             if (filterTag) params.append('tag', filterTag);
+            if (targetCursor) {
+                params.append('cursor', targetCursor);
+            } else if (!query) {
+                params.append('page', targetPage);
+            }
+        } else {
             params.append('page', targetPage);
         }
         return `${endpoint}?${params.toString()}`;
@@ -149,11 +156,13 @@ export default function DiscoverTab() {
         setImportedModel(null);
         setInstalledInfoByModelId({});
         setPage(1);
+        setNextCursor(null);
         try {
-            const url = buildSearchUrl(1);
+            const url = buildSearchUrl(1, null);
             const data = await api.get(url);
             setResults(data.items || []);
-            setHasMore(!!data.metadata?.nextPage);
+            setHasMore(!!data.metadata?.nextPage || !!data.metadata?.nextCursor);
+            setNextCursor(data.metadata?.nextCursor || null);
         } catch (err) {
             // Only toast if it's not a 502/500 from empty spam
             if (!err.message.includes("502")) {
@@ -182,10 +191,11 @@ export default function DiscoverTab() {
         setLoadingMore(true);
         const nextPage = page + 1;
         try {
-            const url = buildSearchUrl(nextPage);
+            const url = buildSearchUrl(nextPage, nextCursor);
             const data = await api.get(url);
             setResults(prev => [...prev, ...(data.items || [])]);
-            setHasMore(!!data.metadata?.nextPage);
+            setHasMore(!!data.metadata?.nextPage || !!data.metadata?.nextCursor);
+            setNextCursor(data.metadata?.nextCursor || null);
             setPage(nextPage);
         } catch (err) {
             toast.error(err.message);
