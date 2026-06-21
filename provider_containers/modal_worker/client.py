@@ -269,7 +269,9 @@ class ModalProviderClient(BaseProviderClient):
 
         async def download_file(download_url: str, storage_path: str, token: str = None):
             download_model_func = get_modal_function("download_model")
-            await download_model_func.remote.aio(url=download_url, path=storage_path, token=token)
+            result = await download_model_func.remote.aio(url=download_url, path=storage_path, token=token)
+            if isinstance(result, dict) and result.get("status") == "error":
+                raise RuntimeError(result.get("message", "Download failed"))
 
         async def delete_file(storage_path: str):
             delete_file_func = get_modal_function("storage_delete_file")

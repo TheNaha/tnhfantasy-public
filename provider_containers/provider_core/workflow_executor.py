@@ -316,6 +316,14 @@ async def execute_comfy_workflow(
             elif msg_type == "execution_error":
                 yield {"status": "error", "message": str(msg_data)}
                 return
+    except asyncio.CancelledError:
+        _log(logger, logging.INFO, "Workflow execution cancelled. Interrupting ComfyUI.")
+        try:
+            client = get_http_client()
+            await client.post(f"http://{server_address}/interrupt", timeout=5.0)
+        except Exception as e:
+            _log(logger, logging.ERROR, f"Failed to send interrupt: {e}")
+        raise
     finally:
         await websocket.close()
 

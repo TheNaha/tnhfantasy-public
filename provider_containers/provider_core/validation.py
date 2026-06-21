@@ -99,6 +99,8 @@ def validate_downloaded_file(
                     header_size = struct.unpack('<Q', header_size_bytes)[0]
                     if header_size > actual_size - 8:
                         raise ValueError(f"Invalid header size: {header_size} > {actual_size - 8}")
+                    if header_size > 100 * 1024 * 1024:  # 100MB cap
+                        raise ValueError(f"Header size too large (exceeds 100MB limit): {header_size}")
                     header_bytes = f.read(header_size)
                     header = json.loads(header_bytes)
                     if not isinstance(header, dict):

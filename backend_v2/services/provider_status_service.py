@@ -224,7 +224,7 @@ class ProviderStatusService:
         try:
             response = await http_client.get(
                 f"{runtime.worker_url}/reconciliation-status",
-                timeout=10.0,
+                timeout=2.0,
             )
             if response.status_code != 200:
                 if persisted_state.get("status") and persisted_state.get("status") != "idle":
@@ -281,7 +281,7 @@ class ProviderStatusService:
         try:
             response = await http_client.get(
                 f"{runtime.worker_url}/deploy-status",
-                timeout=10.0,
+                timeout=2.0,
             )
             if response.status_code != 200:
                 return persisted_state
@@ -298,6 +298,9 @@ class ProviderStatusService:
                     persisted_state["logs"] = logs
                 if worker_state.get("status") == "deploying":
                     persisted_state["status"] = "deploying"
+                    
+                # PERSIST THE UPDATED STATE TO DATABASE SO WE DON'T LOSE IT WHEN WORKER SCALES DOWN
+                await self.provider_service.update_provider(provider_id, {"deploy_state": persisted_state})
 
             return persisted_state
         except Exception:

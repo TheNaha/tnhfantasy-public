@@ -264,7 +264,9 @@ async def download_model(request: Request):
         logger.error(f"[Download] Path traversal blocked: {e}")
         return {"status": "error", "message": "Invalid path"}
 
-    return download_model_to_path(
+    import asyncio
+    return await asyncio.to_thread(
+        download_model_to_path,
         url=url,
         full_path=full_path,
         path=path,

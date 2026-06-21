@@ -233,13 +233,6 @@ export function useProvidersPageData({ realtime = true } = {}) {
         queryFn: fetchProvidersList,
         staleTime: PROVIDERS_STALE_TIME,
         refetchOnWindowFocus: true,
-        refetchInterval: (query) => {
-            const data = query?.state?.data;
-            if (Array.isArray(data) && data.some((p) => p.deploy_state?.status === 'deploying')) {
-                return 2000;
-            }
-            return false;
-        },
     });
 
     const loadBalancerQuery = useQuery({

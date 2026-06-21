@@ -568,9 +568,10 @@ async def run_reconciliation_v2(
 
                 # Only consider deletion for files that weren't successfully registered
                 if registered_count < len(orphaned_files):
-                    unregistered = orphaned_files
-                    max_deletions = calculate_safe_deletion_limit(len(existing_files), len(unregistered))
-                    unregistered = unregistered[:max_deletions]
+                    # SAFETY FIX: Since the registration API only returns a count and not specific 
+                    # failed paths, it's unsafe to delete any of them without risking valid data loss.
+                    logger.warning("[V2 Reconciliation] Registration partially failed. Skipping deletion to prevent data loss.")
+                    unregistered = []
                 else:
                     unregistered = []
 

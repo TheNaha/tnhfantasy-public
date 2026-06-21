@@ -25,6 +25,16 @@ function getJobPhase(job) {
     return PHASE_CONFIG[status] || { icon: Clock, label: status, color: 'text-gray-400', bar: 'bg-gray-600' };
 }
 
+const ElapsedTime = memo(function ElapsedTime({ createdAt, isProcessing }) {
+    useGlobalClock(isProcessing);
+    return (
+        <span className="text-xs text-gray-600 flex items-center gap-1 flex-shrink-0">
+            <Clock size={10} />
+            {formatElapsed(createdAt)}
+        </span>
+    );
+});
+
 const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const realtimeJob = useJobStore(state => state.jobs[initialJob.id]);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
@@ -37,9 +47,6 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const isCancelled = job.status === 'cancelled';
     const isProcessing = ['sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'].includes(job.status);
     const isPending = ['pending'].includes(job.status);
-
-    useGlobalClock(isProcessing);
-
 
     // Extract metadata
     const meta = job.metadata || job.metadata_ || {};
@@ -68,8 +75,6 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
         e.stopPropagation();
         onDelete?.(job.id);
     }, [onDelete, job.id]);
-
-    const getElapsedTime = () => formatElapsed(job.created_at);
 
     return (
         <div
@@ -269,10 +274,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             {promptPreview}
                         </p>
                         {isProcessing && (
-                            <span className="text-xs text-gray-600 flex items-center gap-1 flex-shrink-0">
-                                <Clock size={10} />
-                                {getElapsedTime()}
-                            </span>
+                            <ElapsedTime createdAt={job.created_at} isProcessing={isProcessing} />
                         )}
                     </div>
                 </div>

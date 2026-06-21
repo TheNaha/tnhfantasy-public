@@ -73,6 +73,16 @@ class BeamProviderClient(BaseProviderClient):
                 detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "missing": missing},
             )
 
+        try:
+            http_client = get_http_client()
+            response = await http_client.get(f"{BEAM_STORAGE_URL}/health", headers=get_beam_headers(), timeout=10.0)
+            response.raise_for_status()
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "message": f"Remote ping failed: {e}"}
+            )
+
         return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True}
 
     async def get_info(self) -> Dict[str, Any]:
@@ -326,6 +336,9 @@ class BeamProviderClient(BaseProviderClient):
                 timeout=1800.0
             )
             response.raise_for_status()
+            result = response.json()
+            if isinstance(result, dict) and result.get("status") == "error":
+                raise RuntimeError(result.get("message", "Download failed"))
             
         async def delete_file(storage_path: str):
             client = get_http_client()

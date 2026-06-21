@@ -12,7 +12,6 @@ export function useJobsRealtime() {
 
     const lastEventTimeRef = useRef(0);
     const consecutiveFailuresRef = useRef(0);
-    const mobilePollingIntervalRef = useRef(null);
     const connectionToastIdRef = useRef(null);
     const initializedRef = useRef(false);
     const lastSequenceNumberRef = useRef(0);
@@ -27,61 +26,6 @@ export function useJobsRealtime() {
         toast.dismiss('mobile-connection-error');
         connectionToastIdRef.current = null;
     }, []);
-
-    const stopMobilePolling = useCallback(() => {
-        if (mobilePollingIntervalRef.current) {
-            clearInterval(mobilePollingIntervalRef.current);
-            mobilePollingIntervalRef.current = null;
-            consecutiveFailuresRef.current = 0;
-        }
-    }, []);
-
-    const startMobilePolling = useCallback(() => {
-        if (mobilePollingIntervalRef.current) return;
-
-        consecutiveFailuresRef.current = 0;
-
-        mobilePollingIntervalRef.current = setInterval(async () => {
-            const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
-            const hasActiveJobs = activeJobs.length > 0;
-            const wsEventsFlowing = Date.now() - lastEventTimeRef.current < 5000;
-
-            if (!hasActiveJobs) {
-                stopMobilePolling();
-                return;
-            }
-
-            if (wsEventsFlowing && ws.getConnectionStatus()) {
-                stopMobilePolling();
-                return;
-            }
-
-            try {
-                const data = await jobsApi.getActive();
-                const fetchedJobs = data?.jobs || [];
-                queryClient.setQueryData(['jobs', 'active'], fetchedJobs);
-                
-                // Also update Zustand store so JobCard immediately picks up polled changes
-                const store = useJobStore.getState();
-                fetchedJobs.forEach(job => {
-                    store.updateJob(job.id, job);
-                });
-                
-                consecutiveFailuresRef.current = 0;
-            } catch (e) {
-                console.error('[useJobsRealtime] Mobile polling fetch failed:', e);
-                consecutiveFailuresRef.current += 1;
-
-                if (consecutiveFailuresRef.current >= 3) {
-                    connectionToastIdRef.current = toast.error('Connection issues - trying to reconnect...', {
-                        id: 'mobile-connection-error',
-                        duration: 4000,
-                    });
-                    consecutiveFailuresRef.current = 0;
-                }
-            }
-        }, 2000);
-    }, [queryClient, stopMobilePolling]);
 
     const connectAndSubscribe = useCallback(async () => {
         try {
@@ -153,6 +97,9 @@ export function useJobsRealtime() {
                 old ? { ...old, ...job } : job
             );
             queryClient.invalidateQueries({ queryKey: ['gallery'] });
+            
+            // CLEANUP ZUSTAND TO PREVENT MEMORY LEAKS
+            useJobStore.getState().removeJob(job.id);
 
             if (type === 'completed') {
                 toast.success(
@@ -195,19 +142,11 @@ export function useJobsRealtime() {
             if (document.visibilityState === 'visible') {
                 dismissConnectionToast();
 
-                if (isMobile()) {
-                    if (!ws.getConnectionStatus()) {
-                        void connectAndSubscribe();
-                    }
-                    const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
-                    if (activeJobs.length > 0) startMobilePolling();
-                } else if (!ws.getConnectionStatus()) {
+                if (!ws.getConnectionStatus()) {
                     void connectAndSubscribe();
                 }
 
                 queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-            } else {
-                stopMobilePolling();
             }
         };
 
@@ -218,19 +157,10 @@ export function useJobsRealtime() {
                 void connectAndSubscribe();
             }
             queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-            if (isMobile()) {
-                const activeJobs = queryClient.getQueryData(['jobs', 'active']) || [];
-                if (activeJobs.length > 0) startMobilePolling();
-            }
-        };
-
-        const onOffline = () => {
-            stopMobilePolling();
         };
 
         document.addEventListener('visibilitychange', onVisibilityChange);
         window.addEventListener('online', onOnline);
-        window.addEventListener('offline', onOffline);
 
         return () => {
             unsubs.forEach(unsub => unsub?.());
@@ -238,13 +168,11 @@ export function useJobsRealtime() {
             // Do NOT call ws.disconnect() — the socket is a module-level singleton
             // that should persist for the lifetime of the page. Destroying it here
             // causes events to be lost during the reconnection window.
-            stopMobilePolling();
             dismissConnectionToast();
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
-            window.removeEventListener('offline', onOffline);
         };
-    }, [queryClient, connectAndSubscribe, startMobilePolling, stopMobilePolling, dismissConnectionToast, markEventReceived]);
+    }, [queryClient, connectAndSubscribe, dismissConnectionToast, markEventReceived]);
 }
 
 export default useJobsRealtime;

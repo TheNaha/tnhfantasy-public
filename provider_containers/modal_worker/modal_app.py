@@ -626,10 +626,12 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 
     return result
 
+LIGHTWEIGHT_SCALEDOWN = 15
+
 @app.function(
     image=image,
     volumes={"/mnt/data": vol}, 
-    scaledown_window=STORAGE_SCALEDOWN,
+    scaledown_window=LIGHTWEIGHT_SCALEDOWN,
     max_containers=STORAGE_MAX_CONTAINERS
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)

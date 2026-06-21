@@ -8,7 +8,16 @@ const useJobStore = create((set, get) => ({
     updateJob: (jobId, data) => set((state) => {
         const jobs = { ...state.jobs };
         const hasExisting = jobId in jobs;
-        jobs[jobId] = { ...(jobs[jobId] || {}), ...data };
+        // Extract only volatile delta state
+        const volatileData = {
+            progress: data.progress,
+            overall_progress: data.overall_progress,
+            status: data.status,
+            message: data.message,
+            queue_position: data.queue_position
+        };
+        
+        jobs[jobId] = { ...(jobs[jobId] || {}), ...volatileData };
         if (!hasExisting && Object.keys(jobs).length > MAX_JOBS) {
             const keys = Object.keys(jobs);
             const toDelete = keys.slice(0, keys.length - MAX_JOBS);

@@ -80,11 +80,14 @@ class WebSocketManager:
             topic = event.type.value.split(".")[0]
             room = topic  # e.g., "job", "download", "provider"
             
-            await sio.emit(
-                event.type.value,  # Event name (e.g., "job.progress")
-                event.to_dict(),   # Event data
-                room=room          # Only send to clients in this room
-            )
+            try:
+                await sio.emit(
+                    event.type.value,  # Event name (e.g., "job.progress")
+                    event.to_dict(),   # Event data
+                    room=room          # Only send to clients in this room
+                )
+            except Exception as e:
+                logger.error(f"[WebSocket] Error broadcasting event {event.type.value}: {e}")
     
     async def stop_broadcasting(self):
         """Stop the broadcast listener."""
