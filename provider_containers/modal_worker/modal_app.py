@@ -639,7 +639,7 @@ LIGHTWEIGHT_SCALEDOWN = 15
 async def list_models_with_metadata(directory: str):
     await vol.reload.aio()
     from provider_core.models_utils import list_models_with_metadata_internal
-    return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=True)
+    return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
 
 # ============================================

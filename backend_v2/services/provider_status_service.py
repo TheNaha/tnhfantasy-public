@@ -212,99 +212,18 @@ class ProviderStatusService:
         provider_id: str,
         provider: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Refresh reconciliation state from the worker when possible."""
+        """Return the latest known reconciliation state (uses websockets for live updates)."""
         persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
-        provider = provider or await self.provider_service.get_provider(provider_id)
-        runtime = resolve_provider_runtime(provider)
-
-        if runtime.mode not in ("container_http", "discovery"):
-            return self.normalize_reconciliation_for_card(persisted_state)
-
-        http_client = get_http_client()
-        try:
-            response = await http_client.get(
-                f"{runtime.worker_url}/reconciliation-status",
-                timeout=2.0,
-            )
-            if response.status_code != 200:
-                if persisted_state.get("status") and persisted_state.get("status") != "idle":
-                    return self.normalize_reconciliation_for_card(persisted_state)
-                return self.normalize_reconciliation_for_card({
-                    "provider_id": provider_id,
-                    "status": "idle",
-                    "warning": f"Worker returned HTTP {response.status_code} for reconciliation status",
-                })
-
-            worker_state = response.json()
-            
-            # Prevent overwriting with idle worker state if we already have non-idle persisted state
-            # Or if worker restarted, it will report "idle", but DB might have the truth.
-            if worker_state.get("status") == "idle" and persisted_state.get("status") not in ("idle", None):
-                return self.normalize_reconciliation_for_card(persisted_state)
-                
-            merged_state = await self.provider_service.upsert_reconciliation_state(
-                provider_id,
-                {
-                    **worker_state,
-                    "last_contact_at": ProviderService._utcnow_iso(),
-                },
-            )
-            return self.normalize_reconciliation_for_card(merged_state)
-        except (httpx.HTTPError, ValueError) as exc:
-            if persisted_state.get("status") and persisted_state.get("status") != "idle":
-                merged_state = await self.provider_service.upsert_reconciliation_state(
-                    provider_id,
-                    {"warning": f"Worker unreachable: {str(exc)}"},
-                )
-                return self.normalize_reconciliation_for_card(merged_state)
-            return self.normalize_reconciliation_for_card({
-                "provider_id": provider_id,
-                "status": "idle",
-                "warning": f"Worker unreachable: {str(exc)}",
-            })
+        return self.normalize_reconciliation_for_card(persisted_state)
 
     async def get_live_deploy_state(
         self,
         provider_id: str,
         provider: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Refresh deploy state from the worker when possible."""
+        """Return the latest known deploy state without synchronous HTTP polling."""
         persisted_state = await self.provider_service.get_provider_deploy_state(provider_id)
-        provider = provider or await self.provider_service.get_provider(provider_id)
-        runtime = resolve_provider_runtime(provider)
-
-        if runtime.mode not in ("container_http", "discovery"):
-            return persisted_state
-
-        from infrastructure.http_client import get_http_client
-        http_client = get_http_client()
-        try:
-            response = await http_client.get(
-                f"{runtime.worker_url}/deploy-status",
-                timeout=2.0,
-            )
-            if response.status_code != 200:
-                return persisted_state
-
-            worker_state = response.json()
-            
-            # Use the worker state if it's currently deploying or if we don't have a newer state in DB
-            if worker_state.get("status") in ("deploying", "completed", "failed"):
-                # If worker state is completed/failed and persisted state is also completed/failed,
-                # prefer the one that has logs, or just let DB state win if it's newer.
-                # For simplicity, we just merge logs into the persisted state if they exist.
-                logs = worker_state.get("logs")
-                if logs:
-                    persisted_state["logs"] = logs
-                if worker_state.get("status") == "deploying":
-                    persisted_state["status"] = "deploying"
-                    
-                # PERSIST THE UPDATED STATE TO DATABASE SO WE DON'T LOSE IT WHEN WORKER SCALES DOWN
-                await self.provider_service.update_provider(provider_id, {"deploy_state": persisted_state})
-
-            return persisted_state
-        except Exception:
-            return persisted_state
+        return persisted_state
 
     @staticmethod
     def build_provider_diagnostics(

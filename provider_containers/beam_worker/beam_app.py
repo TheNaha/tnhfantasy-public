@@ -288,7 +288,7 @@ async def list_models(request: Request):
     directory = data.get("directory", "models/checkpoints")
     
     from provider_core.models_utils import list_models_with_metadata_internal
-    files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=True)
+    files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
     
     return {"files": files}
 

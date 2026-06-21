@@ -232,14 +232,14 @@ export function useProvidersPageData({ realtime = true } = {}) {
         queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers,
         queryFn: fetchProvidersList,
         staleTime: PROVIDERS_STALE_TIME,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
     });
 
     const loadBalancerQuery = useQuery({
         queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer,
         queryFn: () => providersApi.getLoadBalancing(),
         staleTime: 30 * 1000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
     });
 
     useEffect(() => {
