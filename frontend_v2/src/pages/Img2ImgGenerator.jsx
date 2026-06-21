@@ -34,10 +34,9 @@ export default function Img2ImgGenerator() {
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
-            sourceImage, denoise,
+            sourceImage, denoise, setDenoise,
             selectedCheckpoint, selectedVae, selectedLoras,
-            setSeed, setSteps, setCfg, setSampler, setScheduler,
-            setSourceImage, setDenoise, clearSourceImage,
+            setSourceImage, clearSourceImage,
             setSelectedCheckpoint, setSelectedVae,
             randomizeSeed, addLora, removeLora, updateLora
         },

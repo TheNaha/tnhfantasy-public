@@ -41,9 +41,29 @@ class ExternalModelService:
             detail="URL must be from CivitAI (civitai.com) or HuggingFace (huggingface.co)",
         )
 
-    async def search_civitai(self, query: str, limit: int = 20) -> Dict[str, Any]:
-        encoded_query = urllib.parse.quote(query, safe="")
-        url = f"https://civitai.com/api/v1/models?query={encoded_query}&limit={limit}"
+    async def search_civitai(
+        self, 
+        query: str = "", 
+        limit: int = 20,
+        types: str = None,
+        sort: str = None,
+        baseModels: str = None,
+        nsfw: bool = None
+    ) -> Dict[str, Any]:
+        params = {"limit": str(limit)}
+        if query:
+            params["query"] = query
+        if types:
+            params["types"] = types
+        if sort:
+            params["sort"] = sort
+        if baseModels:
+            params["baseModels"] = baseModels
+        if nsfw is not None:
+            params["nsfw"] = str(nsfw).lower()
+
+        qs = urllib.parse.urlencode(params)
+        url = f"https://civitai.com/api/v1/models?{qs}"
 
         try:
             response = await get_http_client().get(url, timeout=10)

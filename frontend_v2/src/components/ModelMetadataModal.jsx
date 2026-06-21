@@ -1,10 +1,12 @@
-import { X, Copy, Check, ExternalLink } from 'lucide-react';
+import { X, Copy, Check, ExternalLink, AlertCircle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import { api } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
 
 const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected']);
 const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
@@ -93,26 +95,24 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
     const queryClient = useQueryClient();
+    const [showSearchModal, setShowSearchModal] = useState(false);
 
     const autopopulateMutation = useMutation({
-        mutationFn: async () => {
+        mutationFn: async (civitaiId = null) => {
             const modelId = metadata.id || metadata.model_id;
-            const res = await fetch(`/api/v2/models/${modelId}/autopopulate`, { method: 'POST' });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.detail || 'Failed to autopopulate');
-            }
-            return res.json();
+            const payload = civitaiId ? { civitai_id: civitaiId } : {};
+            const res = await api.post(`/api/v2/models/${modelId}/autopopulate`, payload);
+            return res.data;
         },
         onSuccess: () => {
             const modelId = metadata.id || metadata.model_id;
             toast.success("Model details autopopulated!");
             queryClient.invalidateQueries(['models']);
-            queryClient.invalidateQueries(['model', modelId]);
-            onClose(); // Close modal to refresh data
+            queryClient.invalidateQueries({ queryKey: ['model', modelId] });
+            setShowSearchModal(false);
         },
         onError: (err) => {
-            toast.error(err.message);
+            toast.error(err.message || 'Failed to autopopulate');
         }
     });
 
@@ -335,15 +335,17 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                     {/* Content */}
                     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
                         {metadata?.description?.includes("Auto-discovered") && (
-                            <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-xl flex items-center justify-between">
-                                <div className="text-sm text-blue-200">
-                                    This model was auto-discovered from storage and is missing details.
+                            <div className="p-4 bg-yellow-900/20 border border-yellow-700/30 rounded-xl flex justify-between items-center">
+                                <div className="flex items-center gap-2 text-yellow-500">
+                                    <AlertCircle size={16} />
+                                    <span className="text-sm font-medium">Auto-discovered Model</span>
                                 </div>
                                 <button 
-                                    onClick={() => autopopulateMutation.mutate()}
+                                    onClick={() => setShowSearchModal(true)}
                                     disabled={autopopulateMutation.isPending}
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                                 >
+                                    <RefreshCw size={14} className={autopopulateMutation.isPending ? "animate-spin" : ""} />
                                     {autopopulateMutation.isPending ? 'Fetching...' : 'Fetch Metadata'}
                                 </button>
                             </div>
@@ -496,6 +498,13 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                     </div>
                 </div>
             </div>
+            {showSearchModal && (
+                <CivitaiSearchModal 
+                    initialQuery={displayName}
+                    onClose={() => setShowSearchModal(false)}
+                    onSelect={(selectedModel) => autopopulateMutation.mutate(selectedModel.id)}
+                />
+            )}
         </div>
     </div>
     );

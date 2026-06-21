@@ -71,7 +71,7 @@ class ModelCivitaiSyncService:
 
         return self.repo.model_to_dict(model)
 
-    async def autopopulate_model(self, model_id: str) -> Dict[str, Any]:
+    async def autopopulate_model(self, model_id: str, target_civitai_id: Optional[int] = None) -> Dict[str, Any]:
         import json
         import re
         from services.external_model_service import ExternalModelService
@@ -84,9 +84,14 @@ class ModelCivitaiSyncService:
 
         external = ExternalModelService()
 
-        # Try direct lookup by CivitAI model ID first (most accurate)
-        civitai_data = None
-        if model.civitai_model_id:
+        if target_civitai_id:
+            try:
+                civitai_data = await external.get_civitai_model(target_civitai_id)
+            except Exception:
+                pass
+
+        # Try direct lookup by CivitAI model ID next
+        if not civitai_data and model.civitai_model_id:
             try:
                 civitai_data = await external.get_civitai_model(model.civitai_model_id)
             except Exception:

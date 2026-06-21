@@ -28,13 +28,24 @@ async def parse_model_url(
 
 @router.get("/civitai")
 async def search_civitai(
-    query: str,
+    query: str = "",
     limit: int = 20,
+    types: str = None,
+    sort: str = None,
+    baseModels: str = None,
+    nsfw: bool = None,
     service: ExternalModelService = Depends(get_external_model_service),
 ) -> Dict[str, Any]:
     """Search models on CivitAI."""
     try:
-        return await service.search_civitai(query=query, limit=limit)
+        return await service.search_civitai(
+            query=query, 
+            limit=limit,
+            types=types,
+            sort=sort,
+            baseModels=baseModels,
+            nsfw=nsfw
+        )
     except ExternalModelServiceError as exc:
         raise ProviderError("ExternalModelService", exc.detail) from exc
 

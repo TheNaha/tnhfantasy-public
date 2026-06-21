@@ -8,8 +8,14 @@ from core.entities import ModelV2
 from infrastructure.database import get_session_context
 from infrastructure.logging import get_logger
 
+from pydantic import BaseModel
+from typing import Optional
+
 logger = get_logger("autopopulate")
 router = APIRouter(prefix="", tags=["Models"])
+
+class AutopopulateRequest(BaseModel):
+    civitai_id: Optional[int] = None
 
 
 def _get_models_needing_population(session: Session) -> list:
@@ -20,10 +26,15 @@ def _get_models_needing_population(session: Session) -> list:
 
 
 @router.post("/{model_id}/autopopulate")
-async def autopopulate_model_details(model_id: str, session: Session = Depends(get_session)):
+async def autopopulate_model_details(
+    model_id: str, 
+    request: Optional[AutopopulateRequest] = None,
+    session: Session = Depends(get_session)
+):
     service = ModelCivitaiSyncService(session)
+    target_id = request.civitai_id if request else None
     try:
-        return await service.autopopulate_model(model_id)
+        return await service.autopopulate_model(model_id, target_civitai_id=target_id)
     except ValueError as e:
         raise NotFoundError("Model", model_id)
     except Exception as e:

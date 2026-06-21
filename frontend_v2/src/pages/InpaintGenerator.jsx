@@ -42,9 +42,8 @@ export default function InpaintGenerator() {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
             sourceImage, denoise, maskImage, maskBlur,
             selectedCheckpoint, selectedVae, selectedLoras,
-            setSeed, setSteps, setCfg, setSampler, setScheduler,
-            setSourceImage, setDenoise, setMaskImage, setMaskBlur, clearSourceImage,
-            setSelectedCheckpoint, setSelectedVae,
+            setSourceImage, setDenoise, setMaskImage, setMaskBlur,
+            clearSourceImage, setSelectedCheckpoint, setSelectedVae,
             randomizeSeed, addLora, removeLora, updateLora
         },
         providers, providersLoading,

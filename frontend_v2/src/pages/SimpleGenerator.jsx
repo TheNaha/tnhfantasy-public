@@ -37,12 +37,11 @@ export default function SimpleGenerator() {
             selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
             hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
             adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
-            setPrompt, setNegativePrompt, setSeed, setSteps, setCfg, setSampler, setScheduler, setWidth, setHeight, setBatchSize, setAspectRatioLocked,
+            setPrompt, setNegativePrompt,
             setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
             setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
             setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
-            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords,
-            aspectRatioLocked
+            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords
         },
         providers, providersLoading,
         preflight: {
