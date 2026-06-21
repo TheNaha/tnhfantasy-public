@@ -24,6 +24,35 @@ class BaseProviderClient(abc.ABC):
     def get_config(self) -> Dict[str, Any]:
         return {"config": self.runtime_config}
 
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        try:
+            # We must import ListModelsRequest here to avoid circular imports if needed,
+            # or it should be passed from models
+            from provider_core.models import ListModelsRequest
+            result = await self.list_models(ListModelsRequest(directory=""))
+            files = result.get("files", [])
+            by_directory = {}
+            for file in files:
+                path = file.get("path", "")
+                if not path:
+                    continue
+                # Assuming path is like models/checkpoints/foo.safetensors
+                parts = path.split("/")
+                if len(parts) > 1:
+                    directory = "/".join(parts[:-1])
+                else:
+                    directory = "root"
+                by_directory[directory] = by_directory.get(directory, 0) + 1
+                
+            return {
+                "provider_id": self.provider_id,
+                "total": len(files),
+                "by_directory": by_directory
+            }
+        except Exception as e:
+            logger.error(f"[{self.provider_id}] Failed to get storage stats: {e}")
+            return {"provider_id": self.provider_id, "total": 0, "by_directory": {}, "error": str(e)}
+
     def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         updated = []
         for key, value in updates.items():

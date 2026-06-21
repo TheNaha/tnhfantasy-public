@@ -65,7 +65,6 @@ export default function ProviderDetailPanel({
     jobsAssigned = 0,
 }) {
     const [activeTab, setActiveTab] = useState('runtime');
-    const [showReconciliation, setShowReconciliation] = useState(false);
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
     const deploy = provider.deploy_state ?? EMPTY_OBJECT;
@@ -245,8 +244,6 @@ export default function ProviderDetailPanel({
                             loading={loading}
                             onReconcile={onReconcile}
                             onResetStatus={onResetStatus}
-                            showReconciliation={showReconciliation}
-                            setShowReconciliation={setShowReconciliation}
                             providerId={provider.id}
                         />
                     )}
@@ -408,7 +405,7 @@ function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loadi
 
 function SyncTab({
     modelSync, storage, storageLoaded, reconciliation, capabilities, loading,
-    onReconcile, onResetStatus, showReconciliation, setShowReconciliation, providerId,
+    onReconcile, onResetStatus, providerId,
 }) {
     const dbModels = modelSync.total_models || 0;
     const storageModels = storage.total || 0;
@@ -488,19 +485,18 @@ function SyncTab({
                 />
             )}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mb-4">
                 {capabilities.reconcile && (
                     <ActionBtn onClick={onReconcile} disabled={Boolean(loading)} tone="orange" icon={RefreshCw} label="Reconcile" />
                 )}
                 {capabilities.reset_status && (
                     <ActionBtn onClick={onResetStatus} disabled={Boolean(loading)} tone="red" icon={RotateCcw} label="Reset DB Sync" />
                 )}
-                <ActionBtn onClick={() => setShowReconciliation(true)} tone="gray" icon={Eye} label="Progress" />
             </div>
 
             {/* Inline storage breakdown */}
             {storageEntries.length > 0 && (
-                <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4">
+                <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4 mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-3">Storage by Directory</div>
                     <div className="space-y-2">
                         {storageEntries.map(([dir, count], index) => {
@@ -526,9 +522,7 @@ function SyncTab({
                 </div>
             )}
 
-            {showReconciliation && (
-                <ReconciliationStatus providerId={providerId} onClose={() => setShowReconciliation(false)} />
-            )}
+            <ReconciliationStatus providerId={providerId} inline={true} />
         </>
     );
 }

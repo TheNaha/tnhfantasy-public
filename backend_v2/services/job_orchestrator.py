@@ -27,7 +27,8 @@ class JobOrchestrator:
         
     async def cancel_job(self, job_id: str) -> bool:
         job = await self.job_service.get_job(job_id)
-        if job and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+        active_states = (JobStatus.PENDING, JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING, JobStatus.POST_PROCESSING)
+        if job and job.status in active_states:
             await self.job_service.update_job(job_id, status=JobStatus.CANCELLED)
             return True
         return False

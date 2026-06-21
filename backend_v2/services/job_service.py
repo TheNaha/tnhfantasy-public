@@ -101,8 +101,10 @@ class JobService:
             logger.warning("job_update_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
             
+        # Set started_at for first active state
+        active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING, JobStatus.POST_PROCESSING}
         status = updates.get("status")
-        if status == JobStatus.RUNNING and not job.started_at:
+        if status in active_states and not job.started_at:
             updates["started_at"] = datetime.now(timezone.utc)
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
             updates["completed_at"] = datetime.now(timezone.utc)
@@ -151,7 +153,8 @@ class JobService:
     
     def get_running_jobs(self) -> List[Job]:
         """Get all running/processing jobs."""
-        return self.repo.get_by_statuses([JobStatus.RUNNING])
+        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING, JobStatus.POST_PROCESSING]
+        return self.repo.get_by_statuses(active_states)
 
     def get_pending_queue_items(self) -> List[JobQueueItem]:
         """Get pending queue items (lightweight)."""
@@ -159,7 +162,8 @@ class JobService:
 
     def get_running_queue_items(self) -> List[JobQueueItem]:
         """Get running/processing queue items (lightweight)."""
-        return self.repo.get_queue_items([JobStatus.RUNNING])
+        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING, JobStatus.POST_PROCESSING]
+        return self.repo.get_queue_items(active_states)
     
     def get_average_duration(self, sample_size: int = 10) -> float:
         """

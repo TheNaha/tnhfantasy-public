@@ -1,5 +1,6 @@
 import json
 
+from core.entities import JobStatus
 from infrastructure.http_client import get_streaming_client
 from infrastructure.logging import get_logger
 
@@ -109,6 +110,7 @@ async def call_provider(
             ) as response:
 
                 if response.status_code == 200:
+                    await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to provider...")
                     final_result = None
                     buffer = ""
                     executed_nodes = set()
@@ -125,6 +127,7 @@ async def call_provider(
                             overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
                             await job_service.update_job(
                                 job_id,
+                                status=JobStatus.GENERATING,
                                 progress=percent,
                                 overall_progress=overall,
                                 message=f"Rendering: {percent}%",
@@ -137,6 +140,7 @@ async def call_provider(
                             overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
                             await job_service.update_job(
                                 job_id,
+                                status=JobStatus.GENERATING,
                                 overall_progress=overall,
                                 message=f"Executing node {len(executed_nodes)}/{total_nodes}...",
                             )
@@ -152,7 +156,7 @@ async def call_provider(
                                 message=f"Restored {len(nodes)} cached nodes...",
                             )
                         elif status == "queued":
-                            await job_service.update_job(job_id, message="Queued in ComfyUI...")
+                            await job_service.update_job(job_id, status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
                         elif status == "success":
                             try:
                                 validate_success_payload(update)

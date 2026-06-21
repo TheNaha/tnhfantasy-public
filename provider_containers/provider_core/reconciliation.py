@@ -403,6 +403,14 @@ async def run_reconciliation_v2(
 
         existing_files = set(await list_existing_files())
         reconciliation_state.set_total_models(len(existing_files))
+        
+        by_directory = {}
+        for path in existing_files:
+            parts = path.split("/")
+            directory = "/".join(parts[:-1]) if len(parts) > 1 else "root"
+            by_directory[directory] = by_directory.get(directory, 0) + 1
+        reconciliation_state.set_by_directory(by_directory)
+        
         logger.info(f"[V2 Reconciliation] Found {len(existing_files)} existing files on {storage_label}")
 
         missing_files = all_expected_paths - existing_files

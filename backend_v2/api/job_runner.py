@@ -150,7 +150,7 @@ async def execute_job(
 
                 await job_service.update_job(
                     job_id,
-                    status=JobStatus.RUNNING,
+                    status=JobStatus.SENT_TO_PROVIDER,
                     provider_id=current_provider.id,
                     message=f"Starting on {current_provider.id}...",
                 )

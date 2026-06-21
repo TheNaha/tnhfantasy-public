@@ -56,7 +56,8 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             except Exception:
                 continue
 
-            if job.status != JobStatus.RUNNING:
+            active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING}
+            if job.status not in active_states:
                 continue
 
             job.status = JobStatus.PENDING

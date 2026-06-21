@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 import httpx
 
+from core.entities import JobStatus
 from api.provider_client import JobCancelledError, ProviderCallError, call_provider
 
 
@@ -102,7 +103,7 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
     assert str(exc_info.value) == "beam upstream failed"
     assert exc_info.value.provider_id == "provider-1"
     assert exc_info.value.is_retryable is True
-    job_service.update_job.assert_awaited_once_with("job-1", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-1", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -130,7 +131,7 @@ async def test_call_provider_uses_details_message_field(monkeypatch):
     assert str(exc_info.value) == "nested worker message"
     assert exc_info.value.provider_id == "provider-details"
     assert exc_info.value.is_retryable is True
-    job_service.update_job.assert_awaited_once_with("job-details", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-details", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -155,7 +156,7 @@ async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monk
 
     assert result["status"] == "success"
     assert result["images"][0]["filename"] == "a.png"
-    assert job_service.update_job.await_count == 2
+    assert job_service.update_job.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -181,7 +182,7 @@ async def test_call_provider_parses_success_without_trailing_newline(monkeypatch
 
     assert result["status"] == "success"
     assert result["images"][0]["filename"] == "tail.png"
-    job_service.update_job.assert_awaited_once_with("job-tail-success", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-tail-success", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -235,7 +236,7 @@ async def test_call_provider_invalid_success_payload_is_retryable(monkeypatch):
     assert "Invalid success payload" in str(exc_info.value)
     assert exc_info.value.provider_id == "provider-invalid-success"
     assert exc_info.value.is_retryable is True
-    job_service.update_job.assert_awaited_once_with("job-invalid-success", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-invalid-success", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -262,7 +263,7 @@ async def test_call_provider_raises_job_cancelled_error(monkeypatch):
 
     assert str(exc_info.value) == "Job cancelled by user"
     assert exc_info.value.provider_id == "provider-cancelled"
-    job_service.update_job.assert_awaited_once_with("job-cancelled", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-cancelled", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -324,7 +325,7 @@ async def test_call_provider_accepts_modal_base64_success_payload(monkeypatch):
     assert result["status"] == "success"
     assert result["images"][0]["filename"] == "image_0.png"
     assert result["images"][0]["_base64_encoded"] is True
-    job_service.update_job.assert_awaited_once_with("job-modal-success", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-modal-success", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio
@@ -353,7 +354,7 @@ async def test_call_provider_handles_provider_core_error_payload(monkeypatch):
     assert str(exc_info.value) == "provider-core failure"
     assert exc_info.value.provider_id == "provider-core"
     assert exc_info.value.is_retryable is True
-    job_service.update_job.assert_awaited_once_with("job-provider-core-error", message="Queued in ComfyUI...")
+    job_service.update_job.assert_any_call("job-provider-core-error", status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
 
 
 @pytest.mark.asyncio

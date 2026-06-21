@@ -42,11 +42,16 @@ services:
     depends_on:
       backend_v2:
         condition: service_healthy
+    ports:
+      # Host port 5174 → container port 80 (for direct localhost access)
+      - "5174:80"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      - traefik.http.routers.tnhcomfy.rule=Host(`comfy.lan.thenaha.my.id`)
-      - traefik.http.services.tnhcomfy.loadbalancer.server.port=80
+      - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`)
+      - traefik.http.routers.comfyui-frontend.entrypoints=websecure
+      - traefik.http.routers.comfyui-frontend.tls=true
+      - traefik.http.services.comfyui-frontend.loadbalancer.server.port=80
       - homepage.group=Projects
       - homepage.name=ComfyUI
       - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
@@ -86,10 +91,12 @@ services:
         condition: service_healthy
     env_file:
       - .env
+      - .env.modal-zetsuke
     environment:
       - PROVIDER_ID=modal-zetsuke
       - PORT=8000
       - BACKEND_URL=http://backend_v2:8002
+    user: "1000:1000"
     # Mount /data so provider workers can access models, input, output
     volumes:
       - ./data:/data

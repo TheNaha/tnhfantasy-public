@@ -59,6 +59,15 @@ export function useJobsRealtime() {
                 const data = await jobsApi.getActive();
                 const fetchedJobs = data?.jobs || [];
                 queryClient.setQueryData(['jobs', 'active'], fetchedJobs);
+                
+                // Also update Zustand store so JobCard immediately picks up polled changes
+                import('../store/jobStore').then(({ default: useJobStore }) => {
+                    const store = useJobStore.getState();
+                    fetchedJobs.forEach(job => {
+                        store.updateJob(job.id, job);
+                    });
+                });
+                
                 consecutiveFailuresRef.current = 0;
             } catch (e) {
                 console.error('[useJobsRealtime] Mobile polling fetch failed:', e);

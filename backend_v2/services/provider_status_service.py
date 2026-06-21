@@ -197,14 +197,8 @@ class ProviderStatusService:
         except Exception:
             return self.empty_storage_payload(provider_id, "Container not found")
 
-        provider_type = provider.type if hasattr(provider, "type") else "modal"
-        if provider_type == "beam":
-            stats_endpoint = "/beam-stats"
-        elif provider_type == "modal":
-            stats_endpoint = "/modal-stats"
-        else:
-            stats_endpoint = "/provider-stats"
-
+        # Workers now use unified /provider-stats endpoint
+        stats_endpoint = "/provider-stats"
         http_client = get_http_client()
         worker_url = f"{runtime.worker_url}{stats_endpoint}"
 

@@ -36,7 +36,8 @@ const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
 const AdvancedGenerator = lazy(() => import('./pages/AdvancedGenerator'));
 const Img2ImgGenerator = lazy(() => import('./pages/Img2ImgGenerator'));
 const InpaintGenerator = lazy(() => import('./pages/InpaintGenerator'));
-const ModelManager = lazy(() => import('./pages/ModelManager'));
+const DiscoverModels = lazy(() => import('./pages/DiscoverModels'));
+const InstalledModels = lazy(() => import('./pages/InstalledModels'));
 const Statistics = lazy(() => import('./pages/Statistics'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Providers = lazy(() => import('./pages/Providers'));
@@ -51,7 +52,9 @@ function AnimatedRoutes() {
                 <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
                 <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />
                 <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
-                <Route path="/models" element={<ErrorBoundary><ModelManager /></ErrorBoundary>} />
+                <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
+                <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />
+                <Route path="/models" element={<Navigate to="/models/installed" replace />} />
                 <Route path="/providers" element={<ErrorBoundary><Providers /></ErrorBoundary>} />
                 <Route path="/statistics" element={<ErrorBoundary><Statistics /></ErrorBoundary>} />
                 <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />

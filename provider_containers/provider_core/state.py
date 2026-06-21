@@ -19,6 +19,7 @@ class ReconciliationStats:
     deletions_completed: int = 0
     invalid_cleaned: int = 0
     missing_reported: int = 0
+    by_directory: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -129,6 +130,7 @@ class ReconciliationState:
             "deletions_completed": self._stats.deletions_completed,
             "invalid_cleaned": self._stats.invalid_cleaned,
             "missing_reported": self._stats.missing_reported,
+            "by_directory": self._stats.by_directory.copy(),
         }
     
     def increment_downloads_completed(self):
@@ -150,6 +152,11 @@ class ReconciliationState:
         """Set total models in storage."""
         with self._lock:
             self._stats.total_models_in_storage = count
+
+    def set_by_directory(self, by_directory: Dict[str, int]):
+        """Set the directory breakdown."""
+        with self._lock:
+            self._stats.by_directory = by_directory.copy()
     
     def set_invalid_cleaned(self, count: int):
         """Set invalid models cleaned count."""

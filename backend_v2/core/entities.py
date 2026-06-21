@@ -10,6 +10,10 @@ import uuid
 class JobStatus(str, Enum):
     """Job lifecycle states."""
     PENDING = "pending"
+    SENT_TO_PROVIDER = "sent-to-provider"
+    CONNECTED = "connected"
+    PRE_GENERATION = "pre-generation"
+    GENERATING = "generating"
     RUNNING = "running"
     COMPLETED = "completed"
     POST_PROCESSING = "post-processing"

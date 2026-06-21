@@ -97,12 +97,12 @@ export default function ModelDetailsModal({ file, onClose }) {
         }
         try {
             await api.post(`/api/v2/models/${file.model_id}/autopopulate`);
-            toast.success("Model details autopopulated!");
+            toast.success(isAutoDiscovered ? "Model details autopopulated!" : "Model metadata refetched!");
             queryClient.invalidateQueries({ queryKey: ['models'] });
             queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
             onClose();
         } catch (e) {
-            toast.error("Failed to autopopulate: " + (e.message || "Unknown error"));
+            toast.error("Failed to sync metadata: " + (e.message || "Unknown error"));
         }
     };
 
@@ -181,12 +181,12 @@ export default function ModelDetailsModal({ file, onClose }) {
                             </div>
                         </div>
                         <div className="flex items-center gap-2">
-                            {isAutoDiscovered && file.model_id && (
+                            {file.model_id && (
                                 <button
                                     onClick={handleAutopopulate}
                                     className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
-                                    title="Fetch metadata from CivitAI"
-                                    aria-label="Autopopulate model metadata"
+                                    title={isAutoDiscovered ? "Autopopulate metadata from CivitAI" : "Refetch metadata from CivitAI"}
+                                    aria-label={isAutoDiscovered ? "Autopopulate model metadata" : "Refetch model metadata"}
                                 >
                                     <Wand2 size={20} />
                                 </button>

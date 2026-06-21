@@ -82,6 +82,10 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     async def config_get():
         return client.get_config()
 
+    @app.get("/provider-stats")
+    async def provider_stats():
+        return await client.get_storage_stats()
+
     @app.post("/config")
     async def config_post(config: dict):
         return client.update_config(config)

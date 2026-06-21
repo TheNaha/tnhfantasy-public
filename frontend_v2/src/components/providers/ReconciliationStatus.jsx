@@ -51,7 +51,7 @@ const PHASES = {
 
 const PHASE_ORDER = ['validating', 'fetching', 'downloading', 'deleting', 'completed'];
 
-export default function ReconciliationStatus({ providerId, onClose }) {
+export default function ReconciliationStatus({ providerId, onClose, inline = false }) {
     const { reconciliationState, isLoading } = useProviderReconciliationState(providerId);
 
     const status = useMemo(() => {
@@ -72,10 +72,10 @@ export default function ReconciliationStatus({ providerId, onClose }) {
 
     if (isLoading && !reconciliationState) {
         return (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-                <div className="bg-gray-800 rounded-xl border border-gray-700 p-8">
+            <div className={inline ? "flex items-center justify-center p-8 border border-gray-700 bg-gray-900/50 rounded-xl" : "fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"}>
+                <div className={inline ? "" : "bg-gray-800 rounded-xl border border-gray-700 p-8"}>
                     <Loader2 className="animate-spin text-blue-400 mx-auto" size={32} />
-                    <div className="text-gray-400 mt-3">Loading status...</div>
+                    <div className="text-gray-400 mt-3 text-center">Loading status...</div>
                 </div>
             </div>
         );
@@ -100,14 +100,13 @@ export default function ReconciliationStatus({ providerId, onClose }) {
     // Current phase index for stepper
     const currentPhaseIndex = PHASE_ORDER.indexOf(phase);
 
-    return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-gray-800 rounded-xl border border-gray-700 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col"
-            >
+    const Content = (
+        <motion.div
+            initial={inline ? { opacity: 0, y: 10 } : { opacity: 0, scale: 0.95 }}
+            animate={inline ? { opacity: 1, y: 0 } : { opacity: 1, scale: 1 }}
+            exit={inline ? { opacity: 0, y: 10 } : { opacity: 0, scale: 0.95 }}
+            className={`bg-gray-800 rounded-xl border border-gray-700 w-full overflow-hidden flex flex-col ${inline ? '' : 'max-w-2xl max-h-[90vh]'}`}
+        >
                 {/* Header with Phase */}
                 <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4">
                     <div className="flex items-center justify-between">
@@ -284,19 +283,30 @@ export default function ReconciliationStatus({ providerId, onClose }) {
                 </div>
 
                 {/* Footer */}
-                <div className="sticky bottom-0 bg-gray-800 border-t border-gray-700 px-6 py-4 flex justify-between items-center">
-                    <div className="flex items-center gap-2 text-sm text-gray-400">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        Live updates active
+                {!inline && (
+                    <div className="sticky bottom-0 bg-gray-800 border-t border-gray-700 px-6 py-4 flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-sm text-gray-400">
+                            <span className="w-2 h-2 rounded-full bg-green-500" />
+                            Live updates active
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                        >
+                            Close
+                        </button>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                    >
-                        Close
-                    </button>
-                </div>
+                )}
             </motion.div>
+    );
+
+    if (inline) {
+        return Content;
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            {Content}
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
@@ -8,13 +8,13 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const [, setCurrentTime] = useState(() => Date.now());
 
     const realtimeJob = useJobStore(state => state.jobs[initialJob.id]);
-    const job = realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob;
+    const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
 
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
-    const isProcessing = job.status === 'processing' || job.status === 'executing' || job.status === 'progress' || job.status === 'running' || job.status === 'queued' || job.status === 'post-processing';
-    const isPending = job.status === 'pending' || job.status === 'queued';
+    const isProcessing = ['sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
+    const isPending = ['pending', 'queued'].includes(job.status);
 
     useEffect(() => {
         let interval;

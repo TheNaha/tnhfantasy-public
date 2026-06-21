@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -122,7 +122,8 @@ export default function Layout({ children }) {
                     <NavItem to="/" icon={Home} label="Dashboard" />
                     <NavItem to="/generate" icon={Wand2} label="Simple Generate" />
                     <NavItem to="/advanced" icon={Settings} label="Advanced" />
-                    <NavItem to="/models" icon={HardDrive} label="Models" />
+                    <NavItem to="/models/installed" icon={HardDrive} label="Installed Models" />
+                    <NavItem to="/models/discover" icon={Globe} label="Discover Models" />
                     <NavItem to="/providers" icon={Server} label="Providers" />
                     <NavItem to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem to="/settings" icon={Settings2} label="Settings" />
