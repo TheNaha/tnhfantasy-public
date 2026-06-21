@@ -86,7 +86,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none group"
         >
             {/* Top Row: Provider + Status */}
-            <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-2 z-10">
+            <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-1.5 sm:p-2 z-10">
                 {/* Provider Badge */}
                 {providerName && (
                     <div className="px-2 py-1 rounded text-xs bg-purple-500/20 text-purple-400 flex items-center gap-1 backdrop-blur-sm">
@@ -117,7 +117,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col items-center justify-center p-4 pt-10 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center p-2 pt-10 sm:p-4 sm:pt-10 text-center">
                 {isProcessing && !isPending ? (
                     <>
                         <PhaseIcon className={`animate-pulse ${phase.color} mb-1`} size={22} />
@@ -127,8 +127,8 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             {phase.label}
                         </div>
 
-                        {/* Job Info Row */}
-                        <div className="w-full mb-2">
+                        {/* Job Info Row - Hidden on mobile to save vertical space */}
+                        <div className="hidden sm:block w-full mb-2">
                             {checkpointShort && (
                                 <p className="text-xs text-gray-400 truncate mb-1" title={checkpoint}>
                                     {checkpointShort}
@@ -153,8 +153,8 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             </div>
                         </div>
 
-                        {/* Phase timeline dots */}
-                        <div className="flex items-center justify-center gap-1 mb-2">
+                        {/* Phase timeline dots - Hidden on mobile */}
+                        <div className="hidden sm:flex items-center justify-center gap-1 mb-2">
                             {PHASE_ORDER.map((p, i) => {
                                 const pIdx = PHASE_ORDER.indexOf(job.status);
                                 const active = i <= pIdx && pIdx >= 0;
@@ -170,7 +170,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                         </div>
 
                         {/* Progress Message */}
-                        <p className="text-sm font-medium text-white truncate w-full mb-2">
+                        <p className="text-[10px] sm:text-sm font-medium text-white truncate w-full mb-1 sm:mb-2">
                             {job.message || 'Processing...'}
                         </p>
 
@@ -182,7 +182,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                                     style={{ width: `${job.overall_progress || 0}%` }}
                                 />
                             </div>
-                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                            <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mt-1">
                                 <span>Workflow</span>
                                 <span>{Math.round(job.overall_progress || 0)}%</span>
                             </div>
@@ -197,7 +197,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                                         style={{ width: `${job.progress}%` }}
                                     />
                                 </div>
-                                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mt-1">
                                     <span>Render</span>
                                     <span>{job.progress}%</span>
                                 </div>
@@ -268,7 +268,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
 
             {/* Bottom Row: Prompt Preview + Elapsed Time */}
             {promptPreview && (
-                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-gray-900/90 to-transparent">
+                <div className="absolute bottom-0 left-0 right-0 p-1.5 sm:p-2 bg-gradient-to-t from-gray-900/90 to-transparent">
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-xs text-gray-500 truncate flex-1" title={prompt}>
                             {promptPreview}
