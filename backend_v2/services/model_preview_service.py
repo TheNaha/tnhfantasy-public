@@ -364,62 +364,66 @@ async def prefetch_stale_model_previews() -> Dict[str, Any]:
         logger.debug("preview_prefetch_disabled")
         return {"status": "disabled"}
 
-    jitter_seconds = 0.0
-    if PREVIEW_PREFETCH_JITTER_SECONDS > 0:
-        jitter_seconds = random.uniform(0.0, PREVIEW_PREFETCH_JITTER_SECONDS)
-        if jitter_seconds > 0:
-            await asyncio.sleep(jitter_seconds)
+    try:
+        jitter_seconds = 0.0
+        if PREVIEW_PREFETCH_JITTER_SECONDS > 0:
+            jitter_seconds = random.uniform(0.0, PREVIEW_PREFETCH_JITTER_SECONDS)
+            if jitter_seconds > 0:
+                await asyncio.sleep(jitter_seconds)
 
-    model_ids = await asyncio.to_thread(_list_civitai_model_ids_for_prefetch)
-    total_models = len(model_ids)
-    if total_models == 0:
-        logger.debug("preview_prefetch_no_models")
-        return {"status": "no_models"}
+        model_ids = await asyncio.to_thread(_list_civitai_model_ids_for_prefetch)
+        total_models = len(model_ids)
+        if total_models == 0:
+            logger.debug("preview_prefetch_no_models")
+            return {"status": "no_models"}
 
-    stale_candidates = await asyncio.to_thread(
-        _select_stale_prefetch_candidates,
-        model_ids,
-        PREVIEW_PREFETCH_MAX_CANDIDATES,
-        PREVIEW_PREFETCH_BATCH_SIZE,
-        PREVIEW_PREFETCH_STALE_AFTER_SECONDS,
-    )
-
-    if not stale_candidates:
-        logger.debug("preview_prefetch_no_stale", total_models=total_models)
-        return {
-            "status": "no_stale",
-            "total_models": total_models,
-        }
-
-    warmed = 0
-    misses = 0
-    for index, model_id in enumerate(stale_candidates):
-        image_data, _content_type, _cache_hit = await fetch_civitai_preview(
-            model_id,
-            version_id=None,
-            image_index=0,
-            force_refresh=True,
+        stale_candidates = await asyncio.to_thread(
+            _select_stale_prefetch_candidates,
+            model_ids,
+            PREVIEW_PREFETCH_MAX_CANDIDATES,
+            PREVIEW_PREFETCH_BATCH_SIZE,
+            PREVIEW_PREFETCH_STALE_AFTER_SECONDS,
         )
-        if image_data:
-            warmed += 1
-        else:
-            misses += 1
 
-        if PREVIEW_PREFETCH_ITEM_DELAY_SECONDS > 0 and index < len(stale_candidates) - 1:
-            await asyncio.sleep(random.uniform(0.0, PREVIEW_PREFETCH_ITEM_DELAY_SECONDS))
+        if not stale_candidates:
+            logger.debug("preview_prefetch_no_stale", total_models=total_models)
+            return {
+                "status": "no_stale",
+                "total_models": total_models,
+            }
 
-    logger.info(
-        "preview_prefetch_cycle_complete",
-        total_models=total_models,
-        selected=len(stale_candidates),
-        warmed=warmed,
-        misses=misses,
-        jitter_seconds=round(jitter_seconds, 3),
-    )
-    return {
-        "status": "ok",
-        "total_models": total_models,
-        "selected": len(stale_candidates),
-        "warmed": warmed,
-        "misses": misses,
-    }
+        warmed = 0
+        misses = 0
+        for index, model_id in enumerate(stale_candidates):
+            image_data, _content_type, _cache_hit = await fetch_civitai_preview(
+                model_id,
+                version_id=None,
+                image_index=0,
+                force_refresh=True,
+            )
+            if image_data:
+                warmed += 1
+            else:
+                misses += 1
+
+            if PREVIEW_PREFETCH_ITEM_DELAY_SECONDS > 0 and index < len(stale_candidates) - 1:
+                await asyncio.sleep(random.uniform(0.0, PREVIEW_PREFETCH_ITEM_DELAY_SECONDS))
+
+        logger.info(
+            "preview_prefetch_cycle_complete",
+            total_models=total_models,
+            selected=len(stale_candidates),
+            warmed=warmed,
+            misses=misses,
+            jitter_seconds=round(jitter_seconds, 3),
+        )
+        return {
+            "status": "ok",
+            "total_models": total_models,
+            "selected": len(stale_candidates),
+            "warmed": warmed,
+            "misses": misses,
+        }
+    except asyncio.CancelledError:
+        logger.debug("preview_prefetch_cancelled_due_to_shutdown")
+        return {"status": "cancelled"}

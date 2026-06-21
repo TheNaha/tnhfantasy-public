@@ -66,8 +66,6 @@ export default function DashboardOverlays({
     onSelectCollectionClose,
     collections,
     onSelectCollection,
-
-    keyboardShortcutsRef,
 }) {
     return (
         <>

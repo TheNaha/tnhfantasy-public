@@ -3,8 +3,11 @@ from uuid import uuid4
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
+import httpx
+
 from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
+from infrastructure.http_client import get_http_client
 from core.exceptions import NotFoundError, ValidationError, ProviderError
 from services.provider_utils import (
     read_deploy_state,

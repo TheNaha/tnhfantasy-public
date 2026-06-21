@@ -231,21 +231,44 @@ class BeamProviderClient(BaseProviderClient):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
-                stdout, _ = await proc.communicate()
+                
+                out_str = ""
+                _DEPLOY_STATE["logs"] = out_str
+                
+                while True:
+                    chunk = await proc.stdout.read(1024)
+                    if not chunk:
+                        break
+                    decoded_chunk = chunk.decode('utf-8', errors='replace')
+                    out_str += decoded_chunk
+                    _DEPLOY_STATE["logs"] = out_str
+                
+                await proc.wait()
+                
+                out_str += "\n\n--- Deploying Storage App ---\n\n"
+                _DEPLOY_STATE["logs"] = out_str
                 
                 proc2 = await asyncio.create_subprocess_exec(
                     "beam", "deploy", "/app/beam_app.py:comfy_storage",
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
-                stdout2, _ = await proc2.communicate()
+                
+                while True:
+                    chunk = await proc2.stdout.read(1024)
+                    if not chunk:
+                        break
+                    decoded_chunk = chunk.decode('utf-8', errors='replace')
+                    out_str += decoded_chunk
+                    _DEPLOY_STATE["logs"] = out_str
+                    
+                await proc2.wait()
 
-                out_str = stdout.decode('utf-8', errors='replace') + "\n" + stdout2.decode('utf-8', errors='replace')
                 if proc.returncode == 0 and proc2.returncode == 0:
-                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful"})
                     logger.info("Beam deployment completed successfully")
                 else:
-                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with codes {proc.returncode}, {proc2.returncode}", "logs": out_str})
+                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with codes {proc.returncode}, {proc2.returncode}"})
                     logger.error(f"Beam deployment failed with codes {proc.returncode}, {proc2.returncode}: {out_str[-500:]}")
             except Exception as e:
                 _DEPLOY_STATE.update({"status": "failed", "message": str(e)})

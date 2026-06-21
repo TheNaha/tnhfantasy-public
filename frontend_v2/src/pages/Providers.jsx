@@ -103,7 +103,8 @@ export default function Providers() {
         try {
             const result = await deployProvider(providerId);
             const type = result.provider_type || 'provider';
-            toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} deploy completed`);
+            toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} deploy started`);
+            refreshAll();
         } catch (error) { toast.error(`Deploy failed: ${error.message}`); }
     };
     const handleReconcile = async (providerId) => {

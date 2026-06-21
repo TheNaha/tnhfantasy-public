@@ -214,13 +214,25 @@ class ModalProviderClient(BaseProviderClient):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT
                 )
-                stdout, _ = await proc.communicate()
-                out_str = stdout.decode('utf-8', errors='replace')
+                
+                out_str = ""
+                _DEPLOY_STATE["logs"] = out_str
+                
+                while True:
+                    chunk = await proc.stdout.read(1024)
+                    if not chunk:
+                        break
+                    decoded_chunk = chunk.decode('utf-8', errors='replace')
+                    out_str += decoded_chunk
+                    _DEPLOY_STATE["logs"] = out_str
+                    
+                await proc.wait()
+
                 if proc.returncode == 0:
-                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful", "logs": out_str})
+                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful"})
                     logger.info("Modal deployment completed successfully")
                 else:
-                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with code {proc.returncode}", "logs": out_str})
+                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with code {proc.returncode}"})
                     logger.error(f"Modal deployment failed with code {proc.returncode}: {out_str[-500:]}")
             except Exception as e:
                 _DEPLOY_STATE.update({"status": "failed", "message": str(e)})

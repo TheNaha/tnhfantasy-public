@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';

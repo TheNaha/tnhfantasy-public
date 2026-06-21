@@ -263,6 +263,46 @@ class ProviderStatusService:
                 "warning": f"Worker unreachable: {str(exc)}",
             })
 
+    async def get_live_deploy_state(
+        self,
+        provider_id: str,
+        provider: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Refresh deploy state from the worker when possible."""
+        persisted_state = await self.provider_service.get_provider_deploy_state(provider_id)
+        provider = provider or await self.provider_service.get_provider(provider_id)
+        runtime = resolve_provider_runtime(provider)
+
+        if runtime.mode not in ("container_http", "discovery"):
+            return persisted_state
+
+        from infrastructure.http_client import get_http_client
+        http_client = get_http_client()
+        try:
+            response = await http_client.get(
+                f"{runtime.worker_url}/deploy-status",
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                return persisted_state
+
+            worker_state = response.json()
+            
+            # Use the worker state if it's currently deploying or if we don't have a newer state in DB
+            if worker_state.get("status") in ("deploying", "completed", "failed"):
+                # If worker state is completed/failed and persisted state is also completed/failed,
+                # prefer the one that has logs, or just let DB state win if it's newer.
+                # For simplicity, we just merge logs into the persisted state if they exist.
+                logs = worker_state.get("logs")
+                if logs:
+                    persisted_state["logs"] = logs
+                if worker_state.get("status") == "deploying":
+                    persisted_state["status"] = "deploying"
+
+            return persisted_state
+        except Exception:
+            return persisted_state
+
     @staticmethod
     def build_provider_diagnostics(
         *,
@@ -338,7 +378,7 @@ class ProviderStatusService:
             provider,
             reconciliation_state=reconciliation_state,
         )
-        deploy_state = await self.provider_service.get_provider_deploy_state(provider_id)
+        deploy_state = await self.get_live_deploy_state(provider_id, provider)
         diagnostics = self.build_provider_diagnostics(
             provider_id=provider_id,
             provider_info=provider_info,
