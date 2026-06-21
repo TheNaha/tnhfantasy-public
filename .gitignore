@@ -42,3 +42,5 @@ data/db/comfy.db
 .agents/
 test_async_gen.py
 provider_fixes.patch
+
+.env.modal-zetsuke
