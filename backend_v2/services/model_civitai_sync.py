@@ -167,17 +167,16 @@ class ModelCivitaiSyncService:
                             matched_version = lv
                             break
 
+                # Fall back to reusing the auto-discovered "v1.0" version if it's unlinked
+                if not matched_version:
+                    for lv in local_versions:
+                        if lv.name == "v1.0" and not lv.civitai_version_id:
+                            matched_version = lv
+                            matched_version.name = civitai_version.get("name", "v1.0")
+                            break
+
                 if not matched_version:
                     # Create a new ModelVersion for unmatched CivitAI versions
-                    primary = self.session.exec(
-                        select(ModelFile).where(
-                            ModelFile.version_id.in_(
-                                select(ModelVersion.id).where(
-                                    ModelVersion.model_id == model.id
-                                ).limit(1)
-                            )
-                        )
-                    ).first()
                     new_version = ModelVersion(
                         model_id=model.id,
                         name=civitai_version.get("name", "v1.0"),

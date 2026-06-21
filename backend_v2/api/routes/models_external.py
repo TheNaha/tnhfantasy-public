@@ -34,6 +34,8 @@ async def search_civitai(
     sort: str = None,
     baseModels: str = None,
     nsfw: bool = None,
+    period: str = None,
+    page: int = None,
     service: ExternalModelService = Depends(get_external_model_service),
 ) -> Dict[str, Any]:
     """Search models on CivitAI."""
@@ -44,7 +46,9 @@ async def search_civitai(
             types=types,
             sort=sort,
             baseModels=baseModels,
-            nsfw=nsfw
+            nsfw=nsfw,
+            period=period,
+            page=page
         )
     except ExternalModelServiceError as exc:
         raise ProviderError("ExternalModelService", exc.detail) from exc
@@ -61,3 +65,6 @@ async def search_huggingface(
         return await service.search_huggingface(query=query, limit=limit)
     except ExternalModelServiceError as exc:
         raise ProviderError("ExternalModelService", exc.detail) from exc
+
+
+

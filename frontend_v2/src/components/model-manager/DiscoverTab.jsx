@@ -8,6 +8,7 @@ import ModelImportCard from './ModelImportCard';
 
 const MODEL_TYPES = ['', 'Checkpoint', 'LORA', 'LoRA', 'VAE', 'Controlnet', 'Upscaler', 'TextualInversion', 'Hypernetwork', 'MotionModule'];
 const SORT_OPTIONS = [['', 'Relevance'], ['Newest', 'Newest'], ['Most Downloaded', 'Downloads'], ['Most Liked', 'Likes']];
+const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], ['Week', 'Week'], ['Day', 'Day']];
 const BASE_MODELS = ['', 'SD1.5', 'SDXL', 'SD3', 'SD3.5', 'FLUX', 'Pony', 'Illustrious'];
 
 export default function DiscoverTab() {
@@ -19,39 +20,78 @@ export default function DiscoverTab() {
     const [importedModel, setImportedModel] = useState(null);
     const [source, setSource] = useState("civitai");
     const [installedInfoByModelId, setInstalledInfoByModelId] = useState({});
-    const [showFilters, setShowFilters] = useState(false);
     const [filterType, setFilterType] = useState("");
     const [filterSort, setFilterSort] = useState("");
     const [filterBaseModel, setFilterBaseModel] = useState("");
     const [filterNsfw, setFilterNsfw] = useState("");
+    const [filterPeriod, setFilterPeriod] = useState("");
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
 
-    const buildSearchUrl = useCallback(() => {
-        const endpoint = source === 'civitai' ? '/api/v2/models/external/civitai' : '/api/v2/models/external/huggingface';
+    const buildSearchUrl = useCallback((targetPage = 1) => {
+        const endpoint = `/api/v2/models/external/${source}`;
         const params = new URLSearchParams({ query, limit: '20' });
         if (source === 'civitai') {
             if (filterType) params.append('types', filterType);
             if (filterSort) params.append('sort', filterSort);
             if (filterBaseModel) params.append('baseModels', filterBaseModel);
             if (filterNsfw) params.append('nsfw', filterNsfw);
+            if (filterPeriod) params.append('period', filterPeriod);
+            params.append('page', targetPage);
         }
         return `${endpoint}?${params.toString()}`;
-    }, [query, source, filterType, filterSort, filterBaseModel, filterNsfw]);
+    }, [query, source, filterType, filterSort, filterBaseModel, filterNsfw, filterPeriod]);
 
-    const handleSearch = async (e) => {
-        e.preventDefault();
-        if (!query.trim()) return;
-
+    const fetchResults = useCallback(async () => {
+        // If query is empty, maybe don't search, or if sorting by Newest/Most Downloaded, allow empty query.
+        // But CivitAI allows empty queries.
         setLoading(true);
         setImportedModel(null);
         setInstalledInfoByModelId({});
+        setPage(1);
         try {
-            const url = buildSearchUrl();
+            const url = buildSearchUrl(1);
             const data = await api.get(url);
             setResults(data.items || []);
+            setHasMore(!!data.metadata?.nextPage);
+        } catch (err) {
+            // Only toast if it's not a 502/500 from empty spam
+            if (!err.message.includes("502")) {
+                toast.error(err.message);
+            }
+            setResults([]);
+        } finally {
+            setLoading(false);
+        }
+    }, [buildSearchUrl]);
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            fetchResults();
+        }, 600);
+        return () => clearTimeout(handler);
+    }, [query, filterType, filterSort, filterBaseModel, filterNsfw, filterPeriod, source, fetchResults]);
+
+    const handleSearch = (e) => {
+        e.preventDefault();
+        fetchResults();
+    };
+
+    const handleLoadMore = async () => {
+        if (loadingMore || !hasMore) return;
+        setLoadingMore(true);
+        const nextPage = page + 1;
+        try {
+            const url = buildSearchUrl(nextPage);
+            const data = await api.get(url);
+            setResults(prev => [...prev, ...(data.items || [])]);
+            setHasMore(!!data.metadata?.nextPage);
+            setPage(nextPage);
         } catch (err) {
             toast.error(err.message);
         } finally {
-            setLoading(false);
+            setLoadingMore(false);
         }
     };
 
@@ -137,16 +177,10 @@ export default function DiscoverTab() {
                             <option value="huggingface">HuggingFace</option>
                         </select>
                         <button
-                            type="button"
-                            onClick={() => setShowFilters(v => !v)}
-                            className={`rounded-xl px-3 border transition-colors ${
-                                showFilters || filterType || filterSort || filterBaseModel || filterNsfw
-                                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                                    : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-white'
-                            }`}
-                            title="Toggle filters"
+                            type="submit"
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-xl font-medium transition-colors flex items-center"
                         >
-                            <Filter size={18} />
+                            Search
                         </button>
                     </form>
 
@@ -172,7 +206,7 @@ export default function DiscoverTab() {
             </div>
 
             {/* Filter bar (CivitAI only) */}
-            {showFilters && source === 'civitai' && (
+            {source === 'civitai' && (
                 <div className="flex flex-wrap gap-3 p-4 rounded-xl border border-gray-700 bg-gray-900/60">
                     <div className="flex flex-col gap-1">
                         <label className="text-[10px] uppercase tracking-wider text-gray-500">Type</label>
@@ -204,8 +238,15 @@ export default function DiscoverTab() {
                             <option value="false">SFW Only</option>
                         </select>
                     </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Period</label>
+                        <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+                            {PERIOD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                    </div>
                     <div className="flex items-end">
-                        <button onClick={() => { setFilterType(""); setFilterSort(""); setFilterBaseModel(""); setFilterNsfw(""); }}
+                        <button onClick={() => { setFilterType(""); setFilterSort(""); setFilterBaseModel(""); setFilterNsfw(""); setFilterPeriod(""); }}
                             className="text-xs text-gray-500 hover:text-white px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800">
                             Clear
                         </button>
@@ -223,16 +264,37 @@ export default function DiscoverTab() {
             ) : importedModel ? (
                 <ModelImportCard model={importedModel} onCancel={() => setImportedModel(null)} />
             ) : results.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {results.map(model => (
-                        <ModelCard
-                            key={model.id}
-                            model={model}
-                            onSelect={handleModelSelect}
-                            source={source}
-                            installedInfo={installedInfoByModelId[String(model.id)] || null}
-                        />
-                    ))}
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {results.map(model => (
+                            <ModelCard
+                                key={model.id}
+                                model={model}
+                                onSelect={handleModelSelect}
+                                source={source}
+                                installedInfo={installedInfoByModelId[String(model.id)] || null}
+                            />
+                        ))}
+                    </div>
+                    
+                    {hasMore && (
+                        <div className="flex justify-center pt-4 pb-8">
+                            <button
+                                onClick={handleLoadMore}
+                                disabled={loadingMore}
+                                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-colors border border-gray-700"
+                            >
+                                {loadingMore ? (
+                                    <>
+                                        <Loader2 className="animate-spin" size={18} />
+                                        Loading more...
+                                    </>
+                                ) : (
+                                    'Load More Results'
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="text-center py-20 text-gray-500">

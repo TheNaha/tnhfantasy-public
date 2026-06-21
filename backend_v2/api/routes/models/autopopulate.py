@@ -42,6 +42,50 @@ async def get_autopopulate_candidates(
         raise ValidationError(str(e))
 
 
+@router.get("/{model_id}/autopopulate-search")
+async def search_autopopulate_candidates(
+    model_id: str,
+    query: str,
+    types: Optional[str] = None,
+    session: Session = Depends(get_session)
+):
+    """Manual CivitAI search for autopopulate. Formats results like candidates."""
+    from services.external_model_service import ExternalModelService
+    
+    # Verify model exists
+    from core.entities import ModelV2
+    model = session.exec(select(ModelV2).where(ModelV2.id == model_id)).first()
+    if not model:
+        raise NotFoundError("Model", model_id)
+        
+    external = ExternalModelService()
+    search_kwargs = {"query": query, "limit": 20}
+    if types:
+        search_kwargs["types"] = types
+        
+    try:
+        result = await external.search_civitai(**search_kwargs)
+        
+        candidates = []
+        for item in result.get("items", []):
+            candidates.append({
+                "score": 0,
+                "score_percent": 0,
+                "match_label": "Manual search result",
+                "civitai_model": item,
+            })
+            
+        return {
+            "model_id": str(model.id),
+            "model_name": model.name,
+            "candidates": candidates,
+            "total_candidates": len(candidates),
+            "source": "civitai",
+        }
+    except Exception as e:
+        raise ValidationError(str(e))
+
+
 @router.post("/{model_id}/autopopulate")
 async def autopopulate_model_details(
     model_id: str, 

@@ -159,7 +159,7 @@ class ProviderStatusService:
         provider: Optional[Any] = None,
         reconciliation_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Fetch provider storage stats from the worker with cache and fallbacks."""
+        """Fetch provider storage stats from the worker with cache and fallbacks to DB."""
         cache_key = f"modal_stats_{provider_id}"
 
         if reconciliation_state is None:
@@ -176,58 +176,36 @@ class ProviderStatusService:
         if cache_key in _modal_stats_cache:
             return _modal_stats_cache[cache_key]
 
-        provider = provider or await self.provider_service.get_provider(provider_id)
-        runtime = resolve_provider_runtime(provider)
-        if runtime.mode not in ("container_http", "discovery"):
-            return self.empty_storage_payload(
-                provider_id,
-                "Stats are only available for container-backed or discovered providers",
-            )
-
-        container_manager = get_container_manager()
-        if not container_manager:
-            return self.empty_storage_payload(provider_id, "Container manager not initialized")
-
+        # Fall back to querying the database directly
+        from core.entities import ProviderVersionStatus
+        from sqlmodel import select, func, or_
+        
         try:
-            container = container_manager.client.containers.get(
-                runtime.container_name or f"comfy-provider-{provider_id}"
-            )
-            if container.status != "running":
-                return self.empty_storage_payload(provider_id, "Container not running")
-        except Exception:
-            return self.empty_storage_payload(provider_id, "Container not found")
-
-        # Workers now use unified /provider-stats endpoint
-        stats_endpoint = "/provider-stats"
-        http_client = get_http_client()
-        worker_url = f"{runtime.worker_url}{stats_endpoint}"
-
-        try:
-            response = await http_client.get(worker_url, timeout=45.0)
-            if response.status_code != 200:
-                return self.empty_storage_payload(provider_id, f"HTTP {response.status_code}")
-
-            payload = response.json()
+            count = self.session.exec(
+                select(func.count(ProviderVersionStatus.id))
+                .where(
+                    or_(
+                        ProviderVersionStatus.provider_id == provider_id,
+                        ProviderVersionStatus.provider_name == provider_id
+                    )
+                )
+                .where(ProviderVersionStatus.status == "ready")
+            ).one()
+            
             result = {
-                "provider_id": payload.get("provider_id") or provider_id,
-                "total": payload.get("total", 0),
-                "by_directory": payload.get("by_directory") or {},
+                "provider_id": provider_id,
+                "total": count,
+                "by_directory": {},
             }
-            if payload.get("error"):
-                result["error"] = payload["error"]
-
             _modal_stats_cache[cache_key] = result
             return result
-        except (httpx.HTTPError, ValueError) as exc:
-            error_message = str(exc).strip() or type(exc).__name__
+        except Exception as exc:
             logger.error(
                 "provider_storage_stats_fetch_failed",
                 provider_id=provider_id,
-                worker_url=worker_url,
-                error_type=type(exc).__name__,
-                error=error_message,
+                error=str(exc),
             )
-            return self.empty_storage_payload(provider_id, error_message)
+            return self.empty_storage_payload(provider_id, str(exc))
 
     async def get_live_reconciliation_state(
         self,
@@ -258,6 +236,12 @@ class ProviderStatusService:
                 })
 
             worker_state = response.json()
+            
+            # Prevent overwriting with idle worker state if we already have non-idle persisted state
+            # Or if worker restarted, it will report "idle", but DB might have the truth.
+            if worker_state.get("status") == "idle" and persisted_state.get("status") not in ("idle", None):
+                return self.normalize_reconciliation_for_card(persisted_state)
+                
             merged_state = await self.provider_service.upsert_reconciliation_state(
                 provider_id,
                 {

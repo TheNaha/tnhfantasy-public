@@ -1,4 +1,5 @@
 import { Star, FolderOpen, BarChart3, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 export function DashboardToolbar({
     showFavorites,
@@ -7,9 +8,9 @@ export function DashboardToolbar({
     activeCollection,
     activeCollectionName,
     setShowCollectionsPanel,
-    setShowStatsPanel,
     onClearHistory
 }) {
+    const navigate = useNavigate();
     return (
         <div className="flex items-center gap-2 flex-wrap">
             <button
@@ -42,7 +43,7 @@ export function DashboardToolbar({
 
             <div className="flex items-center gap-2">
                 <button
-                    onClick={() => setShowStatsPanel(true)}
+                    onClick={() => navigate('/statistics')}
                     className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
                     title="View Statistics"
                     type="button"

@@ -17,11 +17,14 @@ import {
 import { motion } from 'framer-motion';
 import ReconciliationStatus from './ReconciliationStatus';
 import { providerBadgeToneClass, summarizeProviderStatus } from '../../utils/providerStatus';
+import JobCard from '../dashboard/JobCard';
+import useJobStore from '../../store/jobStore';
 
 const EMPTY_OBJECT = Object.freeze({});
 
 const TABS = [
     { id: 'runtime', label: 'Runtime' },
+    { id: 'jobs', label: 'Active Jobs' },
     { id: 'deploy', label: 'Deploy' },
     { id: 'sync', label: 'Model Sync' },
     { id: 'diagnostics', label: 'Diagnostics' },
@@ -65,6 +68,12 @@ export default function ProviderDetailPanel({
     jobsAssigned = 0,
 }) {
     const [activeTab, setActiveTab] = useState('runtime');
+    const activeJobs = useJobStore(state => 
+        Object.values(state.jobs).filter(j => 
+            j.provider_id === provider.id && 
+            !['completed', 'failed', 'cancelled', 'error'].includes(j.status)
+        )
+    );
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
     const deploy = provider.deploy_state ?? EMPTY_OBJECT;
@@ -223,6 +232,22 @@ export default function ProviderDetailPanel({
                             jobsAssigned={jobsAssigned}
                             providerFailures={providerFailures}
                         />
+                    )}
+                    {activeTab === 'jobs' && (
+                        <div className="space-y-4">
+                            {activeJobs.length === 0 ? (
+                                <div className="text-center py-8 text-gray-500">
+                                    <Rocket size={32} className="mx-auto mb-3 opacity-20" />
+                                    <p>No active jobs running on this provider.</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {activeJobs.map(job => (
+                                        <JobCard key={job.id} job={job} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     )}
                     {activeTab === 'deploy' && (
                         <DeployTab

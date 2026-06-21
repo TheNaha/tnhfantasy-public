@@ -27,6 +27,8 @@ import {
   buildGeneratorStateFromMetadata,
   hydrateGeneratorStateModelVisuals,
 } from "../../utils/reuseParameters";
+import FeedCardDetails from "./feed-card/FeedCardDetails";
+import FeedCardActions from "./feed-card/FeedCardActions";
 
 const FeedCard = memo(function FeedCard({
   item,
@@ -292,127 +294,20 @@ const FeedCard = memo(function FeedCard({
           >
             {showDetails ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
           </button>
-          {selectionMode ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelect(item.name);
-              }}
-              className={`p-2 rounded-lg ${selected ? "bg-blue-500 text-white" : "bg-gray-700 text-gray-400"}`}
-              aria-label={selected ? "Deselect item" : "Select item"}
-              aria-pressed={selected}
-            >
-              <Check size={18} aria-hidden="true" />
-            </button>
-          ) : (
-            <>
-              {/* Primary actions - always visible */}
-              <button
-                onClick={handleReuse}
-                disabled={reusing}
-                className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white disabled:opacity-60 disabled:cursor-not-allowed"
-                title="Reuse Parameters"
-                aria-label="Reuse Parameters"
-              >
-                {reusing ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
-              </button>
-              <a
-                href={imageEndpoint}
-                download
-                className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white flex items-center"
-                title="Download"
-                aria-label="Download"
-              >
-                <Download size={18} aria-hidden="true" />
-              </a>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(item.name);
-                }}
-                className="p-2 hover:bg-red-900/50 rounded-lg text-gray-400 hover:text-red-400"
-                title="Delete"
-                aria-label="Delete"
-              >
-                <Trash2 size={18} aria-hidden="true" />
-              </button>
-
-              {/* Secondary actions - visible on md+ screens */}
-              <div className="hidden md:flex gap-2">
-                <button
-                  onClick={handleRemix}
-                  disabled={remixing}
-                  className="p-2 hover:bg-purple-900/50 rounded-lg text-gray-400 hover:text-purple-400 disabled:opacity-50"
-                  title="Quick Remix (new seed)"
-                  aria-label="Quick Remix (new seed)"
-                >
-                  {remixing ? (
-                    <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Sparkles size={18} aria-hidden="true" />
-                  )}
-                </button>
-                <button
-                  onClick={handleImg2Img}
-                  className="p-2 hover:bg-orange-900/50 rounded-lg text-gray-400 hover:text-orange-400"
-                  title="Use as Img2Img source"
-                  aria-label="Use as Img2Img source"
-                >
-                  <ImageIcon size={18} aria-hidden="true" />
-                </button>
-                <button
-                  onClick={handleInpaint}
-                  className="p-2 hover:bg-pink-900/50 rounded-lg text-gray-400 hover:text-pink-400"
-                  title="Inpaint this image"
-                  aria-label="Inpaint this image"
-                >
-                  <Paintbrush size={18} aria-hidden="true" />
-                </button>
-              </div>
-
-              {/* Mobile overflow menu - visible only on small screens */}
-              <div className="md:hidden relative group">
-                <button
-                  type="button"
-                  className="p-2 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  title="More actions"
-                  aria-label="More actions"
-                  aria-haspopup="menu"
-                >
-                  <MoreHorizontal size={18} aria-hidden="true" />
-                </button>
-                {/* Dropdown menu */}
-                <div className="absolute right-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-lg shadow-xl py-1 z-10 opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible transition-all min-w-[160px]">
-                  <button
-                    onClick={handleRemix}
-                    disabled={remixing}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800 disabled:opacity-50"
-                  >
-                    {remixing ? (
-                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Sparkles size={16} aria-hidden="true" />
-                    )}
-                    Remix
-                  </button>
-                  <button
-                    onClick={handleImg2Img}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800"
-                  >
-                    <ImageIcon size={16} aria-hidden="true" />
-                    Img2Img
-                  </button>
-                  <button
-                    onClick={handleInpaint}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left text-gray-300 hover:bg-gray-800"
-                  >
-                    <Paintbrush size={16} aria-hidden="true" />
-                    Inpaint
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+          <FeedCardActions
+            item={item}
+            selected={selected}
+            selectionMode={selectionMode}
+            onSelect={onSelect}
+            reusing={reusing}
+            remixing={remixing}
+            imageEndpoint={imageEndpoint}
+            handleReuse={handleReuse}
+            handleRemix={handleRemix}
+            handleImg2Img={handleImg2Img}
+            handleInpaint={handleInpaint}
+            onDelete={onDelete}
+          />
         </div>
       </div>
 
@@ -460,81 +355,12 @@ const FeedCard = memo(function FeedCard({
       </ContextMenu>
 
       {/* Details */}
-      {showDetails && (
-        <div id={detailsId} className="p-6 space-y-6 bg-gray-900/30 border-t border-gray-800">
-          {detailsLoading ? (
-            <div className="flex gap-2 items-center text-gray-500 text-sm">
-              <Loader2 className="animate-spin" size={14} /> Loading details...
-            </div>
-          ) : metadata ? (
-            <>
-              {/* Prompt */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                  Prompt
-                </h4>
-                <p className="text-sm text-gray-300 leading-relaxed bg-gray-950/50 p-4 rounded-xl border border-gray-800/50">
-                  {metadata.prompt}
-                </p>
-              </div>
-
-              {/* Negative Prompt */}
-              {metadata.negativePrompt && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                    Negative Prompt
-                  </h4>
-                  <p className="text-sm text-gray-400 leading-relaxed bg-gray-950/50 p-4 rounded-xl border border-gray-800/50">
-                    {metadata.negativePrompt}
-                  </p>
-                </div>
-              )}
-
-              {/* Grid Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-800">
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1">
-                    Steps
-                  </span>
-                  <span className="text-sm font-medium text-white bg-gray-800 px-2 py-1 rounded">
-                    {metadata.steps}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1">CFG</span>
-                  <span className="text-sm font-medium text-white bg-gray-800 px-2 py-1 rounded">
-                    {metadata.cfg}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1">
-                    Sampler
-                  </span>
-                  <span
-                    className="text-sm font-medium text-white bg-gray-800 px-2 py-1 rounded truncate"
-                    title={metadata.sampler}
-                  >
-                    {metadata.sampler}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1">Seed</span>
-                  <span
-                    className="text-sm font-medium text-white bg-gray-800 px-2 py-1 rounded truncate"
-                    title={metadata.seed}
-                  >
-                    {metadata.seed}
-                  </span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="text-center text-gray-500 text-sm py-4">
-              No metadata available
-            </div>
-          )}
-        </div>
-      )}
+      <FeedCardDetails
+        detailsId={detailsId}
+        showDetails={showDetails}
+        detailsLoading={detailsLoading}
+        metadata={metadata}
+      />
     </div>
   );
 });

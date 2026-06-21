@@ -22,7 +22,6 @@ import { FilterBar } from './FilterBar';
  * @param {string|null} props.activeCollection - Active collection ID or null
  * @param {string|null} props.activeCollectionName - Active collection name or null
  * @param {(val: boolean) => void} props.setShowCollectionsPanel - Callback to show/hide collections panel
- * @param {(val: boolean) => void} props.setShowStatsPanel - Callback to show/hide stats panel
  * @param {() => Promise<void>} props.onClearHistory - Callback to clear job history
  * 
  * @param {() => void} props.onBatchDownload - Callback to download selected files
@@ -51,7 +50,6 @@ export default function DashboardHeaderToolbar({
     activeCollection,
     activeCollectionName,
     setShowCollectionsPanel,
-    setShowStatsPanel,
     onClearHistory,
 
     onBatchDownload,
@@ -85,7 +83,6 @@ export default function DashboardHeaderToolbar({
                     activeCollection={activeCollection}
                     activeCollectionName={activeCollectionName}
                     setShowCollectionsPanel={setShowCollectionsPanel}
-                    setShowStatsPanel={setShowStatsPanel}
                     onClearHistory={onClearHistory}
                 />
 

@@ -132,8 +132,6 @@ export default function Dashboard() {
         setShowCollectionsPanel,
         showSelectCollection,
         setShowSelectCollection,
-        showStatsPanel,
-        setShowStatsPanel,
         showComparison,
         setShowComparison,
         deleteJob,
@@ -417,7 +415,6 @@ export default function Dashboard() {
                     activeCollection={activeCollection}
                     activeCollectionName={activeCollectionName}
                     setShowCollectionsPanel={setShowCollectionsPanel}
-                    setShowStatsPanel={setShowStatsPanel}
                     onClearHistory={handleClearHistory}
                     onBatchDownload={handleBatchDownload}
                     onBatchDelete={handleBatchDelete}
@@ -479,8 +476,6 @@ export default function Dashboard() {
                 onSelectCollectionClose={() => setShowSelectCollection(false)}
                 collections={collections}
                 onSelectCollection={handleSelectCollection}
-                showStatsPanel={showStatsPanel}
-                onStatsPanelClose={() => setShowStatsPanel(false)}
             />
 
             <GeneratorFloatingButton onClick={() => navigate('/generate')} />

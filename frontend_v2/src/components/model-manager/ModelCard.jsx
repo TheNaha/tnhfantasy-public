@@ -1,4 +1,4 @@
-import { Download, Image as ImageIcon, Check } from 'lucide-react';
+import { Download, Image as ImageIcon, Check, Heart } from 'lucide-react';
 
 export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
 
@@ -65,13 +65,19 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
                 <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-gray-500">{model.type}</span>
                     {model.stats && (
-                        <div className="flex items-center gap-1 text-xs text-yellow-500">
-                            <span>★</span>
-                            <span>
-                                {source === 'civitai'
-                                    ? (model.stats.rating?.toFixed(1) || 'N/A')
-                                    : (model.stats.thumbsUpCount?.toLocaleString() || '0')}
-                            </span>
+                        <div className="flex items-center gap-3 text-xs text-gray-400">
+                            {source === 'civitai' && model.stats.downloadCount !== undefined && (
+                                <div className="flex items-center gap-1" title="Downloads">
+                                    <Download size={12} />
+                                    <span>{model.stats.downloadCount > 1000 ? `${(model.stats.downloadCount / 1000).toFixed(1)}k` : model.stats.downloadCount}</span>
+                                </div>
+                            )}
+                            <div className="flex items-center gap-1 text-pink-500" title="Likes">
+                                <Heart size={12} fill="currentColor" />
+                                <span>
+                                    {model.stats?.thumbsUpCount?.toLocaleString() || '0'}
+                                </span>
+                            </div>
                         </div>
                     )}
                 </div>

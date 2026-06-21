@@ -5,7 +5,6 @@ export function useDashboardModals({ queryClient, filters }) {
     const [selectedJobId, setSelectedJobId] = useState(null);
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
     const [showSelectCollection, setShowSelectCollection] = useState(false);
-    const [showStatsPanel, setShowStatsPanel] = useState(false);
     const [showComparison, setShowComparison] = useState(false);
 
     const deleteJob = useCallback(async (jobId) => {
@@ -44,8 +43,6 @@ export function useDashboardModals({ queryClient, filters }) {
         setShowCollectionsPanel,
         showSelectCollection,
         setShowSelectCollection,
-        showStatsPanel,
-        setShowStatsPanel,
         showComparison,
         setShowComparison,
         deleteJob,

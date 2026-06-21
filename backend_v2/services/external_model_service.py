@@ -48,9 +48,13 @@ class ExternalModelService:
         types: str = None,
         sort: str = None,
         baseModels: str = None,
-        nsfw: bool = None
+        nsfw: bool = None,
+        period: str = None,
+        page: int = None
     ) -> Dict[str, Any]:
         params = {"limit": str(limit)}
+        if page:
+            params["page"] = str(page)
         if query:
             params["query"] = query
         if types:
@@ -61,6 +65,8 @@ class ExternalModelService:
             params["baseModels"] = baseModels
         if nsfw is not None:
             params["nsfw"] = str(nsfw).lower()
+        if period:
+            params["period"] = period
 
         qs = urllib.parse.urlencode(params)
         url = f"https://civitai.com/api/v1/models?{qs}"

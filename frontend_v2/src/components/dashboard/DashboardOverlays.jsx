@@ -3,7 +3,7 @@ import JobDetailsModal from './JobDetailsModal';
 import { ImageComparison } from './ImageComparison';
 import CollectionsPanel from '../collections/CollectionsPanel';
 import SelectCollectionModal from '../collections/SelectCollectionModal';
-import StatsPanel from '../stats/StatsPanel';
+import ContextMenu from '../ContextMenu';
 
 /**
  * DashboardOverlays Component
@@ -36,8 +36,7 @@ import StatsPanel from '../stats/StatsPanel';
  * @param {object} props.collections - Active collections data
  * @param {(collectionId: string) => void} props.onSelectCollection - Callback when a collection is selected
  * 
- * @param {boolean} props.showStatsPanel - Whether to show stats panel
- * @param {() => void} props.onStatsPanelClose - Callback to close stats panel
+ * @param {object} props.keyboardShortcutsRef - Ref for keyboard shortcuts modal
  */
 export default function DashboardOverlays({
     selectedImage,
@@ -68,8 +67,7 @@ export default function DashboardOverlays({
     collections,
     onSelectCollection,
 
-    showStatsPanel,
-    onStatsPanelClose,
+    keyboardShortcutsRef,
 }) {
     return (
         <>
@@ -118,10 +116,6 @@ export default function DashboardOverlays({
                 onSelect={onSelectCollection}
             />
 
-            <StatsPanel
-                isOpen={showStatsPanel}
-                onClose={onStatsPanelClose}
-            />
         </>
     );
 }
