@@ -368,7 +368,7 @@ class TestProvidersRouteReconcile:
         assert response.status_code == 200
         data = response.json()
         assert data["provider_id"] == "status-card-provider"
-        assert data["sync"]["total_models"] == 3
+        assert data["model_sync"]["total_models"] == 3
         assert data["model_sync"]["total_models"] == 3
         assert data["storage"]["total"] == 2
         assert data["reconciliation"]["status"] in {"idle", "reconciling", "completed", "failed"}
@@ -422,7 +422,6 @@ class TestProvidersRouteReconcile:
         for provider_id in provider_ids:
             card = data["status_cards"][provider_id]
             assert card["provider_id"] == provider_id
-            assert "sync" in card
             assert "model_sync" in card
             assert "storage" in card
             assert "diagnostics" in card

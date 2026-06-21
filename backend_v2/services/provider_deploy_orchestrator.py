@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from infrastructure.logging import provider_logger
+from infrastructure.providers.provider_registry import ProviderRegistry
 
 logger = provider_logger()
 
@@ -61,8 +62,8 @@ class ProviderDeployOrchestrator:
         attempt_id: str,
         env_vars: Dict[str, str],
     ) -> Any:
-        image_tag = f"comfy-provider-{provider_type}:latest"
-        self._ensure_image(provider_type, image_tag)
+        image_tag = ProviderRegistry.get_worker_image(provider_type)
+        self._ensure_image(provider_type)
 
         container_name = f"comfy-provider-deploy-{provider_id}-{attempt_id[:8]}"
         volumes = self._build_volumes()
@@ -74,10 +75,11 @@ class ProviderDeployOrchestrator:
             container_name=container_name,
         )
 
+        container_sleep_seconds = max(int(self.step_timeout_seconds) + 300, 3600)
         return self.container_manager.client.containers.run(
             image=image_tag,
             name=container_name,
-            command=["sleep", "1800"],
+            command=["sleep", str(container_sleep_seconds)],
             environment=env_vars,
             volumes=volumes,
             detach=True,
@@ -135,7 +137,7 @@ class ProviderDeployOrchestrator:
                 error=str(exc),
             )
 
-    def _ensure_image(self, provider_type: str, image_tag: str) -> None:
+    def _ensure_image(self, provider_type: str) -> None:
         if self.force_rebuild_image:
             self.container_manager.build_worker_image(provider_type)
             return
@@ -144,6 +146,7 @@ class ProviderDeployOrchestrator:
         if images_client is None:
             return
 
+        image_tag = ProviderRegistry.get_worker_image(provider_type)
         try:
             images_client.get(image_tag)
         except Exception:

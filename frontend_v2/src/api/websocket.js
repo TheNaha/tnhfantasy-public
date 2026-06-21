@@ -69,6 +69,11 @@ export function connect() {
             const onError = (err) => settle(reject, err instanceof Error ? err : new Error(err?.message || 'reconnect error'));
             socket.once('connect', onConnect);
             socket.once('connect_error', onError);
+            setTimeout(() => {
+                if (!settled) {
+                    settle(reject, new Error('Reconnect timeout'));
+                }
+            }, 30000);
         });
         return connectionPromise;
     }
@@ -153,24 +158,11 @@ export function connect() {
             }
         });
 
-        socket.on('connected', () => {
-        });
-
-        socket.on('subscribed', () => {
-        });
-
-        socket.on('unsubscribed', () => {
-        });
-
         socket.on('error', (data) => {
             console.error('[WebSocket] Server error:', data.message);
             emitLocal('error', data);
         });
 
-        // Handle pong for keepalive
-        socket.on('pong', () => {
-            // Connection is alive
-        });
     });
 
     return connectionPromise;

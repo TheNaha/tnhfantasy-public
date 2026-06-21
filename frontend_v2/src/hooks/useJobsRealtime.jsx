@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
 import { jobsApi } from '../api';
+import useJobStore from '../store/jobStore';
 import toast from 'react-hot-toast';
 
 const isMobile = () => typeof navigator !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
@@ -61,11 +62,9 @@ export function useJobsRealtime() {
                 queryClient.setQueryData(['jobs', 'active'], fetchedJobs);
                 
                 // Also update Zustand store so JobCard immediately picks up polled changes
-                import('../store/jobStore').then(({ default: useJobStore }) => {
-                    const store = useJobStore.getState();
-                    fetchedJobs.forEach(job => {
-                        store.updateJob(job.id, job);
-                    });
+                const store = useJobStore.getState();
+                fetchedJobs.forEach(job => {
+                    store.updateJob(job.id, job);
                 });
                 
                 consecutiveFailuresRef.current = 0;
@@ -129,9 +128,7 @@ export function useJobsRealtime() {
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
             
             // Push high-frequency updates to the lightweight Zustand store
-            import('../store/jobStore').then(({ default: useJobStore }) => {
-                useJobStore.getState().updateJob(job.id, job);
-            });
+            useJobStore.getState().updateJob(job.id, job);
         };
 
         unsubs.push(ws.on(ws.EventTypes.JOB_PROGRESS, handleUpdate));

@@ -376,7 +376,6 @@ class ProviderStatusService:
                 "capabilities": provider_info.get("capabilities") or {},
             },
             "model_sync": model_sync,
-            "sync": model_sync,
             "storage": storage_stats,
             "reconciliation": reconciliation_state,
             "deploy": deploy_state,
@@ -397,7 +396,6 @@ class ProviderStatusService:
             "provider_type": provider_info.get("type"),
             "runtime": runtime_state,
             "model_sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
-            "sync": {"provider_id": provider_id, "total_models": 0, "stats": {}},
             "storage": self.empty_storage_payload(provider_id, error),
             "reconciliation": self.normalize_reconciliation_for_card(
                 provider_info.get("reconciliation_state") or {}

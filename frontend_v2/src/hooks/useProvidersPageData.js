@@ -179,10 +179,7 @@ async function ensureProvidersRealtime(queryClient) {
 
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_STARTED, patchReconciliation));
         unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_PROGRESS, patchReconciliation));
-        unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, (event) => {
-            patchReconciliation(event);
-            queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
-        }));
+        unsubs.push(ws.on(ws.EventTypes.RECONCILIATION_COMPLETED, patchReconciliation));
 
         unsubs.push(ws.on(ws.EventTypes.MODEL_STATUS_UPDATE, (event) => {
             const payload = unwrapEventData(event);
@@ -295,9 +292,7 @@ export function useProviderReconciliationState(providerId, { realtime = true } =
             if (!provider) {
                 return null;
             }
-            return normalizeReconciliationState(provider.reconciliation_state || {}, {
-                provider_id: provider.id,
-            });
+            return normalizeReconciliationState({}, provider.reconciliation_state || {});
         },
     });
 

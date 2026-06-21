@@ -3,7 +3,7 @@
 
 from typing import Dict, Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_dict
+from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_registry_dict as clean_dict
 from .beam_provider import BeamProvider
 
 

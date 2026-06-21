@@ -83,6 +83,7 @@ class ModelCivitaiSyncService:
             raise ValueError("Model not found")
 
         external = ExternalModelService()
+        civitai_data = None
 
         if target_civitai_id:
             try:
@@ -115,6 +116,9 @@ class ModelCivitaiSyncService:
         # Update model-level fields
         model.civitai_model_id = civitai_data.get("id")
         model.nsfw = civitai_data.get("nsfw", False)
+        model.nsfw_level = civitai_data.get("nsfwLevel", 3 if model.nsfw else 1)
+        model.source = civitai_data.get("source", "civitai")
+        model.type = civitai_data.get("type", model.type)
         
         if civitai_data.get("name"):
             model.name = civitai_data.get("name")
@@ -149,29 +153,54 @@ class ModelCivitaiSyncService:
                 if tag_name not in existing_tag_set:
                     self.session.add(ModelTag(model_id=model.id, tag=tag_name))
 
-        # Update versions — try to match by name or use first
+        # Update versions — match by civitai_id or name, create new versions for unmatched
         if civitai_data.get("modelVersions"):
             local_versions = self.repo.get_versions_for_model(model.id)
             civitai_versions = civitai_data["modelVersions"]
+            matched_ids = set()
 
             for civitai_version in civitai_versions:
-                # Find matching local version by name or civitai_version_id
                 matched_version = None
+
+                # Try matching by CivitAI version ID first
                 for lv in local_versions:
                     if lv.civitai_version_id == civitai_version.get("id"):
                         matched_version = lv
                         break
+
+                # Fall back to name matching
                 if not matched_version:
                     for lv in local_versions:
                         if lv.name.lower() == civitai_version.get("name", "").lower():
                             matched_version = lv
                             break
-                if not matched_version and local_versions:
-                    matched_version = local_versions[0]
 
                 if not matched_version:
-                    continue
+                    # Create a new ModelVersion for unmatched CivitAI versions
+                    primary = self.session.exec(
+                        select(ModelFile).where(ModelFile.version_id.in_(
+                            select(ModelVersion.id).where(
+                                ModelVersion.model_id == model.id
+                            )
+                        ).limit(1))
+                    ).first()
+                    new_version = ModelVersion(
+                        model_id=model.id,
+                        name=civitai_version.get("name", "v1.0"),
+                        civitai_version_id=civitai_version.get("id"),
+                        base_model=civitai_version.get("baseModel", "Unknown"),
+                        base_model_type="Standard",
+                        description=civitai_version.get("description", ""),
+                        trained_words=json.dumps(civitai_version.get("trainedWords", [])),
+                        is_enabled=True,
+                        is_default=len(local_versions) == 0,
+                    )
+                    self.session.add(new_version)
+                    self.session.flush()
+                    matched_version = new_version
+                    local_versions.append(new_version)
 
+                matched_ids.add(matched_version.id)
                 matched_version.civitai_version_id = civitai_version.get("id")
 
                 if "Auto-discovered" in (matched_version.description or ""):
@@ -179,12 +208,10 @@ class ModelCivitaiSyncService:
 
                 matched_version.base_model = civitai_version.get("baseModel", matched_version.base_model)
 
-                # Update trained_words (trigger words)
                 trained = civitai_version.get("trainedWords", [])
                 if trained:
                     matched_version.trained_words = json.dumps(trained)
 
-                # Save first image if missing
                 images = civitai_version.get("images", [])
                 existing_images = self.session.exec(
                     select(ModelImage).where(ModelImage.version_id == matched_version.id)
@@ -192,10 +219,16 @@ class ModelCivitaiSyncService:
 
                 if images and not existing_images:
                     image_data = images[0]
+                    img_nsfw = image_data.get("nsfw", "None")
+                    img_nsfw_level = image_data.get("nsfwLevel")
+                    if img_nsfw_level is not None:
+                        resolved_nsfw_level = img_nsfw_level
+                    else:
+                        resolved_nsfw_level = 3 if img_nsfw else 1
                     img = ModelImage(
                         version_id=matched_version.id,
                         url=image_data.get("url", ""),
-                        nsfw_level=1 if image_data.get("nsfw", "None") == "None" else 3,
+                        nsfw_level=resolved_nsfw_level,
                         sort_order=0,
                     )
                     self.session.add(img)

@@ -278,7 +278,6 @@ class ProviderService:
             logger.warning("provider_delete_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
 
-        from services.load_balancer import LoadBalancer
         await LoadBalancer.remove_provider_state(self.session, provider_id)
         
         logger.info("provider_deleted", provider_id=provider_id, statuses_cleaned=deleted_count)
@@ -318,9 +317,9 @@ class ProviderService:
             updates["config"] = config
             if not existing.container_config:
                 updates["container_config"] = container_config
-            self.repo.update(provider_id, updates)
+            updated = self.repo.update(provider_id, updates)
             logger.info("provider_discovery_updated", provider_id=provider_id, url=internal_url)
-            return existing
+            return updated or existing
 
         provider = self.repo.create({
             "id": provider_id,

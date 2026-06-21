@@ -374,6 +374,8 @@ async def execute_job(
             logger.error("job_processing_error", job_id=job_id, error=str(error), exc_info=True)
 
             try:
+                if current_provider is not None:
+                    await load_balancer.release_job(current_provider.id)
                 job_service = JobService(session)
                 latest_status = await _get_job_status(job_service, job_id)
                 if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:

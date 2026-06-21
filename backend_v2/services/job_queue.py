@@ -169,7 +169,7 @@ class JobQueue:
             current_task = asyncio.current_task()
             if current_task in self._stopping_workers:
                 logger.info("worker_stopping", worker_id=worker_id, reason="graceful_shutdown")
-                self._stopping_workers.remove(current_task)
+                self._stopping_workers.discard(current_task)
                 break
 
             try:
@@ -283,9 +283,10 @@ class JobQueue:
             await self.enqueue(job.id, job.provider_id)
             recovered_count += 1
 
-        for job in recoverable_running:
-            await self.enqueue(job.id, job.provider_id)
-            recovered_count += 1
+        # Don't re-enqueue non-stale running jobs — they may still be processing
+        # on the provider. Stale jobs are handled above (marked as failed).
+        # Non-stale running jobs will either complete normally or time out,
+        # and the timeout handler will retry them if needed.
         
         if recovered_count > 0 or failed_count > 0:
             logger.info("job_recovery_complete", recovered=recovered_count, failed=failed_count)

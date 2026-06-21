@@ -6,6 +6,7 @@ import docker
 import os
 import time
 import asyncio
+import threading
 from typing import Dict, Optional, List, Iterable, Tuple
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from infrastructure.providers.provider_registry import ProviderRegistry
 
 logger = get_logger("container_manager")
 _container_manager_singleton = None
+_container_manager_lock = threading.Lock()
 _CONTAINER_MANAGER_INIT_FAILED = False
 _CONTAINER_MANAGER_INIT_RETRIES = 0
 _CONTAINER_MANAGER_MAX_RETRIES = 3
@@ -421,23 +423,26 @@ def get_container_manager() -> Optional[ContainerManager]:
     After exhausting retries, subsequent calls periodically retry.
     """
     global _container_manager_singleton, _CONTAINER_MANAGER_INIT_FAILED, _CONTAINER_MANAGER_INIT_RETRIES
-    if _CONTAINER_MANAGER_INIT_FAILED:
-        if _CONTAINER_MANAGER_INIT_RETRIES >= _CONTAINER_MANAGER_MAX_RETRIES:
-            return None
-        _CONTAINER_MANAGER_INIT_RETRIES += 1
-        logger.info("container_manager_init_retry", attempt=_CONTAINER_MANAGER_INIT_RETRIES)
-    if _container_manager_singleton is None:
-        try:
-            _container_manager_singleton = ContainerManager()
-            _CONTAINER_MANAGER_INIT_FAILED = False
-            _CONTAINER_MANAGER_INIT_RETRIES = 0
-        except Exception as exc:
-            _CONTAINER_MANAGER_INIT_FAILED = True
+    with _container_manager_lock:
+        if _CONTAINER_MANAGER_INIT_FAILED:
+            if _CONTAINER_MANAGER_INIT_RETRIES >= _CONTAINER_MANAGER_MAX_RETRIES:
+                return None
             _CONTAINER_MANAGER_INIT_RETRIES += 1
-            logger.warning(
-                "container_manager_init_failed",
-                error=str(exc),
-                retries=_CONTAINER_MANAGER_INIT_RETRIES,
-            )
-            return None
+            logger.info("container_manager_init_retry", attempt=_CONTAINER_MANAGER_INIT_RETRIES)
+            _container_manager_singleton = None
+            _CONTAINER_MANAGER_INIT_FAILED = False
+        if _container_manager_singleton is None:
+            try:
+                _container_manager_singleton = ContainerManager()
+                _CONTAINER_MANAGER_INIT_FAILED = False
+                _CONTAINER_MANAGER_INIT_RETRIES = 0
+            except Exception as exc:
+                _CONTAINER_MANAGER_INIT_FAILED = True
+                _CONTAINER_MANAGER_INIT_RETRIES += 1
+                logger.warning(
+                    "container_manager_init_failed",
+                    error=str(exc),
+                    retries=_CONTAINER_MANAGER_INIT_RETRIES,
+                )
+                return None
     return _container_manager_singleton

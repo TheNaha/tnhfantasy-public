@@ -13,11 +13,11 @@ from infrastructure.http_client import get_http_client
 logger = provider_logger()
 
 
-def clean_dict(d):
+def clean_registry_dict(d):
     """Return a new dict with only string keys and non-None values."""
     if not isinstance(d, dict):
         return {}
-    return {k: v for k, v in d.items() if isinstance(k, str)}
+    return {k: v for k, v in d.items() if isinstance(k, str) and v is not None}
 
 
 class HttpFileProxy:
@@ -216,7 +216,7 @@ class ProviderRegistry:
         type_config = cls.get(provider_type)
         if type_config:
             worker_image = type_config.worker_image
-            if worker_image.endswith(":latest"):
+            if ":" in worker_image:
                 return worker_image
             return f"{worker_image}:latest"
         return f"comfy-provider-{provider_type}:latest"

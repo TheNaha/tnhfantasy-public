@@ -77,7 +77,7 @@ export default function ProviderDetailPanel({
     const capabilityReasons = provider.capability_reasons ?? EMPTY_OBJECT;
     const credentialSummary = provider.credential_summary ?? EMPTY_OBJECT;
 
-    const runtimeStatus = runtime.status || (runtime.connected ? 'active' : 'stopped');
+    const runtimeStatus = runtime.status ?? (runtime.connected ? 'active' : 'stopped');
 
     const deployBadge = useMemo(() => {
         if (capabilities.managed_deploy) return 'Managed Deploy';
@@ -334,7 +334,7 @@ function RuntimeTab({
                 <StatusRow label="Runtime Status" value={humanize(runtimeStatus)} tone={STATUS_TONE[runtimeStatus]} />
                 <StatusRow label="Connectivity" value={runtime.connected ? 'Connected' : 'Unavailable'} tone={runtime.connected ? 'green' : 'gray'} />
                 <DataRow label="Worker URL" value={runtime.worker_url} mono />
-                <DataRow label="Container Port" value={String(provider.runtime_config?.port || 'n/a')} />
+                <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
             </div>

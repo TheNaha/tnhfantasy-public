@@ -99,14 +99,15 @@ class ModelReconciliationService:
                 results.append({"path": storage_path, "file_id": None, "status": "deleted", "reason": "Tombstoned"})
                 continue
 
-            parts = storage_path.replace("models/", "", 1).split("/")
+            rel_path = storage_path.replace("models/", "", 1) if storage_path.startswith("models/") else storage_path
+            parts = rel_path.split("/")
             if len(parts) < 2:
                 errors += 1
                 results.append({"path": storage_path, "file_id": None, "status": "error", "reason": "invalid path format"})
                 continue
 
-            directory = parts[0]
-            filename = "/".join(parts[1:])
+            directory = "/".join(parts[:-1])
+            filename = parts[-1]
 
             try:
                 existing_file = self.repo.get_file_by_storage_path(directory, filename)

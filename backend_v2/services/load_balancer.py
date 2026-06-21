@@ -1,6 +1,7 @@
 # Load Balancer - Distributes jobs across multiple providers.
 import os
 import random
+import threading
 import time
 from dataclasses import dataclass, field
 import asyncio
@@ -89,6 +90,7 @@ class LoadBalancerRuntimeState:
 
 # Global runtime state for the process
 _global_runtime_state = LoadBalancerRuntimeState()
+_load_state_lock = threading.Lock()
 
 def get_global_runtime_state() -> LoadBalancerRuntimeState:
     return _global_runtime_state
@@ -156,9 +158,11 @@ class LoadBalancer:
         """Load persisted state from database on startup."""
         state_store = runtime_state or _global_runtime_state
 
-        if not force and (state_store.initialized or state_store.initializing):
-            return
-        state_store.initializing = True
+        if not force:
+            with _load_state_lock:
+                if state_store.initialized or state_store.initializing:
+                    return
+                state_store.initializing = True
 
         try:
             state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == 1)).first()
@@ -176,13 +180,14 @@ class LoadBalancer:
                 if job.provider_id:
                     active_job_counts[job.provider_id] = active_job_counts.get(job.provider_id, 0) + 1
 
-            state_store.round_robin_index = state.round_robin_index if state else 0
+            state_store.round_robin_index = (state.round_robin_index or 0) if state else 0
             state_store.provider_failures = dict(state.provider_failures or {}) if state else {}
             # DON'T load persisted job counts - they represent historical totals.
             # On startup, reset to the actual currently running jobs only.
             state_store.provider_job_counts = active_job_counts
-            state_store.initialized = True
-            state_store.initializing = False
+            with _load_state_lock:
+                state_store.initialized = True
+                state_store.initializing = False
 
             logger.info(
                 "lb_state_loaded",
@@ -192,8 +197,9 @@ class LoadBalancer:
             )
         except Exception as e:
             state_store.provider_job_counts = {}
-            state_store.initialized = True
-            state_store.initializing = False
+            with _load_state_lock:
+                state_store.initialized = True
+                state_store.initializing = False
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
@@ -219,17 +225,16 @@ class LoadBalancer:
     async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: Optional[LoadBalancerRuntimeState] = None):
         """Remove a provider's job counts and failures when the provider is deleted."""
         state_store = runtime_state or _global_runtime_state
-        persist_needed = False
         async with state_store.get_lock():
+            persist_needed = False
             if provider_id in state_store.provider_job_counts:
                 state_store.provider_job_counts.pop(provider_id, None)
                 persist_needed = True
             if provider_id in state_store.provider_failures:
                 state_store.provider_failures.pop(provider_id, None)
                 persist_needed = True
-                
-        if persist_needed:
-            cls.save_state_to_db(session, runtime_state=state_store)
+            if persist_needed:
+                cls.save_state_to_db(session, runtime_state=state_store)
     
     def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: Optional[LoadBalancerRuntimeState] = None):
         """
@@ -631,7 +636,6 @@ class LoadBalancer:
         This decrements the active job count for least-connections tracking.
         Should be called after every job completion (success or failure).
         """
-        persist_needed = False
         async with self.runtime_state.get_lock():
             if provider_id in self.runtime_state.provider_job_counts:
                 previous_count = self.runtime_state.provider_job_counts[provider_id]
@@ -639,12 +643,11 @@ class LoadBalancer:
                     0, self.runtime_state.provider_job_counts[provider_id] - 1
                 )
                 active_jobs = self.runtime_state.provider_job_counts[provider_id]
-                persist_needed = active_jobs != previous_count
+                if active_jobs != previous_count:
+                    LoadBalancer.save_state_to_db(self.session, self.runtime_state)
             else:
                 active_jobs = 0
 
-        if persist_needed:
-            LoadBalancer.save_state_to_db(self.session, self.runtime_state)
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
     async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:
