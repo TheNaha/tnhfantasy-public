@@ -42,21 +42,27 @@ class ExternalModelService:
         )
 
     async def search_civitai(
-        self, 
-        query: str = "", 
+        self,
+        query: str = "",
         limit: int = 20,
         types: str = None,
         sort: str = None,
         baseModels: str = None,
         nsfw: bool = None,
         period: str = None,
-        page: int = None
+        page: int = None,
+        username: str = None,
+        tag: str = None,
     ) -> Dict[str, Any]:
-        params = {"limit": str(limit)}
-        if page:
-            params["page"] = str(page)
+        params = {"limit": limit}
         if query:
             params["query"] = query
+        if page:
+            params["page"] = page
+        if username:
+            params["username"] = username
+        if tag:
+            params["tag"] = tag
         if types:
             # Map standard model types to CivitAI expected casing/values
             type_mapping = {
@@ -75,18 +81,37 @@ class ExternalModelService:
             mapped_types = []
             for t in types.split(","):
                 clean_t = t.strip()
-                mapped_types.append(type_mapping.get(clean_t.lower(), clean_t))
-            params["types"] = ",".join(mapped_types)
+                if clean_t:
+                    mapped_types.append(type_mapping.get(clean_t.lower(), clean_t))
+            params["types"] = mapped_types
+
         if sort:
             params["sort"] = sort
+            
         if baseModels:
-            params["baseModels"] = baseModels
+            bm_mapping = {
+                "sdxl": "SDXL 1.0",
+                "sdxl 1.0": "SDXL 1.0",
+                "sd 1.5": "SD 1.5",
+                "sd1.5": "SD 1.5",
+                "pony": "Pony",
+                "illustrious": "Illustrious",
+                "sd 3.5": "SD 3.5",
+                "flux.1 d": "Flux.1 D",
+                "flux.1 s": "Flux.1 S",
+            }
+            mapped_bms = []
+            for bm in baseModels.split(","):
+                clean_bm = bm.strip()
+                if clean_bm:
+                    mapped_bms.append(bm_mapping.get(clean_bm.lower(), clean_bm))
+            params["baseModels"] = mapped_bms
         if nsfw is not None:
             params["nsfw"] = str(nsfw).lower()
         if period:
             params["period"] = period
 
-        qs = urllib.parse.urlencode(params)
+        qs = urllib.parse.urlencode(params, doseq=True)
         url = f"https://civitai.com/api/v1/models?{qs}"
 
         try:
@@ -102,6 +127,40 @@ class ExternalModelService:
             raise
         except Exception as exc:
             raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
+
+    async def get_civitai_model_version_by_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
+        """Fetch a specific model version from CivitAI by its SHA256 file hash."""
+        url = f"https://civitai.com/api/v1/model-versions/by-hash/{file_hash}"
+        try:
+            response = await get_http_client().get(url, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 404:
+                return None  # Hash not found
+            raise ExternalModelServiceError(
+                status_code=response.status_code,
+                detail=f"CivitAI hash lookup failed: {response.text}",
+            )
+        except ExternalModelServiceError:
+            raise
+        except Exception as exc:
+            raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
+
+    async def get_civitai_enums(self) -> Dict[str, Any]:
+        """Fetch current valid enum values (ModelType, BaseModel, etc.) from CivitAI API."""
+        url = "https://civitai.com/api/v1/enums"
+        try:
+            response = await get_http_client().get(url, timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            raise ExternalModelServiceError(
+                status_code=response.status_code,
+                detail="Failed to fetch CivitAI enums",
+            )
+        except Exception as e:
+            if isinstance(e, ExternalModelServiceError):
+                raise
+            raise ExternalModelServiceError(500, str(e))
 
     async def search_huggingface(self, query: str, limit: int = 20) -> Dict[str, Any]:
         encoded_query = urllib.parse.quote(query, safe="")

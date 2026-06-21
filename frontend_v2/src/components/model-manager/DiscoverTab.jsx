@@ -6,42 +6,141 @@ import { ModelCardSkeleton } from '../Skeleton';
 import ModelCard from './ModelCard';
 import ModelImportCard from './ModelImportCard';
 
-const MODEL_TYPES = ['', 'Checkpoint', 'LORA', 'LoRA', 'VAE', 'Controlnet', 'Upscaler', 'TextualInversion', 'Hypernetwork', 'MotionModule'];
 const SORT_OPTIONS = [['', 'Relevance'], ['Newest', 'Newest'], ['Most Downloaded', 'Downloads'], ['Most Liked', 'Likes']];
 const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], ['Week', 'Week'], ['Day', 'Day']];
-const BASE_MODELS = ['', 'SD1.5', 'SDXL', 'SD3', 'SD3.5', 'FLUX', 'Pony', 'Illustrious'];
+
+function MultiSelectDropdown({ label, options, selected, onChange }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <div className="relative flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider text-gray-500">{label}</label>
+            <div 
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white cursor-pointer select-none h-[30px] flex items-center min-w-[100px]"
+                onClick={() => setOpen(!open)}
+            >
+                {selected.length === 0 ? 'All' : `${selected.length} Selected`}
+            </div>
+            {open && (
+                <>
+                    <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+                    <div className="absolute top-full left-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 max-h-60 overflow-y-auto py-1">
+                        {options.map(opt => {
+                            const value = typeof opt === 'string' ? opt : opt[0];
+                            const text = typeof opt === 'string' ? opt : opt[1];
+                            if (!value) return null;
+                            const isChecked = selected.includes(value);
+                            return (
+                                <label key={value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-700 cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={isChecked}
+                                        onChange={() => {
+                                            if (isChecked) onChange(selected.filter(v => v !== value));
+                                            else onChange([...selected, value]);
+                                        }}
+                                        className="rounded bg-gray-900 border-gray-600 text-blue-500 focus:ring-blue-500 w-3 h-3"
+                                    />
+                                    <span className="text-xs text-white truncate">{text}</span>
+                                </label>
+                            );
+                        })}
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
 
 export default function DiscoverTab() {
-    const [query, setQuery] = useState("");
+    const getSaved = (key, defaultVal) => {
+        try {
+            const val = localStorage.getItem(`civitai_discover_${key}`);
+            return val ? JSON.parse(val) : defaultVal;
+        } catch {
+            return defaultVal;
+        }
+    };
+
+    const [query, setQuery] = useState(() => getSaved('query', ""));
     const [urlInput, setUrlInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [results, setResults] = useState([]);
     const [importing, setImporting] = useState(false);
     const [importedModel, setImportedModel] = useState(null);
-    const [source, setSource] = useState("civitai");
+    const [source, setSource] = useState(() => getSaved('source', "civitai"));
     const [installedInfoByModelId, setInstalledInfoByModelId] = useState({});
-    const [filterType, setFilterType] = useState("");
-    const [filterSort, setFilterSort] = useState("");
-    const [filterBaseModel, setFilterBaseModel] = useState("");
-    const [filterNsfw, setFilterNsfw] = useState("");
-    const [filterPeriod, setFilterPeriod] = useState("");
+    const [filterTypes, setFilterTypes] = useState(() => getSaved('types', []));
+    const [filterSort, setFilterSort] = useState(() => getSaved('sort', ""));
+    const [filterBaseModels, setFilterBaseModels] = useState(() => getSaved('baseModels', []));
+    const [filterNsfw, setFilterNsfw] = useState(() => getSaved('nsfw', ""));
+    const [filterPeriod, setFilterPeriod] = useState(() => getSaved('period', ""));
+    const [filterUsername, setFilterUsername] = useState(() => getSaved('username', ""));
+    const [filterTag, setFilterTag] = useState(() => getSaved('tag', ""));
+    const [popularTags, setPopularTags] = useState([]);
+
+    // Sync to localStorage
+    useEffect(() => {
+        localStorage.setItem('civitai_discover_query', JSON.stringify(query));
+        localStorage.setItem('civitai_discover_source', JSON.stringify(source));
+        localStorage.setItem('civitai_discover_types', JSON.stringify(filterTypes));
+        localStorage.setItem('civitai_discover_sort', JSON.stringify(filterSort));
+        localStorage.setItem('civitai_discover_baseModels', JSON.stringify(filterBaseModels));
+        localStorage.setItem('civitai_discover_nsfw', JSON.stringify(filterNsfw));
+        localStorage.setItem('civitai_discover_period', JSON.stringify(filterPeriod));
+        localStorage.setItem('civitai_discover_username', JSON.stringify(filterUsername));
+        localStorage.setItem('civitai_discover_tag', JSON.stringify(filterTag));
+    }, [query, source, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag]);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
+
+    const [civitaiEnums, setCivitaiEnums] = useState({ ModelType: [], BaseModel: [] });
+
+    // Fetch CivitAI Enums and Tags on mount
+    useEffect(() => {
+        const loadEnums = async () => {
+            try {
+                const data = await api.get('/api/v2/models/external/civitai/enums');
+                setCivitaiEnums({
+                    ModelType: data.ModelType || [],
+                    BaseModel: data.BaseModel || []
+                });
+            } catch (err) {
+                console.warn("Failed to fetch CivitAI enums:", err);
+                setCivitaiEnums({
+                    ModelType: ['Checkpoint', 'LORA', 'VAE', 'Controlnet', 'Upscaler', 'TextualInversion', 'Hypernetwork', 'MotionModule'],
+                    BaseModel: ['SD 1.5', 'SDXL 1.0', 'SD 3', 'SD 3.5', 'Flux.1 D', 'Pony', 'Illustrious']
+                });
+            }
+        };
+        const loadTags = async () => {
+            try {
+                const res = await fetch('https://civitai.com/api/v1/tags?limit=20');
+                const data = await res.json();
+                setPopularTags(data.items || []);
+            } catch (err) {
+                console.warn("Failed to fetch CivitAI tags:", err);
+            }
+        };
+        loadEnums();
+        loadTags();
+    }, []);
 
     const buildSearchUrl = useCallback((targetPage = 1) => {
         const endpoint = `/api/v2/models/external/${source}`;
         const params = new URLSearchParams({ query, limit: '20' });
         if (source === 'civitai') {
-            if (filterType) params.append('types', filterType);
+            if (filterTypes.length > 0) params.append('types', filterTypes.join(','));
             if (filterSort) params.append('sort', filterSort);
-            if (filterBaseModel) params.append('baseModels', filterBaseModel);
+            if (filterBaseModels.length > 0) params.append('baseModels', filterBaseModels.join(','));
             if (filterNsfw) params.append('nsfw', filterNsfw);
             if (filterPeriod) params.append('period', filterPeriod);
+            if (filterUsername) params.append('username', filterUsername);
+            if (filterTag) params.append('tag', filterTag);
             params.append('page', targetPage);
         }
         return `${endpoint}?${params.toString()}`;
-    }, [query, source, filterType, filterSort, filterBaseModel, filterNsfw, filterPeriod]);
+    }, [query, source, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag]);
 
     const fetchResults = useCallback(async () => {
         // If query is empty, maybe don't search, or if sorting by Newest/Most Downloaded, allow empty query.
@@ -71,7 +170,7 @@ export default function DiscoverTab() {
             fetchResults();
         }, 600);
         return () => clearTimeout(handler);
-    }, [query, filterType, filterSort, filterBaseModel, filterNsfw, filterPeriod, source, fetchResults]);
+    }, [query, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag, source, fetchResults]);
 
     const handleSearch = (e) => {
         e.preventDefault();
@@ -153,8 +252,8 @@ export default function DiscoverTab() {
 
     return (
         <div className="space-y-6">
-                {/* Search & Import Bar */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Search & Import Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Search */}
                     <form onSubmit={handleSearch} className="relative flex gap-2">
                         <div className="relative flex-1">
@@ -205,34 +304,73 @@ export default function DiscoverTab() {
                 </div>
             </div>
 
+            {/* Popular Tags & Active Filters (CivitAI only) */}
+            {source === 'civitai' && (
+                <div className="flex flex-col gap-3">
+                    {(filterUsername || filterTag) && (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs text-gray-500 uppercase tracking-wider">Active Filters:</span>
+                            {filterUsername && (
+                                <div className="flex items-center gap-1 bg-blue-900/50 border border-blue-500/50 text-blue-300 px-3 py-1 rounded-full text-xs">
+                                    <span className="font-medium">@{filterUsername}</span>
+                                    <button onClick={() => setFilterUsername("")} className="hover:text-white ml-1">✕</button>
+                                </div>
+                            )}
+                            {filterTag && (
+                                <div className="flex items-center gap-1 bg-purple-900/50 border border-purple-500/50 text-purple-300 px-3 py-1 rounded-full text-xs">
+                                    <span className="font-medium">#{filterTag}</span>
+                                    <button onClick={() => setFilterTag("")} className="hover:text-white ml-1">✕</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {popularTags.length > 0 && (
+                        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+                            <span className="text-[10px] text-gray-500 uppercase tracking-wider whitespace-nowrap sticky left-0 bg-gray-950 pr-2">Trending</span>
+                            {popularTags.map(t => (
+                                <button
+                                    key={t.name}
+                                    onClick={() => setFilterTag(filterTag === t.name ? "" : t.name)}
+                                    className={`whitespace-nowrap px-3 py-1 rounded-full text-xs transition-colors border ${
+                                        filterTag === t.name 
+                                            ? 'bg-purple-600 border-purple-500 text-white' 
+                                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white'
+                                    }`}
+                                >
+                                    {t.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Filter bar (CivitAI only) */}
             {source === 'civitai' && (
                 <div className="flex flex-wrap gap-3 p-4 rounded-xl border border-gray-700 bg-gray-900/60">
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Type</label>
-                        <select value={filterType} onChange={e => setFilterType(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
-                            {MODEL_TYPES.map(t => <option key={t} value={t}>{t || 'All Types'}</option>)}
-                        </select>
-                    </div>
+                    <MultiSelectDropdown 
+                        label="Type" 
+                        options={civitaiEnums.ModelType} 
+                        selected={filterTypes} 
+                        onChange={setFilterTypes} 
+                    />
                     <div className="flex flex-col gap-1">
                         <label className="text-[10px] uppercase tracking-wider text-gray-500">Sort</label>
                         <select value={filterSort} onChange={e => setFilterSort(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
                             {SORT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Base Model</label>
-                        <select value={filterBaseModel} onChange={e => setFilterBaseModel(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
-                            {BASE_MODELS.map(b => <option key={b} value={b}>{b || 'All'}</option>)}
-                        </select>
-                    </div>
+                    <MultiSelectDropdown 
+                        label="Base Model" 
+                        options={civitaiEnums.BaseModel} 
+                        selected={filterBaseModels} 
+                        onChange={setFilterBaseModels} 
+                    />
                     <div className="flex flex-col gap-1">
                         <label className="text-[10px] uppercase tracking-wider text-gray-500">NSFW</label>
                         <select value={filterNsfw} onChange={e => setFilterNsfw(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
                             <option value="">All</option>
                             <option value="true">NSFW</option>
                             <option value="false">SFW Only</option>
@@ -241,12 +379,40 @@ export default function DiscoverTab() {
                     <div className="flex flex-col gap-1">
                         <label className="text-[10px] uppercase tracking-wider text-gray-500">Period</label>
                         <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
                             {PERIOD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Creator</label>
+                        <input 
+                            type="text" 
+                            placeholder="@username"
+                            value={filterUsername}
+                            onChange={e => setFilterUsername(e.target.value)}
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px] w-[120px] outline-none focus:border-blue-500"
+                        />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Tag</label>
+                        <input 
+                            type="text" 
+                            placeholder="#tag"
+                            value={filterTag}
+                            onChange={e => setFilterTag(e.target.value)}
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px] w-[120px] outline-none focus:border-purple-500"
+                        />
+                    </div>
                     <div className="flex items-end">
-                        <button onClick={() => { setFilterType(""); setFilterSort(""); setFilterBaseModel(""); setFilterNsfw(""); setFilterPeriod(""); }}
+                        <button onClick={() => { 
+                            setFilterTypes([]); 
+                            setFilterSort(""); 
+                            setFilterBaseModels([]); 
+                            setFilterNsfw(""); 
+                            setFilterPeriod("");
+                            setFilterUsername("");
+                            setFilterTag("");
+                        }}
                             className="text-xs text-gray-500 hover:text-white px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800">
                             Clear
                         </button>

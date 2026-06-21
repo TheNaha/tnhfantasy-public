@@ -245,13 +245,13 @@ class ModalProviderClient(BaseProviderClient):
             return await asyncio.wait_for(validate_fn.remote.aio(MODEL_DIRECTORIES, delete_invalid), timeout=timeout_seconds)
 
         async def list_existing_files():
-            paths = set()
+            paths = {}
             list_models_func = get_modal_function("list_models_with_metadata")
             list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 45.0)))
             for directory in MODEL_DIRECTORIES:
                 try:
                     files = await asyncio.wait_for(list_models_func.remote.aio(directory), timeout=list_timeout_seconds)
-                    for file_info in files: paths.add(f"{directory}/{file_info['name']}")
+                    for file_info in files: paths[f"{directory}/{file_info['name']}"] = file_info
                 except Exception: pass
             return paths
 

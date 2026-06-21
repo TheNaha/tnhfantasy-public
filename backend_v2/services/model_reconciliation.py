@@ -159,6 +159,7 @@ class ModelReconciliationService:
                         format=filename.split(".")[-1] if "." in filename else "Unknown",
                         is_primary=True,
                         file_type="Model",
+                        hash_sha256=file_info.get("sha256")
                     )
                     self.session.add(file)
                     self.session.flush()

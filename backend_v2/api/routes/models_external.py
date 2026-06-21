@@ -26,6 +26,16 @@ async def parse_model_url(
         raise ProviderError("ExternalModelService", exc.detail) from exc
 
 
+@router.get("/civitai/enums")
+async def get_civitai_enums(
+    service: ExternalModelService = Depends(get_external_model_service),
+) -> Dict[str, Any]:
+    """Get valid enum values for CivitAI filters."""
+    try:
+        return await service.get_civitai_enums()
+    except ExternalModelServiceError as exc:
+        raise ProviderError("ExternalModelService", exc.detail) from exc
+
 @router.get("/civitai")
 async def search_civitai(
     query: str = "",
@@ -36,6 +46,8 @@ async def search_civitai(
     nsfw: bool = None,
     period: str = None,
     page: int = None,
+    username: str = None,
+    tag: str = None,
     service: ExternalModelService = Depends(get_external_model_service),
 ) -> Dict[str, Any]:
     """Search models on CivitAI."""
@@ -48,7 +60,9 @@ async def search_civitai(
             baseModels=baseModels,
             nsfw=nsfw,
             period=period,
-            page=page
+            page=page,
+            username=username,
+            tag=tag
         )
     except ExternalModelServiceError as exc:
         raise ProviderError("ExternalModelService", exc.detail) from exc

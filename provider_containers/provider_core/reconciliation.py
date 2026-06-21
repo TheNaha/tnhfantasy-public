@@ -287,7 +287,7 @@ def calculate_safe_deletion_limit(total_files: int, orphaned_count: int) -> int:
 async def register_discovered_files(
     backend_url: str,
     provider_id: str,
-    orphaned_files: List[str],
+    orphaned_files: List[Dict[str, Any]],
     http_client=None,
 ) -> Dict[str, Any]:
     """Register files found on provider storage as database models.
@@ -303,7 +303,7 @@ async def register_discovered_files(
     url = f"{backend_url}/api/v2/models/register-discovered"
     payload = {
         "provider_id": provider_id,
-        "files": [{"path": path} for path in orphaned_files],
+        "files": [{"path": file_info["path"], "size_bytes": file_info.get("size_bytes"), "sha256": file_info.get("sha256")} for file_info in orphaned_files],
     }
 
     try:
@@ -338,7 +338,7 @@ async def run_reconciliation_v2(
     civitai_token: str,
     storage_label: str,
     validate_existing: Callable[[bool], Awaitable[Dict[str, Any]]],
-    list_existing_files: Callable[[], Awaitable[Set[str]]],
+    list_existing_files: Callable[[], Awaitable[Dict[str, Dict[str, Any]]]],
     download_file: Callable[[str, str, Optional[str]], Awaitable[Any]],
     delete_file: Callable[[str], Awaitable[Any]],
 ) -> None:
@@ -401,7 +401,8 @@ async def run_reconciliation_v2(
         logger.info(f"[V2 Reconciliation] Step 3: Checking existing files on {storage_label}...")
         await push_state("fetching", f"Checking existing files on {storage_label} storage...")
 
-        existing_files = set(await list_existing_files())
+        existing_files_dict = await list_existing_files()
+        existing_files = set(existing_files_dict.keys())
         reconciliation_state.set_total_models(len(existing_files))
         
         by_directory = {}
@@ -548,9 +549,19 @@ async def run_reconciliation_v2(
             if orphaned_files:
                 logger.info(f"[V2 Reconciliation] Found {len(orphaned_files)} orphaned files")
 
+                # Build detailed file infos
+                orphaned_file_infos = []
+                for path in orphaned_files:
+                    info = existing_files_dict.get(path, {})
+                    orphaned_file_infos.append({
+                        "path": path,
+                        "size_bytes": info.get("size", 0),
+                        "sha256": info.get("sha256")
+                    })
+
                 # Register orphaned files as database models so they persist across restarts
                 registration_result = await register_discovered_files(
-                    backend_url, provider_id, orphaned_files,
+                    backend_url, provider_id, orphaned_file_infos,
                     http_client=shared_http_client,
                 )
                 registered_count = registration_result.get("imported", 0)

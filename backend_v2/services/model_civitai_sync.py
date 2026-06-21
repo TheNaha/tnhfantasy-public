@@ -307,6 +307,33 @@ class ModelCivitaiSyncService:
         seen_ids = set()
         exact_match_id = None
 
+        # Stage 0: Hash lookup
+        file_hashes = self.session.exec(
+            select(ModelFile.hash_sha256).where(
+                ModelFile.version_id.in_(
+                    select(ModelVersion.id).where(ModelVersion.model_id == model.id)
+                ),
+                ModelFile.hash_sha256 != None
+            )
+        ).all()
+
+        for file_hash in file_hashes:
+            if not file_hash:
+                continue
+            try:
+                version_data = await external.get_civitai_model_version_by_hash(file_hash)
+                if version_data:
+                    model_id = version_data.get("modelId")
+                    if model_id:
+                        model_data = await external.get_civitai_model(model_id)
+                        if model_data and model_data.get("id") not in seen_ids:
+                            all_items.append(model_data)
+                            seen_ids.add(model_data.get("id"))
+                            exact_match_id = model_data.get("id")
+                            break # Found exact hash match, stop hashing!
+            except Exception:
+                pass
+
         # Stage 1: Direct ID lookup from filenames (fastest path)
         # Note: Users often name files with CivitAI Version IDs, not Model IDs
         extracted_id = self._extract_civitai_id_from_files(model)

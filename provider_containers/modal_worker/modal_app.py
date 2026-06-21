@@ -881,6 +881,8 @@ class FileStorage:
         files = []
         for root, dirs, filenames in os.walk(full_path):
             for filename in filenames:
+                if filename.endswith(".sha256") or filename.endswith(".json") or filename.endswith(".preview.png"):
+                    continue
                 filepath = os.path.join(root, filename)
                 # Make path relative to /mnt/data
                 rel_path = os.path.relpath(filepath, "/mnt/data")
