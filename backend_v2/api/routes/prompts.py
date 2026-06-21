@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 
 # Request/Response models
 class PromptCreate(BaseModel):
-    name: str
+    name: str = ""
     text: str
     negative: Optional[str] = None
     category: str = "Custom"
@@ -100,7 +100,7 @@ async def list_prompts(
                     or_(
                         Prompt.name.contains(search_query),
                         Prompt.text.contains(search_query),
-                        Prompt.description.contains(search_query) if search_query else False
+                        Prompt.description.contains(search_query),
                     )
                 )
                 if category:

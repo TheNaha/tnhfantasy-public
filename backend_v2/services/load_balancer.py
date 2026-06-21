@@ -166,7 +166,7 @@ class LoadBalancer:
             # Calculate actual running job counts from database.
             from core.entities import Job, JobStatus
 
-            active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING, JobStatus.POST_PROCESSING]
+            active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
             running_jobs = session.exec(
                 select(Job).where(Job.status.in_(active_states))
             ).all()

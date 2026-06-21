@@ -187,6 +187,7 @@ class TestRunMigrations:
         assert applied == {
             "001_jobs_started_completed",
             "004_normalize_legacy_job_statuses",
+            "006_deleted_file_tombstones",
         }
 
     def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
@@ -279,6 +280,7 @@ class TestRunMigrations:
             "001_jobs_started_completed",
             "002_prompts_fts",
             "004_normalize_legacy_job_statuses",
+            "006_deleted_file_tombstones",
         ]
 
     def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):
@@ -309,8 +311,8 @@ class TestRunMigrations:
             applied = _get_applied_migrations(conn)
 
         assert statuses["job-queued"] == "pending"
-        assert statuses["job-processing"] == "running"
-        assert statuses["job-running"] == "running"
+        assert statuses["job-processing"] == "generating"
+        assert statuses["job-running"] == "generating"
         assert "004_normalize_legacy_job_statuses" in applied
 
     def test_verify_required_columns_raises_for_missing_columns(self, tmp_path):

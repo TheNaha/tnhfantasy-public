@@ -307,15 +307,6 @@ async def finalize_persisted_job_outputs(
                 outputs=outputs,
                 provider_id=provider_id,
             )
-            await emit_job_event(
-                EventType.JOB_POST_PROCESSING,
-                {
-                    "id": job_id,
-                    "provider_id": provider_id,
-                    "status": JobStatus.POST_PROCESSING.value,
-                    "outputs": outputs,
-                },
-            )
     except Exception:
         await _release_finalization(job_id)
         raise

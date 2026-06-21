@@ -211,8 +211,13 @@ def _migration_normalize_legacy_job_statuses(conn) -> bool:
             """))
     conn.execute(text("""
             UPDATE jobs
-            SET status = 'running'
+            SET status = 'generating'
             WHERE status = 'processing'
+            """))
+    conn.execute(text("""
+            UPDATE jobs
+            SET status = 'generating'
+            WHERE status = 'running'
             """))
     logger.info("migration_job_statuses_normalized")
     return True
@@ -516,6 +521,30 @@ def _migrate_models_to_v2(conn) -> bool:
     return True
 
 
+def _migration_create_deleted_file_tombstones(conn) -> bool:
+    """Create the deleted_file_tombstones table if it does not exist."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "deleted_file_tombstones" in inspector.get_table_names():
+        return False
+
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS deleted_file_tombstones (
+            storage_path TEXT PRIMARY KEY,
+            original_model_id INTEGER,
+            original_filename TEXT,
+            deleted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_tombstone_deleted_at
+        ON deleted_file_tombstones (deleted_at)
+    """))
+    logger.info("migration_created_table", table="deleted_file_tombstones")
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -543,5 +572,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="005_migrate_models_to_v2",
             description="Migrate models from V1 schema to V2 normalized schema",
             apply_fn=_migrate_models_to_v2,
+        ),
+        MigrationStep(
+            version="006_deleted_file_tombstones",
+            description="Create deleted_file_tombstones table for tracking deleted model files",
+            apply_fn=_migration_create_deleted_file_tombstones,
         ),
     ]

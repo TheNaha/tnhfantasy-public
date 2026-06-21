@@ -15,6 +15,7 @@ from infrastructure.logging import get_logger
 from infrastructure.scheduler import (
     schedule_preview_prefetch,
     schedule_vacuum,
+    schedule_cleanup,
     start_scheduler,
     stop_scheduler,
 )
@@ -56,7 +57,7 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             except Exception:
                 continue
 
-            active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.RUNNING}
+            active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING}
             if job.status not in active_states:
                 continue
 
@@ -92,6 +93,43 @@ async def vacuum_database() -> None:
         logger.info("vacuum_complete")
     except Exception as exc:
         logger.error("vacuum_failed", error=str(exc))
+
+
+async def prune_stale_providers() -> None:
+    """Remove provider records that have not sent a discovery heartbeat in 24 hours."""
+    from datetime import datetime, timezone, timedelta
+    from api.deps import get_session_sync
+    from infrastructure.repositories import ProviderRepository
+
+    logger.info("prune_stale_providers_start")
+    try:
+        session = get_session_sync()
+        try:
+            repo = ProviderRepository(session)
+            all_providers = repo.get_all()
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(hours=24)
+            pruned = 0
+            for p in all_providers:
+                config = p.config or {}
+                last_seen = config.get("last_seen_at")
+                if last_seen and isinstance(last_seen, str):
+                    try:
+                        seen = datetime.fromisoformat(last_seen)
+                        if seen < cutoff:
+                            logger.info("pruning_stale_provider", provider_id=p.id, last_seen=last_seen)
+                            repo.delete(p.id)
+                            pruned += 1
+                    except (ValueError, TypeError):
+                        pass
+            if pruned:
+                logger.info("stale_providers_pruned", count=pruned)
+            else:
+                logger.info("prune_stale_providers_complete")
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("prune_stale_providers_failed", error=str(exc))
 
 
 async def startup_application(process_job, ws_manager):
@@ -141,6 +179,9 @@ async def startup_application(process_job, ws_manager):
         prefetch_stale_model_previews,
         interval_seconds=PREVIEW_PREFETCH_INTERVAL_SECONDS,
     )
+
+    logger.info("startup_init", phase="provider_cleanup")
+    schedule_cleanup(prune_stale_providers, interval_seconds=3600)
 
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(

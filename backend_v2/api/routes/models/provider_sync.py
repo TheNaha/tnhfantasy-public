@@ -4,17 +4,13 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session
-from services.model_service import ModelServiceV2
+from api.deps import get_session, get_model_service_v2
 from infrastructure.logging import model_logger
 from .schemas import UpdateProviderStatusRequest
 
 logger = model_logger()
 
 router = APIRouter()
-
-def get_model_service(session: Session) -> ModelServiceV2:
-    return ModelServiceV2(session)
 
 
 # ============================================================================
@@ -27,7 +23,7 @@ async def get_provider_statuses(
     session: Session = Depends(get_session)
 ):
     """Get provider download statuses for a model."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.get_model_provider_statuses(model_id)
 
 
@@ -39,7 +35,7 @@ async def update_file_provider_status(
     session: Session = Depends(get_session)
 ):
     """Update provider status for a specific file."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     result = await service.update_provider_file_status(
         file_id=file_id,
         provider_name=provider_name,
@@ -78,7 +74,7 @@ async def register_discovered_models(
     ModelVersion, ModelFile, and ProviderVersionStatus entries so the
     files are recognized as installed models on subsequent reconciliation runs.
     """
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.register_discovered_files(
         provider_id=request.provider_id,
         files=request.files,
@@ -98,7 +94,7 @@ def get_pending_downloads(
     Get files pending download for a provider.
     Used by worker for reconciliation.
     """
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     pending = service.get_pending_downloads(provider_name)
     return {"files": pending}
 
@@ -106,7 +102,7 @@ def get_pending_downloads(
 @router.get("/cache")
 def get_model_cache(session: Session = Depends(get_session)):
     """Get full model cache for reconciliation."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return {"models": service.get_full_cache()}
 
 
@@ -116,7 +112,7 @@ async def get_model(
     session: Session = Depends(get_session)
 ):
     """Get model with versions, files, and images."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.get_model(model_id)
 
 
@@ -126,7 +122,7 @@ async def delete_model(
     session: Session = Depends(get_session)
 ):
     """Delete a model and all related data."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     await service.delete_model(model_id)
     return {"status": "success"}
 
@@ -169,7 +165,7 @@ async def batch_update_status(
     from sqlmodel import select
     from core.entities_v2 import ModelFile, ModelVersion, ModelV2
     
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     provider_key = request.provider_id or request.provider_name
     if not provider_key:
         raise ValidationError("provider_id or provider_name is required")
@@ -217,7 +213,11 @@ async def batch_update_status(
             failed += 1
     
     from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-    ModelRepositoryV2(session).garbage_collect_auto_discovered()
+    model_repo = ModelRepositoryV2(session)
+    model_repo.garbage_collect_auto_discovered()
+    orphaned = model_repo.cleanup_orphaned_models()
+    if orphaned:
+        logger.info("reverse_reconciliation_cleaned", count=orphaned)
     
     return {"updated": updated, "failed": failed}
 
@@ -242,6 +242,26 @@ def reset_provider_status(
         "message": f"Reset {count} status entries for provider '{provider_name}'",
         "deleted_count": count
     }
+
+
+# ============================================================================
+# REVERSE RECONCILIATION
+# ============================================================================
+
+@router.post("/cleanup-orphaned")
+async def cleanup_orphaned_models(
+    session: Session = Depends(get_session)
+):
+    """Remove models whose files have no active provider status.
+    
+    This is the reverse reconciliation direction: models whose files
+    exist in the database but are no longer present on any provider
+    (all statuses are 'failed' or missing) are cleaned up.
+    """
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+    model_repo = ModelRepositoryV2(session)
+    deleted = model_repo.cleanup_orphaned_models()
+    return {"deleted": deleted}
 
 
 # ============================================================================
@@ -325,7 +345,7 @@ async def receive_batch_sync_progress(
     from sqlmodel import select
     from core.entities_v2 import ModelFile, ModelVersion, ModelV2
 
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     file_id_by_key = {}
     stmt = select(ModelFile, ModelVersion, ModelV2).join(
         ModelVersion, ModelFile.version_id == ModelVersion.id

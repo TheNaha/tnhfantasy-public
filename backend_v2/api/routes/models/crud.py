@@ -5,17 +5,13 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_session_sync
-from services.model_service import ModelServiceV2
+from api.deps import get_session, get_session_sync, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from infrastructure.logging import model_logger
 
 logger = model_logger()
 
 router = APIRouter()
-
-def get_model_service(session: Session) -> ModelServiceV2:
-    return ModelServiceV2(session)
 
 
 # ============================================================================
@@ -25,14 +21,14 @@ def get_model_service(session: Session) -> ModelServiceV2:
 @router.get("/")
 async def list_models(session: Session = Depends(get_session)):
     """List all models grouped by directory."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return {"models": await service.get_models_grouped()}
 
 
 @router.get("/all")
 async def list_all_models(session: Session = Depends(get_session)):
     """List all models as flat list."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.list_models()
 
 
@@ -211,7 +207,7 @@ async def add_model(
     from core.entities_v2 import ModelVersion
     from sqlmodel import select
     
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     
     # Extract version IDs from request
     selected_version_ids = [v["version_id"] for v in request.selected_versions]
@@ -258,7 +254,7 @@ async def list_models_by_directory(
     session: Session = Depends(get_session)
 ):
     """List models in a specific directory."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.list_models_by_directory(directory)
 
 
@@ -270,7 +266,7 @@ async def search_models(
     session: Session = Depends(get_session)
 ):
     """Search models by name, type, or base model."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.search_models(query=q, model_type=type, base_model=base_model)
 
 
@@ -280,7 +276,7 @@ async def search_by_tag(
     session: Session = Depends(get_session)
 ):
     """Search models by tag."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.search_by_tag(tag)
 
 
@@ -294,7 +290,7 @@ async def get_versions(
     session: Session = Depends(get_session)
 ):
     """Get all versions for a model."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.get_versions(model_id)
 
 
@@ -305,7 +301,7 @@ async def set_default_version_modern(
     session: Session = Depends(get_session)
 ):
     """Set the default version for a model."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     success = await service.set_default_version(model_id, request.version_id)
     if success:
         return {"status": "success"}
@@ -318,7 +314,7 @@ async def toggle_version_enabled(
     session: Session = Depends(get_session)
 ):
     """Toggle whether a version is enabled."""
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     result = await service.toggle_version_enabled(version_id)
     if result:
         return result
@@ -335,7 +331,7 @@ async def get_generation_info(
     Get model/version info needed for generation.
     Returns storage path and other generation params.
     """
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     return await service.get_version_for_generation(model_id, version_id)
 
 

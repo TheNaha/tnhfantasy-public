@@ -185,7 +185,7 @@ async def get_queue_status(session: Session = Depends(get_session)):
         remaining = avg_duration * (1 - (job.overall_progress / 100)) if job.overall_progress else avg_duration
         queue.append({
             "id": job.id,
-            "status": "running",
+            "status": "generating",
             "position": 0,
             "progress": job.overall_progress,
             "eta_seconds": remaining,

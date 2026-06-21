@@ -11,7 +11,7 @@ from api.lifecycle import recover_post_processing_jobs
 class TestMainLifecycle:
     def test_requeue_inflight_jobs_for_shutdown(self, session, monkeypatch):
         running_job = Job(
-            status=JobStatus.RUNNING,
+            status=JobStatus.GENERATING,
             workflow={"nodes": {}},
             started_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),

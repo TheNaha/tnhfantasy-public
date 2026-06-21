@@ -1210,3 +1210,36 @@ class ModelRepositoryV2:
                 deleted += 1
         return deleted
 
+    def cleanup_orphaned_models(self) -> int:
+        """Remove models whose files have no 'ready' or 'pending' status on any provider.
+        
+        This is the reverse reconciliation direction: when a model's files are
+        missing from all provider storage and can't be re-downloaded (all statuses
+        are 'failed' or missing), clean up the database records.
+        """
+        stmt = select(ModelV2)
+        models = self.session.exec(stmt).all()
+        deleted = 0
+        for m in models:
+            has_viable = False
+            for v in m.versions:
+                for f in v.files:
+                    status_stmt = select(ProviderVersionStatus).where(
+                        ProviderVersionStatus.file_id == f.id,
+                    )
+                    statuses = list(self.session.exec(status_stmt).all())
+                    if not statuses:
+                        continue
+                    has_ready_or_pending = any(
+                        s.status in ("ready", "pending", "downloading") for s in statuses
+                    )
+                    if has_ready_or_pending:
+                        has_viable = True
+                        break
+                if has_viable:
+                    break
+            if not has_viable:
+                self.delete_model(m.id)
+                deleted += 1
+        return deleted
+

@@ -13,8 +13,8 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
-    const isProcessing = ['sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
-    const isPending = ['pending', 'queued'].includes(job.status);
+    const isProcessing = ['sent-to-provider', 'connected', 'pre-generation', 'generating', 'post-processing'].includes(job.status);
+    const isPending = ['pending'].includes(job.status);
 
     useEffect(() => {
         let interval;

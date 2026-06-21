@@ -5,17 +5,13 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_session_sync
-from services.model_service import ModelServiceV2
+from api.deps import get_session, get_session_sync, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from infrastructure.logging import model_logger
 
 logger = model_logger()
 
 router = APIRouter()
-
-def get_model_service(session: Session) -> ModelServiceV2:
-    return ModelServiceV2(session)
 
 
 # ============================================================================
@@ -74,7 +70,7 @@ async def check_dependencies(
     from core.entities_v2 import ModelVersion
     from sqlmodel import select
     
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     
     # Get model to check existence
     model = await service.get_model(model_id)
@@ -158,7 +154,7 @@ async def resync_model_from_civitai(
     session.commit()
     
     # Get service for dict conversion
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
     
     return {
         "status": "success",
@@ -185,7 +181,7 @@ async def backfill_provider_statuses(
     from infrastructure.http_client import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
 
-    service = get_model_service(session)
+    service = get_model_service_v2(session)
 
     providers = session.exec(
         select(Provider).where(Provider.enabled == True)

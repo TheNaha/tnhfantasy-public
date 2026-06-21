@@ -113,8 +113,8 @@ class TestJobServiceUpdate:
         """Updating status to running sets started_at timestamp."""
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
-        updated = await service.update_job(job.id, status=JobStatus.RUNNING)
-        assert updated.status == JobStatus.RUNNING
+        updated = await service.update_job(job.id, status=JobStatus.GENERATING)
+        assert updated.status == JobStatus.GENERATING
         assert updated.started_at is not None
 
     @pytest.mark.asyncio
@@ -122,7 +122,7 @@ class TestJobServiceUpdate:
         """Updating status to completed sets completed_at timestamp."""
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
-        await service.update_job(job.id, status=JobStatus.RUNNING)
+        await service.update_job(job.id, status=JobStatus.GENERATING)
         updated = await service.update_job(job.id, status=JobStatus.COMPLETED)
         assert updated.status == JobStatus.COMPLETED
         assert updated.completed_at is not None
@@ -320,13 +320,13 @@ class TestJobServiceQueueItems:
         """Test retrieving running jobs."""
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
-        await service.update_job(job.id, status=JobStatus.RUNNING, overall_progress=50.0)
+        await service.update_job(job.id, status=JobStatus.GENERATING, overall_progress=50.0)
 
         running_items = service.get_running_queue_items()
 
         assert len(running_items) == 1
         item = running_items[0]
-        assert item.status == JobStatus.RUNNING
+        assert item.status == JobStatus.GENERATING
         assert item.overall_progress == 50.0
 
     @pytest.mark.asyncio

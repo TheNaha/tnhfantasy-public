@@ -1,13 +1,11 @@
 export const ACTIVE_JOB_STATUSES = new Set([
     'pending',
-    'running',
-    'processing',
-    'executing',
-    'progress',
-    'queued',
+    'sent-to-provider',
+    'connected',
+    'pre-generation',
+    'generating',
     'post-processing',
     'post_processing',
-    'submitting',
 ]);
 
 export function isActiveJobStatus(status) {

@@ -14,7 +14,6 @@ class JobStatus(str, Enum):
     CONNECTED = "connected"
     PRE_GENERATION = "pre-generation"
     GENERATING = "generating"
-    RUNNING = "running"
     COMPLETED = "completed"
     POST_PROCESSING = "post-processing"
     FAILED = "failed"

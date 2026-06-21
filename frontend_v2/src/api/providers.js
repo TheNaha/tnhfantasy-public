@@ -88,6 +88,12 @@ export const providersApi = {
     /** Clean orphaned provider state and stale downloading entries. */
     cleanupState: () => api.post('/api/providers/state/cleanup'),
 
+    /**
+     * Refresh storage stats for a single provider.
+     * @param {string} providerId
+     */
+    getProviderStats: (providerId) => api.get(`/api/providers/${providerId}/modal-stats`),
+
     // -------------------------------------------------------------------------
     // Modal-specific operations
     // -------------------------------------------------------------------------

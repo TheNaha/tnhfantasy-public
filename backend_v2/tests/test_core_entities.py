@@ -41,7 +41,6 @@ def test_job_defaults():
 def test_job_status_enum():
     """Test JobStatus enum values."""
     assert JobStatus.PENDING == "pending"
-    assert JobStatus.RUNNING == "running"
     assert JobStatus.POST_PROCESSING == "post-processing"
     assert JobStatus.COMPLETED == "completed"
     assert JobStatus.FAILED == "failed"
@@ -53,13 +52,13 @@ def test_job_instantiation():
     workflow_data = {"node": 1}
     metadata_data = {"seed": 123}
     job = Job(
-        status=JobStatus.RUNNING,
+        status=JobStatus.GENERATING,
         workflow=workflow_data,
         metadata_=metadata_data,
         provider_id="provider-1"
     )
 
-    assert job.status == JobStatus.RUNNING
+    assert job.status == JobStatus.GENERATING
     assert job.workflow == workflow_data
     assert job.metadata_ == metadata_data
     assert job.provider_id == "provider-1"
