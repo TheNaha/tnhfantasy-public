@@ -172,21 +172,26 @@ class GalleryIndexer:
         return compact
 
     def start(self):
-        """Start the background indexer."""
+        """Start the background indexer asynchronously so it doesn't block startup."""
         if self.observer:
             return
             
         logger.info("gallery_indexer_starting", directory=self.output_dir)
         
-        # Initial scan
-        self._perform_initial_scan()
+        import threading
         
-        # Start watchdog
-        event_handler = _GalleryEventHandler(self)
-        self.observer = Observer()
-        self.observer.schedule(event_handler, self.output_dir, recursive=True)
-        self.observer.start()
-        logger.info("gallery_indexer_started")
+        def background_init():
+            # Initial scan
+            self._perform_initial_scan()
+            
+            # Start watchdog
+            event_handler = _GalleryEventHandler(self)
+            self.observer = Observer()
+            self.observer.schedule(event_handler, self.output_dir, recursive=True)
+            self.observer.start()
+            logger.info("gallery_indexer_started")
+            
+        threading.Thread(target=background_init, daemon=True).start()
 
     def stop(self):
         """Stop the background indexer."""

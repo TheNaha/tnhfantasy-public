@@ -13,16 +13,24 @@ import {
     getModelAvailabilitySummary,
 } from '../../utils/modelAvailability';
 import ModelDetailsModal from './ModelDetailsModal';
+import BatchAutopopulateModal from './BatchAutopopulateModal';
 
 const CATEGORIES = MODEL_MANAGER_CATEGORIES;
 
 export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const queryClient = useQueryClient();
-    const [category, setCategory] = useState("checkpoints");
+    const [category, setCategory] = useState(() => {
+        return localStorage.getItem('modelManagerCategory') || "checkpoints";
+    });
+
+    useEffect(() => {
+        localStorage.setItem('modelManagerCategory', category);
+    }, [category]);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [selectedModel, setSelectedModel] = useState(null);
+    const [showBatchModal, setShowBatchModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedTags, setSelectedTags] = useState([]);
 
@@ -289,34 +297,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     </button>
 
                     <button
-                        onClick={async () => {
-                            try {
-                                const statusRes = await api.get('/api/v2/models/autopopulate-status');
-                                if (statusRes.needs_population === 0) {
-                                    toast.success("All models are already populated!");
-                                    return;
-                                }
-                                const confirmed = await openConfirm({
-                                    title: "Autopopulate Models",
-                                    message: `This will fetch metadata from CivitAI for ${statusRes.needs_population} auto-discovered models. Continue?`,
-                                    confirmText: "Autopopulate"
-                                });
-                                if (!confirmed) return;
-
-                                const res = await api.post('/api/v2/models/autopopulate-all');
-                                toast.success(res.message || "Autopopulation started!");
-                                queryClient.invalidateQueries({ queryKey: ['models'] });
-                                setTimeout(() => fetchFiles(true), 2000);
-                            } catch (e) {
-                                console.error(e);
-                                toast.error("Failed to autopopulate models");
-                            }
-                        }}
-                        className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
-                        title="Autopopulate All Models"
-                        aria-label="Autopopulate All Models"
+                        onClick={() => setShowBatchModal(true)}
+                        className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 transition-colors"
+                        title="Batch Autopopulate Models"
+                        aria-label="Batch Autopopulate Models"
                     >
-                        <Wand2 size={20} />
+                        <Wand2 size={16} className="text-gray-400 hover:text-white" />
                     </button>
 
                     {availableTags.length > 0 && (
@@ -526,6 +512,13 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     file={selectedModel}
                     onClose={() => setSelectedModel(null)}
                 />
+            )}
+
+            {showBatchModal && (
+                <BatchAutopopulateModal onClose={() => {
+                    setShowBatchModal(false);
+                    fetchFiles(true, searchTerm); // Refresh list to reflect populated models
+                }} />
             )}
         </div>
     );

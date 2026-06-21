@@ -33,14 +33,7 @@ export default defineConfig({
       usePolling: true,  // Required for Docker volume mounts
       interval: 1000,
     },
-    hmr: {
-      // HMR_HOST: external hostname for browser connection (e.g. via Traefik)
-      // Falls back to 'localhost' for direct access
-      host: process.env.HMR_HOST || 'localhost',
-      port: parseInt(process.env.HMR_PORT || '5174'),
-      // HMR_CLIENT_PORT: browser-side port (443 for HTTPS Traefik, or matches server port)
-      clientPort: parseInt(process.env.HMR_CLIENT_PORT || process.env.HMR_PORT || '5174'),
-    },
+
     proxy: {
       '/api': {
         // Use VITE_PROXY_TARGET for server-side proxy (Docker hostname)

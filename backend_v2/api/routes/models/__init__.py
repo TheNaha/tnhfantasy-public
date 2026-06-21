@@ -9,7 +9,7 @@ from .autopopulate import router as autopopulate_router
 router = APIRouter(prefix="/api/v2/models", tags=["models-v2"])
 
 router.include_router(crud_router)
+router.include_router(autopopulate_router)
 router.include_router(provider_sync_router)
 router.include_router(maintenance_router)
 router.include_router(preview_router)
-router.include_router(autopopulate_router)

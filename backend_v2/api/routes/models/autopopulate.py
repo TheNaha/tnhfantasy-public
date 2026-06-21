@@ -24,6 +24,22 @@ def _get_models_needing_population(session: Session) -> list:
     ).all()
     return [m for m in auto_discovered if m.civitai_model_id is None]
 
+@router.get("/autopopulate-pending")
+async def get_autopopulate_pending(session: Session = Depends(get_session)):
+    """Return a list of models that need autopopulation."""
+    models = _get_models_needing_population(session)
+    return {
+        "pending": [
+            {
+                "id": str(m.id),
+                "name": m.name,
+                "type": m.type,
+                "directory": m.directory
+            } for m in models
+        ],
+        "count": len(models)
+    }
+
 
 @router.get("/{model_id}/autopopulate-candidates")
 async def get_autopopulate_candidates(

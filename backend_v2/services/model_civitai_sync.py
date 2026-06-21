@@ -273,8 +273,13 @@ class ModelCivitaiSyncService:
         """
         if not a or not b:
             return 0
-        a_tokens = set(a.lower().split())
-        b_tokens = set(b.lower().split())
+            
+        import re
+        a_clean = re.sub(r'[_\-.]', ' ', a.lower())
+        b_clean = re.sub(r'[_\-.]', ' ', b.lower())
+        
+        a_tokens = set(a_clean.split())
+        b_tokens = set(b_clean.split())
         if not a_tokens or not b_tokens:
             return 0
         intersection = a_tokens & b_tokens
@@ -297,19 +302,40 @@ class ModelCivitaiSyncService:
         import re as _re
         external = ExternalModelService()
 
-        # Stage 1: Direct ID lookup from filenames (fastest path)
-        extracted_id = self._extract_civitai_id_from_files(model)
-        if extracted_id:
-            try:
-                model_data = await external.get_civitai_model(extracted_id)
-                if model_data:
-                    return [(100, model_data)]
-            except Exception:
-                pass
-
         search_query = self._clean_search_query(model.name)
         all_items = []
         seen_ids = set()
+        exact_match_id = None
+
+        # Stage 1: Direct ID lookup from filenames (fastest path)
+        # Note: Users often name files with CivitAI Version IDs, not Model IDs
+        extracted_id = self._extract_civitai_id_from_files(model)
+        if extracted_id:
+            # First try as a version ID
+            try:
+                version_data = await external.get_civitai_model_version(extracted_id)
+                model_id = version_data.get("modelId")
+                if model_id:
+                    model_data = await external.get_civitai_model(model_id)
+                    if model_data and model_data.get("id") not in seen_ids:
+                        all_items.append(model_data)
+                        seen_ids.add(model_data.get("id"))
+                        exact_match_id = model_data.get("id")
+            except Exception:
+                pass
+            
+            # Fallback: Try as a model ID if version lookup failed
+            if not exact_match_id:
+                try:
+                    model_data = await external.get_civitai_model(extracted_id)
+                    if model_data and model_data.get("id") not in seen_ids:
+                        all_items.append(model_data)
+                        seen_ids.add(model_data.get("id"))
+                        exact_match_id = model_data.get("id")
+                except Exception:
+                    pass
+
+        import asyncio
 
         # Stage 2: Filtered search (by type + cleaned query)
         search_kwargs = {"query": search_query, "limit": 10}
@@ -321,50 +347,60 @@ class ModelCivitaiSyncService:
             if mapped_type != "Other":
                 search_kwargs["types"] = mapped_type
 
-        result = await external.search_civitai(**search_kwargs)
-        for item in result.get("items", []):
-            if item.get("id") not in seen_ids:
-                all_items.append(item)
-                seen_ids.add(item.get("id"))
+        if exact_match_id:
+            await asyncio.sleep(0.5)
 
-        # Stage 3: Unfiltered search (broader)
-        result = await external.search_civitai(query=search_query, limit=10)
-        for item in result.get("items", []):
-            if item.get("id") not in seen_ids:
-                all_items.append(item)
-                seen_ids.add(item.get("id"))
-
-        # Stage 4: Fuzzy search (remove parentheticals)
-        fuzzy_query = _re.sub(r'\s*\(.*?\)\s*', '', search_query).strip()
-        if fuzzy_query and fuzzy_query != search_query:
-            result = await external.search_civitai(query=fuzzy_query, limit=10)
+        try:
+            result = await external.search_civitai(**search_kwargs)
             for item in result.get("items", []):
                 if item.get("id") not in seen_ids:
                     all_items.append(item)
                     seen_ids.add(item.get("id"))
+        except Exception:
+            pass
 
-        # Stage 5: Raw filename-based search
-        raw_queries = set()
-        files = self.session.exec(
-            select(ModelFile).where(
-                ModelFile.version_id.in_(
-                    select(ModelVersion.id).where(ModelVersion.model_id == model.id)
-                )
-            )
-        ).all()
-        for f in files:
-            raw = (f.original_filename or f.storage_filename or "")
-            base = raw.rsplit(".", 1)[0]
-            raw_clean = _re.sub(r'[_-]', ' ', base)
-            raw_clean = _re.sub(r'\s+', ' ', raw_clean).strip()
-            if raw_clean and raw_clean != search_query:
-                raw_queries.add(raw_clean)
-        for rq in list(raw_queries)[:2]:
-            result = await external.search_civitai(query=rq, limit=10)
-            for item in result.get("items", []):
-                if item.get("id") not in seen_ids:
-                    all_items.append(item)
-                    seen_ids.add(item.get("id"))
+        # Stop early if we have enough candidates (5+)
+        if len(all_items) < 5:
+            await asyncio.sleep(0.5)
+            # Stage 3: Unfiltered search (broader)
+            try:
+                result = await external.search_civitai(query=search_query, limit=10)
+                for item in result.get("items", []):
+                    if item.get("id") not in seen_ids:
+                        all_items.append(item)
+                        seen_ids.add(item.get("id"))
+            except Exception:
+                pass
+
+        if len(all_items) < 5:
+            await asyncio.sleep(0.5)
+            # Stage 4: Progressive fallback - first 3 words
+            tokens = search_query.split()
+            if len(tokens) > 3:
+                progressive_query = " ".join(tokens[:3])
+                try:
+                    result = await external.search_civitai(query=progressive_query, limit=10)
+                    for item in result.get("items", []):
+                        if item.get("id") not in seen_ids:
+                            all_items.append(item)
+                            seen_ids.add(item.get("id"))
+                except Exception:
+                    pass
+
+        if len(all_items) < 5:
+            await asyncio.sleep(0.5)
+            # Stage 5: Progressive fallback - first 2 words
+            tokens = search_query.split()
+            if len(tokens) > 2:
+                progressive_query = " ".join(tokens[:2])
+                try:
+                    result = await external.search_civitai(query=progressive_query, limit=10)
+                    for item in result.get("items", []):
+                        if item.get("id") not in seen_ids:
+                            all_items.append(item)
+                            seen_ids.add(item.get("id"))
+                except Exception:
+                    pass
 
         if not all_items:
             return []
@@ -373,6 +409,11 @@ class ModelCivitaiSyncService:
         lower_name = model.name.lower()
         scored = []
         for item in all_items:
+            item_id = item.get("id")
+            if exact_match_id and item_id == exact_match_id:
+                scored.append((100, item))
+                continue
+                
             item_name = (item.get("name") or "").lower()
             score = self._compute_token_overlap_score(lower_name, item_name)
             if score == 0:
@@ -448,11 +489,27 @@ class ModelCivitaiSyncService:
         """Clean a display name for CivitAI search by removing noise tokens."""
         import re
         q = name
+        
+        # 1. Strip known file extensions
+        q = re.sub(r'\.(safetensors|ckpt|pt|bin|yaml|json|txt)$', '', q, flags=re.IGNORECASE)
+        
+        # 2. Strip CivitAI IDs at the end (e.g. _123456 or -123456)
+        q = re.sub(r'[_\-]\d{4,8}$', '', q)
+        
+        # 3. Strip stuff in parentheses or brackets
         q = re.sub(r'\([^)]*\)', '', q)
-        q = re.sub(r'[_\s]*v\d+(\.\d+)*[\w]*$', '', q, flags=re.IGNORECASE)
-        q = re.sub(r'[_\s]*pruned[\w]*$', '', q, flags=re.IGNORECASE)
-        q = re.sub(r'[_\s]*fp16[\w]*$', '', q, flags=re.IGNORECASE)
-        q = re.sub(r'[_\s]*fp32[\w]*$', '', q, flags=re.IGNORECASE)
-        q = q.replace('_', ' ')
+        q = re.sub(r'\[[^]]*\]', '', q)
+        
+        # 4. Strip version numbers (e.g. v1.5, v2)
+        q = re.sub(r'[_\-\s]*v\d+(\.\d+)*[\w]*', ' ', q, flags=re.IGNORECASE)
+        
+        # 5. Strip common noise words
+        q = re.sub(r'\b(pruned|fp16|fp32|safetensors|ckpt|emaonly|fix|lora|lycoris)\b', ' ', q, flags=re.IGNORECASE)
+        
+        # 6. Replace underscores and hyphens with spaces
+        q = re.sub(r'[_\-.]', ' ', q)
+        
+        # 7. Collapse spaces
         q = re.sub(r'\s+', ' ', q).strip()
+        
         return q

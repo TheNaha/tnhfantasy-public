@@ -235,12 +235,16 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                         </div>
                     )}
 
-                    {/* No candidates — allow manual search */}
-                    {!loading && !error && candidates.length === 0 && (
-                        <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-6">
+                    {/* Manual search fallback */}
+                    {!loading && !error && (
+                        <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-6 mt-6">
                             <div className="text-center mb-4">
                                 <Search className="mx-auto mb-2 text-gray-500" size={28} />
-                                <p className="text-gray-300 font-medium">No matches found automatically</p>
+                                {candidates.length === 0 ? (
+                                    <p className="text-gray-300 font-medium">No matches found automatically</p>
+                                ) : (
+                                    <p className="text-gray-300 font-medium">Didn't find the right model?</p>
+                                )}
                                 <p className="text-gray-500 text-sm mt-1">Try searching CivitAI manually:</p>
                             </div>
                             <form onSubmit={handleManualSearch} className="flex gap-2 max-w-xl mx-auto">

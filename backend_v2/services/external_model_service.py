@@ -58,7 +58,25 @@ class ExternalModelService:
         if query:
             params["query"] = query
         if types:
-            params["types"] = types
+            # Map standard model types to CivitAI expected casing/values
+            type_mapping = {
+                "lora": "LORA",
+                "lycoris": "LORA",  # CivitAI often groups these
+                "checkpoint": "Checkpoint",
+                "textual inversion": "TextualInversion",
+                "textualinversion": "TextualInversion",
+                "embedding": "TextualInversion",
+                "controlnet": "Controlnet",
+                "aesthetic gradient": "AestheticGradient",
+                "poses": "Poses",
+                "hypernetwork": "Hypernetwork",
+            }
+            # Allow multiple comma-separated types
+            mapped_types = []
+            for t in types.split(","):
+                clean_t = t.strip()
+                mapped_types.append(type_mapping.get(clean_t.lower(), clean_t))
+            params["types"] = ",".join(mapped_types)
         if sort:
             params["sort"] = sort
         if baseModels:
@@ -143,7 +161,24 @@ class ExternalModelService:
                 status_code=500,
                 detail=f"Failed to fetch from CivitAI: {str(exc)}",
             ) from exc
-
+    async def get_civitai_model_version(self, version_id: int) -> Dict[str, Any]:
+        try:
+            response = await get_http_client().get(
+                f"https://civitai.com/api/v1/model-versions/{version_id}",
+                timeout=15,
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise ExternalModelServiceError(
+                status_code=exc.response.status_code,
+                detail=f"Failed to fetch version from CivitAI: {str(exc)}",
+            ) from exc
+        except Exception as exc:
+            raise ExternalModelServiceError(
+                status_code=500,
+                detail=f"Failed to fetch version from CivitAI: {str(exc)}",
+            ) from exc
     async def _parse_huggingface_url(self, url: str) -> Dict[str, Any]:
         match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
         if not match:
