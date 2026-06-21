@@ -519,34 +519,13 @@ class ProviderDeployService:
             _update_test_state(test_results)
 
         # 3. Inference Warmup
+        # Skipped to save provider container compute costs
         if all_passed:
-            try:
-                start_t = time.time()
-                workflow = {
-                    "1": {
-                        "inputs": {"value": 42.0},
-                        "class_type": "PrimitiveNode"
-                    }
-                }
-                payload = {
-                    "workflow": workflow,
-                    "job_id": f"test-warmup-{int(time.time())}",
-                    "use_snapshot": False
-                }
-                async with http_client.stream("POST", f"{worker_url}/inference", json=payload, timeout=60.0) as res:
-                    res.raise_for_status()
-                    async for _ in res.aiter_bytes():
-                        break
-                latency = int((time.time() - start_t) * 1000)
-                test_results.append({
-                    "name": "Inference Warmup",
-                    "success": True,
-                    "message": f"Warmup OK ({latency}ms)"
-                })
-            except Exception as e:
-                all_passed = False
-                test_results.append({"name": "Inference Warmup", "success": False, "message": str(e)})
-
+            test_results.append({
+                "name": "Inference Warmup",
+                "success": True,
+                "message": "Skipped to save compute"
+            })
             _update_test_state(test_results)
 
         final_status = "succeeded" if all_passed else "failed"

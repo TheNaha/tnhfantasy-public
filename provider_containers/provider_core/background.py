@@ -69,7 +69,7 @@ async def reconciliation_loop(
     provider_id: str,
     backend_url: str,
     interval_seconds: int = 7200,  # 2 hours
-    startup_delay_seconds: int = 130,
+    startup_delay_seconds: int = 7200, # Do not run immediately on startup to save compute
     http_client=None,
 ):
     """

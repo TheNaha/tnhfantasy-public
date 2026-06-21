@@ -75,7 +75,7 @@ class ModalProviderClient(BaseProviderClient):
         use_snapshot = request.use_snapshot
         job_id = request.job_id
         inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
-        class_name = "ComfyUISnapshot" if use_snapshot else "ComfyUIStable"
+        class_name = "ComfyUISnapshot" # Always use snapshot per user request
         
         if job_id:
             await self.job_tracker.start_job(job_id)
