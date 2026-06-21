@@ -438,6 +438,29 @@ function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loadi
                             </div>
                         ))
                     )}
+                    
+                    {deploy.test_results?.length > 0 && (
+                        <div className="mt-6 border-t border-white/[0.06] pt-6">
+                            <h4 className="text-sm font-semibold text-white mb-3">Deployment Tests</h4>
+                            <div className="space-y-2">
+                                {deploy.test_results.map((test, i) => (
+                                    <div key={i} className="flex items-center justify-between p-3 rounded-lg border border-gray-800 bg-gray-950/50">
+                                        <div className="flex items-center gap-3">
+                                            {test.success ? (
+                                                <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                                            ) : (
+                                                <div className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+                                            )}
+                                            <span className="text-sm font-medium text-gray-200">{test.name}</span>
+                                        </div>
+                                        <span className={`text-xs ${test.success ? 'text-gray-400' : 'text-red-400'}`}>
+                                            {test.message}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </>

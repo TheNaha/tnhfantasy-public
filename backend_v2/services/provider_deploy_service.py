@@ -399,6 +399,27 @@ class ProviderDeployService:
                 steps=results,
             )
             self._persist_deploy_state(provider, success_state)
+
+            try:
+                from services.provider_runtime import resolve_provider_runtime
+                runtime = resolve_provider_runtime(provider)
+                if runtime.worker_url:
+                    await self._run_deployment_tests(
+                        provider=provider,
+                        attempt_id=attempt_id,
+                        started_at=started_at,
+                        completed_steps=sorted(completed_steps),
+                        deployments=results,
+                        worker_url=runtime.worker_url,
+                    )
+                    success_state = read_deploy_state(provider)
+            except Exception as e:
+                logger.error(
+                    "provider_deploy_tests_failed",
+                    provider_id=provider.id,
+                    error=str(e)
+                )
+
             return {
                 "status": "success",
                 "provider_type": provider.type,
@@ -424,3 +445,124 @@ class ProviderDeployService:
             raise
         finally:
             orchestrator.cleanup_container(deploy_container)
+
+    async def _run_deployment_tests(
+        self,
+        provider: Provider,
+        attempt_id: str,
+        started_at: str,
+        completed_steps: list[str],
+        deployments: list[dict],
+        worker_url: str,
+    ) -> None:
+        import time
+        from services.provider_utils import utcnow_iso
+        testing_state = self._build_deploy_state(
+            provider_id=provider.id,
+            provider_type=provider.type,
+            status="testing",
+            attempt_id=attempt_id,
+            started_at=started_at,
+            message="Running post-deployment tests",
+            completed_steps=completed_steps,
+            steps=deployments,
+        )
+        testing_state["test_results"] = []
+        self._persist_deploy_state(provider, testing_state)
+
+        from infrastructure.http_client import get_http_client
+        http_client = get_http_client()
+        test_results = []
+        all_passed = True
+
+        def _update_test_state(results: list[dict]):
+            testing_state["test_results"] = list(results)
+            self._persist_deploy_state(provider, testing_state)
+
+        # 1. Liveness Ping
+        try:
+            start_t = time.time()
+            res = await http_client.get(f"{worker_url}/health", timeout=10.0)
+            res.raise_for_status()
+            latency = int((time.time() - start_t) * 1000)
+            test_results.append({
+                "name": "Liveness Ping",
+                "success": True,
+                "message": f"OK ({latency}ms)"
+            })
+        except Exception as e:
+            all_passed = False
+            test_results.append({"name": "Liveness Ping", "success": False, "message": str(e)})
+
+        _update_test_state(test_results)
+
+        # 2. Egress/Storage Test
+        if all_passed:
+            try:
+                start_t = time.time()
+                payload = {
+                    "url": "https://raw.githubusercontent.com/comfyanonymous/ComfyUI/master/requirements.txt",
+                    "path": "test_dummy_write.txt"
+                }
+                res = await http_client.post(f"{worker_url}/download-model", json=payload, timeout=30.0)
+                res.raise_for_status()
+                latency = int((time.time() - start_t) * 1000)
+                test_results.append({
+                    "name": "Egress/Storage",
+                    "success": True,
+                    "message": f"Write OK ({latency}ms)"
+                })
+            except Exception as e:
+                all_passed = False
+                test_results.append({"name": "Egress/Storage", "success": False, "message": str(e)})
+            
+            _update_test_state(test_results)
+
+        # 3. Inference Warmup
+        if all_passed:
+            try:
+                start_t = time.time()
+                workflow = {
+                    "1": {
+                        "inputs": {"value": 42.0},
+                        "class_type": "PrimitiveNode"
+                    }
+                }
+                payload = {
+                    "workflow": workflow,
+                    "job_id": f"test-warmup-{int(time.time())}",
+                    "use_snapshot": False
+                }
+                async with http_client.stream("POST", f"{worker_url}/inference", json=payload, timeout=60.0) as res:
+                    res.raise_for_status()
+                    async for _ in res.aiter_bytes():
+                        break
+                latency = int((time.time() - start_t) * 1000)
+                test_results.append({
+                    "name": "Inference Warmup",
+                    "success": True,
+                    "message": f"Warmup OK ({latency}ms)"
+                })
+            except Exception as e:
+                all_passed = False
+                test_results.append({"name": "Inference Warmup", "success": False, "message": str(e)})
+
+            _update_test_state(test_results)
+
+        final_status = "succeeded" if all_passed else "failed"
+        final_message = "Deployment and tests completed successfully" if all_passed else "Deployment tests failed"
+        
+        final_state = self._build_deploy_state(
+            provider_id=provider.id,
+            provider_type=provider.type,
+            status=final_status,
+            attempt_id=attempt_id,
+            started_at=started_at,
+            finished_at=utcnow_iso(),
+            message=final_message,
+            completed_steps=completed_steps,
+            steps=deployments,
+        )
+        final_state["test_results"] = test_results
+        self._persist_deploy_state(provider, final_state)
+
