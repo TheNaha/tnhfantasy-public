@@ -2,12 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import {
     TrendingUp, Image, Clock, Sparkles, BarChart3,
-    PieChart as PieChartIcon, Activity, Zap, Hash, MessageSquare, Loader2
+    PieChart as PieChartIcon, Activity, Zap, Hash, MessageSquare, Loader2,
+    Layers, Server
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, PieChart, Pie,
     AreaChart, Area, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
-    ResponsiveContainer
+    ResponsiveContainer, Legend
 } from 'recharts';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#ef4444'];
@@ -34,7 +35,8 @@ const Statistics = () => {
     const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['statistics', 'detailed'],
         queryFn: () => api.get('/api/statistics/detailed'),
-        staleTime: 60000, // Cache for 1 minute
+        staleTime: 30000,
+        refetchInterval: 120000,
     });
 
     if (isLoading) {
@@ -111,6 +113,18 @@ const Statistics = () => {
         count
     })).sort((a, b) => b.count - a.count).slice(0, 8);
 
+    // Prepare LoRA data
+    const loraData = Object.entries(data?.models?.loras ?? {}).map(([name, count]) => ({
+        name: name.length > 20 ? name.substring(0, 20) + '...' : name,
+        count
+    })).sort((a, b) => b.count - a.count).slice(0, 10);
+
+    // Prepare provider distribution
+    const providerData = Object.entries(data?.providers ?? {}).map(([name, count]) => ({
+        name,
+        count
+    })).sort((a, b) => b.count - a.count);
+
     // Prepare performance data
     const perfByModel = Object.entries(data?.performance?.by_model ?? {}).map(([name, stats]) => ({
         name: name.length > 20 ? name.substring(0, 20) + '...' : name,
@@ -173,6 +187,26 @@ const Statistics = () => {
                         </div>
                         <div className="text-3xl font-bold">
                             {Object.keys(data?.prompts?.keywords || {}).length}
+                        </div>
+                    </div>
+
+                    <div className="glass p-6 rounded-2xl">
+                        <div className="flex items-center gap-3 mb-3">
+                            <BarChart3 className="text-cyan-500" size={24} />
+                            <span className="text-sm text-gray-400">Total Jobs</span>
+                        </div>
+                        <div className="text-3xl font-bold">{data?.total_jobs ?? 0}</div>
+                    </div>
+
+                    <div className="glass p-6 rounded-2xl">
+                        <div className="flex items-center gap-3 mb-3">
+                            <Activity className="text-amber-500" size={24} />
+                            <span className="text-sm text-gray-400">Success Rate</span>
+                        </div>
+                        <div className="text-3xl font-bold">
+                            {data?.performance?.success_rate != null
+                                ? (data.performance.success_rate * 100).toFixed(0) + '%'
+                                : 'N/A'}
                         </div>
                     </div>
                 </div>
@@ -393,6 +427,55 @@ const Statistics = () => {
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
+                </div>
+
+                {/* LoRA & Provider Analytics */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Top LoRAs */}
+                    {loraData.length > 0 && (
+                        <div className="glass p-6 rounded-2xl">
+                            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <Layers size={20} />
+                                Most Used LoRAs
+                            </h3>
+                            <ResponsiveContainer width="100%" height={250}>
+                                <BarChart data={loraData} layout="vertical">
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                    <XAxis type="number" stroke="#9ca3af" />
+                                    <YAxis dataKey="name" type="category" width={120} stroke="#9ca3af" tick={{ fontSize: 11 }} />
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Bar dataKey="count" fill="#10b981" radius={[0, 8, 8, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
+
+                    {/* Provider Distribution */}
+                    {providerData.length > 0 && (
+                        <div className="glass p-6 rounded-2xl">
+                            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <Server size={20} />
+                                Jobs by Provider
+                            </h3>
+                            <ResponsiveContainer width="100%" height={250}>
+                                <PieChart>
+                                    <Pie
+                                        data={providerData}
+                                        cx="50%" cy="50%"
+                                        labelLine={false}
+                                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                        outerRadius={100}
+                                        dataKey="count"
+                                    >
+                                        {providerData.map((e, i) => (
+                                            <Cell key={e.name} fill={COLORS[i % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip />} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
                 </div>
 
                 {/* Prompt Analytics */}

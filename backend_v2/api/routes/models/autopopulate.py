@@ -25,6 +25,23 @@ def _get_models_needing_population(session: Session) -> list:
     return [m for m in auto_discovered if m.civitai_model_id is None]
 
 
+@router.get("/{model_id}/autopopulate-candidates")
+async def get_autopopulate_candidates(
+    model_id: str,
+    session: Session = Depends(get_session)
+):
+    """Return scored CivitAI search candidates for an auto-discovered model.
+    Used by the frontend AutopopulateSelector so users can pick the right match.
+    """
+    service = ModelCivitaiSyncService(session)
+    try:
+        return await service.search_civitai_candidates(model_id)
+    except ValueError as e:
+        raise NotFoundError("Model", model_id)
+    except Exception as e:
+        raise ValidationError(str(e))
+
+
 @router.post("/{model_id}/autopopulate")
 async def autopopulate_model_details(
     model_id: str, 

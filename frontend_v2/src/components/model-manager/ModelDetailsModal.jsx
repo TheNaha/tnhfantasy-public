@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import { X, AlertCircle, ExternalLink, Wand2 } from 'lucide-react';
+import { X, AlertCircle, ExternalLink, Wand2, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { api } from '../../api';
 import CivitaiSearchModal from './CivitaiSearchModal';
+import AutopopulateSelector from './AutopopulateSelector';
 
 export default function ModelDetailsModal({ file, onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
     const [showSearchModal, setShowSearchModal] = useState(false);
+    const [showAutopopulateSelector, setShowAutopopulateSelector] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
     const queryClient = useQueryClient();
     
     if (!file) return null;
@@ -110,6 +113,27 @@ export default function ModelDetailsModal({ file, onClose }) {
         }
     };
 
+    const handleDirectRefresh = async () => {
+        if (!file.model_id) {
+            toast.error("Model has no database ID");
+            return;
+        }
+        setRefreshing(true);
+        try {
+            const payload = {};
+            if (civitaiId) payload.civitai_id = civitaiId;
+            await api.post(`/api/v2/models/${file.model_id}/autopopulate`, payload);
+            toast.success("Model metadata refreshed from CivitAI!");
+            queryClient.invalidateQueries({ queryKey: ['models'] });
+            queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+            onClose();
+        } catch (e) {
+            toast.error("Failed to refresh metadata: " + (e.message || "Unknown error"));
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
 
@@ -186,14 +210,27 @@ export default function ModelDetailsModal({ file, onClose }) {
                         </div>
                         <div className="flex items-center gap-2">
                             {file.model_id && (
-                                <button
-                                    onClick={() => setShowSearchModal(true)}
-                                    className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
-                                    title={isAutoDiscovered ? "Autopopulate metadata from CivitAI" : "Refetch metadata from CivitAI"}
-                                    aria-label={isAutoDiscovered ? "Autopopulate model metadata" : "Refetch model metadata"}
-                                >
-                                    <Wand2 size={20} />
-                                </button>
+                                <>
+                                    {civitaiId && !isAutoDiscovered && (
+                                        <button
+                                            onClick={handleDirectRefresh}
+                                            disabled={refreshing}
+                                            className="p-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50"
+                                            title="Refresh metadata from CivitAI"
+                                            aria-label="Refresh model metadata from CivitAI"
+                                        >
+                                            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => isAutoDiscovered ? setShowAutopopulateSelector(true) : setShowSearchModal(true)}
+                                        className="p-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors"
+                                        title={isAutoDiscovered ? "Match with CivitAI" : "Search CivitAI for match"}
+                                        aria-label={isAutoDiscovered ? "Match with CivitAI" : "Search CivitAI for this model"}
+                                    >
+                                        <Wand2 size={20} />
+                                    </button>
+                                </>
                             )}
                             <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-full transition-colors" aria-label="Close modal">
                                 <X size={24} />
@@ -318,11 +355,11 @@ export default function ModelDetailsModal({ file, onClose }) {
                                             <p className="text-sm text-yellow-300 font-medium">Auto-discovered Model</p>
                                             <p className="text-xs text-yellow-400/70 mt-1">This model was auto-discovered from provider storage. Some details may be incomplete.</p>
                                             <button
-                                                onClick={() => setShowSearchModal(true)}
+                                                onClick={() => setShowAutopopulateSelector(true)}
                                                 className="mt-2 text-xs px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors inline-flex items-center gap-1"
                                             >
                                                 <Wand2 size={12} />
-                                                Fetch Full Metadata
+                                                Match with CivitAI
                                             </button>
                                         </div>
                                     </div>
@@ -366,11 +403,11 @@ export default function ModelDetailsModal({ file, onClose }) {
                             <p className="text-xs mt-2">This model may have been added before V2 migration.</p>
                             {file.model_id && (
                                 <button
-                                    onClick={() => setShowSearchModal(true)}
+                                    onClick={() => setShowAutopopulateSelector(true)}
                                     className="mt-4 px-4 py-2 bg-blue-900 border border-blue-700 rounded-lg text-blue-300 hover:text-white hover:border-blue-500 transition-colors text-sm"
                                 >
                                     <Wand2 size={16} className="inline mr-2" />
-                                    Fetch Metadata from CivitAI
+                                    Match with CivitAI
                                 </button>
                             )}
                         </div>
@@ -378,6 +415,19 @@ export default function ModelDetailsModal({ file, onClose }) {
                 </div>
             </div>
             
+            {showAutopopulateSelector && (
+                <AutopopulateSelector
+                    modelId={file.model_id}
+                    modelName={displayName}
+                    modelType={modelType}
+                    modelDirectory={file.directory}
+                    onClose={() => setShowAutopopulateSelector(false)}
+                    onComplete={() => {
+                        queryClient.invalidateQueries({ queryKey: ['models'] });
+                        queryClient.invalidateQueries({ queryKey: ['model', file.model_id] });
+                    }}
+                />
+            )}
             {showSearchModal && (
                 <CivitaiSearchModal 
                     initialQuery={displayName}

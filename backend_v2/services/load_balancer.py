@@ -616,9 +616,13 @@ class LoadBalancer:
     
     async def report_success(self, provider_id: str):
         """Report successful job completion for a provider."""
+        persist_needed = False
         async with self.runtime_state.get_lock():
             if provider_id in self.runtime_state.provider_failures:
                 self.runtime_state.provider_failures[provider_id] = 0
+                persist_needed = True
+        if persist_needed:
+            LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state)
     
     async def report_failure(self, provider_id: str):
         """Report job failure for a provider."""
@@ -629,6 +633,7 @@ class LoadBalancer:
             self.runtime_state.provider_failures[provider_id] += 1
             failures = self.runtime_state.provider_failures[provider_id]
         logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
+        LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state)
     
     async def release_job(self, provider_id: str):
         """

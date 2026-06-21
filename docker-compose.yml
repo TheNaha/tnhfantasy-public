@@ -12,6 +12,7 @@ services:
       - INPUT_DIR=/data/input
       - COMFY_DATABASE_URL=sqlite:////data/db/comfy.db
       - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
+      - COMFY_PREVIEW_PREFETCH_ENABLED=true
       - COMFY_UVICORN_RELOAD=0
     networks:
       - tnhcomfy

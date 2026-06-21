@@ -95,6 +95,37 @@ async def vacuum_database() -> None:
         logger.error("vacuum_failed", error=str(exc))
 
 
+async def run_data_cleanup() -> None:
+    """Run all periodic data cleanup tasks in one pass."""
+    from api.startup_helpers import cleanup_provider_state_artifacts
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+
+    logger.info("data_cleanup_start")
+    try:
+        cleanup_provider_state_artifacts(stale_downloading_after_minutes=120)
+    except Exception as exc:
+        logger.warning("data_cleanup_provider_state_failed", error=str(exc))
+
+    try:
+        await prune_stale_providers()
+    except Exception as exc:
+        logger.warning("data_cleanup_prune_failed", error=str(exc))
+
+    try:
+        session = get_session_sync()
+        try:
+            model_repo = ModelRepositoryV2(session)
+            orphaned = model_repo.cleanup_orphaned_models()
+            if orphaned > 0:
+                logger.info("data_cleanup_orphaned_models", removed=orphaned)
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("data_cleanup_orphaned_failed", error=str(exc))
+
+    logger.info("data_cleanup_complete")
+
+
 async def prune_stale_providers() -> None:
     """Remove provider records that have not sent a discovery heartbeat in 24 hours."""
     from datetime import datetime, timezone, timedelta
@@ -180,8 +211,8 @@ async def startup_application(process_job, ws_manager):
         interval_seconds=PREVIEW_PREFETCH_INTERVAL_SECONDS,
     )
 
-    logger.info("startup_init", phase="provider_cleanup")
-    schedule_cleanup(prune_stale_providers, interval_seconds=3600)
+    logger.info("startup_init", phase="data_cleanup")
+    schedule_cleanup(run_data_cleanup, interval_seconds=3600)
 
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(

@@ -1,14 +1,34 @@
 import { memo, useState, useEffect, useCallback, useMemo } from 'react';
-import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X } from 'lucide-react';
+import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
 import useJobStore from '../../store/jobStore';
+
+const PHASE_CONFIG = {
+    'pending': { icon: Clock, label: 'Queued', color: 'text-gray-400', bar: 'bg-gray-600' },
+    'validating': { icon: Settings, label: 'Validating', color: 'text-blue-300', bar: 'bg-blue-500' },
+    'sent-to-provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
+    'connected': { icon: Wifi, label: 'Connected', color: 'text-cyan-400', bar: 'bg-cyan-500' },
+    'pre-generation': { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
+    'generating': { icon: Cpu, label: 'Generating', color: 'text-purple-400', bar: 'bg-purple-500' },
+    'post-processing': { icon: Image, label: 'Processing', color: 'text-green-400', bar: 'bg-green-500' },
+};
+
+const PHASE_ORDER = ['pending', 'validating', 'sent-to-provider', 'connected', 'pre-generation', 'generating', 'post-processing'];
+
+function getJobPhase(job) {
+    const status = job.status || 'pending';
+    return PHASE_CONFIG[status] || { icon: Clock, label: status, color: 'text-gray-400', bar: 'bg-gray-600' };
+}
 
 const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const [, setCurrentTime] = useState(() => Date.now());
 
     const realtimeJob = useJobStore(state => state.jobs[initialJob.id]);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
+
+    const phase = useMemo(() => getJobPhase(job), [job]);
+    const PhaseIcon = phase.icon;
 
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
@@ -103,7 +123,12 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             <div className="flex-1 flex flex-col items-center justify-center p-4 pt-10 text-center">
                 {isProcessing && !isPending ? (
                     <>
-                        <Loader2 className="animate-spin text-blue-500 mb-2" size={28} />
+                        <PhaseIcon className={`animate-pulse ${phase.color} mb-1`} size={22} />
+
+                        {/* Phase badge */}
+                        <div className={`text-xs font-semibold uppercase tracking-wider ${phase.color} mb-2`}>
+                            {phase.label}
+                        </div>
 
                         {/* Job Info Row */}
                         <div className="w-full mb-2">
@@ -131,9 +156,25 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             </div>
                         </div>
 
+                        {/* Phase timeline dots */}
+                        <div className="flex items-center justify-center gap-1 mb-2">
+                            {PHASE_ORDER.map((p, i) => {
+                                const pIdx = PHASE_ORDER.indexOf(job.status);
+                                const active = i <= pIdx && pIdx >= 0;
+                                return (
+                                    <div
+                                        key={p}
+                                        className={`h-1.5 rounded-full transition-all duration-300 ${
+                                            active ? phase.bar + ' w-4' : 'bg-gray-700 w-1.5'
+                                        }`}
+                                    />
+                                );
+                            })}
+                        </div>
+
                         {/* Progress Message */}
                         <p className="text-sm font-medium text-white truncate w-full mb-2">
-                            {job.status === 'post-processing' ? 'Post-Processing...' : (job.message || 'Processing...')}
+                            {job.message || 'Processing...'}
                         </p>
 
                         {/* Overall Progress */}

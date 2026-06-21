@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional
 
 from sqlmodel import Session
 
+from core.entities import ModelFile, ModelVersion
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_downloader import ModelDownloader
 
@@ -82,36 +83,27 @@ class ModelCivitaiSyncService:
         if not model:
             raise ValueError("Model not found")
 
-        external = ExternalModelService()
         civitai_data = None
 
         if target_civitai_id:
+            external = ExternalModelService()
             try:
                 civitai_data = await external.get_civitai_model(target_civitai_id)
             except Exception:
                 pass
 
-        # Try direct lookup by CivitAI model ID next
         if not civitai_data and model.civitai_model_id:
+            external = ExternalModelService()
             try:
                 civitai_data = await external.get_civitai_model(model.civitai_model_id)
             except Exception:
                 pass
 
-        # Fall back to search by cleaned name
         if not civitai_data:
-            search_query = self._clean_search_query(model.name)
-            search_result = await external.search_civitai(search_query, limit=3)
-            items = search_result.get("items", [])
-            if not items:
+            scored = await self._search_civitai_scored(model)
+            if not scored:
                 raise ValueError(f"No match found on CivitAI for '{model.name}'")
-
-            # Prefer exact name match over first result
-            civitai_data = items[0]
-            for item in items:
-                if item.get("name", "").lower() == model.name.lower():
-                    civitai_data = item
-                    break
+            civitai_data = scored[0][1]
 
         # Update model-level fields
         model.civitai_model_id = civitai_data.get("id")
@@ -178,11 +170,13 @@ class ModelCivitaiSyncService:
                 if not matched_version:
                     # Create a new ModelVersion for unmatched CivitAI versions
                     primary = self.session.exec(
-                        select(ModelFile).where(ModelFile.version_id.in_(
-                            select(ModelVersion.id).where(
-                                ModelVersion.model_id == model.id
+                        select(ModelFile).where(
+                            ModelFile.version_id.in_(
+                                select(ModelVersion.id).where(
+                                    ModelVersion.model_id == model.id
+                                ).limit(1)
                             )
-                        ).limit(1))
+                        )
                     ).first()
                     new_version = ModelVersion(
                         model_id=model.id,
@@ -202,6 +196,19 @@ class ModelCivitaiSyncService:
 
                 matched_ids.add(matched_version.id)
                 matched_version.civitai_version_id = civitai_version.get("id")
+
+                # Update file size from CivitAI data if currently 0
+                civitai_files = civitai_version.get("files", [])
+                if civitai_files:
+                    primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
+                    civitai_size_kb = primary_civitai.get("sizeKB")
+                    if civitai_size_kb is not None:
+                        existing_files = self.session.exec(
+                            select(ModelFile).where(ModelFile.version_id == matched_version.id)
+                        ).all()
+                        for ef in existing_files:
+                            if ef.size_kb is None or ef.size_kb == 0:
+                                ef.size_kb = float(civitai_size_kb)
 
                 if "Auto-discovered" in (matched_version.description or ""):
                     matched_version.description = civitai_version.get("description", matched_version.description)
@@ -236,19 +243,217 @@ class ModelCivitaiSyncService:
         self.session.commit()
         return self.repo.model_to_dict(model)
 
+    def _extract_civitai_id_from_files(self, model) -> int | None:
+        """Extract a CivitAI model ID from model version file names.
+        
+        Many auto-discovered models have filenames ending with _<civitai_id>
+        (e.g. my_model_v1_413394.safetensors). This extracts that ID.
+        """
+        import re
+        from sqlmodel import select
+
+        files = self.session.exec(
+            select(ModelFile).where(
+                ModelFile.version_id.in_(
+                    select(ModelVersion.id).where(ModelVersion.model_id == model.id)
+                )
+            )
+        ).all()
+
+        for f in files:
+            name = f.original_filename or f.storage_filename or ""
+            base = name.rsplit(".", 1)[0]
+            m = re.search(r'_(\d{6,})$', base)
+            if m:
+                return int(m.group(1))
+        return None
+
+    def _compute_token_overlap_score(self, a: str, b: str) -> int:
+        """Compute a 0-100 score based on token overlap ratio, 
+        giving higher weight to matching tokens.
+        """
+        if not a or not b:
+            return 0
+        a_tokens = set(a.lower().split())
+        b_tokens = set(b.lower().split())
+        if not a_tokens or not b_tokens:
+            return 0
+        intersection = a_tokens & b_tokens
+        union = a_tokens | b_tokens
+        jaccard = len(intersection) / len(union)
+        return int(jaccard * 100)
+
+    async def _search_civitai_scored(self, model) -> list:
+        """Search CivitAI for a model and return scored candidates.
+        
+        Returns a list of (score, item_dict) tuples sorted by score descending.
+        Uses 4-stage search with token-overlap scoring.
+        Stage 1: Direct CivitAI ID lookup from filename embedded IDs
+        Stage 2: Filtered search (by type + query)
+        Stage 3: Unfiltered search
+        Stage 4: Raw filename-based search
+        """
+        from services.external_model_service import ExternalModelService
+        from sqlmodel import select
+        import re as _re
+        external = ExternalModelService()
+
+        # Stage 1: Direct ID lookup from filenames (fastest path)
+        extracted_id = self._extract_civitai_id_from_files(model)
+        if extracted_id:
+            try:
+                model_data = await external.get_civitai_model(extracted_id)
+                if model_data:
+                    return [(100, model_data)]
+            except Exception:
+                pass
+
+        search_query = self._clean_search_query(model.name)
+        all_items = []
+        seen_ids = set()
+
+        # Stage 2: Filtered search (by type + cleaned query)
+        search_kwargs = {"query": search_query, "limit": 10}
+        if model.type and model.type.lower() not in ("other", "unknown"):
+            search_kwargs["types"] = model.type
+        elif model.directory and model.directory not in ("other", "unknown"):
+            from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
+            mapped_type = _DIRECTORY_TO_MODEL_TYPE.get(model.directory, "Checkpoint")
+            if mapped_type != "Other":
+                search_kwargs["types"] = mapped_type
+
+        result = await external.search_civitai(**search_kwargs)
+        for item in result.get("items", []):
+            if item.get("id") not in seen_ids:
+                all_items.append(item)
+                seen_ids.add(item.get("id"))
+
+        # Stage 3: Unfiltered search (broader)
+        result = await external.search_civitai(query=search_query, limit=10)
+        for item in result.get("items", []):
+            if item.get("id") not in seen_ids:
+                all_items.append(item)
+                seen_ids.add(item.get("id"))
+
+        # Stage 4: Fuzzy search (remove parentheticals)
+        fuzzy_query = _re.sub(r'\s*\(.*?\)\s*', '', search_query).strip()
+        if fuzzy_query and fuzzy_query != search_query:
+            result = await external.search_civitai(query=fuzzy_query, limit=10)
+            for item in result.get("items", []):
+                if item.get("id") not in seen_ids:
+                    all_items.append(item)
+                    seen_ids.add(item.get("id"))
+
+        # Stage 5: Raw filename-based search
+        raw_queries = set()
+        files = self.session.exec(
+            select(ModelFile).where(
+                ModelFile.version_id.in_(
+                    select(ModelVersion.id).where(ModelVersion.model_id == model.id)
+                )
+            )
+        ).all()
+        for f in files:
+            raw = (f.original_filename or f.storage_filename or "")
+            base = raw.rsplit(".", 1)[0]
+            raw_clean = _re.sub(r'[_-]', ' ', base)
+            raw_clean = _re.sub(r'\s+', ' ', raw_clean).strip()
+            if raw_clean and raw_clean != search_query:
+                raw_queries.add(raw_clean)
+        for rq in list(raw_queries)[:2]:
+            result = await external.search_civitai(query=rq, limit=10)
+            for item in result.get("items", []):
+                if item.get("id") not in seen_ids:
+                    all_items.append(item)
+                    seen_ids.add(item.get("id"))
+
+        if not all_items:
+            return []
+
+        # Score all candidates using token overlap
+        lower_name = model.name.lower()
+        scored = []
+        for item in all_items:
+            item_name = (item.get("name") or "").lower()
+            score = self._compute_token_overlap_score(lower_name, item_name)
+            if score == 0:
+                continue
+            scored.append((score, item))
+
+        scored.sort(key=lambda x: -x[0])
+        return scored
+
+    async def search_civitai_candidates(self, model_id: str) -> dict:
+        """Search CivitAI for candidates matching an auto-discovered model.
+        
+        Returns model info and scored candidates without enriching the model.
+        This is used by the frontend AutopopulateSelector to let users pick.
+        """
+        model = self.repo.get_model(model_id)
+        if not model:
+            raise ValueError("Model not found")
+
+        # Gather raw filenames for the UI
+        from sqlmodel import select
+        raw_filenames = []
+        files = self.session.exec(
+            select(ModelFile).where(
+                ModelFile.version_id.in_(
+                    select(ModelVersion.id).where(ModelVersion.model_id == model.id)
+                )
+            )
+        ).all()
+        for f in files:
+            raw_filenames.append(f.original_filename or f.storage_filename or "")
+
+        scored = await self._search_civitai_scored(model)
+
+        def match_label(score: int) -> str:
+            if score >= 100:
+                return "Exact match"
+            elif score >= 60:
+                return "Close match"
+            elif score >= 30:
+                return "Partial match"
+            elif score > 0:
+                return "Weak match"
+            return "No match"
+
+        candidates = []
+        for score, item in scored:
+            civitai_id = item.get("id")
+            civitai_source = item.get("source", "civitai")
+
+            candidates.append({
+                "score": score,
+                "score_percent": score,
+                "match_label": match_label(score),
+                "civitai_model": item,
+            })
+
+        return {
+            "model_id": str(model.id),
+            "model_name": model.name,
+            "model_type": model.type,
+            "model_directory": model.directory,
+            "model_description": model.description,
+            "raw_filenames": raw_filenames,
+            "search_query": self._clean_search_query(model.name),
+            "candidates": candidates,
+            "total_candidates": len(candidates),
+            "source": "civitai",
+        }
+
     @staticmethod
     def _clean_search_query(name: str) -> str:
         """Clean a display name for CivitAI search by removing noise tokens."""
         import re
         q = name
-        # Remove parenthetical annotations like (NSFW), (SFW), (fp16)
         q = re.sub(r'\([^)]*\)', '', q)
-        # Remove trailing version tokens like v10, v2.0, _pruned
         q = re.sub(r'[_\s]*v\d+(\.\d+)*[\w]*$', '', q, flags=re.IGNORECASE)
         q = re.sub(r'[_\s]*pruned[\w]*$', '', q, flags=re.IGNORECASE)
         q = re.sub(r'[_\s]*fp16[\w]*$', '', q, flags=re.IGNORECASE)
         q = re.sub(r'[_\s]*fp32[\w]*$', '', q, flags=re.IGNORECASE)
-        # Replace underscores with spaces and collapse whitespace
         q = q.replace('_', ' ')
         q = re.sub(r'\s+', ' ', q).strip()
         return q

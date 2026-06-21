@@ -232,6 +232,7 @@ export default function ProviderDetailPanel({
                             capabilityReasons={capabilityReasons}
                             loading={loading}
                             onDeploy={onDeploy}
+                            provider={provider}
                         />
                     )}
                     {activeTab === 'sync' && (
@@ -337,6 +338,9 @@ function RuntimeTab({
                 <DataRow label="Container Port" value={String(provider.runtime_config?.port ?? 'n/a')} />
                 <DataRow label="Jobs Assigned" value={String(jobsAssigned)} />
                 <DataRow label="Failures" value={String(providerFailures)} />
+                <DataRow label="Last Seen" value={runtime.last_seen_at ? new Date(runtime.last_seen_at).toLocaleString() : 'N/A'} />
+                <DataRow label="Container ID" value={runtime.container_id ? runtime.container_id.slice(0, 12) : 'N/A'} mono />
+                <DataRow label="Uptime" value={runtime.uptime ? Math.floor(runtime.uptime / 60) + 'm' : 'N/A'} />
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -348,7 +352,7 @@ function RuntimeTab({
     );
 }
 
-function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy }) {
+function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy, provider }) {
     const [showSteps, setShowSteps] = useState(false);
 
     return (
@@ -357,6 +361,8 @@ function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loadi
                 <StatusRow label="Deploy Status" value={humanize(deploy.status || 'idle')} tone={STATUS_TONE[deploy.status || 'idle']} />
                 <DataRow label="Deploy Mode" value={deployBadge} />
                 <DataRow label="Message" value={deploy.message || capabilityReasons.deploy || 'No deploy activity'} />
+                <DataRow label="Provider Type" value={deploy.mode || provider.type} />
+                <DataRow label="Last Deployed" value={deploy.finished_at ? new Date(deploy.finished_at).toLocaleString() : 'Never'} />
                 <DataRow
                     label="Completed Steps"
                     value={String(deploy.completed_steps?.length || deploy.steps?.filter((s) => s.success)?.length || 0)}
@@ -539,6 +545,8 @@ function DiagnosticsTab({ diagnostics, runtime, credentialSummary, providerFailu
                 <DataRow label="Worker URL" value={diagnostics.worker?.worker_url} mono />
                 <DataRow label="Runtime Mode" value={diagnostics.worker?.mode || runtime.mode} />
                 <DataRow label="Credential Ready" value={credentialSummary.ready ? 'Yes' : 'Missing'} />
+                <DataRow label="GPU" value={diagnostics.worker?.gpu || runtime.gpu || 'N/A'} />
+                <DataRow label="Version" value={diagnostics.worker?.version || runtime.version || 'N/A'} />
                 {credentialSummary.configured_fields?.length > 0 && (
                     <DataRow label="Configured Secrets" value={credentialSummary.configured_fields.join(', ')} />
                 )}
