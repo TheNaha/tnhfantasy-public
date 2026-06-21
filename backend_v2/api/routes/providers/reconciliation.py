@@ -74,12 +74,13 @@ def get_model_cache_for_directory(
 @router.post("/{provider_id}/reconcile")
 async def reconcile_provider(
     provider_id: str,
+    force: bool = False,
     session: Session = Depends(get_session)
 ):
     """Trigger model reconciliation for a provider."""
     try:
         lifecycle = _get_provider_lifecycle_service(session)
-        result = await lifecycle.trigger_reconciliation(provider_id)
+        result = await lifecycle.trigger_reconciliation(provider_id, force=force)
     except ProviderError as exc:
         detail = str(exc)
         status_code = 400 if "Reconciliation is only available" in detail else 500

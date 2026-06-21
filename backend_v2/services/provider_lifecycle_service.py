@@ -181,7 +181,7 @@ class ProviderLifecycleService:
             "result": result,
         }
 
-    async def trigger_reconciliation(self, provider_id: str) -> Dict[str, Any]:
+    async def trigger_reconciliation(self, provider_id: str, force: bool = False) -> Dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
         if not runtime.supports_reconciliation or runtime.mode not in ("container_http", "discovery"):
@@ -190,7 +190,7 @@ class ProviderLifecycleService:
                 "Reconciliation is only available for container-backed or discovered providers",
             )
 
-        session_state = await self.provider_service.start_reconciliation_session(provider_id)
+        session_state = await self.provider_service.start_reconciliation_session(provider_id, force=force)
         if not session_state.get("accepted"):
             return {
                 "status": "already_running",

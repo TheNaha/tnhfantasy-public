@@ -95,8 +95,8 @@ async def reconciliation_loop(
     
     while True:
         try:
-            reconcile_url = f"{backend_url}/api/providers/{provider_id}/reconcile"
-            logger.info(f"[Worker Reconciliation] Attempting to reconcile...")
+            reconcile_url = f"{backend_url}/api/providers/{provider_id}/reconcile?force=true"
+            logger.info(f"[Worker Reconciliation] Attempting to reconcile (force override)...")
             
             if http_client:
                 response = await http_client.post(reconcile_url, timeout=30.0)

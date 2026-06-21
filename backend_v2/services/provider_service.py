@@ -175,9 +175,9 @@ class ProviderService:
         provider = await self.get_provider(provider_id)
         return await self.reconciliation_service.get_provider_reconciliation_state(provider)
 
-    async def start_reconciliation_session(self, provider_id: str) -> Dict[str, Any]:
+    async def start_reconciliation_session(self, provider_id: str, force: bool = False) -> Dict[str, Any]:
         provider = await self.get_provider(provider_id)
-        return await self.reconciliation_service.start_reconciliation_session(provider)
+        return await self.reconciliation_service.start_reconciliation_session(provider, force=force)
 
     async def upsert_reconciliation_state(self, provider_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         provider = await self.get_provider(provider_id)

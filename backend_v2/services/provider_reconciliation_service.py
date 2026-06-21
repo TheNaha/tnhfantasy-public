@@ -70,9 +70,9 @@ class ProviderReconciliationService:
         self._persist_reconciliation_state(provider, stale_state)
         return stale_state
 
-    async def start_reconciliation_session(self, provider: Provider) -> Dict[str, Any]:
+    async def start_reconciliation_session(self, provider: Provider, force: bool = False) -> Dict[str, Any]:
         current_state = read_reconciliation_state(provider)
-        if self._is_reconciliation_in_progress(current_state) and self._is_reconciliation_state_fresh(current_state):
+        if not force and self._is_reconciliation_in_progress(current_state) and self._is_reconciliation_state_fresh(current_state):
             return {
                 "accepted": False,
                 "state": current_state,
