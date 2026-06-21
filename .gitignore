@@ -44,3 +44,4 @@ test_async_gen.py
 provider_fixes.patch
 
 .env.modal-zetsuke
+.env.zetsuke
