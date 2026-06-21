@@ -317,10 +317,10 @@ class BeamProviderClient(BaseProviderClient):
             paths = {}
             client = get_http_client()
             for directory in MODEL_DIRECTORIES:
-                response = await client.post(f"{BEAM_STORAGE_URL}/list-models", json={"directory": directory}, headers=get_beam_headers(), timeout=60.0)
-                if response.status_code == 200:
-                    for f in response.json().get("files", []):
-                        paths[f"{directory}/{f['name']}"] = f
+                response = await client.post(f"{BEAM_STORAGE_URL}/list-models", json={"directory": directory}, headers=get_beam_headers(), timeout=120.0)
+                response.raise_for_status()
+                for f in response.json().get("files", []):
+                    paths[f"{directory}/{f['name']}"] = f
             return paths
 
         async def download_file(download_url: str, storage_path: str, token: str = None):
