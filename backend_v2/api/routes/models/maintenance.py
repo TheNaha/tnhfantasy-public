@@ -25,7 +25,7 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
     These models cannot be used and should be cleaned up.
     """
     from sqlmodel import select, delete
-    from core.entities_v2 import ModelV2, ModelVersion, ModelTag
+    from core.entities import ModelV2, ModelVersion, ModelTag
     
     # Find all models with no versions
     all_models = session.exec(select(ModelV2)).all()
@@ -67,7 +67,7 @@ async def check_dependencies(
     Check for and auto-download dependencies (CLIP, VAE) for a model.
     Useful for Flux/AuraFlow models if dependencies failed to download initially.
     """
-    from core.entities_v2 import ModelVersion
+    from core.entities import ModelVersion
     from sqlmodel import select
     
     service = get_model_service_v2(session)
@@ -107,7 +107,7 @@ async def resync_model_from_civitai(
     Note: This only updates model-level metadata (name, description, stats).
     Version/file data cannot be updated without re-downloading.
     """
-    from core.entities_v2 import ModelV2, ModelTag
+    from core.entities import ModelV2, ModelTag
     from sqlmodel import select, delete
     from infrastructure.http_client import get_http_client
     
@@ -177,7 +177,7 @@ async def backfill_provider_statuses(
     """
     from core.entities import Provider
     from sqlmodel import select
-    from api.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime
     from infrastructure.http_client import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
 

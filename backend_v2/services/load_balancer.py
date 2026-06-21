@@ -215,6 +215,22 @@ class LoadBalancer:
             session.rollback()
             logger.warning("lb_state_save_failed", error=str(e))
     
+    @classmethod
+    async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: Optional[LoadBalancerRuntimeState] = None):
+        """Remove a provider's job counts and failures when the provider is deleted."""
+        state_store = runtime_state or _global_runtime_state
+        persist_needed = False
+        async with state_store.get_lock():
+            if provider_id in state_store.provider_job_counts:
+                state_store.provider_job_counts.pop(provider_id, None)
+                persist_needed = True
+            if provider_id in state_store.provider_failures:
+                state_store.provider_failures.pop(provider_id, None)
+                persist_needed = True
+                
+        if persist_needed:
+            cls.save_state_to_db(session, runtime_state=state_store)
+    
     def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: Optional[LoadBalancerRuntimeState] = None):
         """
         Initialize load balancer.

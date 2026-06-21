@@ -40,7 +40,7 @@ def get_all_storage_paths(session: Session = Depends(get_session)):
     Returns paths like: models/checkpoints/model_v1_12345.safetensors
     """
     from sqlmodel import select
-    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+    from core.entities import ModelFile, ModelVersion, ModelV2
     
     # Query all files with their model directory
     stmt = select(ModelFile, ModelVersion, ModelV2).join(
@@ -73,7 +73,7 @@ def check_installed_versions(
     Use this before showing the import dialog to mark installed versions.
     """
     from sqlmodel import select
-    from core.entities_v2 import ModelV2, ModelVersion
+    from core.entities import ModelV2, ModelVersion
     
     # Check if model exists
     model = session.exec(
@@ -123,7 +123,7 @@ def check_installed_versions_batch(
     }
     """
     from sqlmodel import select
-    from core.entities_v2 import ModelV2, ModelVersion
+    from core.entities import ModelV2, ModelVersion
 
     requested_ids = [mid for mid in request.civitai_model_ids if isinstance(mid, int)]
     if not requested_ids:
@@ -204,7 +204,7 @@ async def add_model(
     - If model+version already exists, that version is skipped
     - New versions of existing models CAN be added
     """
-    from core.entities_v2 import ModelVersion
+    from core.entities import ModelVersion
     from sqlmodel import select
     
     service = get_model_service_v2(session)

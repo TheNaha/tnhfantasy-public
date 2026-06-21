@@ -89,6 +89,7 @@ class GalleryIndexer:
         self.observer = None
         self._initialized = True
         self.is_ready = False
+        self._ready_event = threading.Event()
 
     @staticmethod
     def _compact_checkpoint_metadata(value: Any) -> Any:
@@ -298,6 +299,7 @@ class GalleryIndexer:
             self.filename_index = processed_filename_index
             self._rebuild_sort_index()
             self.is_ready = True
+            self._ready_event.set()
             
         logger.info("gallery_indexer_scan_complete", 
                    count=len(self.files), 
@@ -339,7 +341,7 @@ class GalleryIndexer:
 
     def _wait_until_ready(self):
         if not self.is_ready:
-            time.sleep(0.1)
+            self._ready_event.wait(timeout=5.0)
 
     def get_path_by_relative_path(self, relative_path: str) -> Optional[str]:
         """Get the absolute path for an exact relative path."""
@@ -400,10 +402,8 @@ class GalleryIndexer:
                 "total": int         – total matching files (before pagination)
         """
         # Optional wait if not ready
-        wait_count = 0
-        while not self.is_ready and wait_count < 50: # max wait 5 seconds
-            time.sleep(0.1)
-            wait_count += 1
+        if not self.is_ready:
+            self._ready_event.wait(timeout=5.0)
             
         with self.lock:
             # 1. Get base list
@@ -463,10 +463,8 @@ class GalleryIndexer:
             List[Dict]: List of all file metadata dictionaries (shallow copies)
         """
         # Optional wait if not ready
-        wait_count = 0
-        while not self.is_ready and wait_count < 50: # max wait 5 seconds
-            time.sleep(0.1)
-            wait_count += 1
+        if not self.is_ready:
+            self._ready_event.wait(timeout=5.0)
 
         with self.lock:
             # Return shallow copies as stats calculations don't modify the nested structure

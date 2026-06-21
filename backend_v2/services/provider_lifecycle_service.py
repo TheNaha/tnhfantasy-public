@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Optional
 import httpx
 from sqlmodel import Session
 
-from api.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime
 from core.events import EventType, emit_provider_event
 from core.exceptions import ProviderError
 from infrastructure.http_client import get_http_client

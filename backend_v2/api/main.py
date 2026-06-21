@@ -26,13 +26,13 @@ from fastapi import FastAPI
 import infrastructure.logging  # noqa: F401
 
 from api.app_setup import configure_app
-from api.job_runner import execute_job
+from services.job_runner import execute_job
 from api.lifecycle import (
     requeue_inflight_jobs_for_shutdown as _requeue_inflight_jobs_for_shutdown,
     shutdown_application,
     startup_application,
 )
-from api.provider_client import call_provider as _call_provider
+from services.provider_client import call_provider as _call_provider
 from config import (
     get_job_timeout,
     get_job_max_retries,

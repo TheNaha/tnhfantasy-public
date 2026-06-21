@@ -17,9 +17,9 @@ from typing import Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from api.deps import get_session_context, get_job_service, get_provider_service
-from api.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
+from services.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
 from core.exceptions import NotFoundError
-from api.provider_client import ProviderCallError
+from services.provider_client import ProviderCallError
 from core.entities import JobStatus
 from infrastructure.logging import get_logger
 

@@ -75,7 +75,7 @@ class ModelCivitaiSyncService:
         import json
         import re
         from services.external_model_service import ExternalModelService
-        from core.entities_v2 import ModelImage, ModelTag
+        from core.entities import ModelImage, ModelTag
         from sqlmodel import select
 
         model = self.repo.get_model(model_id)

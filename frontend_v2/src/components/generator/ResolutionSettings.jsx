@@ -1,22 +1,8 @@
 import { memo } from 'react';
-import { Lock, Unlock, RefreshCw } from 'lucide-react';
+import { Lock, Unlock } from 'lucide-react';
 import NumberInput from '../common/NumberInput';
 import PresetManager from './PresetManager';
-import useSettingsStore from '../../store/settingsStore';
-import toast from 'react-hot-toast';
-
-const SAMPLER_OPTIONS = [
-    "euler", "euler_ancestral", "heun", "heunpp2",
-    "dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", "dpm_adaptive",
-    "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu",
-    "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu",
-    "dpmpp_3m_sde", "dpmpp_3m_sde_gpu",
-    "ddpm", "lcm", "ddim", "uni_pc", "uni_pc_bh2"
-];
-
-const SCHEDULER_OPTIONS = [
-    "normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"
-];
+import { useGeneratorStore } from '../../store/generatorStore';
 
 const RESOLUTION_PRESETS = [
     { w: 1024, h: 1024, label: "1:1" },
@@ -29,28 +15,15 @@ const RESOLUTION_PRESETS = [
     { w: 1536, h: 640, label: "21:9" },
 ];
 
-const ParametersPanel = memo(function ParametersPanel({
-    width,
-    height,
-    setWidth,
-    setHeight,
-    batchSize,
-    setBatchSize,
-    steps,
-    setSteps,
-    cfg,
-    setCfg,
-    seed,
-    setSeed,
-    sampler,
-    setSampler,
-    scheduler,
-    setScheduler,
-    aspectRatioLocked,
-    setAspectRatioLocked,
-    autoRandomizeSeed,
-}) {
-    const updateSetting = useSettingsStore(state => state.updateSetting);
+const ResolutionSettings = memo(function ResolutionSettings() {
+    const width = useGeneratorStore(state => state.width);
+    const height = useGeneratorStore(state => state.height);
+    const setWidth = useGeneratorStore(state => state.setWidth);
+    const setHeight = useGeneratorStore(state => state.setHeight);
+    const batchSize = useGeneratorStore(state => state.batchSize);
+    const setBatchSize = useGeneratorStore(state => state.setBatchSize);
+    const aspectRatioLocked = useGeneratorStore(state => state.aspectRatioLocked);
+    const setAspectRatioLocked = useGeneratorStore(state => state.setAspectRatioLocked);
 
     const setResolution = (w, h) => {
         setWidth(w);
@@ -150,90 +123,8 @@ const ParametersPanel = memo(function ParametersPanel({
                 min={1}
                 max={16}
             />
-
-            <div className="grid grid-cols-2 gap-2">
-                <NumberInput
-                    label="Steps"
-                    value={steps}
-                    onChange={(val) => setSteps(Math.max(1, val))}
-                    min={1}
-                    max={100}
-                />
-                <NumberInput
-                    label="CFG"
-                    value={cfg}
-                    onChange={(val) => setCfg(Math.max(0, val))}
-                    min={1}
-                    max={30}
-                    step={0.5}
-                />
-            </div>
-
-            <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-500">Seed</label>
-                <div className="flex gap-1.5 items-stretch">
-                    <input
-                        type="number"
-                        value={seed}
-                        onChange={(e) => setSeed(parseInt(e.target.value))}
-                        className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white font-mono"
-                    />
-                    <button
-                        onClick={() => {
-                            setSeed(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
-                            if (!autoRandomizeSeed) {
-                                updateSetting('generator', 'autoRandomizeSeed', true);
-                                toast.success('Auto-randomize enabled!', { icon: '🎲' });
-                            }
-                        }}
-                        className="no-touch-padding w-10 flex items-center justify-center bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded transition-colors flex-shrink-0 text-base"
-                        title="Randomize seed"
-                    >
-                        🎲
-                    </button>
-                    <button
-                        onClick={() => updateSetting('generator', 'autoRandomizeSeed', !autoRandomizeSeed)}
-                        className={`no-touch-padding w-10 flex items-center justify-center border rounded transition-colors flex-shrink-0 ${
-                            autoRandomizeSeed
-                                ? 'bg-blue-600 text-white border-blue-500'
-                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600 border-gray-600'
-                        }`}
-                        title={autoRandomizeSeed ? 'Auto-randomize ON' : 'Auto-randomize OFF'}
-                    >
-                        <RefreshCw size={16} />
-                    </button>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Sampler</label>
-                    <select
-                        value={sampler}
-                        onChange={(e) => setSampler(e.target.value)}
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
-                    >
-                        {SAMPLER_OPTIONS.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheduler</label>
-                    <select
-                        value={scheduler}
-                        onChange={(e) => setScheduler(e.target.value)}
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
-                    >
-                        {SCHEDULER_OPTIONS.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                        ))}
-                    </select>
-                </div>
-            </div>
         </div>
     );
 });
 
-export default ParametersPanel;
+export default ResolutionSettings;

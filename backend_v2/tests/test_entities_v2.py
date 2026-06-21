@@ -1,6 +1,6 @@
 """Tests for uncovered parts of core/entities_v2.py"""
 import pytest
-from core.entities_v2 import (
+from core.entities import (
     get_directory_from_type,
     compute_storage_filename,
     is_unet_only_model,

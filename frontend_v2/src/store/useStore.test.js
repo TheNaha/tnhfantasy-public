@@ -23,11 +23,7 @@ describe('useStore basic state', () => {
         });
     });
 
-    it('manages viewMode', () => {
-        expect(useStore.getState().viewMode).toBe('grid');
-        useStore.getState().setViewMode('list');
-        expect(useStore.getState().viewMode).toBe('list');
-    });
+
 
     it('manages favorites', () => {
         expect(useStore.getState().favorites).toEqual([]);

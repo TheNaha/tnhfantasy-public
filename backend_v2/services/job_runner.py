@@ -1,14 +1,14 @@
 import asyncio
 from typing import Optional
 
-from api.job_orchestration import (
+from services.job_orchestration import (
     mark_provider_exhausted,
     maybe_retry_current_provider,
     select_next_provider,
 )
-from api.job_processing import finalize_successful_job
-from api.provider_client import JobCancelledError, JobTimeoutError, ProviderCallError
-from api.provider_runtime import resolve_provider_runtime
+from services.job_processing import finalize_successful_job
+from services.provider_client import JobCancelledError, JobTimeoutError, ProviderCallError
+from services.provider_runtime import resolve_provider_runtime
 from core.workflow_parser import extract_models_from_workflow
 from core.entities import JobStatus
 from core.exceptions import NotFoundError

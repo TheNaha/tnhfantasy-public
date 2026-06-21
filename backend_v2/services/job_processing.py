@@ -369,7 +369,7 @@ async def finalize_successful_job(
 ) -> None:
     """Finalize a successful provider result and schedule image post-processing."""
     images = final_result.get("images", [])
-    outputs = build_job_outputs(job, images, provider_id)
+    outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
 
     await finalize_persisted_job_outputs(
         job_service=job_service,

@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from api.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime
 
 
 def test_container_provider_defaults_to_unknown_until_probe_succeeds():

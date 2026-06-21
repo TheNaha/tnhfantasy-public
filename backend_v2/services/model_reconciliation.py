@@ -3,7 +3,7 @@ import re
 
 from sqlmodel import Session
 
-from core.entities_v2 import ModelV2, ModelVersion, ModelFile
+from core.entities import ModelV2, ModelVersion, ModelFile
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
 _DIRECTORY_TO_MODEL_TYPE = {

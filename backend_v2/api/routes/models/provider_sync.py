@@ -163,7 +163,7 @@ async def batch_update_status(
     - By storage_path (used when file_id unknown, e.g., reporting missing files)
     """
     from sqlmodel import select
-    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+    from core.entities import ModelFile, ModelVersion, ModelV2
     
     service = get_model_service_v2(session)
     provider_key = request.provider_id or request.provider_name
@@ -343,7 +343,7 @@ async def receive_batch_sync_progress(
     Updates multiple model statuses in a single request.
     """
     from sqlmodel import select
-    from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+    from core.entities import ModelFile, ModelVersion, ModelV2
 
     service = get_model_service_v2(session)
     file_id_by_key = {}

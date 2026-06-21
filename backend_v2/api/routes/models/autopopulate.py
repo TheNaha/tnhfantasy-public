@@ -4,7 +4,7 @@ from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select
 from api.deps import get_session
 from services.model_civitai_sync import ModelCivitaiSyncService
-from core.entities_v2 import ModelV2
+from core.entities import ModelV2
 from infrastructure.database import get_session_context
 from infrastructure.logging import get_logger
 

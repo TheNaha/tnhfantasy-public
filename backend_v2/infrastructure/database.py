@@ -82,7 +82,7 @@ def create_db_and_tables() -> None:
                                LoadBalancerState, LoadBalancingConfig,
                                Prompt, Provider)
     # Import V2 entities (normalized schema)
-    from core.entities_v2 import (ModelFile, ModelImage, ModelTag, ModelV2,
+    from core.entities import (ModelFile, ModelImage, ModelTag, ModelV2,
                                   ModelVersion, ProviderVersionStatus, DeletedFileTombstone)
 
     SQLModel.metadata.create_all(engine)

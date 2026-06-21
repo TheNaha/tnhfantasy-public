@@ -1,7 +1,7 @@
 import asyncio
 
 from api.deps import get_session_sync
-from api.provider_runtime import monitor_provider_changes
+from services.provider_runtime import monitor_provider_changes
 from api.startup_helpers import (
     cleanup_provider_state_artifacts,
     configure_worker_pool,
@@ -237,7 +237,7 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
 
 async def recover_post_processing_jobs(process_image_background_fn=None) -> int:
     """Resume jobs that already have persisted outputs but were not marked completed yet."""
-    from api.job_processing import finalize_persisted_job_outputs
+    from services.job_processing import finalize_persisted_job_outputs
     from core.entities import Job
 
     process_image_background_fn = process_image_background_fn or _process_image_background_for_recovery

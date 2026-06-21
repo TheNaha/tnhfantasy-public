@@ -4,7 +4,7 @@ import os
 from sqlmodel import Session
 
 from core.entities import Provider
-from core.entities_v2 import (
+from core.entities import (
     ModelV2, ModelVersion, ModelFile, ProviderVersionStatus,
     FLUX_DEFAULT_COMPONENTS, AURAFLOW_DEFAULT_COMPONENTS, is_unet_only_model
 )
@@ -140,7 +140,7 @@ class ModelDownloader:
             storage_path = f"models/{model.directory}/{file.storage_filename}"
             
             for provider in providers:
-                from api.provider_runtime import resolve_provider_runtime
+                from services.provider_runtime import resolve_provider_runtime
                 runtime = resolve_provider_runtime(provider)
                 
                 if not runtime.worker_url:

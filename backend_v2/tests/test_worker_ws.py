@@ -16,7 +16,7 @@ from api.routes.worker_ws import (
     request_worker_job_cancel,
     worker_websocket,
 )
-from api.provider_client import ProviderCallError
+from services.provider_client import ProviderCallError
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
 

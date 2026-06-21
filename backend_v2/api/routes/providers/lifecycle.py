@@ -322,7 +322,7 @@ async def get_provider_deploy_status(
     """Get persisted backend deploy state for a provider or proxy from worker."""
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    from api.provider_runtime import resolve_provider_runtime
+    from services.provider_runtime import resolve_provider_runtime
     runtime = resolve_provider_runtime(provider)
     
     if runtime.mode == "discovery":

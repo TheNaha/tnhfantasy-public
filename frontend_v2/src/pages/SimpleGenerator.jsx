@@ -18,7 +18,8 @@ import ModelSection from '../components/generator/ModelSection';
 import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
 import ControlNetSection from '../components/generator/ControlNetSection';
 import EnhancementsSection from '../components/generator/EnhancementsSection';
-import ParametersPanel from '../components/generator/ParametersPanel';
+import ResolutionSettings from '../components/generator/ResolutionSettings';
+import SamplingSettings from '../components/generator/SamplingSettings';
 import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
@@ -297,28 +298,8 @@ export default function SimpleGenerator() {
                         hint="Provider health and model checks before you commit a generation."
                     />
 
-                    <ParametersPanel
-                        width={width}
-                        height={height}
-                        setWidth={setWidth}
-                        setHeight={setHeight}
-                        batchSize={batchSize}
-                        setBatchSize={setBatchSize}
-                        steps={steps}
-                        setSteps={setSteps}
-                        cfg={cfg}
-                        setCfg={setCfg}
-                        seed={seed}
-                        setSeed={setSeed}
-                        sampler={sampler}
-                        setSampler={setSampler}
-                        scheduler={scheduler}
-                        setScheduler={setScheduler}
-                        aspectRatioLocked={aspectRatioLocked}
-                        setAspectRatioLocked={setAspectRatioLocked}
-                        autoRandomizeSeed={autoRandomizeSeed}
-                        randomizeSeed={randomizeSeed}
-                    />
+                    <ResolutionSettings />
+                    <SamplingSettings />
 
                     <div className="hidden md:block">
                         <GenerateButtonBar

@@ -158,7 +158,7 @@ def _is_preview_cache_stale(
 
 def _list_civitai_model_ids_for_prefetch() -> List[int]:
     from sqlmodel import select
-    from core.entities_v2 import ModelV2
+    from core.entities import ModelV2
 
     session = get_session_sync()
     try:

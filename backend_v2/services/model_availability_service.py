@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 from sqlalchemy import and_, or_
 
-from core.entities_v2 import ModelFile, ModelVersion, ModelV2, ProviderVersionStatus
+from core.entities import ModelFile, ModelVersion, ModelV2, ProviderVersionStatus
 from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
 from infrastructure.logging import model_logger

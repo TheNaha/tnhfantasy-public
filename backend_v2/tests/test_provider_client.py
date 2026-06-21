@@ -1,6 +1,6 @@
 import pytest
 
-from api.provider_client import validate_success_payload
+from services.provider_client import validate_success_payload
 
 
 def test_validate_success_payload_accepts_valid_images():

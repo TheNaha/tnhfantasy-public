@@ -207,7 +207,7 @@ class ProviderDeployService:
         return state
 
     async def deploy_provider_app(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
-        from api.provider_runtime import resolve_provider_runtime
+        from services.provider_runtime import resolve_provider_runtime
         runtime = resolve_provider_runtime(provider)
         
         if runtime.mode == "discovery" or not container_manager:

@@ -4,7 +4,7 @@ from typing import Callable
 
 from sqlalchemy import inspect, text
 
-from core.entities_v2 import compute_storage_filename
+from core.entities import compute_storage_filename
 from infrastructure.logging import db_logger
 
 logger = db_logger()
@@ -398,7 +398,7 @@ def _migrate_models_to_v2(conn) -> bool:
                 hashes = file_data.get("hashes", {})
 
                 # Compute storage filename
-                from core.entities_v2 import compute_storage_filename
+                from core.entities import compute_storage_filename
 
                 storage_filename = compute_storage_filename(
                     metadata.get("name", "model"),

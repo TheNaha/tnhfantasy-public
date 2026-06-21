@@ -14,7 +14,7 @@ from .entities import (
     Prompt,
     Collection, CollectionImage,
 )
-from .entities_v2 import (
+from .entities import (
     ModelV2, ModelVersion, ModelFile, ModelImage,
     ModelTag, ProviderVersionStatus,
     ModelType, ProviderFileStatus,

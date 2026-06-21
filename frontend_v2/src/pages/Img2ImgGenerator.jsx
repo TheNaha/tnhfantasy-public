@@ -15,6 +15,7 @@ import ImageUploader from '../components/generator/ImageUploader';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import PromptPanel from '../components/generator/PromptPanel';
+import SamplingSettings from '../components/generator/SamplingSettings';
 import PresetManager from '../components/generator/PresetManager';
 import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
@@ -339,84 +340,7 @@ export default function Img2ImgGenerator() {
                         </div>
                     </div>
 
-                    {/* Sampling Parameters */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                            <Settings2 size={18} className="text-gray-400" />
-                            Sampling
-                        </h3>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-medium text-gray-500 mb-1">Steps</label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="150"
-                                    value={steps}
-                                    onChange={(e) => setSteps(parseInt(e.target.value))}
-                                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-500 mb-1">CFG</label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="30"
-                                    step="0.5"
-                                    value={cfg}
-                                    onChange={(e) => setCfg(parseFloat(e.target.value))}
-                                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">Sampler</label>
-                            <select
-                                value={sampler}
-                                onChange={(e) => setSampler(e.target.value)}
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
-                            >
-                                {SAMPLERS.map(s => (
-                                    <option key={s} value={s}>{s}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">Scheduler</label>
-                            <select
-                                value={scheduler}
-                                onChange={(e) => setScheduler(e.target.value)}
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
-                            >
-                                {SCHEDULERS.map(s => (
-                                    <option key={s} value={s}>{s}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">Seed</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="number"
-                                    value={seed}
-                                    onChange={(e) => setSeed(parseInt(e.target.value))}
-                                    className="flex-1 bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
-                                />
-                                <button
-                                    onClick={randomizeSeed}
-                                    className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg"
-                                    title="Randomize Seed"
-                                >
-                                    <RefreshCw size={16} />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <SamplingSettings />
 
                     {/* Generate Button */}
                     <div className="flex gap-2">

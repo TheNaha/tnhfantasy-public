@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.job_orchestration import maybe_retry_current_provider, select_next_provider
+from services.job_orchestration import maybe_retry_current_provider, select_next_provider
 from core.entities import JobStatus
 
 
@@ -59,7 +59,7 @@ async def test_maybe_retry_current_provider_updates_job_and_returns_true(monkeyp
     async def fake_sleep(delay):
         sleep_calls.append(delay)
 
-    monkeypatch.setattr("api.job_orchestration.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("services.job_orchestration.asyncio.sleep", fake_sleep)
 
     should_retry, next_retry_count = await maybe_retry_current_provider(
         job_service=job_service,

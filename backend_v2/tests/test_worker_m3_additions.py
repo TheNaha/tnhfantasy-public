@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from core.entities import Provider
 from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
-from api.provider_client import call_provider, ProviderCallError
+from services.provider_client import call_provider, ProviderCallError
 from provider_core.router import attach_provider_routes
 from provider_core.models import InferenceRequest
 
@@ -38,7 +38,7 @@ async def test_call_provider_extracts_retryable_from_non_200():
     mock_client_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client_ctx.__aexit__ = AsyncMock(return_value=None)
     
-    with patch("api.provider_client.get_streaming_client", return_value=mock_client_ctx):
+    with patch("services.provider_client.get_streaming_client", return_value=mock_client_ctx):
         with pytest.raises(ProviderCallError) as exc_info:
             await call_provider(
                 worker_url="http://mock-worker",
@@ -53,7 +53,7 @@ async def test_call_provider_extracts_retryable_from_non_200():
 
     # Test retryable is False
     mock_response.aread = AsyncMock(return_value=b'{"message": "InvalidWorkflow", "retryable": false}')
-    with patch("api.provider_client.get_streaming_client", return_value=mock_client_ctx):
+    with patch("services.provider_client.get_streaming_client", return_value=mock_client_ctx):
         with pytest.raises(ProviderCallError) as exc_info:
             await call_provider(
                 worker_url="http://mock-worker",

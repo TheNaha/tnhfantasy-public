@@ -9,7 +9,7 @@ from api.main import app
 from api.deps import get_session
 # Need to import all models so SQLModel metadata is complete
 from core.entities import Job, Provider
-from core.entities_v2 import ModelV2, ProviderVersionStatus
+from core.entities import ModelV2, ProviderVersionStatus
 
 
 @pytest.fixture(name="engine")

@@ -10,7 +10,7 @@ from core.exceptions import NotFoundError, ProviderError, ValidationError
 from infrastructure.repositories import ProviderRepository, LoadBalancingRepository
 from infrastructure.logging import provider_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
-from api.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime
 
 from services.provider_utils import (
     extract_runtime_config,
@@ -278,11 +278,8 @@ class ProviderService:
             logger.warning("provider_delete_not_found", provider_id=provider_id)
             raise NotFoundError("Provider", provider_id)
 
-        from services.load_balancer import get_global_runtime_state
-        lb_runtime = get_global_runtime_state()
-        lb_runtime.provider_job_counts.pop(provider_id, None)
-        lb_runtime.provider_failures.pop(provider_id, None)
-        LoadBalancer.save_state_to_db(self.session, runtime_state=lb_runtime)
+        from services.load_balancer import LoadBalancer
+        await LoadBalancer.remove_provider_state(self.session, provider_id)
         
         logger.info("provider_deleted", provider_id=provider_id, statuses_cleaned=deleted_count)
         

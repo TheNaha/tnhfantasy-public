@@ -6,9 +6,9 @@ import httpx
 from cachetools import TTLCache
 from sqlmodel import Session, select
 
-from api.provider_runtime import resolve_provider_runtime
+from services.provider_runtime import resolve_provider_runtime
 from config import get_worker_backend_url
-from core.entities_v2 import ModelFile, ModelVersion, ModelV2
+from core.entities import ModelFile, ModelVersion, ModelV2
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from services.container_manager import get_container_manager

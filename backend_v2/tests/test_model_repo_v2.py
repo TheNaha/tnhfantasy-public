@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2, parse_civitai_datetime
-from core.entities_v2 import ModelV2, ModelVersion, ModelFile, ProviderVersionStatus
+from core.entities import ModelV2, ModelVersion, ModelFile, ProviderVersionStatus
 
 
 @pytest.fixture(name="engine")

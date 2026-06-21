@@ -33,12 +33,6 @@ describe('providersApi load balancer aliases', () => {
         expect(getMock).toHaveBeenCalledWith('/api/providers/config/load-balancing');
     });
 
-    it('keeps getLoadBalancerConfig as an alias of getLoadBalancing', () => {
-        providersApi.getLoadBalancerConfig();
-
-        expect(getMock).toHaveBeenCalledWith('/api/providers/config/load-balancing');
-    });
-
     it('uses the canonical config endpoint for updateLoadBalancing', () => {
         const payload = { strategy: 'least-connections' };
         providersApi.updateLoadBalancing(payload);
@@ -46,16 +40,4 @@ describe('providersApi load balancer aliases', () => {
         expect(putMock).toHaveBeenCalledWith('/api/providers/config/load-balancing', payload);
     });
 
-    it('keeps updateLoadBalancerConfig as an alias of updateLoadBalancing', () => {
-        const payload = { strategy: 'round-robin' };
-        providersApi.updateLoadBalancerConfig(payload);
-
-        expect(putMock).toHaveBeenCalledWith('/api/providers/config/load-balancing', payload);
-    });
-
-    it('keeps getStatus as an alias of getStatusCard', () => {
-        providersApi.getStatus('modal-primary');
-
-        expect(getMock).toHaveBeenCalledWith('/api/providers/modal-primary/status-card');
-    });
 });

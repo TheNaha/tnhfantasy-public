@@ -26,10 +26,6 @@ import { persist } from 'zustand/middleware';
 const useStore = create(
     persist(
         (set, get) => ({
-            // UI state
-            viewMode: 'grid', // 'grid' | 'list' | 'feed' | 'timeline'
-            setViewMode: (mode) => set({ viewMode: mode }),
-
             // Favorites state (still local - simple and fast)
             favorites: [],
             toggleFavorite: (filename) => set((state) => {
@@ -46,7 +42,6 @@ const useStore = create(
         {
             name: 'comfy-storage',
             partialize: (state) => ({
-                viewMode: state.viewMode,
                 favorites: state.favorites,
                 activeCollection: state.activeCollection,
             }),

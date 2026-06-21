@@ -309,16 +309,6 @@ export const useGeneratorStore = create(
                 return false;
             },
 
-            applySDXLSettings: () => set({
-                width: 1024,
-                height: 1024,
-                steps: 30,
-                cfg: 7.0,
-                sampler: "dpmpp_2m",
-                scheduler: "karras",
-                lastAppliedModelType: 'sdxl'
-            }),
-
             // Bulk Set (for loading saved prompts)
             setAll: (newState) => set((state) => ({ ...state, ...newState }))
         }),

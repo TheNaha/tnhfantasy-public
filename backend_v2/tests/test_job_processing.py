@@ -12,7 +12,7 @@ import pytest
 from sqlmodel import Session
 
 from api.main import process_job
-from api.provider_client import JobTimeoutError, ProviderCallError
+from services.provider_client import JobTimeoutError, ProviderCallError
 from core.entities import JobStatus, Provider
 from services.job_service import JobService
 from services.load_balancer import LoadBalancer
@@ -85,7 +85,7 @@ def _stub_container_runtime(monkeypatch):
             healthy=True,
         )
 
-    monkeypatch.setattr("api.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
+    monkeypatch.setattr("services.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
 
 
 @pytest.mark.asyncio
@@ -118,8 +118,8 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 
@@ -153,7 +153,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
 
     await process_job(job.id)
@@ -201,9 +201,9 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
-    monkeypatch.setattr("api.job_processing.os.path.relpath", lambda target, base: ".")
+    monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: ".")
     monkeypatch.setattr("infrastructure.image_processor.get_output_path", lambda base_dir: str(tmp_path))
     monkeypatch.setattr(
         "infrastructure.image_processor.save_image_with_metadata",
@@ -250,7 +250,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job_id)
 
@@ -278,8 +278,8 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
-    monkeypatch.setattr("api.job_runner.get_http_client", lambda: mock_http_client)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 
@@ -313,10 +313,10 @@ async def test_process_job_timeout_signals_external_worker_cancel(session: Sessi
     monkeypatch.setattr("api.routes.worker_ws.dispatch_job_to_worker", fake_dispatch_job_to_worker)
     monkeypatch.setattr("api.routes.worker_ws.request_worker_job_cancel", request_cancel)
     monkeypatch.setattr(
-        "api.job_runner.resolve_provider_runtime",
+        "services.job_runner.resolve_provider_runtime",
         lambda provider: SimpleNamespace(mode="external_worker", connected=True, worker_url=None),
     )
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 
@@ -348,8 +348,8 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
-    monkeypatch.setattr("api.job_runner.get_http_client", lambda: mock_http_client)
-    monkeypatch.setattr("api.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job.id)
 

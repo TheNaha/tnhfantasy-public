@@ -94,7 +94,7 @@ class TestMainLifecycle:
 
         finalize_mock = AsyncMock()
         monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
-        monkeypatch.setattr("api.job_processing.finalize_persisted_job_outputs", finalize_mock)
+        monkeypatch.setattr("services.job_processing.finalize_persisted_job_outputs", finalize_mock)
 
         recovered = await recover_post_processing_jobs()
 

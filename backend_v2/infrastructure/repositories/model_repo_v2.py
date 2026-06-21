@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any, Tuple, Union
 from datetime import datetime, timezone
 import json
 
-from core.entities_v2 import (
+from core.entities import (
     ModelV2, ModelVersion, ModelFile, ModelImage, 
     ProviderVersionStatus, ModelTag, compute_storage_filename, get_directory_from_type,
     is_unet_only_model, FLUX_DEFAULT_COMPONENTS, DeletedFileTombstone
@@ -1146,7 +1146,7 @@ class ModelRepositoryV2:
         Returns:
             Dict with migration results: {'migrated': [...], 'count': N}
         """
-        from core.entities_v2 import is_unet_only_model
+        from core.entities import is_unet_only_model
         
         # Find all Checkpoint type models in checkpoints directory
         stmt = select(ModelV2).where(

@@ -1,4 +1,4 @@
-"""Tests for provider streaming response parsing in api.provider_client."""
+"""Tests for provider streaming response parsing in services.provider_client."""
 
 from contextlib import asynccontextmanager
 import importlib
@@ -12,7 +12,7 @@ import pytest
 import httpx
 
 from core.entities import JobStatus
-from api.provider_client import JobCancelledError, ProviderCallError, call_provider
+from services.provider_client import JobCancelledError, ProviderCallError, call_provider
 
 
 class FakeResponse:
@@ -58,7 +58,7 @@ def install_streaming_client(monkeypatch, response, capture=None):
     async def fake_get_streaming_client(timeout=600.0):
         yield FakeClient(response, capture=capture)
 
-    monkeypatch.setattr("api.provider_client.get_streaming_client", fake_get_streaming_client)
+    monkeypatch.setattr("services.provider_client.get_streaming_client", fake_get_streaming_client)
 
 
 def build_provider_core_error_payload(message: str, *, retryable: bool = False):
@@ -282,7 +282,7 @@ async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
     async def fake_get_streaming_client(timeout=600.0):
         yield RaisingClient()
 
-    monkeypatch.setattr("api.provider_client.get_streaming_client", fake_get_streaming_client)
+    monkeypatch.setattr("services.provider_client.get_streaming_client", fake_get_streaming_client)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:

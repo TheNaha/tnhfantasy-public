@@ -68,13 +68,6 @@ export const providersApi = {
     /** Get canonical status-card payload for one provider. */
     getStatusCard: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
 
-    /** Backward-compatible alias for single-provider status-card payload. */
-    getStatus: (providerId) => providersApi.getStatusCard(providerId),
-
-    // Aliases kept for backward compatibility with older call-sites
-    getLoadBalancerConfig: () => providersApi.getLoadBalancing(),
-    updateLoadBalancerConfig: (config) => providersApi.updateLoadBalancing(config),
-
     // -------------------------------------------------------------------------
     // Model reconciliation & status
     // -------------------------------------------------------------------------
