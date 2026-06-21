@@ -157,10 +157,11 @@ def _calculate_statistics() -> Dict[str, Any]:
     return stats
 
 
-def _calculate_detailed_statistics() -> Dict[str, Any]:
+def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
     """
     Synchronous worker function to calculate detailed statistics.
     Should be run in a thread pool to avoid blocking the event loop.
+    Supports filtering by time_range: "24h", "7d", "30d", "all"
     """
     # Initialize detailed stats structure
     detailed_stats = {
@@ -242,9 +243,29 @@ def _calculate_detailed_statistics() -> Dict[str, Any]:
     try:
         all_files = gallery_indexer.get_all_files()
         
+        now_ts = datetime.now().timestamp()
+        cutoff_ts = 0
+        if time_range == "24h":
+            cutoff_ts = now_ts - (24 * 3600)
+        elif time_range == "7d":
+            cutoff_ts = now_ts - (7 * 24 * 3600)
+        elif time_range == "30d":
+            cutoff_ts = now_ts - (30 * 24 * 3600)
+
         for file_data in all_files:
             meta = file_data.get("metadata", {})
             if not meta:
+                continue
+            
+            # Time range filtering
+            completed_at = None
+            if "job" in meta and isinstance(meta["job"], dict):
+                completed_at = meta["job"].get("completed_at")
+            
+            if completed_at is None:
+                completed_at = file_data.get("modified", file_data.get("created", 0))
+
+            if cutoff_ts > 0 and completed_at < cutoff_ts:
                 continue
         
             detailed_stats["total_images"] += 1
@@ -499,12 +520,12 @@ async def get_statistics():
 
 @router.get("/detailed")
 @cache_stats
-async def get_detailed_statistics():
+async def get_detailed_statistics(timeRange: str = "all"):
     """
     Extended statistics with data optimized for charts and visualizations.
     Provides timeline data, distributions, and advanced analytics.
     """
-    return await asyncio.to_thread(_calculate_detailed_statistics)
+    return await asyncio.to_thread(_calculate_detailed_statistics, timeRange)
 
 
 @router.get("/summary")
