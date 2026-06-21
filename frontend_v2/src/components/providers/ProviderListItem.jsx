@@ -9,6 +9,7 @@ import {
     Trash2,
     ChevronRight,
 } from 'lucide-react';
+import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import {
     providerBadgeToneClass,
     summarizeProviderStatus,
@@ -35,6 +36,21 @@ function deployBadgeText(capabilities) {
     if (capabilities?.manual_deploy) return 'Manual';
     if (capabilities?.runtime_only) return 'Runtime Only';
     return 'Provider';
+}
+
+function SparkLine({ data, color, dataKey = 'value', domain = [0, 100] }) {
+    if (!data || data.length === 0) return null;
+    const chartData = data.map((v, i) => ({ index: i, [dataKey]: v }));
+    return (
+        <div className="h-6 w-12">
+            <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                    <YAxis domain={domain} hide />
+                    <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    );
 }
 
 export default function ProviderListItem({
@@ -73,6 +89,10 @@ export default function ProviderListItem({
         || providerFailures > 0;
 
     const isReconciling = reconciliation.status === 'reconciling' || reconciliation.status === 'queued';
+
+    const telemetry = provider.hardware_telemetry || {};
+    const vramHistory = telemetry.vram_history || [];
+    const tempHistory = telemetry.gpu_temp_history || [];
 
     return (
         <div
@@ -167,6 +187,20 @@ export default function ProviderListItem({
 
                 {/* Metrics */}
                 <div className="hidden items-center gap-2 md:flex">
+                    {vramHistory.length > 0 && (
+                        <div className="flex items-center gap-1.5 metric-chip !px-2 border-gray-700 bg-gray-800/30">
+                            <span className="text-[9px] text-gray-500 font-medium">VRAM</span>
+                            <SparkLine data={vramHistory} color="#3b82f6" />
+                            <span className="text-[10px] text-blue-400 min-w-[2ch]">{vramHistory[vramHistory.length - 1]}%</span>
+                        </div>
+                    )}
+                    {tempHistory.length > 0 && (
+                        <div className="flex items-center gap-1.5 metric-chip !px-2 border-gray-700 bg-gray-800/30">
+                            <span className="text-[9px] text-gray-500 font-medium">GPU</span>
+                            <SparkLine data={tempHistory} color="#ef4444" domain={[30, 90]} />
+                            <span className="text-[10px] text-red-400 min-w-[3ch]">{tempHistory[tempHistory.length - 1]}°</span>
+                        </div>
+                    )}
                     <span className="metric-chip">
                         <Circle size={6} className={`fill-current ${statusColorByTone(statusSummary.dotTone)}`} />
                         {statusSummary.label}
