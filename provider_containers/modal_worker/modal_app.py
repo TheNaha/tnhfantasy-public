@@ -632,13 +632,14 @@ LIGHTWEIGHT_SCALEDOWN = 15
     image=image,
     volumes={"/mnt/data": vol}, 
     scaledown_window=LIGHTWEIGHT_SCALEDOWN,
-    max_containers=STORAGE_MAX_CONTAINERS
+    max_containers=STORAGE_MAX_CONTAINERS,
+    timeout=3600
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
     await vol.reload.aio()
     from provider_core.models_utils import list_models_with_metadata_internal
-    return await list_models_with_metadata_internal("/mnt/data", directory)
+    return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=True)
 
 
 # ============================================

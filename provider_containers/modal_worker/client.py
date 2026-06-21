@@ -259,7 +259,7 @@ class ModalProviderClient(BaseProviderClient):
         async def list_existing_files():
             paths = {}
             list_models_func = get_modal_function("list_models_with_metadata")
-            list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 120.0)))
+            list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 3600.0)))
             for directory in MODEL_DIRECTORIES:
                 try:
                     files = await asyncio.wait_for(list_models_func.remote.aio(directory), timeout=list_timeout_seconds)

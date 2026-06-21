@@ -317,7 +317,7 @@ class BeamProviderClient(BaseProviderClient):
             paths = {}
             client = get_http_client()
             for directory in MODEL_DIRECTORIES:
-                response = await client.post(f"{BEAM_STORAGE_URL}/list-models", json={"directory": directory}, headers=get_beam_headers(), timeout=120.0)
+                response = await client.post(f"{BEAM_STORAGE_URL}/list-models", json={"directory": directory}, headers=get_beam_headers(), timeout=3600.0)
                 response.raise_for_status()
                 for f in response.json().get("files", []):
                     paths[f"{directory}/{f['name']}"] = f
