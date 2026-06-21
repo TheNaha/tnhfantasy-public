@@ -60,7 +60,7 @@ export const providersApi = {
      * database and downloads/deletes as needed.
      * @param {string} providerId
      */
-    reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile`),
+    reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true`),
 
     /** Get canonical status-card payloads for all providers. */
     getStatusCards: () => api.get('/api/providers/status-cards'),
