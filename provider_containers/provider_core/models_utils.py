@@ -11,7 +11,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-async def list_models_with_metadata_internal(base_path: str, directory: str) -> List[Dict[str, Any]]:
+async def list_models_with_metadata_internal(base_path: str, directory: str, compute_hashes: bool = False) -> List[Dict[str, Any]]:
     """
     List models in a directory and attach metadata and preview URLs if they exist.
     """
@@ -81,18 +81,21 @@ async def list_models_with_metadata_internal(base_path: str, directory: str) -> 
             except Exception as e:
                 logger.warning(f"Failed to read hash for {name}: {e}")
         else:
-            # Need to compute hash
-            logger.info(f"Computing SHA256 for {name}...")
-            try:
-                target_filepath = os.path.join(target_dir, name)
-                computed_hash = await asyncio.to_thread(_compute_hash_sync, target_filepath)
-                file_data["sha256"] = computed_hash
-                # Save sidecar
-                async with aiofiles.open(sha256_path, 'w') as f:
-                    await f.write(computed_hash)
-                logger.info(f"Saved SHA256 sidecar for {name}: {computed_hash}")
-            except Exception as e:
-                logger.warning(f"Failed to compute/save hash for {name}: {e}")
+            if compute_hashes:
+                # Need to compute hash
+                logger.info(f"Computing SHA256 for {name}...")
+                try:
+                    target_filepath = os.path.join(target_dir, name)
+                    computed_hash = await asyncio.to_thread(_compute_hash_sync, target_filepath)
+                    file_data["sha256"] = computed_hash
+                    # Save sidecar
+                    async with aiofiles.open(sha256_path, 'w') as f:
+                        await f.write(computed_hash)
+                    logger.info(f"Saved SHA256 sidecar for {name}: {computed_hash}")
+                except Exception as e:
+                    logger.warning(f"Failed to compute/save hash for {name}: {e}")
+            else:
+                file_data["sha256"] = None
                 
         files.append(file_data)
         

@@ -636,7 +636,7 @@ LIGHTWEIGHT_SCALEDOWN = 15
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
-    vol.reload()
+    await vol.reload.aio()
     from provider_core.models_utils import list_models_with_metadata_internal
     return await list_models_with_metadata_internal("/mnt/data", directory)
 
@@ -652,8 +652,8 @@ async def list_models_with_metadata(directory: str):
     max_containers=VALIDATE_MAX_CONTAINERS
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
-def validate_models(directories: list[str] = ["models/checkpoints"], delete_invalid: bool = False):
-    vol.reload()
+async def validate_models(directories: list[str] = ["models/checkpoints"], delete_invalid: bool = False):
+    await vol.reload.aio()
     """
     Validate all models in specified directories.
     Checks: minimum size, magic bytes, partial downloads.
