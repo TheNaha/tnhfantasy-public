@@ -219,6 +219,28 @@ async function ensureProvidersRealtime(queryClient) {
             }
         }));
 
+        const patchDeployState = (event) => {
+            const payload = unwrapEventData(event);
+            const providerId = extractProviderId(payload);
+            if (!providerId) return;
+
+            queryClient.setQueryData(
+                PROVIDERS_PAGE_QUERY_KEYS.providers,
+                (current) => patchProviders(current, providerId, (provider) => ({
+                    ...provider,
+                    deploy_state: {
+                        ...(provider.deploy_state || {}),
+                        ...payload,
+                    },
+                }))
+            );
+        };
+
+        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_STARTED, patchDeployState));
+        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_PROGRESS, patchDeployState));
+        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_COMPLETED, patchDeployState));
+        unsubs.push(ws.on(ws.EventTypes.PROVIDER_DEPLOY_FAILED, patchDeployState));
+
         realtimeState.cleanup = () => {
             unsubs.forEach((unsub) => unsub?.());
             ws.unsubscribe(PROVIDER_REALTIME_TOPICS);

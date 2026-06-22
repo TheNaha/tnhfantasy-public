@@ -115,6 +115,15 @@ export const useGeneratorStore = create(
             height: 1024,
             batchSize: 1,
             aspectRatioLocked: false,
+            lockedParams: {
+                width: false,
+                height: false,
+                batchSize: false,
+                steps: false,
+                cfg: false,
+                sampler: false,
+                scheduler: false,
+            },
             preflightResult: null,
 
             // Models
@@ -175,6 +184,12 @@ export const useGeneratorStore = create(
             ],
 
             // Actions
+            toggleParamLock: (paramName) => set((state) => ({
+                lockedParams: {
+                    ...state.lockedParams,
+                    [paramName]: !state.lockedParams[paramName]
+                }
+            })),
             setPreflightResult: (result) => set({ preflightResult: result }),
             setPrompt: (prompt) => set({ prompt, preflightResult: null }),
             setNegativePrompt: (negativePrompt) => set({ negativePrompt, preflightResult: null }),
@@ -200,7 +215,12 @@ export const useGeneratorStore = create(
 
                     if (modelType && BASE_MODEL_SETTINGS[modelType]) {
                         const settings = BASE_MODEL_SETTINGS[modelType];
-                        Object.assign(newState, settings);
+                        const locked = state.lockedParams || {};
+                        for (const [key, value] of Object.entries(settings)) {
+                            if (!locked[key]) {
+                                newState[key] = value;
+                            }
+                        }
                         newState.lastAppliedModelType = modelType;
 
                     }

@@ -130,19 +130,24 @@ async def resync_model_from_civitai(
         raise ComfyError(f"Failed to fetch from CivitAI: {str(e)}")
     
     # Update model metadata
-    stats = civitai_data.get("stats", {})
-    creator = civitai_data.get("creator", {})
+    stats = civitai_data.get("stats") or {}
+    creator = civitai_data.get("creator") or {}
     
-    model.name = civitai_data.get("name", model.name)
+    model.name = civitai_data.get("name") or model.name
     model.description = civitai_data.get("description")
     model.nsfw = civitai_data.get("nsfw", model.nsfw)
-    model.nsfw_level = civitai_data.get("nsfwLevel", model.nsfw_level)
+    
+    # nsfwLevel might be absent or None
+    new_nsfw_level = civitai_data.get("nsfwLevel")
+    if new_nsfw_level is not None:
+        model.nsfw_level = new_nsfw_level
+        
     model.creator_username = creator.get("username")
     model.creator_image = creator.get("image")
-    model.stats_downloads = stats.get("downloadCount", 0)
-    model.stats_thumbs_up = stats.get("thumbsUpCount", 0)
-    model.stats_thumbs_down = stats.get("thumbsDownCount", 0)
-    model.stats_comments = stats.get("commentCount", 0)
+    model.stats_downloads = stats.get("downloadCount") or 0
+    model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
+    model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
+    model.stats_comments = stats.get("commentCount") or 0
     
     # Update tags - delete old and add new
     session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
@@ -218,19 +223,23 @@ async def resync_all_models_from_civitai(session: Session = Depends(get_session)
                         raise ComfyError(f"CivitAI API error: {response.status_code}")
                     civitai_data = response.json()
                     
-                    stats = civitai_data.get("stats", {})
-                    creator = civitai_data.get("creator", {})
+                    stats = civitai_data.get("stats") or {}
+                    creator = civitai_data.get("creator") or {}
                     
-                    bg_model.name = civitai_data.get("name", bg_model.name)
+                    bg_model.name = civitai_data.get("name") or bg_model.name
                     bg_model.description = civitai_data.get("description", bg_model.description)
                     bg_model.nsfw = civitai_data.get("nsfw", bg_model.nsfw)
-                    bg_model.nsfw_level = civitai_data.get("nsfwLevel", bg_model.nsfw_level)
+                    
+                    new_nsfw_level = civitai_data.get("nsfwLevel")
+                    if new_nsfw_level is not None:
+                        bg_model.nsfw_level = new_nsfw_level
+                        
                     bg_model.creator_username = creator.get("username")
                     bg_model.creator_image = creator.get("image")
-                    bg_model.stats_downloads = stats.get("downloadCount", 0)
-                    bg_model.stats_thumbs_up = stats.get("thumbsUpCount", 0)
-                    bg_model.stats_thumbs_down = stats.get("thumbsDownCount", 0)
-                    bg_model.stats_comments = stats.get("commentCount", 0)
+                    bg_model.stats_downloads = stats.get("downloadCount") or 0
+                    bg_model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
+                    bg_model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
+                    bg_model.stats_comments = stats.get("commentCount") or 0
                     
                     # Update tags
                     bg_session.exec(delete(ModelTag).where(ModelTag.model_id == bg_model.id))

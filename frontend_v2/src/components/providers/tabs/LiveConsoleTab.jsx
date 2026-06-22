@@ -1,26 +1,19 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Terminal, Loader2 } from 'lucide-react';
-import { useWebSocket } from '../../../api/websocket';
+import { useQuery } from '@tanstack/react-query';
+import { providersApi } from '../../../api';
 
 export default function LiveConsoleTab({ providerId }) {
-    const topic = `provider.logs.${providerId}`;
-    const { isConnected, subscribe } = useWebSocket([topic]);
-    const [logs, setLogs] = useState([]);
     const logsEndRef = useRef(null);
 
-    useEffect(() => {
-        // Assume backend emits 'provider.log' events to this room.
-        const unsub = subscribe('provider.log', (data) => {
-            if (data.provider_id === providerId) {
-                setLogs((prev) => {
-                    const newLogs = [...prev, data.message];
-                    if (newLogs.length > 500) return newLogs.slice(-500); // Keep last 500 lines
-                    return newLogs;
-                });
-            }
-        });
-        return () => unsub();
-    }, [providerId, subscribe]);
+    const { data, isLoading } = useQuery({
+        queryKey: ['provider-logs', providerId],
+        queryFn: () => providersApi.getLogs(providerId),
+        refetchInterval: 5000, // Poll every 5s while tab is open
+        enabled: !!providerId,
+    });
+
+    const logs = data?.logs || [];
 
     useEffect(() => {
         // Auto-scroll to bottom
@@ -30,23 +23,23 @@ export default function LiveConsoleTab({ providerId }) {
     }, [logs]);
 
     return (
-        <div className="rounded-xl border border-gray-800 bg-gray-950/70 p-4 h-[400px] flex flex-col">
+        <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4 h-[400px] flex flex-col mb-4">
             <div className="mb-2 flex items-center justify-between gap-3 shrink-0">
                 <span className="font-medium text-sm text-white flex items-center gap-2">
-                    <Terminal size={14} />
-                    Live Console
+                    <Terminal size={14} className="text-blue-400" />
+                    Console Logs
                 </span>
-                <span className="text-xs text-gray-500 flex items-center gap-1.5">
-                    {isConnected ? (
-                        <><span className="w-2 h-2 rounded-full bg-green-500"></span> Connected</>
+                <span className="text-xs text-gray-400 flex items-center gap-1.5">
+                    {isLoading ? (
+                        <><Loader2 size={12} className="animate-spin" /> Fetching...</>
                     ) : (
-                        <><Loader2 size={12} className="animate-spin" /> Connecting...</>
+                        <><span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span> Polling (5s)</>
                     )}
                 </span>
             </div>
-            <div className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded bg-black/40 p-3 ring-1 ring-inset ring-white/5 scrollbar-thin">
+            <div className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed text-gray-300 whitespace-pre-wrap break-words rounded-lg bg-black/60 p-3 ring-1 ring-inset ring-white/[0.05] shadow-inner scrollbar-thin">
                 {logs.length === 0 ? (
-                    <span className="text-gray-600 italic">Waiting for logs...</span>
+                    <span className="text-gray-500 italic">No logs available...</span>
                 ) : (
                     logs.map((log, i) => <div key={i}>{log}</div>)
                 )}

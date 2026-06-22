@@ -373,7 +373,7 @@ class TestProviderServiceDeploy:
         container_manager = _DummyContainerManager("test-provider", container)
 
         result = await service.deploy_provider_app("test-provider", container_manager)
-        assert result["status"] == "success"
+        assert result["status"] == "succeeded"
         assert result["provider_type"] == "modal"
 
         provider = await service.get_provider("test-provider")
@@ -412,7 +412,7 @@ class TestProviderServiceDeploy:
         resumed_manager = _DummyContainerManager("beam-provider", resumed_container)
 
         result = await service.deploy_provider_app("beam-provider", resumed_manager)
-        assert result["status"] == "success"
+        assert result["status"] == "succeeded"
         deployments = result.get("deployments", [])
         skipped = [step for step in deployments if step.get("name") == "comfy_gpu" and step.get("skipped")]
         assert skipped
@@ -445,7 +445,7 @@ class TestProviderServiceDeploy:
 
         result = await service.deploy_provider_app("beam-legacy-cli", container_manager)
 
-        assert result["status"] == "success"
+        assert result["status"] == "succeeded"
         assert container.commands
         assert container.commands[0][0] == "beta9"
         assert container.commands[0][1] == "deploy"
@@ -484,7 +484,7 @@ class TestProviderServiceDeploy:
 
         result = await service.deploy_provider_app("beam-ci-mode", container_manager)
 
-        assert result["status"] == "success"
+        assert result["status"] == "succeeded"
         assert containers_client.last_run_kwargs is not None
         environment = containers_client.last_run_kwargs.get("environment") or {}
         assert environment.get("CI") == "1"
@@ -514,7 +514,7 @@ class TestProviderServiceDeploy:
             message="Deployment started",
             steps=[],
         )
-        service.deploy_service._persist_deploy_state(provider, stuck_state)
+        await service.deploy_service._persist_deploy_state(provider, stuck_state)
 
         deploy_container = _DummyContainer([_DummyExecResult(0, "modal deploy ok")])
         missing_attempt_client = _DummyContainersClient(
@@ -530,7 +530,7 @@ class TestProviderServiceDeploy:
 
         result = await service.deploy_provider_app("stuck-provider", container_manager)
 
-        assert result["status"] == "success"
+        assert result["status"] == "succeeded"
         provider = await service.get_provider("stuck-provider")
         deploy_state = (provider.config or {}).get("deploy_state", {})
         assert deploy_state.get("status") == "succeeded"
@@ -550,7 +550,7 @@ class TestProviderServiceDeploy:
             message="Deployment started",
             steps=[],
         )
-        service.deploy_service._persist_deploy_state(provider, stuck_state)
+        await service.deploy_service._persist_deploy_state(provider, stuck_state)
 
         missing_attempt_client = _DummyContainersClient(
             None,

@@ -192,9 +192,37 @@ const Statistics = () => {
         );
     }
 
-    const timelineDaily = Object.entries(data?.timeline?.daily ?? {}).map(([date, count]) => ({
-        date, count
-    }));
+    const timelineDaily = Object.entries(data?.timeline?.daily ?? {})
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort descending
+
+    let currentStreak = 0;
+    if (timelineDaily.length > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let checkDate = new Date(today);
+        
+        // Handle case where they haven't generated today yet but did yesterday
+        let firstDate = new Date(timelineDaily[0].date);
+        firstDate.setHours(0, 0, 0, 0);
+        
+        const diffDays = Math.floor((today - firstDate) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 1) {
+            checkDate = firstDate; // Start checking from their most recent generation
+            
+            for (let i = 0; i < timelineDaily.length; i++) {
+                const entryDate = new Date(timelineDaily[i].date);
+                entryDate.setHours(0, 0, 0, 0);
+                
+                if (entryDate.getTime() === checkDate.getTime()) {
+                    currentStreak++;
+                    checkDate.setDate(checkDate.getDate() - 1); // Move back one day
+                } else {
+                    break;
+                }
+            }
+        }
+    }
 
     const timelineHourly = Object.entries(data?.timeline?.hourly ?? {}).map(([hour, count]) => ({
         hour: `${hour}:00`, count
@@ -363,7 +391,7 @@ const Statistics = () => {
                                 Generation Streak
                             </h3>
                             <span className="text-[10px] font-bold tracking-widest bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-lg border border-emerald-500/20 shadow-inner uppercase">
-                                {timelineDaily.length} ACTIVE DAYS
+                                {currentStreak} DAY STREAK
                             </span>
                         </div>
                         <ContributionHeatmap data={timelineDaily} />

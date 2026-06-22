@@ -24,7 +24,6 @@ export default function Providers() {
     const [showAddModal, setShowAddModal] = useState(false);
     const [showAddModelModal, setShowAddModelModal] = useState(false);
     const [editingProvider, setEditingProvider] = useState(null);
-    const [reconcilingProviderId, setReconcilingProviderId] = useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState('all');
@@ -110,7 +109,6 @@ export default function Providers() {
     const handleReconcile = async (providerId) => {
         try {
             await reconcileProvider(providerId);
-            setReconcilingProviderId(providerId);
         } catch (error) { toast.error(`Reconciliation failed: ${error.message}`); }
     };
     const handleSetup = async (providerId) => {
@@ -324,13 +322,6 @@ export default function Providers() {
                 <AddModelToProviderModal
                     providers={providers}
                     onClose={() => setShowAddModelModal(false)}
-                />
-            )}
-
-            {reconcilingProviderId && (
-                <ReconciliationStatus
-                    providerId={reconcilingProviderId}
-                    onClose={async () => { setReconcilingProviderId(null); await refreshAll(); }}
                 />
             )}
         </motion.div>

@@ -1,5 +1,5 @@
 import { HardDrive, RefreshCw, RotateCcw, Server, Download, Circle, Loader2 } from 'lucide-react';
-import ReconciliationStatus from '../ReconciliationStatus';
+import { useProviderReconciliationState } from '../../../hooks/useProvidersPageData';
 import { ActionBtn, Notice } from './Shared';
 import { STATUS_TONE, statusDotClass, humanize, capitalize } from './utils';
 
@@ -21,6 +21,18 @@ export default function SyncTab({
         'from-rose-500 to-pink-500',
     ];
 
+    const { reconciliationState } = useProviderReconciliationState(providerId);
+    
+    // Use realtime state if available, otherwise fallback to provider.reconciliation_state
+    const currentRecon = reconciliationState || reconciliation;
+    const isReconciling = currentRecon.status === 'reconciling';
+    const activeDownloads = currentRecon.active_downloads || [];
+    const stats = currentRecon.stats || {};
+    const queued = stats.downloads_queued || 0;
+    const completed = stats.downloads_completed || 0;
+    const failed = stats.downloads_failed || 0;
+    const progress = queued > 0 ? ((completed + failed) / queued) * 100 : 0;
+
     return (
         <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -40,14 +52,39 @@ export default function SyncTab({
                     <div className="text-xl font-semibold text-white">{storageModels} models</div>
                 </div>
 
-                <div className="rounded-xl border border-white/[0.08] bg-gray-900/60 p-4">
-                    <div className="mb-2 flex items-center justify-between">
+                <div className="rounded-xl border border-white/[0.08] bg-gray-900/60 p-4 flex flex-col justify-between relative overflow-hidden">
+                    <div className="mb-2 flex items-center justify-between relative z-10">
                         <span className="text-xs uppercase tracking-wide text-gray-500">Reconciliation</span>
-                        <Circle className={`fill-current ${statusDotClass(STATUS_TONE[reconciliationStatus])}`} size={8} />
+                        <Circle className={`fill-current ${statusDotClass(STATUS_TONE[reconciliationStatus])} ${isReconciling ? 'animate-pulse' : ''}`} size={8} />
                     </div>
-                    <div className="text-lg font-medium text-white">{humanize(reconciliationStatus)}</div>
+                    <div className="text-lg font-medium text-white relative z-10">
+                        {isReconciling && currentRecon.phase ? capitalize(currentRecon.phase) : humanize(reconciliationStatus)}
+                    </div>
+                    {isReconciling && queued > 0 && (
+                        <div className="absolute bottom-0 left-0 h-1 bg-blue-500/30 w-full">
+                            <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                        </div>
+                    )}
                 </div>
             </div>
+
+            {isReconciling && activeDownloads.length > 0 && (
+                <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 p-4 mb-4">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Download className="text-blue-400 animate-pulse" size={14} />
+                        <span className="text-sm font-medium text-blue-200">Active Downloads ({activeDownloads.length})</span>
+                    </div>
+                    <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                        {activeDownloads.map((dl, idx) => (
+                            <div key={dl.file_id || idx} className="flex items-center gap-3 text-sm">
+                                <Loader2 className="text-blue-400/70 animate-spin flex-shrink-0" size={14} />
+                                <span className="text-gray-300 truncate flex-1">{dl.name}</span>
+                                <span className="text-gray-500 text-xs font-mono">{dl.index}/{dl.total}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 p-4">
                 <div className="mb-3 flex items-center justify-between gap-4">
@@ -78,19 +115,19 @@ export default function SyncTab({
                 )}
             </div>
 
-            {modelDelta > 0 && (
+            {modelDelta > 0 && !isReconciling && (
                 <Notice
                     tone="yellow"
                     message={`Model count mismatch detected: DB reports ${dbModels} while provider storage reports ${storageModels}. Run reconciliation to align state.`}
                 />
             )}
 
-            <div className="flex flex-wrap gap-2 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4 mt-4">
                 {capabilities.reconcile && (
-                    <ActionBtn onClick={onReconcile} disabled={Boolean(loading)} tone="orange" icon={RefreshCw} label="Reconcile" />
+                    <ActionBtn onClick={onReconcile} disabled={Boolean(loading) || isReconciling} tone="orange" icon={RefreshCw} label={isReconciling ? "Reconciling..." : "Reconcile"} />
                 )}
                 {capabilities.reset_status && (
-                    <ActionBtn onClick={onResetStatus} disabled={Boolean(loading)} tone="red" icon={RotateCcw} label="Reset DB Sync" />
+                    <ActionBtn onClick={onResetStatus} disabled={Boolean(loading) || isReconciling} tone="red" icon={RotateCcw} label="Reset DB Sync" />
                 )}
             </div>
 
@@ -120,8 +157,6 @@ export default function SyncTab({
                     </div>
                 </div>
             )}
-
-            <ReconciliationStatus providerId={providerId} inline={true} />
         </>
     );
 }

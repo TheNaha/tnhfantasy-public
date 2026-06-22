@@ -15,7 +15,7 @@ export default function DiagnosticsTab({ providerId, diagnostics, runtime, crede
         enabled: !!providerId,
     });
 
-    const metrics = metricsData?.data;
+    const metrics = metricsData;
 
     return (
         <>

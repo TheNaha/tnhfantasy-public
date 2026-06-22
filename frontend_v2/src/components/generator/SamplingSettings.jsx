@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { RefreshCw, Settings2 } from 'lucide-react';
+import { RefreshCw, Settings2, Lock, Unlock } from 'lucide-react';
 import NumberInput from '../common/NumberInput';
 import useSettingsStore from '../../store/settingsStore';
 import { useGeneratorStore } from '../../store/generatorStore';
@@ -19,8 +19,22 @@ const SamplingSettings = memo(function SamplingSettings() {
     const setSeed = useGeneratorStore(state => state.setSeed);
     const randomizeSeed = useGeneratorStore(state => state.randomizeSeed);
 
+    const lockedParams = useGeneratorStore(state => state.lockedParams);
+    const toggleParamLock = useGeneratorStore(state => state.toggleParamLock);
+
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
     const updateSetting = useSettingsStore(state => state.updateSetting);
+
+    const renderLockIcon = (param) => (
+        <button
+            onClick={() => toggleParamLock(param)}
+            className={`ml-2 no-touch-padding p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param] ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
+            title={lockedParams[param] ? "Unlock parameter" : "Lock parameter (prevent auto-change)"}
+            aria-label={lockedParams[param] ? "Unlock parameter" : "Lock parameter"}
+        >
+            {lockedParams[param] ? <Lock size={10} /> : <Unlock size={10} />}
+        </button>
+    );
 
     return (
         <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 mb-4">
@@ -31,17 +45,19 @@ const SamplingSettings = memo(function SamplingSettings() {
 
             <div className="grid grid-cols-2 gap-6">
                 <NumberInput
-                    label="Steps"
+                    label={<>Steps{renderLockIcon('steps')}</>}
                     value={steps}
-                    onChange={(val) => setSteps(Math.max(1, val))}
+                    onChange={(val) => { if (!lockedParams.steps) setSteps(Math.max(1, val)); }}
+                    disabled={lockedParams.steps}
                     min={1}
                     max={150}
                     className="flex-1"
                 />
                 <NumberInput
-                    label="CFG"
+                    label={<>CFG{renderLockIcon('cfg')}</>}
                     value={cfg}
-                    onChange={(val) => setCfg(Math.max(0, val))}
+                    onChange={(val) => { if (!lockedParams.cfg) setCfg(Math.max(0, val)); }}
+                    disabled={lockedParams.cfg}
                     min={0}
                     max={30}
                     step={0.5}
@@ -51,24 +67,31 @@ const SamplingSettings = memo(function SamplingSettings() {
 
             <div className="grid grid-cols-2 gap-4 pt-2">
                 <div className="space-y-1.5 group">
-                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
+                    <div className="flex items-center">
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
+                        {renderLockIcon('sampler')}
+                    </div>
                     <select
                         value={sampler}
-                        onChange={(e) => setSampler(e.target.value)}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus"
+                        disabled={lockedParams.sampler}
+                        onChange={(e) => { if (!lockedParams.sampler) setSampler(e.target.value); }}
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {SAMPLERS.map(s => (
                             <option key={s} value={s}>{s}</option>
                         ))}
                     </select>
                 </div>
-
                 <div className="space-y-1.5 group">
-                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
+                    <div className="flex items-center">
+                        <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
+                        {renderLockIcon('scheduler')}
+                    </div>
                     <select
                         value={scheduler}
-                        onChange={(e) => setScheduler(e.target.value)}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus"
+                        disabled={lockedParams.scheduler}
+                        onChange={(e) => { if (!lockedParams.scheduler) setScheduler(e.target.value); }}
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {SCHEDULERS.map(s => (
                             <option key={s} value={s}>{s}</option>
@@ -77,14 +100,26 @@ const SamplingSettings = memo(function SamplingSettings() {
                 </div>
             </div>
 
-            <div className="pt-2 space-y-1.5">
-                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Seed</label>
-                <div className="flex gap-3">
+            <div className="pt-2 border-t border-white/5 space-y-3">
+                <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Seed</label>
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                        <input
+                            type="checkbox"
+                            checked={autoRandomizeSeed}
+                            onChange={(e) => updateSetting('generator', 'autoRandomizeSeed', e.target.checked)}
+                            className="w-3.5 h-3.5 rounded bg-black/40 border-white/20 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-gray-900 transition-all cursor-pointer"
+                        />
+                        <span className="text-xs text-gray-400 group-hover:text-white transition-colors">Auto-randomize</span>
+                    </label>
+                </div>
+
+                <div className="flex gap-2">
                     <input
                         type="number"
                         value={seed}
-                        onChange={(e) => setSeed(parseInt(e.target.value))}
-                        className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white font-mono focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus shadow-inner"
+                        onChange={(e) => setSeed(Number(e.target.value))}
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none font-mono transition-all glow-focus"
                     />
                     <button
                         onClick={() => {

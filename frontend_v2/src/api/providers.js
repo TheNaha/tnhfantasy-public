@@ -94,6 +94,9 @@ export const providersApi = {
     /** Fetch live metrics directly from the remote provider container. */
     getLiveMetrics: (providerId) => api.get(`/api/providers/${providerId}/live-metrics`),
 
+    /** Fetch container logs for the provider. */
+    getLogs: (providerId) => api.get(`/api/providers/${providerId}/logs`),
+
     /**
      * Deploy the latest provider app from the backend orchestrator.
      * Beam runs three deploy steps: comfy_gpu, comfy_storage, and comfy_download.

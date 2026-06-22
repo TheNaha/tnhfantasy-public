@@ -25,9 +25,12 @@ const ResolutionSettings = memo(function ResolutionSettings() {
     const aspectRatioLocked = useGeneratorStore(state => state.aspectRatioLocked);
     const setAspectRatioLocked = useGeneratorStore(state => state.setAspectRatioLocked);
 
+    const lockedParams = useGeneratorStore(state => state.lockedParams);
+    const toggleParamLock = useGeneratorStore(state => state.toggleParamLock);
+
     const setResolution = (w, h) => {
-        setWidth(w);
-        setHeight(h);
+        if (!lockedParams.width) setWidth(w);
+        if (!lockedParams.height) setHeight(h);
     };
 
     const handleDimensionChange = (type, value) => {
@@ -36,18 +39,29 @@ const ResolutionSettings = memo(function ResolutionSettings() {
 
         if (aspectRatioLocked) {
             const ratio = width / height;
-            if (type === 'width') {
+            if (type === 'width' && !lockedParams.width) {
                 setWidth(newVal);
-                setHeight(Math.round(newVal / ratio));
-            } else {
+                if (!lockedParams.height) setHeight(Math.round(newVal / ratio));
+            } else if (type === 'height' && !lockedParams.height) {
                 setHeight(newVal);
-                setWidth(Math.round(newVal * ratio));
+                if (!lockedParams.width) setWidth(Math.round(newVal * ratio));
             }
         } else {
-            if (type === 'width') setWidth(newVal);
-            else setHeight(newVal);
+            if (type === 'width' && !lockedParams.width) setWidth(newVal);
+            else if (type === 'height' && !lockedParams.height) setHeight(newVal);
         }
     };
+
+    const renderLockIcon = (param) => (
+        <button
+            onClick={() => toggleParamLock(param)}
+            className={`ml-2 no-touch-padding p-1 rounded-md border transition-all flex items-center justify-center ${lockedParams[param] ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-transparent text-gray-600 hover:text-gray-400 border-transparent hover:bg-white/5'}`}
+            title={lockedParams[param] ? "Unlock parameter" : "Lock parameter (prevent auto-change)"}
+            aria-label={lockedParams[param] ? "Unlock parameter" : "Lock parameter"}
+        >
+            {lockedParams[param] ? <Lock size={10} /> : <Unlock size={10} />}
+        </button>
+    );
 
     return (
         <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 lg:space-y-6 mb-4">
@@ -57,17 +71,20 @@ const ResolutionSettings = memo(function ResolutionSettings() {
             </div>
 
             <div className="space-y-3 lg:space-y-4">
-                <label className="text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1">Resolution</label>
+                <label className="text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1 flex items-center">
+                    Resolution
+                </label>
 
                 <div className="grid grid-cols-4 gap-2">
                     {RESOLUTION_PRESETS.map((p) => (
                         <button
                             key={p.label}
                             onClick={() => setResolution(p.w, p.h)}
+                            disabled={lockedParams.width || lockedParams.height}
                             aria-label={`Set aspect ratio ${p.label}, ${p.w}x${p.h} pixels`}
                             title={`Set aspect ratio ${p.label} (${p.w}x${p.h})`}
                             aria-pressed={width === p.w && height === p.h}
-                            className={`flex flex-col items-center justify-center gap-1 p-2 rounded-xl transition-all border focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:outline-none ${width === p.w && height === p.h ? 'bg-blue-500/20 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)] text-blue-400 scale-105' : 'bg-black/40 border-white/10 text-gray-400 hover:bg-black/60 hover:text-white hover:border-white/20 shadow-inner'}`}
+                            className={`flex flex-col items-center justify-center gap-1 p-2 rounded-xl transition-all border focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${width === p.w && height === p.h ? 'bg-blue-500/20 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)] text-blue-400 scale-105' : 'bg-black/40 border-white/10 text-gray-400 hover:bg-black/60 hover:text-white hover:border-white/20 shadow-inner'}`}
                         >
                             <div className="w-5 h-5 flex items-center justify-center">
                                 <div
@@ -85,13 +102,17 @@ const ResolutionSettings = memo(function ResolutionSettings() {
 
                 <div className="flex items-end gap-3 pt-2">
                     <div className="flex-1 space-y-1.5">
-                        <label htmlFor="width-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Width</label>
+                        <div className="flex items-center">
+                            <label htmlFor="width-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Width</label>
+                            {renderLockIcon('width')}
+                        </div>
                         <input
                             id="width-input"
                             type="number"
                             value={width}
+                            disabled={lockedParams.width}
                             onChange={(e) => handleDimensionChange('width', e.target.value)}
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus"
+                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                     </div>
                     <button
@@ -104,28 +125,39 @@ const ResolutionSettings = memo(function ResolutionSettings() {
                         {aspectRatioLocked ? <Lock size={16} /> : <Unlock size={16} />}
                     </button>
                     <div className="flex-1 space-y-1.5">
-                        <label htmlFor="height-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Height</label>
+                        <div className="flex items-center">
+                            <label htmlFor="height-input" className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Height</label>
+                            {renderLockIcon('height')}
+                        </div>
                         <input
                             id="height-input"
                             type="number"
                             value={height}
+                            disabled={lockedParams.height}
                             onChange={(e) => handleDimensionChange('height', e.target.value)}
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus"
+                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                     </div>
                 </div>
             </div>
 
-            <NumberInput
-                label="Batch Size"
-                value={batchSize}
-                onChange={(val) => setBatchSize(Math.max(1, val))}
-                min={1}
-                max={16}
-                containerClass="space-y-1.5"
-                labelClass="block text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1"
-                inputClass="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus"
-            />
+            <div className="space-y-1.5">
+                <div className="flex items-center">
+                    <label className="block text-[11px] font-bold text-blue-400 uppercase tracking-widest px-1">Batch Size</label>
+                    {renderLockIcon('batchSize')}
+                </div>
+                <input
+                    type="number"
+                    value={batchSize}
+                    onChange={(e) => {
+                        if (!lockedParams.batchSize) setBatchSize(Math.max(1, parseInt(e.target.value) || 1));
+                    }}
+                    disabled={lockedParams.batchSize}
+                    min={1}
+                    max={16}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none transition-all glow-focus disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+            </div>
         </div>
     );
 });
