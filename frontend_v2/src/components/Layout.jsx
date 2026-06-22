@@ -71,7 +71,11 @@ export default function Layout({ children }) {
     });
 
     return (
-        <div className="flex min-h-screen lg:h-screen bg-[#0B0E14] text-gray-100 lg:overflow-hidden overflow-x-hidden font-sans selection:bg-blue-500/30">
+        <div className="flex min-h-screen lg:h-screen bg-[#0B0E14] text-gray-100 lg:overflow-hidden overflow-x-hidden font-sans selection:bg-blue-500/30 relative">
+            {/* Global Ambient Background Gradients */}
+            <div className="fixed top-[-20%] right-[-10%] w-[800px] h-[800px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none z-0" />
+            <div className="fixed bottom-[-20%] left-[-10%] w-[800px] h-[800px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none z-0" />
+
             {/* Mobile Header */}
             <div className="lg:hidden fixed top-0 left-0 right-0 h-16 glass-panel border-b border-white/5 flex items-center px-4 z-40">
                 <button
@@ -190,8 +194,9 @@ export default function Layout({ children }) {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col min-w-0 lg:overflow-hidden pt-16 lg:pt-0">
-                <main id="main-scroll-container" className="flex-1 lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8">
+            <div className="flex-1 flex flex-col min-w-0 lg:overflow-hidden pt-16 lg:pt-0 relative z-10">
+                
+                <main id="main-scroll-container" className="flex-1 lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8 relative z-10">
                     {children}
                 </main>
             </div>

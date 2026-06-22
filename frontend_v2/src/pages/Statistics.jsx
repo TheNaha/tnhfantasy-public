@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { motion } from 'framer-motion';
@@ -85,8 +85,16 @@ const ContributionHeatmap = ({ data }) => {
         return 'bg-emerald-400 border-emerald-300 shadow-[0_0_10px_rgba(52,211,153,0.5)]';
     };
 
+    const scrollContainerRef = useRef(null);
+
+    useEffect(() => {
+        if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollLeft = scrollContainerRef.current.scrollWidth;
+        }
+    }, [weeks.length]);
+
     return (
-        <div className="flex flex-col gap-2 overflow-x-auto pb-2 custom-scrollbar">
+        <div ref={scrollContainerRef} className="flex flex-col gap-2 overflow-x-auto pb-2 custom-scrollbar">
             <div className="flex gap-1.5" style={{ minWidth: 'max-content' }}>
                 {weeks.map((week, i) => (
                     <motion.div 
@@ -146,7 +154,7 @@ const Statistics = () => {
 
     const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['statistics', 'detailed', timeRange],
-        queryFn: () => api.get('/api/statistics/detailed', { params: { timeRange } }),
+        queryFn: () => api.get(`/api/statistics/detailed?timeRange=${timeRange}`),
         staleTime: 30000,
         refetchInterval: 120000,
     });
@@ -280,16 +288,14 @@ const Statistics = () => {
     ];
 
     return (
-        <div className="min-h-screen p-4 md:p-8 relative overflow-hidden">
-            {/* Dynamic Background Gradients */}
-            <div className="absolute top-[-20%] right-[-10%] w-[800px] h-[800px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
-            <div className="absolute bottom-[-20%] left-[-10%] w-[800px] h-[800px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
-
+        <div className="min-h-screen relative p-4 md:p-8">
             <motion.div 
+                key={timeRange}
                 variants={containerVariants}
                 initial="hidden"
                 animate="show"
                 className="max-w-7xl mx-auto space-y-8 relative z-10"
+                style={{ opacity: 1 }}
             >
                 <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-end justify-between gap-6 glass-panel p-8 rounded-3xl border border-white/5 shadow-2xl">
                     <div>

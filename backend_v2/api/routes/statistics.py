@@ -262,15 +262,24 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
             if not meta:
                 continue
             
-            # Time range filtering
             completed_at = None
             if "job" in meta and isinstance(meta["job"], dict):
-                completed_at = meta["job"].get("completed_at")
+                job_completed_at = meta["job"].get("completed_at")
+                if isinstance(job_completed_at, str):
+                    try:
+                        # Parse ISO 8601 string to timestamp
+                        # e.g., "2026-06-22T17:21:42.123Z"
+                        job_completed_at = job_completed_at.replace("Z", "+00:00")
+                        completed_at = datetime.fromisoformat(job_completed_at).timestamp()
+                    except ValueError:
+                        pass
+                elif isinstance(job_completed_at, (int, float)):
+                    completed_at = float(job_completed_at)
             
             if not completed_at:
                 completed_at = file_data.get("modified_time", file_data.get("date", 0))
 
-            if cutoff_ts > 0 and completed_at < cutoff_ts:
+            if cutoff_ts > 0 and float(completed_at) < cutoff_ts:
                 continue
         
             detailed_stats["total_images"] += 1
