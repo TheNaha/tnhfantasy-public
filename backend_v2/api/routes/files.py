@@ -294,7 +294,7 @@ async def list_files_endpoint(
                     search_lower = search.lower()
                     # Include all version filenames in searchable string
                     version_filenames = " ".join([
-                        v.get("file", {}).get("filename", "") for v in versions
+                        (v.get("file") or {}).get("filename", "") for v in versions if v
                     ])
                     searchable = f"{file_data['name']} {file_data['display_name']} {version_filenames}".lower()
                     if search_lower not in searchable:
