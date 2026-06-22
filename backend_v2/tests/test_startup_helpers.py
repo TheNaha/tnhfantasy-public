@@ -46,7 +46,7 @@ async def test_startup_application_autostarts_providers_after_cleanup():
     provider_monitor_task = MagicMock()
     broadcast_task = MagicMock()
 
-    def start_background_task_side_effect(coro, task_name):
+    def start_background_task_side_effect(coro, task_name, **kwargs):
         close = getattr(coro, "close", None)
         if callable(close):
             close()

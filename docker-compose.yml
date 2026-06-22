@@ -49,7 +49,7 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
-      - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`)
+      - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
       - traefik.http.routers.comfyui-frontend.entrypoints=websecure
       - traefik.http.routers.comfyui-frontend.tls=true
       - traefik.http.services.comfyui-frontend.loadbalancer.server.port=80

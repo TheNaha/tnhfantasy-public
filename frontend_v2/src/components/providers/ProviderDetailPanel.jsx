@@ -244,6 +244,7 @@ export default function ProviderDetailPanel({
                     )}
                     {activeTab === 'diagnostics' && (
                         <DiagnosticsTab
+                            providerId={provider.id}
                             diagnostics={diagnostics}
                             runtime={runtime}
                             credentialSummary={credentialSummary}

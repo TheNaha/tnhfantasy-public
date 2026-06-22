@@ -155,6 +155,12 @@ async function ensureProvidersRealtime(queryClient) {
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
         }));
 
+        unsubs.push(ws.on('connection', (state) => {
+            if (state.connected) {
+                queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+            }
+        }));
+
         unsubs.push(ws.on(ws.EventTypes.PROVIDER_CONTAINER_STATUS, (event) => {
             queryClient.setQueryData(
                 PROVIDERS_PAGE_QUERY_KEYS.providers,

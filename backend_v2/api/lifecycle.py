@@ -171,17 +171,6 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="provider_state_cleanup")
     cleanup_provider_state_artifacts()
     
-    try:
-        session = get_session_sync()
-        from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-        model_repo = ModelRepositoryV2(session)
-        reset_count = model_repo.reset_stale_downloading_statuses()
-        if reset_count > 0:
-            logger.info("stale_downloads_reset", count=reset_count)
-            session.commit()
-        session.close()
-    except Exception as exc:
-        logger.warning("startup_reset_stale_downloads_failed", error=str(exc))
 
     logger.info("startup_init", phase="job_processor")
     job_queue.set_processor(process_job)

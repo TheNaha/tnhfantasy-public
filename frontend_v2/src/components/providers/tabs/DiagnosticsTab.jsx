@@ -1,10 +1,21 @@
-import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Activity, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { DataRow } from './Shared';
+import { providersApi } from '../../../api';
 
-export default function DiagnosticsTab({ diagnostics, runtime, credentialSummary, providerFailures }) {
+export default function DiagnosticsTab({ providerId, diagnostics, runtime, credentialSummary, providerFailures }) {
     const warnings = diagnostics.warnings || [];
     const errors = diagnostics.errors || [];
     const hasIssues = warnings.length > 0 || errors.length > 0 || providerFailures > 0;
+
+    const { data: metricsData, isLoading: metricsLoading } = useQuery({
+        queryKey: ['provider-live-metrics', providerId],
+        queryFn: () => providersApi.getLiveMetrics(providerId),
+        refetchInterval: 5000, // Poll every 5s while tab is open
+        enabled: !!providerId,
+    });
+
+    const metrics = metricsData?.data;
 
     return (
         <>
@@ -17,6 +28,50 @@ export default function DiagnosticsTab({ diagnostics, runtime, credentialSummary
                 <DataRow label="Version" value={diagnostics.worker?.version || runtime.version || 'N/A'} />
                 {credentialSummary.configured_fields?.length > 0 && (
                     <DataRow label="Configured Secrets" value={credentialSummary.configured_fields.join(', ')} />
+                )}
+            </div>
+
+            <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-medium text-blue-200 flex items-center gap-2">
+                        <Activity size={16} className="text-blue-400" />
+                        Live Remote Metrics
+                    </h3>
+                    {metricsLoading && <Loader2 size={14} className="text-blue-400 animate-spin" />}
+                </div>
+                {!metricsLoading && !metrics && (
+                    <div className="text-xs text-gray-500 italic">No metrics available.</div>
+                )}
+                {metrics && (
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <div className="text-xs text-gray-500">Status</div>
+                            <div className={metrics.status === 'online' ? 'text-green-400' : 'text-red-400'}>
+                                {metrics.status}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-xs text-gray-500">Ping Latency</div>
+                            <div className="text-gray-200">{metrics.latency_ms > 0 ? `${metrics.latency_ms} ms` : 'N/A'}</div>
+                        </div>
+                        {metrics.info && (
+                            <>
+                                <div>
+                                    <div className="text-xs text-gray-500">Remote Version</div>
+                                    <div className="text-gray-200">{metrics.info.version || 'unknown'}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-gray-500">ComfyUI Mode</div>
+                                    <div className="text-gray-200">{metrics.info.comfy_mode || 'unknown'}</div>
+                                </div>
+                            </>
+                        )}
+                        {metrics.error && (
+                            <div className="col-span-2 text-xs text-red-400 mt-1">
+                                Error: {metrics.error}
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
 

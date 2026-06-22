@@ -27,7 +27,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5174,
-    allowedHosts: ['comfy.lan.thenaha.my.id'],
+    allowedHosts: ['comfy.lan.thenaha.my.id', '100.150.0.4'],
     // HMR configuration for Docker
     watch: {
       usePolling: true,  // Required for Docker volume mounts

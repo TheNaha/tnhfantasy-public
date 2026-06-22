@@ -167,6 +167,42 @@ async def get_provider_status_card(provider_id: str, session: Session = Depends(
     return await status_service.build_provider_status_card(provider_id)
 
 
+@router.get("/{provider_id}/live-metrics")
+async def get_provider_live_metrics(provider_id: str, session: Session = Depends(get_session)):
+    """Fetch live metrics directly from the remote provider container."""
+    from services.provider_service import get_provider_service
+    from services.provider_runtime import resolve_provider_runtime
+    from infrastructure.http_client import get_http_client
+    import time
+    
+    service = get_provider_service(session)
+    provider = await service.get_provider(provider_id)
+    runtime = resolve_provider_runtime(provider)
+    
+    if not runtime.worker_url:
+        return {"status": "offline", "latency_ms": 0, "error": "No worker URL configured"}
+        
+    try:
+        http_client = get_http_client()
+        start_t = time.time()
+        res = await http_client.get(f"{runtime.worker_url}/info", timeout=5.0)
+        res.raise_for_status()
+        latency = int((time.time() - start_t) * 1000)
+        info_data = res.json()
+        
+        return {
+            "status": "online",
+            "latency_ms": latency,
+            "info": info_data,
+        }
+    except Exception as exc:
+        return {
+            "status": "offline",
+            "latency_ms": 0,
+            "error": str(exc),
+        }
+
+
 @router.get("/{provider_id}/modal-stats")
 async def get_provider_modal_stats(provider_id: str, session: Session = Depends(get_session)):
     """

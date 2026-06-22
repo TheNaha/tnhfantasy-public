@@ -62,6 +62,13 @@ export function useJobsRealtime() {
             });
         }));
 
+        // Invalidate active jobs automatically on WebSocket reconnection
+        unsubs.push(ws.on('connection', (state) => {
+            if (state.connected) {
+                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+            }
+        }));
+
         // 2. Job Progress/Updated -> Update in Zustand store to prevent expensive re-renders
         const handleUpdate = (event) => {
             const job = event.data?.job || event;

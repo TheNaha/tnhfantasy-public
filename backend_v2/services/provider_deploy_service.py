@@ -501,16 +501,17 @@ class ProviderDeployService:
             try:
                 start_t = time.time()
                 payload = {
-                    "url": "https://raw.githubusercontent.com/comfyanonymous/ComfyUI/master/requirements.txt",
-                    "path": "test_dummy_write.txt"
+                    "url": "https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip",
+                    "path": "test_dummy_write.zip"
                 }
-                res = await http_client.post(f"{worker_url}/download-model", json=payload, timeout=30.0)
+                res = await http_client.post(f"{worker_url}/download-model", json=payload, timeout=60.0)
                 res.raise_for_status()
-                latency = int((time.time() - start_t) * 1000)
+                latency = time.time() - start_t
+                mb_per_sec = 5.0 / latency if latency > 0 else 0 # approximate 5MB zip
                 test_results.append({
                     "name": "Egress/Storage",
                     "success": True,
-                    "message": f"Write OK ({latency}ms)"
+                    "message": f"Write OK: {mb_per_sec:.1f} MB/s ({latency:.1f}s)"
                 })
             except Exception as e:
                 all_passed = False
