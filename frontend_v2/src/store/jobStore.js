@@ -14,7 +14,9 @@ const useJobStore = create((set, get) => ({
             overall_progress: data.overall_progress,
             status: data.status,
             message: data.message,
-            queue_position: data.queue_position
+            queue_position: data.queue_position,
+            provider_id: data.provider_id,
+            metadata_: data.metadata_
         };
         
         jobs[jobId] = { ...(jobs[jobId] || {}), ...volatileData };

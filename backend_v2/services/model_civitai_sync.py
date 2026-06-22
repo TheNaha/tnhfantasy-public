@@ -206,8 +206,9 @@ class ModelCivitaiSyncService:
                             select(ModelFile).where(ModelFile.version_id == matched_version.id)
                         ).all()
                         for ef in existing_files:
-                            if ef.size_kb is None or ef.size_kb == 0:
+                            if not ef.size_kb or ef.size_kb == 0:
                                 ef.size_kb = float(civitai_size_kb)
+                                self.session.add(ef)
 
                 if "Auto-discovered" in (matched_version.description or ""):
                     matched_version.description = civitai_version.get("description", matched_version.description)

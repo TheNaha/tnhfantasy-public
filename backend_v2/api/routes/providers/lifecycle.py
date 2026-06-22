@@ -170,7 +170,6 @@ async def get_provider_status_card(provider_id: str, session: Session = Depends(
 @router.get("/{provider_id}/live-metrics")
 async def get_provider_live_metrics(provider_id: str, session: Session = Depends(get_session)):
     """Fetch live metrics directly from the remote provider container."""
-    from services.provider_service import get_provider_service
     from services.provider_runtime import resolve_provider_runtime
     from infrastructure.http_client import get_http_client
     import time
@@ -201,6 +200,18 @@ async def get_provider_live_metrics(provider_id: str, session: Session = Depends
             "latency_ms": 0,
             "error": str(exc),
         }
+
+
+@router.get("/{provider_id}/logs")
+async def get_provider_logs(provider_id: str, tail: int = 500, session: Session = Depends(get_session)):
+    """Fetch recent container logs for a provider."""
+    lifecycle = _get_provider_lifecycle_service(session)
+    result = lifecycle.get_container_logs(provider_id, tail=tail)
+    if "error" in result:
+        return {"logs": [], "error": result["error"]}
+    # Split the string of logs into an array of lines
+    lines = result.get("logs", "").split("\n")
+    return {"logs": lines}
 
 
 @router.get("/{provider_id}/modal-stats")

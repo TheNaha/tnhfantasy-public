@@ -356,7 +356,7 @@ class TestProvidersRouteReconcile:
         }
 
         with patch(
-            "services.provider_status_service.ProviderStatusService.get_provider_sync_status",
+            "services.provider_status_service.ProviderStatusService.get_provider_sync_stats",
             new=AsyncMock(return_value=sync_payload),
         ), \
              patch(
@@ -406,7 +406,7 @@ class TestProvidersRouteReconcile:
         }
 
         with patch(
-            "services.provider_status_service.ProviderStatusService.get_provider_sync_status",
+            "services.provider_status_service.ProviderStatusService.get_provider_sync_stats",
             new=AsyncMock(return_value=sync_payload),
         ), \
              patch(

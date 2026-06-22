@@ -9,13 +9,18 @@ const PHASE_CONFIG = {
     'pending': { icon: Clock, label: 'Queued', color: 'text-gray-400', bar: 'bg-gray-600' },
     'validating': { icon: Settings, label: 'Validating', color: 'text-blue-300', bar: 'bg-blue-500' },
     'sent-to-provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
+    'sent_to_provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
     'connecting': { icon: Wifi, label: 'Connecting', color: 'text-cyan-300', bar: 'bg-cyan-400' },
     'connected': { icon: Server, label: 'Connected', color: 'text-cyan-400', bar: 'bg-cyan-500' },
     'pre-generation': { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
+    'pre_generation': { icon: Zap, label: 'Preparing', color: 'text-yellow-400', bar: 'bg-yellow-500' },
     'generating': { icon: Cpu, label: 'Generating', color: 'text-purple-400', bar: 'bg-purple-500' },
     'post-processing': { icon: Layers, label: 'Processing', color: 'text-green-300', bar: 'bg-green-400' },
+    'post_processing': { icon: Layers, label: 'Processing', color: 'text-green-300', bar: 'bg-green-400' },
     'generating-blurhash': { icon: Image, label: 'Blurhash', color: 'text-green-400', bar: 'bg-green-500' },
+    'generating_blurhash': { icon: Image, label: 'Blurhash', color: 'text-green-400', bar: 'bg-green-500' },
     'generating-thumbnails': { icon: Image, label: 'Thumbnails', color: 'text-emerald-400', bar: 'bg-emerald-500' },
+    'generating_thumbnails': { icon: Image, label: 'Thumbnails', color: 'text-emerald-400', bar: 'bg-emerald-500' },
 };
 
 const PHASE_ORDER = ['pending', 'validating', 'sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'];
@@ -45,7 +50,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
-    const isProcessing = ['sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'].includes(job.status);
+    const isProcessing = ['sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 'pre-generation', 'pre_generation', 'generating', 'post-processing', 'post_processing', 'generating-blurhash', 'generating_blurhash', 'generating-thumbnails', 'generating_thumbnails'].includes(job.status);
     const isPending = ['pending'].includes(job.status);
 
     // Extract metadata

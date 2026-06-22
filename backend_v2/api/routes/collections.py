@@ -288,20 +288,29 @@ async def remove_images_from_collection(
 @router.get("/export")
 async def export_collections(session: Session = Depends(get_session)):
     """Export all collections (for backup)."""
+    from collections import defaultdict
+
     collections = session.exec(select(Collection)).all()
-    
+    if not collections:
+        return {"collections": []}
+
+    collection_ids = [c.id for c in collections]
+    all_images = session.exec(
+        select(CollectionImage).where(CollectionImage.collection_id.in_(collection_ids))
+    ).all()
+
+    images_by_collection = defaultdict(list)
+    for img in all_images:
+        images_by_collection[img.collection_id].append(img.image_filename)
+
     result = []
     for col in collections:
-        images = session.exec(
-            select(CollectionImage).where(CollectionImage.collection_id == col.id)
-        ).all()
-        
         result.append({
             "id": col.id,
             "name": col.name,
             "color": col.color,
             "description": col.description,
-            "images": [img.image_filename for img in images],
+            "images": images_by_collection.get(col.id, []),
             "created_at": col.created_at.isoformat(),
             "updated_at": col.updated_at.isoformat()
         })

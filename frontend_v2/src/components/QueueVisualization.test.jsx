@@ -46,7 +46,7 @@ describe('QueueVisualization', () => {
 
     it('renders the queue summary header', () => {
         render(<QueueVisualization onJobClick={mockOnJobClick} />);
-        expect(screen.getByText(/Queue \(1 running, 1 pending\)/)).toBeInTheDocument();
+        expect(screen.getByText(/1\s*running,\s*1\s*pending/i)).toBeInTheDocument();
     });
 
     it('toggle button has accessibility attributes', () => {

@@ -153,6 +153,55 @@ class ProviderStatusService:
             "models": models,
         }
 
+    async def get_provider_sync_stats(self, provider_id: str) -> Dict[str, Any]:
+        """Fast aggregated provider sync counts using SQL GROUP BY."""
+        from core.entities import ProviderVersionStatus
+        from sqlmodel import select, func, or_
+        
+        total_stmt = select(func.count(ModelFile.id)).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).where(ModelVersion.is_enabled == True)
+        
+        total_models = self.session.exec(total_stmt).one()
+        
+        stats_stmt = select(
+            ProviderVersionStatus.status, 
+            func.count(ProviderVersionStatus.id)
+        ).join(
+            ModelFile, ProviderVersionStatus.file_id == ModelFile.id
+        ).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).where(
+            ModelVersion.is_enabled == True
+        ).where(
+            or_(
+                ProviderVersionStatus.provider_id == provider_id,
+                ProviderVersionStatus.provider_name == provider_id
+            )
+        ).group_by(ProviderVersionStatus.status)
+        
+        status_counts = self.session.exec(stats_stmt).all()
+        
+        stats = {
+            "installed": 0,
+            "pending": 0,
+            "downloading": 0,
+            "failed": 0,
+        }
+        
+        tracked_count = 0
+        for status, count in status_counts:
+            normalized = "installed" if status == "ready" else status
+            stats[normalized] = stats.get(normalized, 0) + count
+            tracked_count += count
+            
+        stats["pending"] += total_models - tracked_count
+        
+        return {
+            "total_models": total_models,
+            "stats": stats
+        }
+
     async def get_provider_storage_stats(
         self,
         provider_id: str,
@@ -287,7 +336,7 @@ class ProviderStatusService:
         provider_info = provider_payload or self.provider_service._provider_to_dict(provider)
         runtime = resolve_provider_runtime(provider)
 
-        sync_status = await self.get_provider_sync_status(provider_id)
+        sync_status = await self.get_provider_sync_stats(provider_id)
         model_sync = {
             "provider_id": provider_id,
             "total_models": sync_status.get("total_models", 0),

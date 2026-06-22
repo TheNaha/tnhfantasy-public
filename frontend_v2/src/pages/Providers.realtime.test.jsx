@@ -24,6 +24,7 @@ vi.mock('../api/websocket', () => ({
     connect: vi.fn().mockResolvedValue(undefined),
     subscribe: vi.fn().mockResolvedValue(undefined),
     unsubscribe: vi.fn(),
+    getConnectionStatus: vi.fn(() => false),
     on: vi.fn((event, callback) => {
         const callbacks = wsListeners.get(event) || [];
         callbacks.push(callback);
@@ -49,10 +50,6 @@ vi.mock('../components/providers/ProviderModal', () => ({
 }));
 
 vi.mock('../components/providers/AddModelToProviderModal', () => ({
-    default: () => null,
-}));
-
-vi.mock('../components/providers/ReconciliationStatus', () => ({
     default: () => null,
 }));
 

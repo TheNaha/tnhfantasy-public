@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 import httpx
+from core.events import EventType, emit_provider_event
 
 from core.entities import Provider
 from infrastructure.repositories import ProviderRepository
@@ -72,7 +73,7 @@ class ProviderDeployService:
             state["steps"] = steps
         return state
 
-    def _persist_deploy_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def _persist_deploy_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
@@ -83,6 +84,21 @@ class ProviderDeployService:
         updated = self.repo.update(provider.id, {"config": config})
         if updated is None:
             raise NotFoundError("Provider", provider.id)
+
+        # Emit websocket event for live deploy progress
+        event_type_map = {
+            "deploying": EventType.PROVIDER_DEPLOY_PROGRESS,
+            "failed": EventType.PROVIDER_DEPLOY_FAILED,
+            "succeeded": EventType.PROVIDER_DEPLOY_COMPLETED,
+            "idle": EventType.PROVIDER_DEPLOY_COMPLETED,
+        }
+        event_type = event_type_map.get(state.get("status"), EventType.PROVIDER_DEPLOY_PROGRESS)
+        # Handle the start event
+        if state.get("status") == "deploying" and not state.get("steps"):
+            event_type = EventType.PROVIDER_DEPLOY_STARTED
+
+        await emit_provider_event(event_type, provider.id, state)
+        
         return state
 
     def _is_deploy_in_progress(self, state: Dict[str, Any]) -> bool:
@@ -152,7 +168,7 @@ class ProviderDeployService:
 
         return False
 
-    def _mark_deploy_state_failed(self, provider: Provider, state: Dict[str, Any], *, message: str) -> Dict[str, Any]:
+    async def _mark_deploy_state_failed(self, provider: Provider, state: Dict[str, Any], *, message: str) -> Dict[str, Any]:
         failed_state = self._build_deploy_state(
             provider_id=provider.id,
             provider_type=provider.type,
@@ -165,7 +181,7 @@ class ProviderDeployService:
             failed_steps=state.get("failed_steps"),
             steps=state.get("steps") if isinstance(state.get("steps"), list) else None,
         )
-        self._persist_deploy_state(provider, failed_state)
+        await self._persist_deploy_state(provider, failed_state)
         return failed_state
 
     @staticmethod
@@ -193,7 +209,7 @@ class ProviderDeployService:
                 provider.id,
                 state.get("attempt_id"),
             ):
-                return self._mark_deploy_state_failed(
+                return await self._mark_deploy_state_failed(
                     provider,
                     state,
                     message="Previous deployment container disappeared and state was marked failed",
@@ -201,7 +217,7 @@ class ProviderDeployService:
             return state
 
         if state.get("status") == "deploying":
-            return self._mark_deploy_state_failed(
+            return await self._mark_deploy_state_failed(
                 provider,
                 state,
                 message="Previous deployment state expired and was marked failed",
@@ -238,7 +254,7 @@ class ProviderDeployService:
                 provider.id,
                 current_state.get("attempt_id"),
             ):
-                current_state = self._mark_deploy_state_failed(
+                current_state = await self._mark_deploy_state_failed(
                     provider,
                     current_state,
                     message="Previous deployment container disappeared and state was marked failed",
@@ -295,7 +311,7 @@ class ProviderDeployService:
             completed_steps=resumed_steps,
             steps=[],
         )
-        self._persist_deploy_state(provider, deploying_state)
+        await self._persist_deploy_state(provider, deploying_state)
 
         orchestrator = ProviderDeployOrchestrator(container_manager)
         deploy_container = None
@@ -350,20 +366,17 @@ class ProviderDeployService:
                         "entrypoint": step.get("entrypoint"),
                     }
                 )
-                self._persist_deploy_state(
-                    provider,
-                    self._build_deploy_state(
-                        provider_id=provider.id,
-                        provider_type=provider.type,
-                        status="deploying",
-                        attempt_id=attempt_id,
-                        started_at=started_at,
-                        message=f"Deployment running: {name}",
-                        completed_steps=sorted(completed_steps),
-                        failed_steps=[entry["name"] for entry in results if not entry["success"]],
-                        steps=list(results),
-                    ),
+                step_state = self._build_deploy_state(
+                    provider_id=provider.id,
+                    provider_type=provider.type,
+                    status="deploying",
+                    attempt_id=attempt_id,
+                    started_at=started_at,
+                    message=f"Running step: {name}",
+                    completed_steps=list(completed_steps),
+                    steps=results,
                 )
+                await self._persist_deploy_state(provider, step_state)
                 if not success:
                     break
 
@@ -376,12 +389,12 @@ class ProviderDeployService:
                     attempt_id=attempt_id,
                     started_at=started_at,
                     finished_at=utcnow_iso(),
-                    message=f"{provider.type.capitalize()} deploy failed for: {', '.join(failed_steps)}",
-                    completed_steps=sorted(completed_steps),
+                    message=f"Deployment failed at step '{name}'",
+                    completed_steps=list(completed_steps),
                     failed_steps=failed_steps,
                     steps=results,
                 )
-                self._persist_deploy_state(provider, failed_state)
+                await self._persist_deploy_state(provider, failed_state)
                 raise ProviderError(
                     provider.id,
                     f"{provider.type.capitalize()} deploy failed for: {', '.join(failed_steps)}. Check deploy details for logs.",
@@ -394,11 +407,11 @@ class ProviderDeployService:
                 attempt_id=attempt_id,
                 started_at=started_at,
                 finished_at=utcnow_iso(),
-                message=f"{provider.type.capitalize()} deploy completed",
-                completed_steps=sorted(completed_steps),
+                message="Deployment completed successfully",
+                completed_steps=list(completed_steps),
                 steps=results,
             )
-            self._persist_deploy_state(provider, success_state)
+            await self._persist_deploy_state(provider, success_state)
 
             try:
                 from services.provider_runtime import resolve_provider_runtime
@@ -421,7 +434,7 @@ class ProviderDeployService:
                 )
 
             return {
-                "status": "success",
+                "status": "succeeded",
                 "provider_type": provider.type,
                 "message": f"{provider.type.capitalize()} app deployed for {provider.id}",
                 "deployments": results,
@@ -441,7 +454,7 @@ class ProviderDeployService:
                     completed_steps=current_state.get("completed_steps"),
                     failed_steps=current_state.get("failed_steps"),
                 )
-                self._persist_deploy_state(provider, failed_state)
+                await self._persist_deploy_state(provider, failed_state)
             raise
         finally:
             orchestrator.cleanup_container(deploy_container)
@@ -468,16 +481,16 @@ class ProviderDeployService:
             steps=deployments,
         )
         testing_state["test_results"] = []
-        self._persist_deploy_state(provider, testing_state)
+        await self._persist_deploy_state(provider, testing_state)
 
         from infrastructure.http_client import get_http_client
         http_client = get_http_client()
         test_results = []
         all_passed = True
 
-        def _update_test_state(results: list[dict]):
+        async def _update_test_state(results: list[dict]):
             testing_state["test_results"] = list(results)
-            self._persist_deploy_state(provider, testing_state)
+            await self._persist_deploy_state(provider, testing_state)
 
         # 1. Liveness Ping
         try:
@@ -494,20 +507,20 @@ class ProviderDeployService:
             all_passed = False
             test_results.append({"name": "Liveness Ping", "success": False, "message": str(e)})
 
-        _update_test_state(test_results)
+        await _update_test_state(test_results)
 
         # 2. Egress/Storage Test
         if all_passed:
             try:
                 start_t = time.time()
                 payload = {
-                    "url": "https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip",
-                    "path": "test_dummy_write.zip"
+                    "url": "https://speed.hetzner.de/100MB.bin",
+                    "path": "test_dummy_write_100mb.bin"
                 }
-                res = await http_client.post(f"{worker_url}/download-model", json=payload, timeout=60.0)
+                res = await http_client.post(f"{worker_url}/download-model", json=payload, timeout=120.0)
                 res.raise_for_status()
                 latency = time.time() - start_t
-                mb_per_sec = 5.0 / latency if latency > 0 else 0 # approximate 5MB zip
+                mb_per_sec = 104.85 / latency if latency > 0 else 0 # 100 MiB
                 test_results.append({
                     "name": "Egress/Storage",
                     "success": True,
@@ -517,7 +530,7 @@ class ProviderDeployService:
                 all_passed = False
                 test_results.append({"name": "Egress/Storage", "success": False, "message": str(e)})
             
-            _update_test_state(test_results)
+            await _update_test_state(test_results)
 
         # 3. Inference Warmup
         # Skipped to save provider container compute costs
@@ -527,7 +540,7 @@ class ProviderDeployService:
                 "success": True,
                 "message": "Skipped to save compute"
             })
-            _update_test_state(test_results)
+            await _update_test_state(test_results)
 
         final_status = "succeeded" if all_passed else "failed"
         final_message = "Deployment and tests completed successfully" if all_passed else "Deployment tests failed"
@@ -541,8 +554,8 @@ class ProviderDeployService:
             finished_at=utcnow_iso(),
             message=final_message,
             completed_steps=completed_steps,
+            failed_steps=[t["name"] for t in test_results if not t.get("success")] if not all_passed else None,
             steps=deployments,
         )
         final_state["test_results"] = test_results
-        self._persist_deploy_state(provider, final_state)
-
+        await self._persist_deploy_state(provider, final_state)

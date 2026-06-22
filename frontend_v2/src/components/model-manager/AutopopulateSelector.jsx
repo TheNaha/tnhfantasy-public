@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Loader2, Search, Wand2, Star, Download, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 
 function matchTone(score) {
@@ -82,7 +83,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
         }
     };
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
 
@@ -342,6 +343,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

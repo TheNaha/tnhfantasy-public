@@ -292,7 +292,11 @@ async def list_files_endpoint(
                 # Apply search filter
                 if search:
                     search_lower = search.lower()
-                    searchable = f"{file_data['name']} {file_data['display_name']}".lower()
+                    # Include all version filenames in searchable string
+                    version_filenames = " ".join([
+                        (v.get("file") or {}).get("filename", "") for v in versions if v
+                    ])
+                    searchable = f"{file_data['name']} {file_data['display_name']} {version_filenames}".lower()
                     if search_lower not in searchable:
                         continue
                 
@@ -821,6 +825,63 @@ async def upload_mask_image(
         "sync_status": sync_status,
         "synced_providers": synced_count
     }
+
+
+@router.delete("/api/files/{filename}")
+async def delete_single_file(filename: str):
+    """Delete a single file (cleanup after failed gallery refresh)."""
+    import glob
+
+    try:
+        safe_filename = filename.lstrip("/\\")
+        local_path = None
+
+        try:
+            local_path = get_safe_path(OUTPUT_DIR, safe_filename)
+        except ValidationError:
+            pass
+
+        if local_path and os.path.exists(local_path):
+            os.remove(local_path)
+            meta_path = f"{local_path}.json"
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
+            thumb_dir = os.path.join(os.path.dirname(local_path), "thumb")
+            thumb_path = os.path.join(thumb_dir, safe_filename)
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+            logger.info("delete_file_removed", path=local_path)
+            return {"status": "success", "deleted": True}
+
+        from services.gallery_indexer import gallery_indexer
+        indexed_path = gallery_indexer.get_path(safe_filename)
+        if indexed_path and os.path.exists(indexed_path):
+            os.remove(indexed_path)
+            meta_path = f"{indexed_path}.json"
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
+            thumb_dir = os.path.join(os.path.dirname(indexed_path), "thumb")
+            thumb_path = os.path.join(thumb_dir, safe_filename)
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+            logger.info("delete_file_removed", path=indexed_path)
+            return {"status": "success", "deleted": True}
+
+        pattern = os.path.join(OUTPUT_DIR, "**", safe_filename)
+        matches = glob.glob(pattern, recursive=True)
+        matches = [m for m in matches if "/thumb/" not in m]
+        if matches:
+            os.remove(matches[0])
+            logger.info("delete_file_removed", path=matches[0])
+            return {"status": "success", "deleted": True}
+
+        raise NotFoundError("Resource", f"File '{filename}' not found")
+    except ValidationError:
+        raise ValidationError("Invalid filename")
+    except NotFoundError:
+        raise
+    except Exception as e:
+        raise ComfyError(str(e))
 
 
 @router.post("/api/batch/delete")

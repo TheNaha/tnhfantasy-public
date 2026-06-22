@@ -120,14 +120,19 @@ def _calculate_statistics() -> Dict[str, Any]:
                 stats["popular_settings"]["resolution"][res] = stats["popular_settings"]["resolution"].get(res, 0) + 1
 
             # Images by date
+            completed_at = None
             if job and isinstance(job, dict):
                 completed_at = job.get("completed_at")
-                if completed_at:
-                    try:
-                        date = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d")
-                        stats["images_by_date"][date] = stats["images_by_date"].get(date, 0) + 1
-                    except Exception:
-                        pass
+            
+            if not completed_at:
+                completed_at = file_data.get("modified_time", file_data.get("date", 0))
+
+            if completed_at:
+                try:
+                    date = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d")
+                    stats["images_by_date"][date] = stats["images_by_date"].get(date, 0) + 1
+                except Exception:
+                    pass
 
     except Exception as e:
         logger.error("statistics_calculation_failed", error=str(e))
@@ -257,15 +262,24 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
             if not meta:
                 continue
             
-            # Time range filtering
             completed_at = None
             if "job" in meta and isinstance(meta["job"], dict):
-                completed_at = meta["job"].get("completed_at")
+                job_completed_at = meta["job"].get("completed_at")
+                if isinstance(job_completed_at, str):
+                    try:
+                        # Parse ISO 8601 string to timestamp
+                        # e.g., "2026-06-22T17:21:42.123Z"
+                        job_completed_at = job_completed_at.replace("Z", "+00:00")
+                        completed_at = datetime.fromisoformat(job_completed_at).timestamp()
+                    except ValueError:
+                        pass
+                elif isinstance(job_completed_at, (int, float)):
+                    completed_at = float(job_completed_at)
             
-            if completed_at is None:
-                completed_at = file_data.get("modified", file_data.get("created", 0))
+            if not completed_at:
+                completed_at = file_data.get("modified_time", file_data.get("date", 0))
 
-            if cutoff_ts > 0 and completed_at < cutoff_ts:
+            if cutoff_ts > 0 and float(completed_at) < cutoff_ts:
                 continue
         
             detailed_stats["total_images"] += 1
@@ -277,28 +291,26 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
                 detailed_stats["legacy_count"] += 1
 
             # === TIMELINE DATA ===
-            if "job" in meta and isinstance(meta["job"], dict):
-                completed_at = meta["job"].get("completed_at")
-                if completed_at:
-                    try:
-                        dt = datetime.fromtimestamp(completed_at)
+            if completed_at:
+                try:
+                    dt = datetime.fromtimestamp(completed_at)
 
-                        # Daily
-                        date_str = dt.strftime("%Y-%m-%d")
-                        detailed_stats["timeline"]["daily"][date_str] = \
-                            detailed_stats["timeline"]["daily"].get(date_str, 0) + 1
+                    # Daily
+                    date_str = dt.strftime("%Y-%m-%d")
+                    detailed_stats["timeline"]["daily"][date_str] = \
+                        detailed_stats["timeline"]["daily"].get(date_str, 0) + 1
 
-                        # Hourly
-                        hour = str(dt.hour)
-                        detailed_stats["timeline"]["hourly"][hour] = \
-                            detailed_stats["timeline"]["hourly"].get(hour, 0) + 1
+                    # Hourly
+                    hour = str(dt.hour)
+                    detailed_stats["timeline"]["hourly"][hour] = \
+                        detailed_stats["timeline"]["hourly"].get(hour, 0) + 1
 
-                        # Weekday (0=Monday, 6=Sunday)
-                        weekday = str(dt.weekday())
-                        detailed_stats["timeline"]["weekday"][weekday] = \
-                            detailed_stats["timeline"]["weekday"].get(weekday, 0) + 1
-                    except Exception:
-                        pass
+                    # Weekday (0=Monday, 6=Sunday)
+                    weekday = str(dt.weekday())
+                    detailed_stats["timeline"]["weekday"][weekday] = \
+                        detailed_stats["timeline"]["weekday"].get(weekday, 0) + 1
+                except Exception:
+                    pass
 
             # === MODEL DATA ===
             # Checkpoints
@@ -511,10 +523,17 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
     return detailed_stats
 
 
+from fastapi import APIRouter, HTTPException
+
 @router.get("")
 @cache_stats
 async def get_statistics():
     """Generate comprehensive statistics from image metadata files."""
+    if not gallery_indexer.is_ready:
+        await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
+    if not gallery_indexer.is_ready:
+        raise HTTPException(status_code=503, detail="Gallery indexer is still scanning files. Please wait.")
+        
     return await asyncio.to_thread(_calculate_statistics)
 
 
@@ -525,6 +544,11 @@ async def get_detailed_statistics(timeRange: str = "all"):
     Extended statistics with data optimized for charts and visualizations.
     Provides timeline data, distributions, and advanced analytics.
     """
+    if not gallery_indexer.is_ready:
+        await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
+    if not gallery_indexer.is_ready:
+        raise HTTPException(status_code=503, detail="Gallery indexer is still scanning files. Please wait.")
+        
     return await asyncio.to_thread(_calculate_detailed_statistics, timeRange)
 
 

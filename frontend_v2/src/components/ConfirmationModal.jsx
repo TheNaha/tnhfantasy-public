@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { createPortal } from 'react-dom';
 
 export default function ConfirmationModal({
     isOpen,
@@ -28,7 +29,7 @@ export default function ConfirmationModal({
 
     return (
         <AnimatePresence>
-            {isOpen && (
+            {isOpen && createPortal(
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
                     onClick={handleCancel}
@@ -82,7 +83,8 @@ export default function ConfirmationModal({
                             </div>
                         </div>
                     </Motion.div>
-                </div>
+                </div>,
+                document.body
             )}
         </AnimatePresence>
     );

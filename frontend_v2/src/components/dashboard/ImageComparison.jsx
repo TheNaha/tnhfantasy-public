@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, ArrowLeftRight, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 
 export const ImageComparison = ({ images, onClose }) => {
     const [sliderPosition, setSliderPosition] = useState(50);
@@ -14,7 +15,7 @@ export const ImageComparison = ({ images, onClose }) => {
     // Metadata keys to compare
     const metaKeys = ['model', 'sampler', 'steps', 'cfg', 'seed', 'scheduler'];
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col">
             {/* Header */}
             <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900">
@@ -162,6 +163,7 @@ export const ImageComparison = ({ images, onClose }) => {
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };

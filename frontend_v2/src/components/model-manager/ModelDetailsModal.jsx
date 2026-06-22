@@ -3,6 +3,7 @@ import { X, AlertCircle, ExternalLink, Wand2, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
@@ -135,7 +136,7 @@ export default function ModelDetailsModal({ file, onClose }) {
     // Check if we have any meaningful data
     const hasData = displayName || civitaiId || baseModel !== "Unknown";
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col md:flex-row" onClick={e => e.stopPropagation()}>
 
@@ -213,11 +214,11 @@ export default function ModelDetailsModal({ file, onClose }) {
                                         <button
                                             onClick={handleDirectRefresh}
                                             disabled={refreshing}
-                                            className="p-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50"
+                                            className="flex items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50 text-sm font-medium"
                                             title="Refresh metadata from CivitAI"
-                                            aria-label="Refresh model metadata from CivitAI"
                                         >
-                                            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+                                            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                                            {refreshing ? 'Refreshing...' : 'Resync Metadata'}
                                         </button>
                                     )}
                                     <button
@@ -433,6 +434,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                     onSelect={(selectedModel) => handleAutopopulate(selectedModel.id)}
                 />
             )}
-        </div>
+        </div>,
+        document.body
     );
 }

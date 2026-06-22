@@ -14,6 +14,9 @@ import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
+import ControlNetSection from '../components/generator/ControlNetSection';
+import IPAdapterSection from '../components/generator/IPAdapterSection';
+import EnhancementsSection from '../components/generator/EnhancementsSection';
 import PromptPanel from '../components/generator/PromptPanel';
 import SamplingSettings from '../components/generator/SamplingSettings';
 import PresetManager from '../components/generator/PresetManager';
@@ -34,11 +37,15 @@ export default function Img2ImgGenerator() {
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
-            sourceImage, denoise, setDenoise,
-            selectedCheckpoint, selectedVae, selectedLoras,
-            setSourceImage, clearSourceImage,
+            sourceImage, denoise, setSourceImage, setDenoise, clearSourceImage,
             setSelectedCheckpoint, setSelectedVae,
-            randomizeSeed, addLora, removeLora, updateLora
+            selectedCheckpoint, selectedVae, selectedLoras,
+            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
+            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
+            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
+            adetailerInpaintMasked, setAdetailerInpaintMasked,
+            adetailerModels, controlNetModels
         },
         providers, providersLoading,
         preflight: {
@@ -101,7 +108,15 @@ export default function Img2ImgGenerator() {
                 denoise,
                 checkpoint: selectedCheckpoint.name,
                 loras: selectedLoras,
-                vae: selectedVae
+                vae: selectedVae,
+                clipSkip,
+                enableFreeU,
+                enablePAG,
+                pagScale,
+                enableLatentUpscale,
+                latentUpscaleMultiplier,
+                ipAdapters,
+                controlnets: controlnets
             });
 
             const metadata = {
@@ -119,7 +134,14 @@ export default function Img2ImgGenerator() {
                 sourceImage: sourceImage.filename,
                 checkpoint: selectedCheckpoint,
                 vae: selectedVae,
-                loras: selectedLoras
+                loras: selectedLoras,
+                clipSkip,
+                enableFreeU,
+                enablePAG,
+                pagScale,
+                enableLatentUpscale,
+                ipAdapters,
+                controlnets
             };
 
             const submission = await runWithPreflight(workflow, {
@@ -218,6 +240,46 @@ export default function Img2ImgGenerator() {
                             selectedModel={selectedCheckpoint}
                             onChange={setSelectedCheckpoint}
                             directory="models/checkpoints"
+                        />
+
+                        <ControlNetSection
+                            controlnets={[]}
+                            addControlNet={addControlNet}
+                            removeControlNet={removeControlNet}
+                            updateControlNet={updateControlNet}
+                            controlNetModels={controlNetModels}
+                        />
+
+                        <IPAdapterSection
+                            ipAdapters={ipAdapters}
+                            addIpAdapter={addIpAdapter}
+                            removeIpAdapter={removeIpAdapter}
+                            updateIpAdapter={updateIpAdapter}
+                        />
+
+                        <EnhancementsSection
+                            adetailerInpaintMasked={adetailerInpaintMasked}
+                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
+                            adetailerModels={adetailerModels}
+                            enableFreeU={enableFreeU}
+                            setEnableFreeU={setEnableFreeU}
+                            enablePAG={enablePAG}
+                            setEnablePAG={setEnablePAG}
+                            pagScale={pagScale}
+                            setPagScale={setPagScale}
+                            adetailerInpaintMasked={adetailerInpaintMasked}
+                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
+                            adetailerModels={adetailerModels}
+                            enableFreeU={enableFreeU}
+                            setEnableFreeU={setEnableFreeU}
+                            enablePAG={enablePAG}
+                            setEnablePAG={setEnablePAG}
+                            pagScale={pagScale}
+                            setPagScale={setPagScale}
+                            enableLatentUpscale={enableLatentUpscale}
+                            setEnableLatentUpscale={setEnableLatentUpscale}
+                            latentUpscaleMultiplier={latentUpscaleMultiplier}
+                            setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
                         />
 
                         {/* VAE Selector */}

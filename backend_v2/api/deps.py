@@ -74,6 +74,12 @@ def get_external_model_service():
     return ExternalModelService()
 
 
+def get_image_service():
+    """Get image service instance."""
+    from services.image_service import get_image_service as _get_image_service
+    return _get_image_service()
+
+
 def get_container_manager():
     """Get container manager singleton (lazy initialization)."""
     try:

@@ -66,6 +66,8 @@ export function useJobsRealtime() {
         unsubs.push(ws.on('connection', (state) => {
             if (state.connected) {
                 queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+                queryClient.invalidateQueries({ queryKey: ['gallery'] });
+                queryClient.invalidateQueries({ queryKey: ['statistics'] });
             }
         }));
 
@@ -151,6 +153,8 @@ export function useJobsRealtime() {
                 }
 
                 queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+                queryClient.invalidateQueries({ queryKey: ['gallery'] });
+                queryClient.invalidateQueries({ queryKey: ['statistics'] });
             }
         };
 
@@ -161,6 +165,8 @@ export function useJobsRealtime() {
                 void connectAndSubscribe();
             }
             queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+            queryClient.invalidateQueries({ queryKey: ['gallery'] });
+            queryClient.invalidateQueries({ queryKey: ['statistics'] });
         };
 
         document.addEventListener('visibilitychange', onVisibilityChange);

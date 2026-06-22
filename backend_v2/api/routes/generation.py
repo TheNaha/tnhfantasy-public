@@ -53,7 +53,9 @@ class SaveImageRequest(BaseModel):
 
 
 @router.post("/providers/save-image")
-async def save_generated_image(request: SaveImageRequest):
+async def save_generated_image(
+    request: SaveImageRequest,
+):
     """
     Receive generated image from worker and save with metadata.
     
@@ -67,16 +69,15 @@ async def save_generated_image(request: SaveImageRequest):
     Returns saved image info for frontend display.
     """
     import base64
-    from core.exceptions import ValidationError
     import asyncio
-    from services.image_service import get_image_service
+    from services.image_service import get_image_service as _get_image_service
     
     try:
         image_data = base64.b64decode(request.image_base64, validate=True)
     except Exception as e:
         raise ValidationError(f"Invalid base64 image data: {e}")
 
-    service = get_image_service()
+    service = _get_image_service()
     
     result = await service.save_generated_image(
         image_data=image_data,

@@ -25,7 +25,6 @@ import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
-import { useBrandingStore } from './store/brandingStore';
 import { useSettings } from './store/settingsStore';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
@@ -91,7 +90,6 @@ function GlobalHooks() {
 
 function App() {
     const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
-    const loadBranding = useBrandingStore((state) => state.loadBranding);
     const settings = useSettings();
 
     const [queryClient] = useState(() => (
@@ -136,10 +134,6 @@ function App() {
             },
         });
     }, [queryClient, queryUiSettings]);
-
-    useEffect(() => {
-        loadBranding();
-    }, [loadBranding]);
 
     return (
         <ErrorBoundary>

@@ -1,8 +1,13 @@
 """Extended tests for api/routes/statistics.py"""
 import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
 
+from api.main import app
+from services.gallery_indexer import gallery_indexer
+
+gallery_indexer.is_ready = True
 
 class TestStatisticsExtended:
     """Extended tests for statistics API endpoints."""

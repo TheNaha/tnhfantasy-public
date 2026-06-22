@@ -234,20 +234,43 @@ textarea,
   background: linear-gradient(
     90deg,
     rgba(59, 130, 246, 0.15) 0%,
-    transparent 100%
+    rgba(139, 92, 246, 0.05) 100%
   );
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  box-shadow: inset 0 0 12px rgba(59, 130, 246, 0.1);
 }
 
 .nav-active::before {
   content: "";
   position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  left: -1px;
+  top: 10%;
+  height: 80%;
   width: 3px;
-  height: 60%;
   background: linear-gradient(180deg, #3b82f6 0%, #8b5cf6 100%);
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 4px 4px 0;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.8);
+}
+
+/* Premium Layout Elements */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+}
+
+.glow-focus:focus-within {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.text-gradient-primary {
+  background: linear-gradient(to right, #60a5fa, #c084fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 /* Progress Bar Polish */

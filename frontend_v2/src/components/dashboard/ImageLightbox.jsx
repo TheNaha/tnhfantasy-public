@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
@@ -72,7 +73,7 @@ export default memo(function ImageLightbox({
         return `${minutes}m ${remainingSeconds}s`;
     };
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4">
             <button
                 onClick={onClose}
@@ -285,6 +286,7 @@ export default memo(function ImageLightbox({
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 });

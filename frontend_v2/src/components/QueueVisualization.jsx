@@ -64,28 +64,28 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     };
 
     return (
-        <div className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-xl overflow-hidden mb-4">
+        <div className="glass-panel rounded-2xl overflow-hidden mb-4 border border-white/5 shadow-xl">
             {/* Header */}
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 aria-expanded={!isCollapsed}
                 aria-controls={contentId}
-                className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-800/50 transition-colors"
+                className="w-full px-5 py-4 flex items-center justify-between hover:bg-white/5 transition-colors group"
             >
                 <div className="flex items-center gap-3">
-                    <Clock className="text-blue-400" size={18} aria-hidden="true" />
-                    <span className="font-medium text-white">
-                        Queue ({runningJobs.length} running, {pendingJobs.length} pending)
+                    <Clock className="text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]" size={18} aria-hidden="true" />
+                    <span className="font-semibold text-white tracking-wide">
+                        Queue <span className="text-gray-400 font-normal">({runningJobs.length} running, {pendingJobs.length} pending)</span>
                     </span>
                     {!stats.has_history && (
-                        <span className="text-xs text-yellow-500 bg-yellow-500/10 px-2 py-0.5 rounded">
+                        <span className="text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-yellow-400/20">
                             Calculating ETA...
                         </span>
                     )}
                 </div>
                 {isCollapsed ?
-                    <ChevronDown size={18} className="text-gray-400" aria-hidden="true" /> :
-                    <ChevronUp size={18} className="text-gray-400" aria-hidden="true" />
+                    <ChevronDown size={18} className="text-gray-400 group-hover:text-white transition-colors" aria-hidden="true" /> :
+                    <ChevronUp size={18} className="text-gray-400 group-hover:text-white transition-colors" aria-hidden="true" />
                 }
             </button>
 
@@ -95,20 +95,16 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                     <div
                         id={contentId}
                     >
-                        <div className="px-4 pb-4 space-y-2">
+                        <div className="px-5 pb-5 space-y-3">
                             {/* Timeline Bar - Using flex for proper job layout */}
-                            <div className="flex h-8 bg-gray-800 rounded-lg overflow-hidden gap-0.5" aria-hidden="true">
-                                {/* Running jobs */}
-                                {runningJobs.map((job) => (
+                            <div className="flex h-10 bg-[#0B0E14] rounded-xl overflow-hidden gap-0.5 shadow-inner" aria-hidden="true">
+                                {runningJobs.map(job => (
                                     <div
-                                        key={job.id}
-                                        className="relative h-full bg-gray-700 flex items-center justify-center cursor-pointer min-w-[60px] flex-1 overflow-hidden"
-                                        onClick={() => onJobClick?.(job.id)}
-                                        title={job.prompt || 'Running...'}
+                                        key={`timeline-${job.id}`}
+                                        className="relative bg-blue-500/20 border-r border-blue-500/30 overflow-hidden flex-1 group transition-colors hover:bg-blue-500/30"
+                                        title={`Running: ${job.prompt?.slice(0, 50) || 'Image generation'}`}
                                     >
-                                        {/* Progress fill */}
                                         <div
-                                            className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-300"
                                             style={{ width: `${job.progress || 0}%` }}
                                         />
                                         {/* Content overlay */}

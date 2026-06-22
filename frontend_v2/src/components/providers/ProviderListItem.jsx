@@ -96,153 +96,155 @@ export default function ProviderListItem({
 
     return (
         <div
-            className={`row-interactive rounded-xl border px-5 py-4 ${
+            className={`group rounded-2xl border px-5 py-4 transition-all duration-300 ${
                 isSelected
-                    ? 'border-blue-500/30 bg-blue-500/5 glow-border'
+                    ? 'border-blue-500/50 bg-[#0B0E14] shadow-[0_0_20px_rgba(59,130,246,0.15)] scale-[1.01] z-10 relative'
                     : provider.enabled
-                        ? 'border-gray-800 bg-gray-950/60'
-                        : 'border-gray-800/60 bg-gray-950/30 opacity-60'
-            }`}
+                        ? 'border-white/5 bg-[#0B0E14]/60 hover:bg-[#0B0E14]/80 hover:border-white/10 hover:shadow-lg backdrop-blur-sm'
+                        : 'border-white/5 bg-[#0B0E14]/30 opacity-60 hover:opacity-80 backdrop-blur-sm'
+            } cursor-pointer`}
             onClick={() => onSelect?.(provider.id)}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => e.key === 'Enter' && onSelect?.(provider.id)}
         >
-            <div className="flex items-center gap-4">
-                {/* Status indicator + icon */}
-                <div className="relative flex-shrink-0">
-                    <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
-                        runtimeStatus === 'running' || runtimeStatus === 'active'
-                            ? 'border-green-500/20 bg-green-500/10'
-                            : runtimeStatus === 'failed'
-                                ? 'border-red-500/20 bg-red-500/10'
-                                : 'border-gray-700 bg-gray-800/60'
-                    }`}>
-                        <Server
-                            size={18}
-                            className={
-                                runtimeStatus === 'running' || runtimeStatus === 'active'
-                                    ? 'text-green-400'
-                                    : runtimeStatus === 'failed'
-                                        ? 'text-red-400'
-                                        : 'text-gray-500'
-                            }
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex items-center gap-4 w-full sm:w-auto flex-1 min-w-0">
+                    {/* Status indicator + icon */}
+                    <div className="relative flex-shrink-0">
+                        <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border shadow-inner ${
+                            runtimeStatus === 'running' || runtimeStatus === 'active'
+                                ? 'border-green-500/30 bg-green-500/10 shadow-[inset_0_0_15px_rgba(34,197,94,0.1)]'
+                                : runtimeStatus === 'failed'
+                                    ? 'border-red-500/30 bg-red-500/10 shadow-[inset_0_0_15px_rgba(239,68,68,0.1)]'
+                                    : 'border-white/5 bg-white/5'
+                        }`}>
+                            <Server
+                                size={20}
+                                className={
+                                    runtimeStatus === 'running' || runtimeStatus === 'active'
+                                        ? 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]'
+                                        : runtimeStatus === 'failed'
+                                            ? 'text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]'
+                                            : 'text-gray-500'
+                                }
+                            />
+                        </div>
+                        {/* Tiny status dot */}
+                        <Circle
+                            size={10}
+                            className={`fill-current absolute -right-1 -top-1 border-2 border-[#0B0E14] rounded-full drop-shadow-md ${statusColorByTone(statusSummary.dotTone)}`}
                         />
                     </div>
-                    {/* Tiny status dot */}
-                    <Circle
-                        size={8}
-                        className={`fill-current absolute -right-0.5 -top-0.5 ${statusColorByTone(statusSummary.dotTone)}`}
-                    />
-                </div>
 
-                {/* Provider info — name + subtitle */}
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-0.5">
-                        <h3 className="truncate text-sm font-semibold text-white">
+                    {/* Provider info — name + subtitle */}
+                    <div className="min-w-0 flex-1 pl-2">
+                        <div className="flex flex-wrap items-center gap-2.5 mb-1">
+                        <h3 className="truncate text-base font-bold text-white tracking-wide">
                             {provider.id}
                         </h3>
-                        <span className="flex-shrink-0 rounded-md bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+                        <span className="flex-shrink-0 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-indigo-300 shadow-inner">
                             P{provider.priority}
                         </span>
-                        <span className="flex-shrink-0 rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-300">
+                        <span className="flex-shrink-0 rounded-lg bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-purple-300 shadow-inner">
                             {deployBadge}
                         </span>
                         {!provider.enabled && (
-                            <span className="flex-shrink-0 rounded-md bg-gray-700/50 border border-gray-600/30 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
+                            <span className="flex-shrink-0 rounded-lg bg-gray-500/10 border border-gray-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 shadow-inner">
                                 Disabled
                             </span>
                         )}
                         {!['online', 'offline', 'configured', 'disabled'].includes(statusSummary.stage) && (
-                            <span className={`flex-shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${providerBadgeToneClass(statusSummary.stage)}`}>
+                            <span className={`flex-shrink-0 rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest shadow-inner ${providerBadgeToneClass(statusSummary.stage)}`}>
                                 {statusSummary.label}
                             </span>
                         )}
                         {hasIssues && (
-                            <span className="flex-shrink-0 rounded-md bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                            <span className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-300 shadow-inner">
                                 ⚠
                             </span>
                         )}
                         {isReconciling && (
-                            <span className="flex-shrink-0 rounded-md bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-300 animate-pulse">
+                            <span className="flex-shrink-0 rounded-lg bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-blue-300 animate-pulse shadow-inner">
                                 Syncing
                             </span>
                         )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <span>{provider.type} provider</span>
+                    <div className="flex items-center gap-2 text-xs font-medium text-gray-500">
+                        <span className="uppercase tracking-widest">{provider.type} provider</span>
                         {credentialSummary.account_label && (
                             <>
                                 <span className="text-gray-700">·</span>
-                                <span className="truncate">{credentialSummary.account_label}</span>
+                                <span className="truncate text-gray-400">{credentialSummary.account_label}</span>
                             </>
                         )}
                     </div>
                     {statusSummary.message && (
-                        <p className="mt-1 truncate text-[11px] text-gray-400" title={statusSummary.message}>
+                        <p className="mt-1.5 truncate text-[11px] font-medium text-gray-400/80" title={statusSummary.message}>
                             {statusSummary.message}
                         </p>
                     )}
+                    </div>
                 </div>
 
                 {/* Metrics */}
                 <div className="hidden items-center gap-2 md:flex">
                     {vramHistory.length > 0 && (
-                        <div className="flex items-center gap-1.5 metric-chip !px-2 border-gray-700 bg-gray-800/30">
-                            <span className="text-[9px] text-gray-500 font-medium">VRAM</span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">VRAM</span>
                             <SparkLine data={vramHistory} color="#3b82f6" />
-                            <span className="text-[10px] text-blue-400 min-w-[2ch]">{vramHistory[vramHistory.length - 1]}%</span>
+                            <span className="text-xs font-bold text-blue-400 min-w-[3ch]">{vramHistory[vramHistory.length - 1]}%</span>
                         </div>
                     )}
                     {tempHistory.length > 0 && (
-                        <div className="flex items-center gap-1.5 metric-chip !px-2 border-gray-700 bg-gray-800/30">
-                            <span className="text-[9px] text-gray-500 font-medium">GPU</span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">GPU</span>
                             <SparkLine data={tempHistory} color="#ef4444" domain={[30, 90]} />
-                            <span className="text-[10px] text-red-400 min-w-[3ch]">{tempHistory[tempHistory.length - 1]}°</span>
+                            <span className="text-xs font-bold text-red-400 min-w-[3ch]">{tempHistory[tempHistory.length - 1]}°</span>
                         </div>
                     )}
-                    <span className="metric-chip">
-                        <Circle size={6} className={`fill-current ${statusColorByTone(statusSummary.dotTone)}`} />
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner text-xs font-bold text-gray-300">
+                        <Circle size={8} className={`fill-current ${statusColorByTone(statusSummary.dotTone)}`} />
                         {statusSummary.label}
                     </span>
                     {runtime.connected !== undefined && (
-                        <span className={`metric-chip ${runtime.connected ? 'text-green-400' : 'text-gray-500'}`}>
+                        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner text-xs font-bold ${runtime.connected ? 'text-green-400' : 'text-gray-500'}`}>
                             {runtime.connected ? 'Connected' : 'Offline'}
                         </span>
                     )}
                     {statusSummary.downloadsActive > 0 && (
-                        <span className="metric-chip text-cyan-300 border-cyan-500/20">
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 shadow-inner text-xs font-bold text-cyan-300">
                             {statusSummary.downloadsActive} downloading
                         </span>
                     )}
                     {statusSummary.downloadsQueued > 0 && (
-                        <span className="metric-chip text-blue-300 border-blue-500/20">
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-500/20 bg-blue-500/10 shadow-inner text-xs font-bold text-blue-300">
                             {statusSummary.downloadsQueued} queued
                         </span>
                     )}
-                    <span className="metric-chip">
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/5 bg-black/40 shadow-inner text-xs font-bold text-gray-300">
                         {jobsAssigned} job{jobsAssigned !== 1 ? 's' : ''}
                     </span>
                     {providerFailures > 0 && (
-                        <span className="metric-chip text-red-400 border-red-500/20">
+                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-red-500/20 bg-red-500/10 shadow-inner text-xs font-bold text-red-400">
                             {providerFailures} fail{providerFailures !== 1 ? 's' : ''}
                         </span>
                     )}
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 mt-3 sm:mt-0 sm:pl-4 justify-end w-full sm:w-auto border-t sm:border-none border-white/5 pt-3 sm:pt-0" onClick={(e) => e.stopPropagation()}>
                     <button
                         type="button"
                         onClick={(e) => {
                             e.stopPropagation();
                             onToggleEnabled?.(provider.id, provider.enabled);
                         }}
-                        className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
+                        className={`rounded-xl p-2.5 transition-all duration-300 ${provider.enabled ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20 hover:text-green-300' : 'text-gray-500 bg-white/5 hover:bg-white/10 hover:text-gray-300'}`}
                         title={provider.enabled ? 'Disable' : 'Enable'}
                         aria-label={provider.enabled ? 'Disable Provider' : 'Enable Provider'}
                     >
-                        {provider.enabled ? <Power size={14} /> : <PowerOff size={14} />}
+                        {provider.enabled ? <Power size={16} /> : <PowerOff size={16} />}
                     </button>
                     <button
                         type="button"
@@ -250,11 +252,11 @@ export default function ProviderListItem({
                             e.stopPropagation();
                             onEdit?.(provider);
                         }}
-                        className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
+                        className="rounded-xl p-2.5 text-gray-400 bg-white/5 hover:bg-blue-500/10 hover:text-blue-400 transition-all duration-300"
                         title="Edit"
                         aria-label="Edit Provider"
                     >
-                        <Edit2 size={14} />
+                        <Edit2 size={16} />
                     </button>
                     <button
                         type="button"
@@ -262,21 +264,23 @@ export default function ProviderListItem({
                             e.stopPropagation();
                             onDelete?.(provider.id);
                         }}
-                        className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-800 hover:text-red-400"
+                        className="rounded-xl p-2.5 text-gray-400 bg-white/5 hover:bg-red-500/10 hover:text-red-400 transition-all duration-300"
                         title="Delete"
                         aria-label="Delete Provider"
                     >
-                        <Trash2 size={14} />
+                        <Trash2 size={16} />
                     </button>
                     {currentAction && (
-                        <Loader2 className="ml-1 animate-spin text-blue-400" size={14} />
+                        <Loader2 className="ml-2 animate-spin text-blue-400" size={16} />
                     )}
-                    <ChevronRight
-                        size={16}
-                        className={`ml-1 text-gray-600 transition-transform duration-200 ${
-                            isSelected ? 'rotate-90' : ''
-                        }`}
-                    />
+                    <div className={`ml-2 p-1.5 rounded-lg transition-colors ${isSelected ? 'bg-blue-500/10 text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`}>
+                        <ChevronRight
+                            size={18}
+                            className={`transition-transform duration-300 ${
+                                isSelected ? 'rotate-90' : 'group-hover:translate-x-0.5'
+                            }`}
+                        />
+                    </div>
                 </div>
             </div>
 

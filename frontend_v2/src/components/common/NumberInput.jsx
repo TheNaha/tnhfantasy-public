@@ -1,9 +1,10 @@
 import { memo, useId } from 'react';
 
-export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, className = "" }) => {
+export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, className = "", disabled = false }) => {
     const inputId = useId();
 
     const handleChange = (e) => {
+        if (disabled) return;
         const val = parseFloat(e.target.value);
         if (isNaN(val)) {
             // allow intermediate typing
@@ -14,6 +15,7 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
     };
 
     const handleBlur = () => {
+        if (disabled) return;
         // Only clamp the minimum, allow exceeding max
         if (typeof value === 'string' && value === "") {
              onChange(min);
@@ -24,14 +26,15 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
     };
 
     const handleSliderChange = (e) => {
+        if (disabled) return;
         onChange(Number(e.target.value));
     };
 
     return (
-        <div className={className}>
+        <div className={`space-y-1 ${className}`}>
             {label && (
                 <div className="flex justify-between items-center mb-1">
-                    <label htmlFor={inputId} className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</label>
+                    <label htmlFor={inputId} className="text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1 flex items-center">{label}</label>
                     <input
                         id={inputId}
                         type="number"
@@ -39,7 +42,8 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
                         onChange={handleChange}
                         onBlur={handleBlur}
                         step={step}
-                        className="w-16 bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-center text-white text-sm focus:ring-1 focus:ring-blue-500 outline-none appearance-none"
+                        disabled={disabled}
+                        className="w-16 bg-[#0B0E14] border border-white/10 rounded-lg px-1.5 py-1 text-center text-white text-sm focus:ring-2 focus:ring-blue-500/50 outline-none appearance-none transition-all shadow-inner disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                 </div>
             )}
@@ -50,8 +54,9 @@ export const NumberInput = memo(({ label, value, onChange, min, max, step = 1, c
                 step={step}
                 value={Math.min(Math.max(Number(value) || min, min !== undefined ? min : 0), max !== undefined ? max : 100)}
                 onChange={handleSliderChange}
-                aria-label={label ? `${label} slider` : 'Range slider'}
-                className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                disabled={disabled}
+                aria-label={typeof label === 'string' ? `${label} slider` : 'Range slider'}
+                className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             />
         </div>
     );

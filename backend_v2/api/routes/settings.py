@@ -277,7 +277,7 @@ async def get_settings_schema() -> Dict[str, Any]:
                 "cors_origins": {
                     "type": "array",
                     "description": "Allowed CORS origins",
-                    "default": ["http://localhost:5173", "http://localhost:5174"]
+                    "default": ["http://localhost:5174"]
                 },
                 "gzip_minimum_size": {
                     "type": "integer",
@@ -296,26 +296,35 @@ async def get_settings_schema() -> Dict[str, Any]:
     }
 
 
+class SettingsUpdate(BaseModel):
+    """Pydantic model for settings updates to ensure type safety."""
+    worker: Optional[Dict[str, Any]] = None
+    jobs: Optional[Dict[str, Any]] = None
+    api: Optional[Dict[str, Any]] = None
+    generator: Optional[Dict[str, Any]] = None
+
+
 @router.put("")
-async def update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
+async def update_settings(updates: SettingsUpdate) -> Dict[str, Any]:
     """
     Update application settings.
     
     Args:
-        updates: Dictionary with configuration updates
+        updates: SettingsUpdate with configuration updates
         
     Returns:
         Updated configuration
-        
-    Raises:
-       : If validation fails
     """
     try:
-        # Don't allow updating Modal settings
-        if "modal" in updates:
-            raise ValueError("Modal.com settings are read-only and require redeployment")
+        filtered = {k: v for k, v in updates.model_dump(exclude_none=True).items() if v is not None}
+        if not filtered:
+            return {
+                "status": "success",
+                "message": "No settings to update",
+                "settings": app_config.get_config()
+            }
         
-        updated_config = app_config.update_config(updates, persist=True)
+        updated_config = app_config.update_config(filtered, persist=True)
         return {
             "status": "success",
             "message": "Settings updated successfully",
@@ -478,18 +487,22 @@ PRESETS = [
 @router.get("/presets")
 async def get_presets(session: Session = Depends(get_session)):
     """Returns a list of curated models with installation status."""
-    model_repo = ModelRepositoryV2(session)
+    from sqlmodel import select
+    from core.entities import ModelFile
+    
+    preset_paths = [f"models/{p['type']}/{p['filename']}" for p in PRESETS]
+    installed_files = set(
+        row[0] for row in session.exec(
+            select(ModelFile.storage_path).where(ModelFile.storage_path.in_(preset_paths))
+        ).all()
+    )
     
     presets = []
     for preset in PRESETS:
-        installed = model_repo.get_file_by_storage_path(
-            preset["type"],
-            preset["filename"],
-        ) is not None
-        
+        storage_path = f"models/{preset['type']}/{preset['filename']}"
         presets.append({
             **preset,
-            "installed": installed
+            "installed": storage_path in installed_files
         })
     
     return {"presets": presets}

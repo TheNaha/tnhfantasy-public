@@ -1,5 +1,6 @@
 import { useState, useEffect, memo, useRef, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { filesApi } from "../api";
 import TriggerBox from "./model-selector/TriggerBox";
@@ -39,7 +40,23 @@ const ModelSelector = memo(function ModelSelector({
   const abortControllerRef = useRef(null);
   const [expandedModel, setExpandedModel] = useState(null);
 
-  const selectedModel = externalSelectedModel || internalSelectedModel;
+  const selectedModel = useMemo(() => {
+    let sm = externalSelectedModel || internalSelectedModel;
+    if (sm && (!sm.versions || sm.versions.length === 0)) {
+       const matchingModel = models.find(m => m.name === sm.name || m.name === sm._originalModel?.name || m.display_name === sm.display_name);
+       if (matchingModel) {
+          sm = { 
+            ...matchingModel, 
+            ...sm, 
+            versions: matchingModel.versions,
+            civitai_id: sm.civitai_id || matchingModel.civitai_id,
+            preview: sm.preview || matchingModel.preview,
+            base_model: sm.base_model || matchingModel.base_model
+          };
+       }
+    }
+    return sm;
+  }, [externalSelectedModel, internalSelectedModel, models]);
 
   const getModelWithVersion = useCallback((model, version) => {
     if (!version) return model;
@@ -228,7 +245,7 @@ const ModelSelector = memo(function ModelSelector({
       />
 
       {/* Modal */}
-      {isOpen && (
+      {isOpen && createPortal(
         <div
           className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
           role="dialog"
@@ -310,7 +327,8 @@ const ModelSelector = memo(function ModelSelector({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
