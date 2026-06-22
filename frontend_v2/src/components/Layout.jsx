@@ -43,6 +43,7 @@ export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const { data: branding } = useBranding();
+    const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const { providers, lbStats } = useProvidersPageData();
 
     const providerStatsMap = useMemo(() => {
@@ -83,9 +84,9 @@ export default function Layout({ children }) {
                     <Menu size={24} aria-hidden="true" />
                 </button>
                 <div className="ml-4 flex items-center gap-2">
-                    <img src={branding.logoUrl} alt="Logo" className="w-6 h-6" />
+                    <img src={safeBranding.logoUrl} alt="Logo" className="w-6 h-6" />
                     <h1 className="text-lg font-bold text-gradient-primary">
-                        {branding.appName}
+                        {safeBranding.appName}
                     </h1>
                 </div>
             </div>
@@ -105,9 +106,9 @@ export default function Layout({ children }) {
             )}>
                 <div className="p-6 flex items-center justify-between border-b border-white/5 h-16 lg:h-auto">
                     <div className="flex items-center gap-3">
-                        <img src={branding.logoUrl} alt="Logo" className="w-8 h-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
+                        <img src={safeBranding.logoUrl} alt="Logo" className="w-8 h-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
                         <h1 className="text-xl font-bold text-gradient-primary tracking-tight">
-                            {branding.appName}
+                            {safeBranding.appName}
                         </h1>
                     </div>
 

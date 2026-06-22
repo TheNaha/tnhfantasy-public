@@ -265,7 +265,60 @@ async def download_model(request: Request):
         return {"status": "error", "message": "Invalid path"}
 
     import asyncio
-    return await asyncio.to_thread(
+    
+    progress_dir = "/mnt/data/downloads"
+    os.makedirs(progress_dir, exist_ok=True)
+    safe_name = os.path.basename(path)
+    progress_file = os.path.join(progress_dir, f"{safe_name}.json")
+    
+    last_progress_update = [0.0]
+    
+    def progress_callback(payload: Dict[str, Any]):
+        status = payload.get("status")
+        now = time.time()
+        
+        if status == "starting":
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", ""
+        elif status == "downloading":
+            if now - last_progress_update[0] < 0.5:
+                return
+            last_progress_update[0] = now
+            total_bytes = payload.get("total_bytes", 0) or 0
+            downloaded_bytes = payload.get("downloaded_bytes", 0) or 0
+            speed_mbps = payload.get("speed_mbps", 0.0) or 0.0
+            eta_seconds = int(payload.get("eta_seconds", 0) or 0)
+            percent = int(payload.get("percent", 0) or 0)
+            
+            downloaded_str = f"{downloaded_bytes / (1024 ** 2):.2f} MB"
+            total_str = f"{total_bytes / (1024 ** 2):.2f} MB" if total_bytes > 0 else "Unknown"
+            speed_str = f"{speed_mbps:.2f} MB/s"
+            eta_str = f"{eta_seconds}s"
+            msg = ""
+        elif status == "success":
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 100, "", "", "", "", "Download complete"
+        elif status == "message":
+            status = "error"
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", payload.get("message", "Download failed")
+        else:
+            return
+            
+        try:
+            with open(progress_file, "w") as f:
+                json.dump({
+                    "filename": safe_name,
+                    "status": status,
+                    "percent": percent,
+                    "speed": speed_str,
+                    "eta": eta_str,
+                    "downloaded": downloaded_str,
+                    "total": total_str,
+                    "message": msg,
+                    "updated_at": now
+                }, f)
+        except Exception:
+            pass
+
+    res = await asyncio.to_thread(
         download_model_to_path,
         url=url,
         full_path=full_path,
@@ -277,8 +330,16 @@ async def download_model(request: Request):
         metadata=metadata,
         log=print,
         log_prefix="Download",
+        progress_callback=progress_callback,
         validation_unknown_header_log_prefix="Validate",
     )
+    
+    if res.get("status") == "success":
+        time.sleep(5)
+        if os.path.exists(progress_file):
+            os.remove(progress_file)
+            
+    return res
 
 
 @storage_app.post("/list-models")
@@ -569,7 +630,62 @@ async def download_model_endpoint(request: Request):
         logger.error(f"[Download] Path traversal blocked: {e}")
         return {"status": "error", "message": "Invalid path"}
 
-    result = download_model_to_path(
+    import asyncio
+    
+    progress_dir = "/mnt/data/downloads"
+    os.makedirs(progress_dir, exist_ok=True)
+    safe_name = os.path.basename(path)
+    progress_file = os.path.join(progress_dir, f"{safe_name}.json")
+    
+    last_progress_update = [0.0]
+    
+    def progress_callback(payload: Dict[str, Any]):
+        status = payload.get("status")
+        now = time.time()
+        
+        if status == "starting":
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", ""
+        elif status == "downloading":
+            if now - last_progress_update[0] < 0.5:
+                return
+            last_progress_update[0] = now
+            total_bytes = payload.get("total_bytes", 0) or 0
+            downloaded_bytes = payload.get("downloaded_bytes", 0) or 0
+            speed_mbps = payload.get("speed_mbps", 0.0) or 0.0
+            eta_seconds = int(payload.get("eta_seconds", 0) or 0)
+            percent = int(payload.get("percent", 0) or 0)
+            
+            downloaded_str = f"{downloaded_bytes / (1024 ** 2):.2f} MB"
+            total_str = f"{total_bytes / (1024 ** 2):.2f} MB" if total_bytes > 0 else "Unknown"
+            speed_str = f"{speed_mbps:.2f} MB/s"
+            eta_str = f"{eta_seconds}s"
+            msg = ""
+        elif status == "success":
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 100, "", "", "", "", "Download complete"
+        elif status == "message":
+            status = "error"
+            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", payload.get("message", "Download failed")
+        else:
+            return
+            
+        try:
+            with open(progress_file, "w") as f:
+                json.dump({
+                    "filename": safe_name,
+                    "status": status,
+                    "percent": percent,
+                    "speed": speed_str,
+                    "eta": eta_str,
+                    "downloaded": downloaded_str,
+                    "total": total_str,
+                    "message": msg,
+                    "updated_at": now
+                }, f)
+        except Exception:
+            pass
+
+    result = await asyncio.to_thread(
+        download_model_to_path,
         url=url,
         full_path=full_path,
         path=path,
@@ -580,10 +696,14 @@ async def download_model_endpoint(request: Request):
         metadata=metadata,
         log=print,
         log_prefix="Download",
+        progress_callback=progress_callback,
         validation_unknown_header_log_prefix="Validate",
     )
 
     if result.get("status") == "success":
+        time.sleep(5)
+        if os.path.exists(progress_file):
+            os.remove(progress_file)
         return {"status": "success", "path": path, "size": result.get("size", 0)}
 
     return {"status": "error", "message": result.get("message", "Download failed")}
@@ -599,7 +719,7 @@ async def download_model_endpoint(request: Request):
     keep_warm_seconds=DOWNLOAD_KEEP_WARM,
     concurrent_requests=1,
     workers=1,
-    autoscaler=QueueDepthAutoscaler(max_containers=DOWNLOAD_CONCURRENT, tasks_per_container=1)
+    autoscaler=QueueDepthAutoscaler(max_containers=DOWNLOAD_MAX_CONTAINERS, tasks_per_container=1)
 )
 def comfy_download():
     """Dedicated download endpoint for model downloads (separate scaling from storage)."""

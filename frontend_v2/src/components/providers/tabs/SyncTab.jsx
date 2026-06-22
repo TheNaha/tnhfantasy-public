@@ -1,5 +1,6 @@
 import { HardDrive, RefreshCw, RotateCcw, Server, Download, Circle, Loader2 } from 'lucide-react';
 import { useProviderReconciliationState } from '../../../hooks/useProvidersPageData';
+import ReconciliationStatus from '../ReconciliationStatus';
 import { ActionBtn, Notice } from './Shared';
 import { STATUS_TONE, statusDotClass, humanize, capitalize } from './utils';
 
@@ -26,7 +27,6 @@ export default function SyncTab({
     // Use realtime state if available, otherwise fallback to provider.reconciliation_state
     const currentRecon = reconciliationState || reconciliation;
     const isReconciling = currentRecon.status === 'reconciling';
-    const activeDownloads = currentRecon.active_downloads || [];
     const stats = currentRecon.stats || {};
     const queued = stats.downloads_queued || 0;
     const completed = stats.downloads_completed || 0;
@@ -35,7 +35,7 @@ export default function SyncTab({
 
     return (
         <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 mb-4">
                 <div className="rounded-xl border border-blue-500/15 bg-blue-500/8 p-4">
                     <div className="mb-2 flex items-center justify-between">
                         <span className="text-xs uppercase tracking-wide text-blue-200/75">DB Sync</span>
@@ -68,21 +68,9 @@ export default function SyncTab({
                 </div>
             </div>
 
-            {isReconciling && activeDownloads.length > 0 && (
-                <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 p-4 mb-4">
-                    <div className="flex items-center gap-2 mb-3">
-                        <Download className="text-blue-400 animate-pulse" size={14} />
-                        <span className="text-sm font-medium text-blue-200">Active Downloads ({activeDownloads.length})</span>
-                    </div>
-                    <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar pr-2">
-                        {activeDownloads.map((dl, idx) => (
-                            <div key={dl.file_id || idx} className="flex items-center gap-3 text-sm">
-                                <Loader2 className="text-blue-400/70 animate-spin flex-shrink-0" size={14} />
-                                <span className="text-gray-300 truncate flex-1">{dl.name}</span>
-                                <span className="text-gray-500 text-xs font-mono">{dl.index}/{dl.total}</span>
-                            </div>
-                        ))}
-                    </div>
+            {isReconciling && (
+                <div className="mb-4">
+                    <ReconciliationStatus providerId={providerId} inline={true} />
                 </div>
             )}
 

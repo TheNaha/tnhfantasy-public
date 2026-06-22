@@ -425,7 +425,7 @@ class ComfyUIStable:
     volumes={"/mnt/data": vol},
     timeout=COMFYUI_TIMEOUT,
     max_containers=COMFYUI_MAX_CONTAINERS,
-    scaledown_window=40,
+    scaledown_window=COMFYUI_SCALEDOWN_SNAPSHOT,
     enable_memory_snapshot=True,  # CPU/memory snapshot only, NOT GPU
 )
 class ComfyUISnapshot:

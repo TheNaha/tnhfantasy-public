@@ -1,7 +1,9 @@
 # Statistics API Tests
 import pytest
 from unittest.mock import patch
+from services.gallery_indexer import gallery_indexer
 
+gallery_indexer.is_ready = True
 
 class TestStatisticsEndpoints:
     """Tests for the statistics API endpoints."""

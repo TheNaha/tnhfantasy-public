@@ -41,9 +41,12 @@ const ContributionHeatmap = ({ data }) => {
     const today = new Date();
     const days = [];
     for (let i = 364; i >= 0; i--) {
-        const d = new Date(today);
+        const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
         d.setDate(d.getDate() - i);
-        days.push(d.toISOString().split('T')[0]);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        days.push(`${year}-${month}-${day}`);
     }
 
     const dataMap = new Map(data.map(item => [item.date, item.count]));
@@ -52,7 +55,8 @@ const ContributionHeatmap = ({ data }) => {
     const weeks = [];
     let currentWeek = [];
     
-    const firstDay = new Date(days[0]);
+    const [y, m, d] = days[0].split('-');
+    const firstDay = new Date(y, m - 1, d);
     for (let i = 0; i < firstDay.getDay(); i++) {
         currentWeek.push(null);
     }
@@ -203,15 +207,17 @@ const Statistics = () => {
         let checkDate = new Date(today);
         
         // Handle case where they haven't generated today yet but did yesterday
-        let firstDate = new Date(timelineDaily[0].date);
+        const [fy, fm, fd] = timelineDaily[0].date.split('-');
+        let firstDate = new Date(fy, fm - 1, fd);
         firstDate.setHours(0, 0, 0, 0);
         
-        const diffDays = Math.floor((today - firstDate) / (1000 * 60 * 60 * 24));
+        const diffDays = Math.floor((today.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24));
         if (diffDays <= 1) {
             checkDate = firstDate; // Start checking from their most recent generation
             
             for (let i = 0; i < timelineDaily.length; i++) {
-                const entryDate = new Date(timelineDaily[i].date);
+                const [ey, em, ed] = timelineDaily[i].date.split('-');
+                const entryDate = new Date(ey, em - 1, ed);
                 entryDate.setHours(0, 0, 0, 0);
                 
                 if (entryDate.getTime() === checkDate.getTime()) {
@@ -382,8 +388,8 @@ const Statistics = () => {
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                    <div className="lg:col-span-2 glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl flex flex-col">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                             <h3 className="text-lg font-black tracking-wide flex items-center gap-3 text-white">
                                 <div className="p-2 bg-emerald-500/10 rounded-xl">
                                     <Calendar className="text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]" size={20} />
@@ -394,45 +400,45 @@ const Statistics = () => {
                                 {currentStreak} DAY STREAK
                             </span>
                         </div>
-                        <ContributionHeatmap data={timelineDaily} />
+                        <div className="flex-1 flex flex-col justify-center">
+                            <ContributionHeatmap data={timelineDaily} />
+                        </div>
                     </div>
 
-                    <div className="bg-gradient-to-br from-emerald-900/20 to-[#0B0E14]/80 backdrop-blur-md p-8 rounded-3xl border border-emerald-500/20 relative overflow-hidden group hover:border-emerald-500/40 transition-all hover:shadow-[0_0_30px_rgba(52,211,153,0.1)]">
+                    <div className="bg-gradient-to-br from-emerald-900/20 to-[#0B0E14]/80 backdrop-blur-md p-8 rounded-3xl border border-emerald-500/20 relative overflow-hidden group hover:border-emerald-500/40 transition-all hover:shadow-[0_0_30px_rgba(52,211,153,0.1)] flex flex-col">
                         <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-emerald-500/10 rounded-full blur-[50px] pointer-events-none group-hover:bg-emerald-500/20 transition-colors duration-500" />
-                        <h3 className="text-lg font-black tracking-wide mb-8 flex items-center gap-3 relative z-10 text-white">
+                        <h3 className="text-lg font-black tracking-wide mb-6 flex items-center gap-3 relative z-10 text-white">
                             <div className="p-2 bg-emerald-500/10 rounded-xl">
                                 <Leaf className="text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]" size={20} />
                             </div>
                             Resource Impact
                         </h3>
-                        <div className="space-y-6 relative z-10">
-                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner">
-                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
-                                    <Cpu size={14} /> GPU Hours
-                                </div>
-                                <div className="text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
-                                    {TOTAL_HOURS.toFixed(2)}<span className="text-lg text-emerald-600/50 ml-1 font-bold">h</span>
+                        <div className="grid grid-cols-2 gap-4 relative z-10 flex-1 content-center">
+                            <div className="col-span-2 bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
+                                <div>
+                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
+                                        <Cpu size={14} /> GPU Hours
+                                    </div>
+                                    <div className="text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
+                                        {TOTAL_HOURS.toFixed(2)}<span className="text-lg text-emerald-600/50 ml-1 font-bold">h</span>
+                                    </div>
                                 </div>
                             </div>
                             
-                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
-                                <div>
-                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Power Usage</div>
-                                    <div className="text-2xl font-black text-white drop-shadow-sm">
-                                        {KWH.toFixed(2)}
-                                    </div>
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex flex-col justify-between">
+                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Power</div>
+                                <div className="flex items-end gap-1">
+                                    <div className="text-xl font-black text-white drop-shadow-sm">{KWH.toFixed(2)}</div>
+                                    <span className="text-xs font-bold text-gray-500 mb-0.5">kWh</span>
                                 </div>
-                                <span className="text-sm font-bold text-gray-500 mb-1">kWh</span>
                             </div>
 
-                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
-                                <div>
-                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Est. Carbon</div>
-                                    <div className="text-2xl font-black text-white drop-shadow-sm">
-                                        {CO2_EMISSIONS.toFixed(2)}
-                                    </div>
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex flex-col justify-between">
+                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Carbon</div>
+                                <div className="flex items-end gap-1">
+                                    <div className="text-xl font-black text-white drop-shadow-sm">{CO2_EMISSIONS.toFixed(2)}</div>
+                                    <span className="text-xs font-bold text-gray-500 mb-0.5">kg</span>
                                 </div>
-                                <span className="text-sm font-bold text-gray-500 mb-1">kg CO₂</span>
                             </div>
                         </div>
                     </div>

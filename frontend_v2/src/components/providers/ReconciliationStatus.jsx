@@ -214,12 +214,33 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
                                     Active Downloads ({activeDownloads.length})
                                 </span>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-4">
                                 {activeDownloads.map((dl, idx) => (
-                                    <div key={dl.file_id || idx} className="flex items-center gap-3 text-sm">
-                                        <Loader2 className="text-blue-400 animate-spin flex-shrink-0" size={14} />
-                                        <span className="text-gray-300 truncate flex-1">{dl.name}</span>
-                                        <span className="text-gray-500 text-xs">{dl.index}/{dl.total}</span>
+                                    <div key={dl.file_id || idx} className="bg-gray-800/80 rounded border border-gray-700 p-3">
+                                        <div className="flex items-center gap-3 text-sm mb-2">
+                                            <Loader2 className="text-blue-400 animate-spin flex-shrink-0" size={14} />
+                                            <span className="text-gray-200 font-medium truncate flex-1" title={dl.name}>{dl.name}</span>
+                                            {dl.percent !== undefined ? (
+                                                <span className="text-blue-400 font-bold">{dl.percent}%</span>
+                                            ) : (
+                                                <span className="text-gray-500 text-xs">{dl.index}/{dl.total}</span>
+                                            )}
+                                        </div>
+                                        {dl.percent !== undefined && (
+                                            <>
+                                                <div className="w-full bg-gray-700 rounded-full h-1.5 mb-2 overflow-hidden">
+                                                    <div
+                                                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                                                        style={{ width: `${dl.percent}%` }}
+                                                    />
+                                                </div>
+                                                <div className="flex justify-between text-xs text-gray-400">
+                                                    <span className="font-mono">{dl.speed}</span>
+                                                    <span>{dl.downloaded} / {dl.total}</span>
+                                                    <span className="font-mono">ETA: {dl.eta}</span>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
                                 ))}
                             </div>
