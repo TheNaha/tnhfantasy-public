@@ -64,6 +64,9 @@ const EnhancementsSection = memo(function EnhancementsSection({
                         </div>
 
                         <div className={`space-y-4 transition-all duration-300 ${hiresFix ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                                Performs a second pass to upscale the image and add finer details. Use Latent for hallucinated details or a Pixel upscaler for structural preservation.
+                            </p>
                             <div className="space-y-1.5">
                                 <label className="block text-[11px] font-bold text-yellow-400 uppercase tracking-widest px-1">Upscaler</label>
                                 <select
@@ -131,6 +134,9 @@ const EnhancementsSection = memo(function EnhancementsSection({
                         </div>
 
                         <div className={`space-y-4 transition-all duration-300 ${adetailer ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                                Automatically detects faces, hands, or other objects to fix structural issues by performing localized inpainting.
+                            </p>
                             <div className="space-y-1.5">
                                 <label className="block text-[11px] font-bold text-orange-400 uppercase tracking-widest px-1">Model</label>
                                 <select
@@ -208,9 +214,11 @@ const EnhancementsSection = memo(function EnhancementsSection({
                             <label htmlFor="enableFreeU" className="text-sm font-bold text-white cursor-pointer select-none tracking-wide">FreeU (v2)</label>
                         </div>
                     </div>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                        Substantially improves image quality by adjusting U-Net skip connections. (Ignored for Flux models)
-                    </p>
+                    <div className={`transition-all duration-300 ${enableFreeU ? 'opacity-100 max-h-[500px] mt-4' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden mt-0'}`}>
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                            Substantially improves image quality by adjusting U-Net skip connections. (Ignored for Flux models)
+                        </p>
+                    </div>
                 </div>
 
                 <div className={`space-y-4 bg-[#0B0E14]/80 p-5 rounded-2xl border transition-colors shadow-inner ${enablePAG ? 'border-purple-500/30 ring-1 ring-purple-500/20' : 'border-white/5'}`}>
@@ -231,6 +239,9 @@ const EnhancementsSection = memo(function EnhancementsSection({
                     </div>
 
                     <div className={`space-y-4 transition-all duration-300 ${enablePAG ? 'opacity-100 max-h-[500px]' : 'opacity-30 pointer-events-none max-h-0 overflow-hidden'}`}>
+                        <p className="text-xs text-gray-400 leading-relaxed">
+                            Enhances structural coherence and overall image quality without requiring additional training or prompt changes. (Ignored for Flux)
+                        </p>
                         <div className="space-y-1.5">
                             <label className="block text-[11px] font-bold text-purple-400 uppercase tracking-widest px-1">PAG Scale</label>
                             <input

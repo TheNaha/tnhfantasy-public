@@ -39,7 +39,10 @@ const ControlNetSection = memo(function ControlNetSection({
             defaultOpen={controlnets.length > 0}
         >
             <div className="space-y-4 pt-4">
-                <div className="flex justify-end">
+                <div className="flex justify-between items-center px-1">
+                    <p className="text-xs text-gray-400">
+                        Guide the generation using structural references like edges, poses, or depth maps.
+                    </p>
                     <button onClick={() => addControlNet(controlNetModels[0]?.name)} className="text-[11px] font-bold uppercase tracking-widest flex items-center gap-1.5 text-green-400 hover:text-green-300 hover:scale-105 transition-all">
                         <Plus size={14} strokeWidth={3} /> Add ControlNet
                     </button>
