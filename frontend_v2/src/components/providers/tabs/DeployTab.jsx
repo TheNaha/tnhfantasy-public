@@ -61,6 +61,24 @@ export default function DeployTab({ deploy, deployBadge, capabilities, capabilit
                             </div>
                         ))
                     )}
+                    {deploy.test_results && deploy.test_results.length > 0 && (
+                        <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 mt-4">
+                            <h4 className="text-sm font-medium text-blue-200 mb-3">Deployment Tests</h4>
+                            <div className="space-y-2">
+                                {deploy.test_results.map((test, idx) => (
+                                    <div key={idx} className="flex items-center justify-between bg-black/40 p-2 rounded border border-white/5">
+                                        <span className="text-sm text-gray-300">{test.name}</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-gray-400">{test.message}</span>
+                                            <span className={`text-xs font-bold ${test.success ? 'text-green-400' : 'text-red-400'}`}>
+                                                {test.success ? 'PASS' : 'FAIL'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </>

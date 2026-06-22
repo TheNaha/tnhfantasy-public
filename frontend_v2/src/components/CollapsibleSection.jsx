@@ -17,7 +17,7 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, classNa
     const headerId = useId();
 
     return (
-        <div className={`border-b border-gray-800 ${className}`}>
+        <div className={`glass-panel p-5 rounded-2xl border border-white/5 shadow-xl mb-4 ${className}`}>
             <h3>
                 <button
                     type="button"
@@ -25,15 +25,15 @@ const CollapsibleSection = ({ title, icon, defaultOpen = true, children, classNa
                     aria-expanded={isOpen}
                     aria-controls={contentId}
                     onClick={() => setIsOpen(!isOpen)}
-                    className="w-full py-3 flex justify-between items-center hover:bg-gray-800/30 transition-colors rounded-lg focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none px-2 -mx-2"
+                    className="w-full pb-2 flex justify-between items-center group focus-visible:outline-none"
                 >
-                    <span className="text-base lg:text-lg font-semibold flex items-center gap-2">
+                    <span className="text-base lg:text-lg font-bold flex items-center gap-2 text-white">
                         {icon}
                         {title}
                     </span>
                     <ChevronDown
                         size={20}
-                        className={`text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                        className={`text-gray-500 group-hover:text-white transition-all duration-300 ${isOpen ? 'rotate-180' : ''}`}
                         aria-hidden="true"
                     />
                 </button>

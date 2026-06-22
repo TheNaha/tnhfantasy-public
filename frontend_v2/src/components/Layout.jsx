@@ -22,14 +22,17 @@ const NavItem = ({ to, icon: Icon, label }) => {
             to={to}
             aria-current={isActive ? 'page' : undefined}
             className={clsx(
-                "flex items-center gap-3 px-4 py-3 rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                "group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
                 isActive
-                    ? "nav-active text-white font-medium"
-                    : "text-gray-400 hover:bg-gray-800/50 hover:text-white"
+                    ? "nav-active text-white font-medium shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+                    : "text-gray-400 hover:bg-white/5 hover:text-gray-200"
             )}
         >
-            <Icon size={20} className={isActive ? "text-blue-400" : ""} aria-hidden="true" />
-            <span className="font-medium">{label}</span>
+            <Icon size={20} className={clsx(
+                "transition-all duration-300",
+                isActive ? "text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "text-gray-500 group-hover:text-gray-300"
+            )} aria-hidden="true" />
+            <span className="font-medium tracking-wide text-sm">{label}</span>
         </Link>
     );
 };
@@ -67,9 +70,9 @@ export default function Layout({ children }) {
     });
 
     return (
-        <div className="flex min-h-screen lg:h-screen bg-gray-900 text-white lg:overflow-hidden overflow-x-hidden">
+        <div className="flex min-h-screen lg:h-screen bg-[#0B0E14] text-gray-100 lg:overflow-hidden overflow-x-hidden font-sans selection:bg-blue-500/30">
             {/* Mobile Header */}
-            <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-gray-950/90 backdrop-blur-md border-b border-gray-800 flex items-center px-4 z-40">
+            <div className="lg:hidden fixed top-0 left-0 right-0 h-16 glass-panel border-b border-white/5 flex items-center px-4 z-40">
                 <button
                     onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                     className="p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"
@@ -81,7 +84,7 @@ export default function Layout({ children }) {
                 </button>
                 <div className="ml-4 flex items-center gap-2">
                     <img src={branding.logoUrl} alt="Logo" className="w-6 h-6" />
-                    <h1 className="text-lg font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                    <h1 className="text-lg font-bold text-gradient-primary">
                         {branding.appName}
                     </h1>
                 </div>
@@ -90,20 +93,20 @@ export default function Layout({ children }) {
             {/* Mobile Overlay */}
             {isMobileMenuOpen && (
                 <div
-                    className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
                     onClick={() => setIsMobileMenuOpen(false)}
                 />
             )}
 
             {/* Sidebar */}
             <div id="mobile-sidebar" className={clsx(
-                "fixed inset-y-0 left-0 z-50 w-64 bg-gray-950 border-r border-gray-800 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0",
+                "fixed inset-y-0 left-0 z-50 w-64 bg-[#0B0E14]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0 shadow-2xl shadow-black/50",
                 isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
             )}>
-                <div className="p-6 flex items-center justify-between border-b border-gray-800 h-16 lg:h-auto">
-                    <div className="flex items-center gap-2">
-                        <img src={branding.logoUrl} alt="Logo" className="w-7 h-7" />
-                        <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                <div className="p-6 flex items-center justify-between border-b border-white/5 h-16 lg:h-auto">
+                    <div className="flex items-center gap-3">
+                        <img src={branding.logoUrl} alt="Logo" className="w-8 h-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
+                        <h1 className="text-xl font-bold text-gradient-primary tracking-tight">
                             {branding.appName}
                         </h1>
                     </div>
@@ -111,32 +114,35 @@ export default function Layout({ children }) {
                     {/* Close button only for mobile overlay mode */}
                     <button
                         onClick={() => setIsMobileMenuOpen(false)}
-                        className="lg:hidden text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg p-1"
+                        className="lg:hidden text-gray-400 hover:text-white bg-white/5 rounded-full p-1.5"
                         aria-label="Close mobile menu"
                     >
-                        <X size={24} aria-hidden="true" />
+                        <X size={20} aria-hidden="true" />
                     </button>
                 </div>
 
-                <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+                <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
+                    <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-3 px-4">Menu</div>
                     <NavItem to="/" icon={Home} label="Dashboard" />
                     <NavItem to="/generate" icon={Wand2} label="Simple Generate" />
                     <NavItem to="/advanced" icon={Settings} label="Advanced" />
+                    <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
                     <NavItem to="/models/installed" icon={HardDrive} label="Installed Models" />
                     <NavItem to="/models/discover" icon={Globe} label="Discover Models" />
                     <NavItem to="/providers" icon={Server} label="Providers" />
+                    <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">System</div>
                     <NavItem to="/statistics" icon={BarChart3} label="Statistics" />
                     <NavItem to="/settings" icon={Settings2} label="Settings" />
                 </nav>
 
-                <div className="p-4 border-t border-gray-800">
-                    <div className="bg-gray-900/60 rounded-xl p-3 border border-gray-800/60">
-                        <div className="flex items-center justify-between mb-2.5">
-                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">System Status</span>
-                            <span className={`inline-block h-2 w-2 rounded-full ${runningProviderCount > 0 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                <div className="p-4 border-t border-white/5">
+                    <div className="glass-panel rounded-xl p-4 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
+                            <span className={`inline-block h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
                         </div>
                         {providerEntries.length > 0 ? (
-                            <div className="space-y-1.5">
+                            <div className="space-y-2">
                                 {providerEntries.map(({ provider, summary }) => {
                                     const statusMeta = [
                                         summary.jobsAssigned > 0 ? `${summary.jobsAssigned} jobs` : null,
@@ -147,22 +153,22 @@ export default function Layout({ children }) {
                                     const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
 
                                     return (
-                                        <div key={provider.id} className="flex items-start gap-2 group">
-                                            <span className={`provider-dot ${providerDotToneClass(summary.dotTone)}`} />
+                                        <div key={provider.id} className="flex items-start gap-2.5 group">
+                                            <span className={`mt-1 provider-dot shadow-[0_0_5px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className={`text-xs truncate ${providerTextToneClass(summary.stage)}`}>
+                                                    <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
                                                         {provider.id}
                                                     </span>
-                                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide ${providerBadgeToneClass(summary.stage)}`}>
+                                                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
                                                         {summary.label}
                                                     </span>
                                                     {summary.isDisabled && (
-                                                        <span className="text-[9px] text-gray-600 ml-auto">off</span>
+                                                        <span className="text-[9px] text-gray-500 ml-auto font-medium">off</span>
                                                     )}
                                                 </div>
                                                 {subtitle && (
-                                                    <p className="mt-0.5 truncate text-[10px] text-gray-400" title={subtitle}>
+                                                    <p className="mt-1 truncate text-[10px] text-gray-500 group-hover:text-gray-400 transition-colors" title={subtitle}>
                                                         {subtitle}
                                                     </p>
                                                 )}
@@ -172,10 +178,11 @@ export default function Layout({ children }) {
                                 })}
                             </div>
                         ) : (
-                            <p className="text-xs text-gray-600">No providers</p>
+                            <p className="text-xs text-gray-500">No providers connected</p>
                         )}
-                        <div className="mt-2.5 pt-2 border-t border-gray-800/50 text-xs text-gray-500">
-                            {runningProviderCount}/{providers.length} online
+                        <div className="mt-3 pt-3 border-t border-white/5 text-[10px] font-medium text-gray-500 flex justify-between">
+                            <span>Active Providers</span>
+                            <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
                         </div>
                     </div>
                 </div>

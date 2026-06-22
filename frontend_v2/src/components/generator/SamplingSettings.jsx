@@ -23,19 +23,20 @@ const SamplingSettings = memo(function SamplingSettings() {
     const updateSetting = useSettingsStore(state => state.updateSetting);
 
     return (
-        <div className="space-y-3 pb-4 border-b border-gray-800">
-            <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                <Settings2 size={18} className="text-gray-400" />
+        <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 mb-4">
+            <h3 className="text-base lg:text-lg font-bold flex items-center gap-2 text-white tracking-wide">
+                <Settings2 size={20} className="text-gray-400 drop-shadow-md" />
                 Sampling
             </h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-6">
                 <NumberInput
                     label="Steps"
                     value={steps}
                     onChange={(val) => setSteps(Math.max(1, val))}
                     min={1}
                     max={150}
+                    className="flex-1"
                 />
                 <NumberInput
                     label="CFG"
@@ -44,16 +45,17 @@ const SamplingSettings = memo(function SamplingSettings() {
                     min={0}
                     max={30}
                     step={0.5}
+                    className="flex-1"
                 />
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mt-2">
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Sampler</label>
+            <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="space-y-1.5 group">
+                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Sampler</label>
                     <select
                         value={sampler}
                         onChange={(e) => setSampler(e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus"
                     >
                         {SAMPLERS.map(s => (
                             <option key={s} value={s}>{s}</option>
@@ -61,12 +63,12 @@ const SamplingSettings = memo(function SamplingSettings() {
                     </select>
                 </div>
 
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheduler</label>
+                <div className="space-y-1.5 group">
+                    <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Scheduler</label>
                     <select
                         value={scheduler}
                         onChange={(e) => setScheduler(e.target.value)}
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus"
                     >
                         {SCHEDULERS.map(s => (
                             <option key={s} value={s}>{s}</option>
@@ -75,14 +77,14 @@ const SamplingSettings = memo(function SamplingSettings() {
                 </div>
             </div>
 
-            <div className="mt-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Seed</label>
-                <div className="flex gap-2">
+            <div className="pt-2 space-y-1.5">
+                <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest px-1">Seed</label>
+                <div className="flex gap-3">
                     <input
                         type="number"
                         value={seed}
                         onChange={(e) => setSeed(parseInt(e.target.value))}
-                        className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-white font-mono"
+                        className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white font-mono focus:ring-2 focus:ring-gray-500/50 outline-none transition-all glow-focus shadow-inner"
                     />
                     <button
                         onClick={() => {
@@ -92,21 +94,21 @@ const SamplingSettings = memo(function SamplingSettings() {
                                 toast.success('Auto-randomize enabled!', { icon: '🎲' });
                             }
                         }}
-                        className="no-touch-padding w-10 flex items-center justify-center bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors flex-shrink-0 text-base"
+                        className="no-touch-padding w-12 flex items-center justify-center bg-black/40 hover:bg-black/60 border border-white/10 hover:border-white/20 rounded-xl transition-all shadow-lg hover:-translate-y-0.5 text-lg"
                         title="Randomize seed"
                     >
                         🎲
                     </button>
                     <button
                         onClick={() => updateSetting('generator', 'autoRandomizeSeed', !autoRandomizeSeed)}
-                        className={`no-touch-padding w-10 flex items-center justify-center border rounded-lg transition-colors flex-shrink-0 ${
+                        className={`no-touch-padding w-12 flex items-center justify-center border rounded-xl transition-all shadow-lg hover:-translate-y-0.5 ${
                             autoRandomizeSeed
-                                ? 'bg-blue-600 text-white border-blue-500'
-                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700 border-gray-700'
+                                ? 'bg-blue-500/20 text-blue-400 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]'
+                                : 'bg-black/40 text-gray-500 hover:text-white border-white/10 hover:bg-black/60 hover:border-white/20'
                         }`}
                         title={autoRandomizeSeed ? 'Auto-randomize ON' : 'Auto-randomize OFF'}
                     >
-                        <RefreshCw size={16} />
+                        <RefreshCw size={18} className={autoRandomizeSeed ? 'animate-spin-slow' : ''} />
                     </button>
                 </div>
             </div>

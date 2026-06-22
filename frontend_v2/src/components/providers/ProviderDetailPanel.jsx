@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import { providerBadgeToneClass, summarizeProviderStatus } from '../../utils/providerStatus';
 import JobCard from '../dashboard/JobCard';
 import useJobStore from '../../store/jobStore';
+import { useActiveJobs } from '../../hooks/useActiveJobs';
 
 import RuntimeTab from './tabs/RuntimeTab';
 import DeployTab from './tabs/DeployTab';

@@ -191,12 +191,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     return (
         <div className="space-y-6">
-            <div className="flex gap-2 overflow-x-auto pb-2">
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                 {CATEGORIES.map(cat => (
                     <button
                         key={cat.id}
                         onClick={() => setCategory(cat.id)}
-                        className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${category === cat.id ? 'bg-gray-700 text-white border border-gray-600' : 'bg-gray-900 text-gray-400 border border-gray-800 hover:border-gray-700'
+                        className={`px-5 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-300 shadow-lg ${category === cat.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-[#0B0E14]/80 text-gray-400 border border-white/5 hover:bg-black/40 hover:text-white hover:border-white/10'
                             }`}
                     >
                         {cat.label}
@@ -205,11 +205,11 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             </div>
 
             {/* Sort and Filter Controls */}
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-3 flex-wrap">
                 <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus"
                 >
                     <option value="name">Sort: Name</option>
                     <option value="date">Sort: Date</option>
@@ -220,7 +220,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 <select
                     value={filterBaseModel}
                     onChange={(e) => setFilterBaseModel(e.target.value)}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus"
                 >
                     <option value="all">All Base Models</option>
                     <option value="SD 1.5">SD 1.5</option>
@@ -234,7 +234,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 <select
                     value={filterType}
                     onChange={(e) => setFilterType(e.target.value)}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus"
                 >
                     <option value="all">All Types</option>
                     <option value="Checkpoint">Checkpoint</option>
@@ -242,12 +242,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     <option value="TextualInversion">Embedding</option>
                 </select>
 
-                <label className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white cursor-pointer hover:border-blue-500">
+                <label className="flex items-center gap-2.5 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-[11px] font-bold text-gray-400 uppercase tracking-widest cursor-pointer hover:border-white/20 transition-colors shadow-inner">
                     <input
                         type="checkbox"
                         checked={showNSFW}
                         onChange={(e) => setShowNSFW(e.target.checked)}
-                        className="rounded w-3 h-3"
+                        className="rounded w-3.5 h-3.5 bg-black/40 border-gray-600 text-blue-500 focus:ring-blue-500"
                     />
                     Show NSFW
                 </label>
@@ -259,7 +259,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                             setFilterType('all');
                             setShowNSFW(true);
                         }}
-                        className="bg-red-900/30 border border-red-800 rounded-lg px-3 py-1.5 text-xs text-red-300 hover:bg-red-900/50"
+                        className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2 text-[11px] font-bold text-red-400 uppercase tracking-widest hover:bg-red-500/20 hover:border-red-500/30 transition-colors shadow-inner"
                     >
                         Clear Filters
                     </button>
@@ -270,7 +270,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             <div className="mb-6 space-y-4">
                 <div className="flex flex-wrap gap-4">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
                         <input
                             type="text"
                             placeholder="Search models..."
@@ -282,13 +282,13 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                 }
                             }}
                             enterKeyHint="search"
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white focus:ring-2 focus:ring-blue-500/50 outline-none shadow-inner glow-focus placeholder-gray-600 font-medium"
                         />
                     </div>
 
                     <button
                         onClick={handleRefresh}
-                        className="p-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
+                        className="p-3 bg-[#0B0E14]/80 border border-white/10 rounded-xl text-gray-400 hover:text-white hover:border-white/20 transition-all shadow-inner hover:shadow-[0_0_10px_rgba(255,255,255,0.1)]"
                         title="Refresh List"
                         aria-label="Refresh List"
                     >
@@ -297,31 +297,31 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
                     <button
                         onClick={() => setShowBatchModal(true)}
-                        className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 transition-colors"
+                        className="p-3 bg-[#0B0E14]/80 hover:bg-black/40 rounded-xl border border-white/10 transition-all shadow-inner hover:shadow-[0_0_10px_rgba(255,255,255,0.1)]"
                         title="Batch Autopopulate Models"
                         aria-label="Batch Autopopulate Models"
                     >
-                        <Wand2 size={16} className="text-gray-400 hover:text-white" />
+                        <Wand2 size={20} className="text-purple-400 drop-shadow-md" />
                     </button>
 
                     <button
                         onClick={() => setShowBatchResyncModal(true)}
-                        className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 transition-colors"
+                        className="p-3 bg-[#0B0E14]/80 hover:bg-black/40 rounded-xl border border-white/10 transition-all shadow-inner hover:shadow-[0_0_10px_rgba(255,255,255,0.1)]"
                         title="Resync All Metadata"
                         aria-label="Resync All Metadata"
                     >
-                        <RotateCw size={16} className="text-blue-400 hover:text-blue-300" />
+                        <RotateCw size={20} className="text-blue-400 hover:text-blue-300 drop-shadow-md" />
                     </button>
 
                     {availableTags.length > 0 && (
                         <div className="relative group">
-                            <button className="flex items-center gap-2 px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500">
+                            <button className="flex items-center gap-2 px-5 py-3 bg-[#0B0E14]/80 border border-white/10 rounded-xl text-gray-300 hover:text-white hover:border-white/20 shadow-inner transition-all">
                                 <Filter size={20} />
-                                <span>Tags ({selectedTags.length})</span>
+                                <span className="font-bold text-[11px] uppercase tracking-widest">Tags ({selectedTags.length})</span>
                             </button>
-                            <div className="absolute right-0 mt-2 w-64 max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-2 hidden group-hover:block z-20">
+                            <div className="absolute right-0 mt-2 w-64 max-h-96 overflow-y-auto glass-panel border border-white/10 rounded-2xl shadow-2xl p-3 hidden group-hover:block z-20 backdrop-blur-xl">
                                 {availableTags.map(tag => (
-                                    <label key={tag} className="flex items-center gap-2 p-2 hover:bg-gray-800 rounded cursor-pointer">
+                                    <label key={tag} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
                                         <input
                                             type="checkbox"
                                             checked={selectedTags.includes(tag)}
@@ -329,9 +329,9 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                                 if (e.target.checked) setSelectedTags([...selectedTags, tag]);
                                                 else setSelectedTags(selectedTags.filter(t => t !== tag));
                                             }}
-                                            className="rounded border-gray-700 bg-gray-800 text-blue-500"
+                                            className="rounded border-white/10 bg-black/40 text-blue-500 focus:ring-blue-500/50"
                                         />
-                                        <span className="text-sm text-gray-300">{tag}</span>
+                                        <span className="text-sm font-medium text-gray-300">{tag}</span>
                                     </label>
                                 ))}
                             </div>
@@ -343,14 +343,14 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 {selectedTags.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                         {selectedTags.map(tag => (
-                            <span key={tag} className="flex items-center gap-1 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs border border-blue-500/30">
+                            <span key={tag} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/20 text-blue-300 rounded-full text-xs font-bold border border-blue-500/30 shadow-inner">
                                 {tag}
-                                <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))} className="hover:text-white" aria-label={`Remove tag ${tag}`}>
-                                    <X size={12} />
+                                <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))} className="hover:text-white transition-colors" aria-label={`Remove tag ${tag}`}>
+                                    <X size={14} />
                                 </button>
                             </span>
                         ))}
-                        <button onClick={() => setSelectedTags([])} className="text-xs text-gray-500 hover:text-gray-300 underline" aria-label="Clear all tags">
+                        <button onClick={() => setSelectedTags([])} className="text-xs font-bold text-gray-500 hover:text-gray-300 uppercase tracking-widest transition-colors" aria-label="Clear all tags">
                             Clear all
                         </button>
                     </div>
@@ -358,19 +358,19 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             </div>
 
             {loading && filteredFiles.length === 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                     {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} className="aspect-[2/3] bg-gray-800 rounded-xl animate-pulse" />
+                        <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
                     ))}
                 </div>
             ) : filteredFiles.length === 0 ? (
-                <div className="text-center py-20 text-gray-500">
-                    <HardDrive className="mx-auto mb-4 opacity-50" size={48} />
-                    <p className="text-lg">No models found</p>
-                    <p className="text-sm opacity-70">Try adjusting your search or filters</p>
+                <div className="text-center py-20 text-gray-500 glass-panel rounded-3xl border border-white/5">
+                    <HardDrive className="mx-auto mb-4 opacity-50 text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.4)]" size={64} />
+                    <p className="text-xl font-bold tracking-wide text-gray-300">No models found</p>
+                    <p className="text-sm opacity-70 mt-2">Try adjusting your search or filters</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
                     {filteredFiles.map(file => {
                         const availability = getModelAvailabilitySummary(
                             file.provider_statuses,
@@ -384,14 +384,14 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                             <div
                                 key={file.name}
                                 onClick={() => setSelectedModel(file)}
-                                className="group relative bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-gray-600 transition-all aspect-[2/3] cursor-pointer"
+                                className="group relative bg-[#0B0E14]/80 rounded-2xl overflow-hidden border border-white/5 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all duration-300 aspect-[2/3] cursor-pointer"
                             >
                                 <div className="absolute inset-0">
                                     {file.preview ? (
                                         <img
                                             src={file.preview}
                                             alt={file.display_name || file.name}
-                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                             loading="lazy"
                                             decoding="async"
                                             fetchPriority="low"
@@ -410,22 +410,22 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                         <img
                                             src={`/api/v2/models/preview/${file.civitai_id}?image_index=0`}
                                             alt={file.display_name || file.name}
-                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                             loading="lazy"
                                             decoding="async"
                                             fetchPriority="low"
                                             onError={(e) => { e.target.style.display = 'none'; }}
                                         />
                                     ) : (
-                                        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-600">
-                                            <Globe size={32} />
+                                        <div className="w-full h-full bg-gradient-to-br from-black/60 to-black/20 flex items-center justify-center text-gray-600/50">
+                                            <Globe size={48} />
                                         </div>
                                     )}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-80" />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-[#0B0E14] via-[#0B0E14]/60 to-transparent opacity-90 transition-opacity duration-300 group-hover:opacity-75" />
                                 </div>
 
-                                <div className="absolute bottom-0 left-0 right-0 p-3">
-                                    <h3 className="text-sm font-medium text-white line-clamp-2 mb-1" title={file.display_name || file.name}>
+                                <div className="absolute bottom-0 left-0 right-0 p-4">
+                                    <h3 className="text-sm font-bold text-white line-clamp-2 mb-2 drop-shadow-md tracking-wide" title={file.display_name || file.name}>
                                         {file.display_name || file.name}
                                     </h3>
                                     {file.description?.includes("Auto-discovered") && (

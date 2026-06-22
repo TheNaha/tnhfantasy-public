@@ -55,9 +55,9 @@ const ModelSection = memo(function ModelSection({
     };
 
     return (
-        <div className="space-y-3 lg:space-y-4 pb-4 border-b border-gray-800">
-            <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                <Settings2 size={18} className="text-purple-400" />
+        <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 lg:space-y-5 mb-4">
+            <h3 className="text-base lg:text-lg font-bold flex items-center gap-2 text-white">
+                <Settings2 size={20} className="text-purple-400 drop-shadow-[0_0_8px_rgba(168,85,247,0.6)]" />
                 Models
             </h3>
 
@@ -80,12 +80,12 @@ const ModelSection = memo(function ModelSection({
                 </div>
             </div>
 
-            <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-500">VAE</label>
+            <div className="space-y-1.5 group">
+                <label className="text-[11px] font-bold text-purple-400 uppercase tracking-widest px-1">VAE</label>
                 <select
                     value={selectedVae}
                     onChange={(e) => setSelectedVae(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 text-white text-sm focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50 outline-none transition-all shadow-inner glow-focus"
                 >
                     <option value="Baked in">Baked in (Default)</option>
                     {vaeModels.map(v => (
@@ -95,9 +95,9 @@ const ModelSection = memo(function ModelSection({
             </div>
 
             {isUnetModel(selectedCheckpoint) && clipModels.length > 0 && (
-                <div className="space-y-3 p-3 bg-gradient-to-r from-purple-900/20 to-blue-900/20 rounded-lg border border-purple-800/30">
+                <div className="space-y-3 p-4 bg-purple-900/10 rounded-xl border border-purple-500/20 shadow-inner">
                     <div className="flex items-center gap-2">
-                        <Sparkles size={14} className="text-purple-400" />
+                        <Sparkles size={16} className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]" />
                         <label className="text-xs font-medium text-purple-300">
                             {isFluxModel(selectedCheckpoint) ? "Flux Text Encoders" : "Text Encoder (CLIP)"}
                         </label>

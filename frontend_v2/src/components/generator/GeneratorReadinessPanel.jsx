@@ -23,30 +23,30 @@ export default function GeneratorReadinessPanel({
             : 'text-gray-400';
 
     return (
-        <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 shadow-lg shadow-black/20">
-            <div className="mb-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+        <div className="glass-panel rounded-2xl border border-white/5 bg-[#0B0E14]/80 p-5 shadow-xl">
+            <div className="mb-5 border-b border-white/5 pb-3">
+                <h3 className="text-base lg:text-lg font-bold flex items-center gap-2 text-white tracking-wide">
                     {title}
-                </p>
-                <p className="mt-1 text-xs text-gray-400">{hint}</p>
+                </h3>
+                <p className="mt-1 text-xs text-gray-400 font-medium">{hint}</p>
             </div>
 
             <div className="space-y-3">
-                <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-3">
+                <div className="rounded-xl border border-white/10 bg-black/40 p-4 shadow-inner">
                     <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                            <Server size={16} className={providerTone} />
-                            <span className="text-sm font-medium text-white">Providers</span>
+                        <div className="flex items-center gap-2.5">
+                            <Server size={18} className={`${providerTone} drop-shadow-md`} />
+                            <span className="text-sm font-bold text-white tracking-wide">Providers</span>
                         </div>
                         {providersLoading ? (
-                            <Loader2 size={14} className="animate-spin text-blue-400" />
+                            <Loader2 size={16} className="animate-spin text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" />
                         ) : (
-                            <span className={`text-xs ${providerTone}`}>
+                            <span className={`text-[11px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${providerTone}`}>
                                 {onlineProviders}/{totalProviders} online
                             </span>
                         )}
                     </div>
-                    <p className="mt-2 text-xs text-gray-400">
+                    <p className="mt-2.5 text-xs text-gray-400 font-medium">
                         {providersLoading
                             ? 'Checking provider runtime state...'
                             : onlineProviders > 0
@@ -55,19 +55,19 @@ export default function GeneratorReadinessPanel({
                     </p>
                 </div>
 
-                <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-3">
+                <div className="rounded-xl border border-white/10 bg-black/40 p-4 shadow-inner">
                     <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2.5">
                             {isChecking ? (
-                                <Loader2 size={16} className="animate-spin text-blue-400" />
+                                <Loader2 size={18} className="animate-spin text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" />
                             ) : validationSummary?.valid ? (
-                                <CheckCircle2 size={16} className="text-emerald-300" />
+                                <CheckCircle2 size={18} className="text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
                             ) : (
-                                <AlertTriangle size={16} className={validationSummary ? 'text-amber-300' : 'text-gray-500'} />
+                                <AlertTriangle size={18} className={`${validationSummary ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.5)]' : 'text-gray-500'}`} />
                             )}
-                            <span className="text-sm font-medium text-white">Model preflight</span>
+                            <span className="text-sm font-bold text-white tracking-wide">Model preflight</span>
                         </div>
-                        <span className={`text-xs ${readinessTone}`}>
+                        <span className={`text-[11px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-current/20 bg-current/10 ${readinessTone}`}>
                             {isChecking
                                 ? 'Checking'
                                 : validationSummary?.valid
@@ -77,7 +77,7 @@ export default function GeneratorReadinessPanel({
                                         : 'Not checked'}
                         </span>
                     </div>
-                    <p className="mt-2 text-xs text-gray-400">
+                    <p className="mt-2.5 text-xs text-gray-400 font-medium">
                         {isChecking
                             ? 'Validating workflow requirements against provider availability.'
                             : validationSummary?.valid

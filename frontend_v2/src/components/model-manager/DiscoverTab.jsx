@@ -12,10 +12,10 @@ const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], 
 function MultiSelectDropdown({ label, options, selected, onChange }) {
     const [open, setOpen] = useState(false);
     return (
-        <div className="relative flex flex-col gap-1">
-            <label className="text-[10px] uppercase tracking-wider text-gray-500">{label}</label>
+        <div className="relative flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{label}</label>
             <div 
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white cursor-pointer select-none h-[30px] flex items-center min-w-[100px]"
+                className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white cursor-pointer select-none h-10 flex items-center min-w-[120px] shadow-inner transition-colors hover:border-white/20"
                 onClick={() => setOpen(!open)}
             >
                 {selected.length === 0 ? 'All' : `${selected.length} Selected`}
@@ -23,14 +23,14 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
             {open && (
                 <>
                     <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-                    <div className="absolute top-full left-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-20 max-h-60 overflow-y-auto py-1">
+                    <div className="absolute top-[calc(100%+0.5rem)] left-0 w-56 glass-panel border border-white/10 rounded-2xl shadow-2xl z-20 max-h-64 overflow-y-auto p-2 backdrop-blur-xl">
                         {options.map(opt => {
                             const value = typeof opt === 'string' ? opt : opt[0];
                             const text = typeof opt === 'string' ? opt : opt[1];
                             if (!value) return null;
                             const isChecked = selected.includes(value);
                             return (
-                                <label key={value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-700 cursor-pointer">
+                                <label key={value} className="flex items-center gap-3 p-2.5 hover:bg-white/5 rounded-xl cursor-pointer transition-colors">
                                     <input 
                                         type="checkbox" 
                                         checked={isChecked}
@@ -38,9 +38,9 @@ function MultiSelectDropdown({ label, options, selected, onChange }) {
                                             if (isChecked) onChange(selected.filter(v => v !== value));
                                             else onChange([...selected, value]);
                                         }}
-                                        className="rounded bg-gray-900 border-gray-600 text-blue-500 focus:ring-blue-500 w-3 h-3"
+                                        className="rounded border-white/10 bg-black/40 text-blue-500 focus:ring-blue-500/50 w-4 h-4"
                                     />
-                                    <span className="text-xs text-white truncate">{text}</span>
+                                    <span className="text-sm font-medium text-gray-300 truncate">{text}</span>
                                 </label>
                             );
                         })}
@@ -263,52 +263,53 @@ export default function DiscoverTab() {
     return (
         <div className="space-y-6">
             {/* Search & Import Bar */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Search */}
-                    <form onSubmit={handleSearch} className="relative flex gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                            <input
-                                type="text"
-                                placeholder="Search models..."
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                enterKeyHint="search"
-                                className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                        <select
-                            value={source}
-                            onChange={(e) => setSource(e.target.value)}
-                            className="bg-gray-900 border border-gray-700 rounded-xl px-3 text-white focus:outline-none focus:border-blue-500"
-                        >
-                            <option value="civitai">CivitAI</option>
-                            <option value="huggingface">HuggingFace</option>
-                        </select>
-                        <button
-                            type="submit"
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-xl font-medium transition-colors flex items-center"
-                        >
-                            Search
-                        </button>
-                    </form>
+            {/* Search & Import Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Search */}
+                <form onSubmit={handleSearch} className="relative flex gap-3">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
+                        <input
+                            type="text"
+                            placeholder="Search models..."
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            enterKeyHint="search"
+                            className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white focus:ring-2 focus:ring-blue-500/50 outline-none shadow-inner glow-focus placeholder-gray-600 font-medium"
+                        />
+                    </div>
+                    <select
+                        value={source}
+                        onChange={(e) => setSource(e.target.value)}
+                        className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-medium shadow-inner glow-focus"
+                    >
+                        <option value="civitai">CivitAI</option>
+                        <option value="huggingface">HuggingFace</option>
+                    </select>
+                    <button
+                        type="submit"
+                        className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-6 rounded-xl font-bold transition-all duration-300 flex items-center shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10"
+                    >
+                        Search
+                    </button>
+                </form>
 
                 {/* URL Import */}
-                <div className="flex gap-2">
+                <div className="flex gap-3">
                     <input
                         type="text"
                         placeholder="Paste CivitAI or HuggingFace URL..."
                         value={urlInput}
                         onChange={(e) => setUrlInput(e.target.value)}
-                        className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors"
+                        className="flex-1 bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium transition-all"
                     />
                     <button
                         onClick={handleUrlImport}
                         disabled={importing || !urlInput}
-                        className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 rounded-xl font-medium transition-colors flex items-center gap-2"
+                        className="bg-black/40 hover:bg-[#0B0E14] disabled:opacity-50 disabled:cursor-not-allowed text-white border border-white/10 hover:border-purple-500/50 px-6 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(168,85,247,0.3)] transform active:scale-95"
                         aria-label="Import model from URL"
                     >
-                        {importing ? <Loader2 className="animate-spin" /> : <Download size={18} />}
+                        {importing ? <Loader2 className="animate-spin text-purple-400" /> : <Download size={20} className="text-purple-400" />}
                         Import
                     </button>
                 </div>
@@ -316,35 +317,35 @@ export default function DiscoverTab() {
 
             {/* Popular Tags & Active Filters (CivitAI only) */}
             {source === 'civitai' && (
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4">
                     {(filterUsername || filterTag) && (
-                        <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-gray-500 uppercase tracking-wider">Active Filters:</span>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Active Filters:</span>
                             {filterUsername && (
-                                <div className="flex items-center gap-1 bg-blue-900/50 border border-blue-500/50 text-blue-300 px-3 py-1 rounded-full text-xs">
-                                    <span className="font-medium">@{filterUsername}</span>
-                                    <button onClick={() => setFilterUsername("")} className="hover:text-white ml-1">✕</button>
+                                <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 px-3 py-1.5 rounded-full text-xs shadow-inner">
+                                    <span className="font-bold tracking-wide">@{filterUsername}</span>
+                                    <button onClick={() => setFilterUsername("")} className="hover:text-white ml-1 transition-colors">✕</button>
                                 </div>
                             )}
                             {filterTag && (
-                                <div className="flex items-center gap-1 bg-purple-900/50 border border-purple-500/50 text-purple-300 px-3 py-1 rounded-full text-xs">
-                                    <span className="font-medium">#{filterTag}</span>
-                                    <button onClick={() => setFilterTag("")} className="hover:text-white ml-1">✕</button>
+                                <div className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/30 text-purple-300 px-3 py-1.5 rounded-full text-xs shadow-inner">
+                                    <span className="font-bold tracking-wide">#{filterTag}</span>
+                                    <button onClick={() => setFilterTag("")} className="hover:text-white ml-1 transition-colors">✕</button>
                                 </div>
                             )}
                         </div>
                     )}
                     {popularTags.length > 0 && (
-                        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
-                            <span className="text-[10px] text-gray-500 uppercase tracking-wider whitespace-nowrap sticky left-0 bg-gray-950 pr-2">Trending</span>
+                        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10">Trending</span>
                             {popularTags.map(t => (
                                 <button
                                     key={t.name}
                                     onClick={() => setFilterTag(filterTag === t.name ? "" : t.name)}
-                                    className={`whitespace-nowrap px-3 py-1 rounded-full text-xs transition-colors border ${
+                                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-inner ${
                                         filterTag === t.name 
-                                            ? 'bg-purple-600 border-purple-500 text-white' 
-                                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white'
+                                            ? 'bg-purple-600/20 border border-purple-500 text-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.3)]' 
+                                            : 'bg-[#0B0E14]/80 border border-white/5 text-gray-400 hover:bg-white/5 hover:text-white hover:border-white/10'
                                     }`}
                                 >
                                     {t.name}
@@ -357,17 +358,17 @@ export default function DiscoverTab() {
 
             {/* Filter bar (CivitAI only) */}
             {source === 'civitai' && (
-                <div className="flex flex-wrap gap-3 p-4 rounded-xl border border-gray-700 bg-gray-900/60">
+                <div className="flex flex-wrap gap-4 p-5 rounded-2xl border border-white/5 bg-[#0B0E14]/60 shadow-inner">
                     <MultiSelectDropdown 
                         label="Type" 
                         options={civitaiEnums.ModelType} 
                         selected={filterTypes} 
                         onChange={setFilterTypes} 
                     />
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Sort</label>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Sort</label>
                         <select value={filterSort} onChange={e => setFilterSort(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
+                            className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             {SORT_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
@@ -377,40 +378,40 @@ export default function DiscoverTab() {
                         selected={filterBaseModels} 
                         onChange={setFilterBaseModels} 
                     />
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">NSFW</label>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">NSFW</label>
                         <select value={filterNsfw} onChange={e => setFilterNsfw(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
+                            className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             <option value="">All</option>
                             <option value="true">NSFW</option>
                             <option value="false">SFW Only</option>
                         </select>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Period</label>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Period</label>
                         <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px]">
+                            className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none">
                             {PERIOD_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Creator</label>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Creator</label>
                         <input 
                             type="text" 
                             placeholder="@username"
                             value={filterUsername}
                             onChange={e => setFilterUsername(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px] w-[120px] outline-none focus:border-blue-500"
+                            className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 w-[140px] shadow-inner glow-focus focus:ring-2 focus:ring-blue-500/50 outline-none placeholder-gray-600"
                         />
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase tracking-wider text-gray-500">Tag</label>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Tag</label>
                         <input 
                             type="text" 
                             placeholder="#tag"
                             value={filterTag}
                             onChange={e => setFilterTag(e.target.value)}
-                            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white h-[30px] w-[120px] outline-none focus:border-purple-500"
+                            className="bg-[#0B0E14]/80 border border-white/10 rounded-xl px-4 py-2 text-xs font-medium text-white h-10 w-[140px] shadow-inner glow-focus focus:ring-2 focus:ring-purple-500/50 outline-none placeholder-gray-600"
                         />
                     </div>
                     <div className="flex items-end">
@@ -423,7 +424,7 @@ export default function DiscoverTab() {
                             setFilterUsername("");
                             setFilterTag("");
                         }}
-                            className="text-xs text-gray-500 hover:text-white px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800">
+                            className="text-[11px] font-bold uppercase tracking-widest text-red-400 hover:text-white px-4 py-2.5 rounded-xl border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 transition-colors shadow-inner h-10">
                             Clear
                         </button>
                     </div>
@@ -434,7 +435,7 @@ export default function DiscoverTab() {
             {loading ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {Array.from({ length: 8 }).map((_, i) => (
-                        <ModelCardSkeleton key={i} />
+                        <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
                     ))}
                 </div>
             ) : importedModel ? (
@@ -454,16 +455,16 @@ export default function DiscoverTab() {
                     </div>
                     
                     {hasMore && (
-                        <div className="flex justify-center pt-4 pb-8">
+                        <div className="flex justify-center pt-6 pb-10">
                             <button
                                 onClick={handleLoadMore}
                                 disabled={loadingMore}
-                                className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-colors border border-gray-700"
+                                className="bg-[#0B0E14]/80 hover:bg-black/40 disabled:opacity-50 text-white px-8 py-3.5 rounded-2xl font-bold tracking-wide flex items-center gap-3 transition-all duration-300 border border-white/10 shadow-lg hover:shadow-[0_0_15px_rgba(255,255,255,0.1)] transform active:scale-95"
                             >
                                 {loadingMore ? (
                                     <>
-                                        <Loader2 className="animate-spin" size={18} />
-                                        Loading more...
+                                        <Loader2 className="animate-spin text-blue-400" size={20} />
+                                        <span>Loading more...</span>
                                     </>
                                 ) : (
                                     'Load More Results'
@@ -473,9 +474,9 @@ export default function DiscoverTab() {
                     )}
                 </div>
             ) : (
-                <div className="text-center py-20 text-gray-500">
-                    <Globe size={48} className="mx-auto mb-4 opacity-20" />
-                    <p>Search for models or paste a URL (CivitAI / HuggingFace) to get started</p>
+                <div className="text-center py-24 text-gray-500 glass-panel rounded-3xl border border-white/5 shadow-2xl">
+                    <Globe size={64} className="mx-auto mb-6 opacity-40 text-blue-400 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]" />
+                    <p className="text-xl font-bold tracking-wide text-gray-300">Search for models or paste a URL (CivitAI / HuggingFace) to get started</p>
                 </div>
             )}
         </div>

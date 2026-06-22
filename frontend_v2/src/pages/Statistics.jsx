@@ -246,7 +246,7 @@ const Statistics = () => {
     ];
 
     return (
-        <div className="min-h-[calc(100vh-64px)] bg-[#050505] text-white p-4 md:p-8 relative overflow-hidden">
+        <div className="min-h-screen p-4 md:p-8 relative overflow-hidden">
             {/* Dynamic Background Gradients */}
             <div className="absolute top-[-20%] right-[-10%] w-[800px] h-[800px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
             <div className="absolute bottom-[-20%] left-[-10%] w-[800px] h-[800px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
@@ -257,22 +257,22 @@ const Statistics = () => {
                 animate="show"
                 className="max-w-7xl mx-auto space-y-8 relative z-10"
             >
-                <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-end justify-between gap-6 glass-panel p-8 rounded-3xl border border-white/5 shadow-2xl">
                     <div>
-                        <h1 className="text-4xl font-black mb-2 tracking-tight bg-gradient-to-r from-white via-gray-200 to-gray-500 bg-clip-text text-transparent">
+                        <h1 className="text-3xl font-black mb-2 tracking-tight bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-md">
                             Telemetry & Insights
                         </h1>
-                        <p className="text-gray-400 font-medium">
-                            Synthesized from <span className="text-white">{data.total_images ?? 0}</span> generations
+                        <p className="text-gray-400 font-medium tracking-wide">
+                            Synthesized from <span className="text-white font-bold px-2 py-0.5 bg-white/10 rounded-md border border-white/5">{data.total_images ?? 0}</span> generations
                         </p>
                     </div>
                     
-                    <div className="flex bg-white/5 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-2xl">
+                    <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
                         {ranges.map((r) => (
                             <button
                                 key={r.value}
                                 onClick={() => setTimeRange(r.value)}
-                                className={`px-6 py-2 rounded-xl text-xs font-bold tracking-widest transition-all duration-300 ${timeRange === r.value ? 'bg-white text-black shadow-lg scale-105' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
+                                className={`px-6 py-2 rounded-xl text-[11px] font-bold tracking-widest uppercase transition-all duration-300 ${timeRange === r.value ? 'bg-gradient-to-r from-blue-600/50 to-violet-600/50 text-white shadow-[0_0_15px_rgba(59,130,246,0.3)] border border-blue-500/50' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
                             >
                                 {r.label}
                             </button>
@@ -280,56 +280,70 @@ const Statistics = () => {
                     </div>
                 </motion.div>
 
-                <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <motion.div whileHover={{ scale: 1.02 }} className="group bg-gradient-to-br from-blue-900/20 to-transparent p-6 rounded-3xl border border-blue-500/20 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-blue-500/40 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)]">
-                        <div className="bg-blue-500/10 p-4 rounded-2xl text-blue-400 ring-1 ring-blue-500/30 group-hover:bg-blue-500/20 transition-colors">
-                            <Sparkles size={28} />
+                <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-blue-500/40 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)] relative overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                        <div className="bg-blue-500/10 p-4 rounded-2xl text-blue-400 ring-1 ring-blue-500/30 group-hover:bg-blue-500/20 transition-colors shadow-inner relative z-10">
+                            <Sparkles size={28} className="drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                         </div>
-                        <div>
-                            <h3 className="text-xs text-blue-400 font-black tracking-widest uppercase mb-2">Aesthetic Signature</h3>
-                            <p className="text-gray-200 text-sm leading-relaxed">{getTopCheckpointInsight()}</p>
+                        <div className="relative z-10">
+                            <h3 className="text-[10px] text-blue-400 font-bold tracking-widest uppercase mb-1">Aesthetic Signature</h3>
+                            <p className="text-gray-300 text-sm font-medium leading-relaxed">{getTopCheckpointInsight()}</p>
                         </div>
                     </motion.div>
-                    <motion.div whileHover={{ scale: 1.02 }} className="group bg-gradient-to-br from-purple-900/20 to-transparent p-6 rounded-3xl border border-purple-500/20 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-purple-500/40 hover:shadow-[0_0_30px_rgba(168,85,247,0.15)]">
-                        <div className="bg-purple-500/10 p-4 rounded-2xl text-purple-400 ring-1 ring-purple-500/30 group-hover:bg-purple-500/20 transition-colors">
-                            <Zap size={28} />
+                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-purple-500/40 hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] relative overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                        <div className="bg-purple-500/10 p-4 rounded-2xl text-purple-400 ring-1 ring-purple-500/30 group-hover:bg-purple-500/20 transition-colors shadow-inner relative z-10">
+                            <Zap size={28} className="drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
                         </div>
-                        <div>
-                            <h3 className="text-xs text-purple-400 font-black tracking-widest uppercase mb-2">Workflow Preference</h3>
-                            <p className="text-gray-200 text-sm leading-relaxed">{getTopSamplerInsight()}</p>
+                        <div className="relative z-10">
+                            <h3 className="text-[10px] text-purple-400 font-bold tracking-widest uppercase mb-1">Workflow Preference</h3>
+                            <p className="text-gray-300 text-sm font-medium leading-relaxed">{getTopSamplerInsight()}</p>
                         </div>
                     </motion.div>
                 </motion.div>
 
-                <motion.div variants={itemVariants} className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <motion.div whileHover={{ y: -5 }} className="bg-white/5 backdrop-blur-xl p-6 rounded-3xl border border-white/10 hover:border-white/20 transition-all duration-300">
-                        <div className="flex items-center gap-2 mb-4 text-gray-400">
+                <motion.div variants={itemVariants} className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Image size={48} />
+                        </div>
+                        <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Image size={16} />
-                            <span className="text-xs font-bold uppercase tracking-wider">Total Volume</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Total Volume</span>
                         </div>
-                        <div className="text-4xl font-black tracking-tight">{data.total_images ?? 0}</div>
+                        <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data.total_images ?? 0}</div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="bg-white/5 backdrop-blur-xl p-6 rounded-3xl border border-white/10 hover:border-white/20 transition-all duration-300">
-                        <div className="flex items-center gap-2 mb-4 text-gray-400">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Clock size={48} />
+                        </div>
+                        <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Clock size={16} />
-                            <span className="text-xs font-bold uppercase tracking-wider">Avg Speed</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Avg Speed</span>
                         </div>
-                        <div className="text-4xl font-black tracking-tight">{data?.performance?.avg_time || 0}<span className="text-xl text-gray-600 ml-1">s</span></div>
+                        <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data?.performance?.avg_time || 0}<span className="text-xl text-gray-500 ml-1">s</span></div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="bg-white/5 backdrop-blur-xl p-6 rounded-3xl border border-white/10 hover:border-white/20 transition-all duration-300">
-                        <div className="flex items-center gap-2 mb-4 text-gray-400">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Hash size={48} />
+                        </div>
+                        <div className="flex items-center gap-2 mb-4 text-gray-500 relative z-10">
                             <Hash size={16} />
-                            <span className="text-xs font-bold uppercase tracking-wider">Unique Words</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Unique Words</span>
                         </div>
-                        <div className="text-4xl font-black tracking-tight">{Object.keys(data?.prompts?.keywords || {}).length}</div>
+                        <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{Object.keys(data?.prompts?.keywords || {}).length}</div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="bg-gradient-to-b from-emerald-500/10 to-transparent p-6 rounded-3xl border border-emerald-500/20 hover:border-emerald-500/40 transition-all duration-300 relative overflow-hidden">
-                        <div className="flex items-center gap-2 mb-4 text-emerald-400/80 relative z-10">
+                    <motion.div whileHover={{ y: -5 }} className="bg-gradient-to-br from-emerald-500/10 to-[#0B0E14]/80 backdrop-blur-md p-6 rounded-3xl border border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_20px_rgba(52,211,153,0.1)] transition-all duration-300 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 text-emerald-400 group-hover:opacity-20 transition-opacity">
+                            <Activity size={48} />
+                        </div>
+                        <div className="flex items-center gap-2 mb-4 text-emerald-500 relative z-10">
                             <Activity size={16} />
-                            <span className="text-xs font-bold uppercase tracking-wider">Success Rate</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Success Rate</span>
                         </div>
                         <div className="text-4xl font-black tracking-tight text-emerald-400 relative z-10 drop-shadow-[0_0_15px_rgba(52,211,153,0.3)]">
                             {data?.performance?.success_rate != null
@@ -340,63 +354,75 @@ const Statistics = () => {
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <div className="flex justify-between items-center mb-8">
-                            <h3 className="text-lg font-bold flex items-center gap-3">
-                                <Calendar className="text-emerald-400" size={20} />
+                    <div className="lg:col-span-2 glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                            <h3 className="text-lg font-black tracking-wide flex items-center gap-3 text-white">
+                                <div className="p-2 bg-emerald-500/10 rounded-xl">
+                                    <Calendar className="text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]" size={20} />
+                                </div>
                                 Generation Streak
                             </h3>
-                            <span className="text-xs font-bold bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full ring-1 ring-emerald-500/30">
+                            <span className="text-[10px] font-bold tracking-widest bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-lg border border-emerald-500/20 shadow-inner uppercase">
                                 {timelineDaily.length} ACTIVE DAYS
                             </span>
                         </div>
                         <ContributionHeatmap data={timelineDaily} />
                     </div>
 
-                    <div className="bg-gradient-to-br from-emerald-900/30 to-transparent p-8 rounded-3xl border border-emerald-500/20 relative overflow-hidden group hover:border-emerald-500/40 transition-all">
-                        <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-emerald-500/10 rounded-full blur-[40px] pointer-events-none group-hover:bg-emerald-500/20 transition-colors" />
-                        <h3 className="text-lg font-bold mb-8 flex items-center gap-3 relative z-10">
-                            <Leaf className="text-emerald-400" size={20} />
+                    <div className="bg-gradient-to-br from-emerald-900/20 to-[#0B0E14]/80 backdrop-blur-md p-8 rounded-3xl border border-emerald-500/20 relative overflow-hidden group hover:border-emerald-500/40 transition-all hover:shadow-[0_0_30px_rgba(52,211,153,0.1)]">
+                        <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-emerald-500/10 rounded-full blur-[50px] pointer-events-none group-hover:bg-emerald-500/20 transition-colors duration-500" />
+                        <h3 className="text-lg font-black tracking-wide mb-8 flex items-center gap-3 relative z-10 text-white">
+                            <div className="p-2 bg-emerald-500/10 rounded-xl">
+                                <Leaf className="text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]" size={20} />
+                            </div>
                             Resource Impact
                         </h3>
                         <div className="space-y-6 relative z-10">
-                            <div>
-                                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner">
+                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
                                     <Cpu size={14} /> GPU Hours
                                 </div>
-                                <div className="text-3xl font-black text-emerald-400 drop-shadow-md">
-                                    {TOTAL_HOURS.toFixed(2)}<span className="text-lg text-emerald-600/50 ml-1">h</span>
+                                <div className="text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
+                                    {TOTAL_HOURS.toFixed(2)}<span className="text-lg text-emerald-600/50 ml-1 font-bold">h</span>
                                 </div>
                             </div>
                             
-                            <div>
-                                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Power Usage</div>
-                                <div className="text-xl font-bold">
-                                    {KWH.toFixed(2)} <span className="text-sm text-gray-500">kWh</span>
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
+                                <div>
+                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Power Usage</div>
+                                    <div className="text-2xl font-black text-white drop-shadow-sm">
+                                        {KWH.toFixed(2)}
+                                    </div>
                                 </div>
+                                <span className="text-sm font-bold text-gray-500 mb-1">kWh</span>
                             </div>
 
-                            <div>
-                                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Est. Carbon</div>
-                                <div className="text-xl font-bold">
-                                    {CO2_EMISSIONS.toFixed(2)} <span className="text-sm text-gray-500">kg CO₂</span>
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 shadow-inner flex justify-between items-end">
+                                <div>
+                                    <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">Est. Carbon</div>
+                                    <div className="text-2xl font-black text-white drop-shadow-sm">
+                                        {CO2_EMISSIONS.toFixed(2)}
+                                    </div>
                                 </div>
+                                <span className="text-sm font-bold text-gray-500 mb-1">kg CO₂</span>
                             </div>
                         </div>
                     </div>
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <h3 className="text-lg font-bold mb-8 flex items-center gap-3">
-                            <BarChart3 className="text-blue-400" size={20} />
+                    <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <h3 className="text-lg font-black tracking-wide mb-8 flex items-center gap-3 text-white">
+                            <div className="p-2 bg-blue-500/10 rounded-xl">
+                                <BarChart3 className="text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" size={20} />
+                            </div>
                             Top Models
                         </h3>
                         <ResponsiveContainer width="100%" height={300}>
                             <BarChart data={checkpointsData} layout="vertical" margin={{ left: 0, right: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" horizontal={true} vertical={false} />
-                                <XAxis type="number" stroke="#ffffff30" tick={{fill: '#9ca3af', fontSize: 12}} axisLine={false} tickLine={false} />
-                                <YAxis dataKey="name" type="category" width={150} stroke="#ffffff30" tick={{ fontSize: 13, fill: '#d1d5db', fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={true} vertical={false} />
+                                <XAxis type="number" stroke="#ffffff20" tick={{fill: '#9ca3af', fontSize: 11, fontWeight: 'bold'}} axisLine={false} tickLine={false} />
+                                <YAxis dataKey="name" type="category" width={150} stroke="#ffffff20" tick={{ fontSize: 11, fill: '#d1d5db', fontWeight: 'bold' }} axisLine={false} tickLine={false} />
                                 <Tooltip cursor={{fill: '#ffffff05'}} content={<CustomTooltip />} />
                                 <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={24}>
                                     {checkpointsData.map((entry, index) => (
@@ -417,16 +443,18 @@ const Statistics = () => {
                         </ResponsiveContainer>
                     </div>
 
-                    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <h3 className="text-lg font-bold mb-8 flex items-center gap-3">
-                            <Activity className="text-purple-400" size={20} />
+                    <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <h3 className="text-lg font-black tracking-wide mb-8 flex items-center gap-3 text-white">
+                            <div className="p-2 bg-purple-500/10 rounded-xl">
+                                <Activity className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]" size={20} />
+                            </div>
                             Hourly Activity
                         </h3>
                         <ResponsiveContainer width="100%" height={300}>
                             <BarChart data={timelineHourly} margin={{ top: 10 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                                <XAxis dataKey="hour" stroke="#ffffff30" tick={{ fontSize: 12, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                                <YAxis stroke="#ffffff30" tick={{fill: '#9ca3af', fontSize: 12}} axisLine={false} tickLine={false} />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis dataKey="hour" stroke="#ffffff20" tick={{ fontSize: 11, fill: '#9ca3af', fontWeight: 'bold' }} axisLine={false} tickLine={false} />
+                                <YAxis stroke="#ffffff20" tick={{fill: '#9ca3af', fontSize: 11, fontWeight: 'bold'}} axisLine={false} tickLine={false} />
                                 <Tooltip cursor={{fill: '#ffffff05'}} content={<CustomTooltip />} />
                                 <Bar dataKey="count" fill="url(#purpleGradient)" radius={[6, 6, 0, 0]} />
                                 <defs>
@@ -441,21 +469,27 @@ const Statistics = () => {
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-400">Steps Curve</h3>
+                    <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            Steps Curve
+                        </h3>
                         <ResponsiveContainer width="100%" height={200}>
                             <LineChart data={stepsData} margin={{ top: 10 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                                <XAxis dataKey="steps" stroke="#ffffff30" tick={{fontSize: 12, fill: '#9ca3af'}} axisLine={false} tickLine={false} />
-                                <YAxis stroke="#ffffff30" tick={{fontSize: 12, fill: '#9ca3af'}} axisLine={false} tickLine={false} width={30} />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis dataKey="steps" stroke="#ffffff20" tick={{fontSize: 11, fill: '#9ca3af', fontWeight: 'bold'}} axisLine={false} tickLine={false} />
+                                <YAxis stroke="#ffffff20" tick={{fontSize: 11, fill: '#9ca3af', fontWeight: 'bold'}} axisLine={false} tickLine={false} width={30} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={4} dot={{ fill: '#10b981', r: 4, strokeWidth: 0 }} activeDot={{ r: 6, stroke: '#047857', strokeWidth: 2 }} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
 
-                    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-400">Samplers</h3>
+                    <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-500" />
+                            Samplers
+                        </h3>
                         <ResponsiveContainer width="100%" height={200}>
                             <PieChart>
                                 <Pie data={samplersData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="count" stroke="none" paddingAngle={4}>
@@ -468,13 +502,16 @@ const Statistics = () => {
                         </ResponsiveContainer>
                     </div>
 
-                    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 hover:border-white/20 transition-all">
-                        <h3 className="text-xs font-bold tracking-widest uppercase mb-6 text-gray-400">Resolutions</h3>
+                    <div className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-white/10 transition-all hover:shadow-xl">
+                        <h3 className="text-[10px] font-bold tracking-widest uppercase mb-6 text-gray-500 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-pink-500" />
+                            Resolutions
+                        </h3>
                         <ResponsiveContainer width="100%" height={200}>
                             <BarChart data={resolutionsData} margin={{ top: 10, bottom: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                                <XAxis dataKey="resolution" stroke="#ffffff30" tick={{ fontSize: 10, fill: '#9ca3af' }} angle={-45} textAnchor="end" height={40} axisLine={false} tickLine={false} />
-                                <YAxis stroke="#ffffff30" tick={{fontSize: 12, fill: '#9ca3af'}} axisLine={false} tickLine={false} width={30} />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                <XAxis dataKey="resolution" stroke="#ffffff20" tick={{ fontSize: 10, fill: '#9ca3af', fontWeight: 'bold' }} angle={-45} textAnchor="end" height={40} axisLine={false} tickLine={false} />
+                                <YAxis stroke="#ffffff20" tick={{fontSize: 11, fill: '#9ca3af', fontWeight: 'bold'}} axisLine={false} tickLine={false} width={30} />
                                 <Tooltip cursor={{fill: '#ffffff05'}} content={<CustomTooltip />} />
                                 <Bar dataKey="count" fill="url(#pinkGradient)" radius={[6, 6, 0, 0]} />
                                 <defs>
@@ -488,12 +525,14 @@ const Statistics = () => {
                     </div>
                 </motion.div>
 
-                <motion.div variants={itemVariants} className="bg-gradient-to-br from-neutral-900/80 to-pink-900/20 p-10 rounded-[2.5rem] border border-pink-500/20 relative overflow-hidden group hover:border-pink-500/40 transition-all shadow-2xl">
+                <motion.div variants={itemVariants} className="bg-gradient-to-br from-[#0B0E14]/90 to-pink-900/20 backdrop-blur-xl p-10 rounded-[2.5rem] border border-pink-500/20 relative overflow-hidden group hover:border-pink-500/40 transition-all shadow-2xl">
                     <div className="absolute -right-20 -top-20 text-pink-500/5 rotate-12 pointer-events-none transition-transform duration-700 group-hover:rotate-[24deg] group-hover:scale-110">
                         <MessageSquare size={300} />
                     </div>
-                    <h3 className="text-2xl font-bold mb-8 flex items-center gap-3 relative z-10">
-                        <MessageSquare className="text-pink-400" size={24} />
+                    <h3 className="text-2xl font-black tracking-wide mb-8 flex items-center gap-3 relative z-10 text-white">
+                        <div className="p-3 bg-pink-500/10 rounded-2xl">
+                            <MessageSquare className="text-pink-400 drop-shadow-[0_0_8px_rgba(244,114,182,0.5)]" size={24} />
+                        </div>
                         Prompt Anatomy
                     </h3>
                     <div className="flex flex-wrap items-center justify-center gap-3 relative z-10">
@@ -504,14 +543,14 @@ const Statistics = () => {
                                 <motion.div
                                     key={word}
                                     whileHover={{ scale: 1.1, y: -2 }}
-                                    className="px-4 py-2 rounded-2xl bg-white/5 backdrop-blur-sm border border-white/10 hover:border-pink-400 hover:bg-pink-500/20 transition-all cursor-default shadow-sm"
+                                    className="px-5 py-2.5 rounded-2xl bg-white/5 backdrop-blur-md border border-white/5 hover:border-pink-400/50 hover:bg-pink-500/10 transition-all cursor-default shadow-inner"
                                     style={{
                                         fontSize: `${Math.max(0.85, Math.min(2.5, 0.85 + (ratio * 1.5)))}rem`,
                                         opacity: Math.max(0.6, Math.min(1, 0.6 + ratio)),
-                                        fontWeight: ratio > 0.3 ? (ratio > 0.7 ? 800 : 600) : 400
+                                        fontWeight: ratio > 0.3 ? (ratio > 0.7 ? 900 : 700) : 500
                                     }}
                                 >
-                                    <span className="text-white drop-shadow-sm">{word}</span>
+                                    <span className="text-white tracking-wide">{word}</span>
                                 </motion.div>
                             )
                         })}

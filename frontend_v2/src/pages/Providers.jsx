@@ -166,31 +166,31 @@ export default function Providers() {
         >
             {/* ── Page Header ── */}
             <div className="mb-6">
-                <h1 className="mb-1 text-3xl font-bold gradient-header">Providers</h1>
-                <p className="text-sm text-gray-500">
+                <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 drop-shadow-md tracking-tight mb-1">Providers</h1>
+                <p className="text-sm text-gray-400 font-medium tracking-wide">
                     {providers.length} provider{providers.length !== 1 ? 's' : ''} configured
                     {onlineCount > 0 && (
-                        <span className="text-green-400"> · {onlineCount} online</span>
+                        <span className="text-emerald-400 font-bold ml-1">· {onlineCount} online</span>
                     )}
                 </p>
             </div>
 
             {/* ── Toolbar ── */}
-            <div className="toolbar-strip mb-6">
-                <button className="primary" onClick={() => setShowAddModal(true)}>
-                    <Plus size={14} />
+            <div className="flex flex-wrap gap-3 mb-8">
+                <button className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10" onClick={() => setShowAddModal(true)}>
+                    <Plus size={18} strokeWidth={2.5} />
                     Add Provider
                 </button>
-                <button onClick={() => setShowAddModelModal(true)} disabled={providers.length === 0}>
-                    <Download size={14} />
+                <button className="bg-[#0B0E14]/80 hover:bg-black/40 text-gray-300 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 border border-white/10 shadow-inner disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => setShowAddModelModal(true)} disabled={providers.length === 0}>
+                    <Download size={18} />
                     Add Model
                 </button>
-                <button onClick={refreshAll} disabled={isRefreshing}>
-                    <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+                <button className="bg-[#0B0E14]/80 hover:bg-black/40 text-gray-300 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 border border-white/10 shadow-inner" onClick={refreshAll} disabled={isRefreshing}>
+                    <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
                     Refresh
                 </button>
-                <button className="warning" onClick={handleCleanupState}>
-                    <Wrench size={14} />
+                <button className="bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 border border-red-500/20 shadow-inner" onClick={handleCleanupState}>
+                    <Wrench size={18} />
                     Cleanup
                 </button>
             </div>
@@ -203,27 +203,27 @@ export default function Providers() {
             />
 
             {/* ── Search + Filters ── */}
-            <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <label className="relative block max-w-md flex-1">
-                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                    <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
                     <input
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search providers..."
-                        className="w-full rounded-lg border border-gray-800 bg-gray-950/60 py-2.5 pl-9 pr-4 text-sm text-white outline-none transition-colors focus:border-blue-500/50 placeholder:text-gray-600"
+                        className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-inner glow-focus placeholder-gray-600 font-medium"
                     />
                 </label>
 
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2 p-1.5 bg-black/40 border border-white/10 rounded-2xl w-fit shadow-inner">
                     {FILTERS.map((option) => (
                         <button
                             key={option.id}
                             onClick={() => setFilter(option.id)}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                            className={`relative px-4 py-2 text-xs font-bold rounded-xl transition-all duration-300 tracking-wide ${
                                 filter === option.id
-                                    ? 'border-blue-500/30 bg-blue-500/15 text-blue-300'
-                                    : 'border-gray-800 bg-gray-950/40 text-gray-500 hover:text-gray-300 hover:bg-gray-900/60'
+                                    ? 'text-white shadow-[0_0_10px_rgba(59,130,246,0.3)] bg-gradient-to-r from-blue-600/80 to-violet-600/80 border border-white/20'
+                                    : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
                             }`}
                         >
                             {option.label}
@@ -234,11 +234,15 @@ export default function Providers() {
 
             {/* ── Provider List ── */}
             {isLoading ? (
-                <div className="flex h-48 items-center justify-center rounded-xl border border-gray-800/60 bg-gray-950/30">
-                    <div className="text-sm text-gray-500">Loading providers...</div>
+                <div className="glass-panel flex h-64 items-center justify-center rounded-3xl border border-white/5 shadow-2xl relative overflow-hidden">
+                     <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 animate-pulse" />
+                    <div className="flex flex-col items-center gap-4 relative z-10">
+                        <RefreshCw size={32} className="animate-spin text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]" />
+                        <div className="text-sm font-bold text-gray-400 tracking-wider uppercase">Loading providers...</div>
+                    </div>
                 </div>
             ) : filteredProviders.length > 0 ? (
-                <div className="space-y-2">
+                <div className="space-y-4">
                     {filteredProviders.map((provider) => (
                         <ProviderListItem
                             key={provider.id}
@@ -255,24 +259,29 @@ export default function Providers() {
                     ))}
                 </div>
             ) : (
-                <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-gray-800/60 bg-gray-950/30 text-center">
-                    <p className="mb-1 text-sm font-medium text-white">
-                        {providers.length === 0 ? 'No providers configured' : 'No matches'}
-                    </p>
-                    <p className="mb-4 max-w-sm text-xs text-gray-500">
-                        {providers.length === 0
-                            ? 'Create a provider to start dispatching inference jobs.'
-                            : 'Adjust your search or filter.'}
-                    </p>
-                    {providers.length === 0 && (
-                        <button
-                            onClick={() => setShowAddModal(true)}
-                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
-                        >
-                            <Plus size={14} />
-                            Add Provider
-                        </button>
-                    )}
+                <div className="glass-panel flex h-64 flex-col items-center justify-center rounded-3xl border border-white/5 shadow-2xl text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 pointer-events-none" />
+                    <div className="relative z-10 flex flex-col items-center">
+                        <Wrench size={48} className="mb-4 text-gray-600/50 drop-shadow-md" />
+                        <p className="mb-2 text-xl font-bold text-white tracking-wide">
+                            {providers.length === 0 ? 'No providers configured' : 'No matches'}
+                        </p>
+                        <p className="mb-6 max-w-sm text-sm text-gray-400 font-medium">
+                            {providers.length === 0
+                                ? 'Create a provider to start dispatching inference jobs.'
+                                : 'Adjust your search or filter.'}
+                        </p>
+                        {providers.length === 0 && (
+                            <button
+                                onClick={() => setShowAddModal(true)}
+                                className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-6 py-3 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10"
+                            >
+                                <Plus size={18} strokeWidth={2.5} />
+                                Add Provider
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
 
