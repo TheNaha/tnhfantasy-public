@@ -32,19 +32,19 @@ import { persist } from 'zustand/middleware';
 const BASE_MODEL_SETTINGS = {
     illustrious: {
         steps: 25, cfg: 6.0, sampler: 'euler_ancestral', scheduler: 'normal',
-        width: 1024, height: 1024
+        width: 1024, height: 1024, clipSkip: 2
     },
     pony: {
         steps: 25, cfg: 6.0, sampler: 'dpmpp_2m', scheduler: 'karras',
-        width: 1024, height: 1024
+        width: 1024, height: 1024, clipSkip: 2
     },
     sdxl: {
         steps: 30, cfg: 7.0, sampler: 'dpmpp_2m', scheduler: 'karras',
-        width: 1024, height: 1024
+        width: 1024, height: 1024, clipSkip: 1
     },
     sd15: {
         steps: 25, cfg: 7.0, sampler: 'euler_ancestral', scheduler: 'normal',
-        width: 512, height: 768
+        width: 512, height: 768, clipSkip: 1
     },
     flux: {
         steps: 20, cfg: 1.0, sampler: 'euler', scheduler: 'normal',
@@ -111,6 +111,12 @@ export const useGeneratorStore = create(
             cfg: 7.0,
             sampler: "euler",
             scheduler: "normal",
+            clipSkip: 1,
+            enableFreeU: false,
+            enablePAG: false,
+            pagScale: 3.0,
+            enableLatentUpscale: false,
+            latentUpscaleMultiplier: 1.5,
             width: 1024,
             height: 1024,
             batchSize: 1,
@@ -123,7 +129,10 @@ export const useGeneratorStore = create(
                 cfg: false,
                 sampler: false,
                 scheduler: false,
+                clipSkip: false,
             },
+            controlnets: [],
+            ipAdapters: [],
             preflightResult: null,
 
             // Models
@@ -132,7 +141,6 @@ export const useGeneratorStore = create(
             selectedClip: null,      // For Flux: T5XXL model
             selectedClip2: null,     // For Flux: CLIP-L model
             selectedLoras: [], // Array of { name, strength, metadata, preview }
-            controlnets: [], // Array of { name, image, strength, preprocessor }
 
             // Enhancements
             hiresFix: false,
@@ -198,6 +206,12 @@ export const useGeneratorStore = create(
             setCfg: (cfg) => set({ cfg, preflightResult: null }),
             setSampler: (sampler) => set({ sampler, preflightResult: null }),
             setScheduler: (scheduler) => set({ scheduler, preflightResult: null }),
+            setClipSkip: (clipSkip) => set({ clipSkip, preflightResult: null }),
+            setEnableFreeU: (enableFreeU) => set({ enableFreeU, preflightResult: null }),
+            setEnablePAG: (enablePAG) => set({ enablePAG, preflightResult: null }),
+            setPagScale: (pagScale) => set({ pagScale, preflightResult: null }),
+            setEnableLatentUpscale: (enableLatentUpscale) => set({ enableLatentUpscale, preflightResult: null }),
+            setLatentUpscaleMultiplier: (latentUpscaleMultiplier) => set({ latentUpscaleMultiplier, preflightResult: null }),
             setWidth: (width) => set({ width, preflightResult: null }),
             setHeight: (height) => set({ height, preflightResult: null }),
             setBatchSize: (batchSize) => set({ batchSize, preflightResult: null }),
@@ -305,11 +319,22 @@ export const useGeneratorStore = create(
                 return { controlnets: newCns };
             }),
 
-            updateControlNet: (index, field, value) => set((state) => {
-                const newCns = [...state.controlnets];
-                newCns[index][field] = value;
-                return { controlnets: newCns };
-            }),
+            updateControlNet: (index, field, value) => set((state) => ({
+                controlnets: state.controlnets.map((cn, i) => i === index ? { ...cn, [field]: value } : cn),
+                preflightResult: null
+            })),
+            addIpAdapter: () => set((state) => ({ 
+                ipAdapters: [...state.ipAdapters, { image: null, model: '', clipVision: '', weight: 1.0, stopAt: 1.0 }],
+                preflightResult: null
+            })),
+            removeIpAdapter: (index) => set((state) => ({ 
+                ipAdapters: state.ipAdapters.filter((_, i) => i !== index),
+                preflightResult: null
+            })),
+            updateIpAdapter: (index, field, value) => set((state) => ({
+                ipAdapters: state.ipAdapters.map((ip, i) => i === index ? { ...ip, [field]: value } : ip),
+                preflightResult: null
+            })),
 
             addTriggerWords: (words) => set((state) => {
                 if (!words) return {};

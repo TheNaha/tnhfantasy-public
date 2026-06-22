@@ -17,6 +17,7 @@ import GeneratorTabs from '../components/generator/GeneratorTabs';
 import ModelSection from '../components/generator/ModelSection';
 import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
 import ControlNetSection from '../components/generator/ControlNetSection';
+import IPAdapterSection from '../components/generator/IPAdapterSection';
 import EnhancementsSection from '../components/generator/EnhancementsSection';
 import ResolutionSettings from '../components/generator/ResolutionSettings';
 import SamplingSettings from '../components/generator/SamplingSettings';
@@ -41,7 +42,11 @@ export default function SimpleGenerator() {
             setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
             setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
             setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
-            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet, addTriggerWords
+            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
+            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
+            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
+            addTriggerWords
         },
         providers, providersLoading,
         preflight: {
@@ -102,9 +107,11 @@ export default function SimpleGenerator() {
             clip: isUnet ? selectedClip : null,
             clip2: (isUnet && isFluxModel(selectedCheckpoint)) ? selectedClip2 : null,
             vae: effectiveVae,
-            loras: selectedLoras, controlnets,
+            loras: selectedLoras, controlnets, ipAdapters,
             hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
             adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
+            clipSkip, enableFreeU, enablePAG, pagScale,
+            enableLatentUpscale, latentUpscaleMultiplier,
             modelType: isFluxModel(selectedCheckpoint) ? 'flux' : (isPonyModel(selectedCheckpoint) || isAuraFlowModel(selectedCheckpoint)) ? 'sdxl' : 'sd15'
         });
 
@@ -113,7 +120,9 @@ export default function SimpleGenerator() {
             width, height, batchSize,
             checkpoint: selectedCheckpoint, vae: selectedVae, loras: selectedLoras,
             embeddings: extractEmbeddingsFromPrompt(prompt, negativePrompt),
-            hiresFix, hiresUpscaler, adetailer, adetailerModel
+            hiresFix, hiresUpscaler, adetailer, adetailerModel,
+            clipSkip, enableFreeU, enablePAG, pagScale, enableLatentUpscale,
+            ipAdapters, controlnets
         };
 
         return { workflow, metadata };
@@ -259,6 +268,13 @@ export default function SimpleGenerator() {
                         controlNetModels={controlNetModels}
                     />
 
+                    <IPAdapterSection
+                        ipAdapters={ipAdapters}
+                        addIpAdapter={addIpAdapter}
+                        removeIpAdapter={removeIpAdapter}
+                        updateIpAdapter={updateIpAdapter}
+                    />
+
                     <EnhancementsSection
                         hiresFix={hiresFix}
                         setHiresFix={setHiresFix}
@@ -284,6 +300,16 @@ export default function SimpleGenerator() {
                         adetailerInpaintMasked={adetailerInpaintMasked}
                         setAdetailerInpaintMasked={setAdetailerInpaintMasked}
                         adetailerModels={adetailerModels}
+                        enableFreeU={enableFreeU}
+                        setEnableFreeU={setEnableFreeU}
+                        enablePAG={enablePAG}
+                        setEnablePAG={setEnablePAG}
+                        pagScale={pagScale}
+                        setPagScale={setPagScale}
+                        enableLatentUpscale={enableLatentUpscale}
+                        setEnableLatentUpscale={setEnableLatentUpscale}
+                        latentUpscaleMultiplier={latentUpscaleMultiplier}
+                        setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
                     />
                 </div>
 

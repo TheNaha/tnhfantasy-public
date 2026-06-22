@@ -15,6 +15,8 @@ const SamplingSettings = memo(function SamplingSettings() {
     const setSampler = useGeneratorStore(state => state.setSampler);
     const scheduler = useGeneratorStore(state => state.scheduler);
     const setScheduler = useGeneratorStore(state => state.setScheduler);
+    const clipSkip = useGeneratorStore(state => state.clipSkip);
+    const setClipSkip = useGeneratorStore(state => state.setClipSkip);
     const seed = useGeneratorStore(state => state.seed);
     const setSeed = useGeneratorStore(state => state.setSeed);
     const randomizeSeed = useGeneratorStore(state => state.randomizeSeed);
@@ -61,6 +63,19 @@ const SamplingSettings = memo(function SamplingSettings() {
                     min={0}
                     max={30}
                     step={0.5}
+                    className="flex-1"
+                />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-white/5 mt-4 pt-4">
+                <NumberInput
+                    label={<>Clip Skip{renderLockIcon('clipSkip')}</>}
+                    value={clipSkip || 1}
+                    onChange={(val) => { if (!lockedParams.clipSkip) setClipSkip(Math.max(1, Math.min(4, val))); }}
+                    disabled={lockedParams.clipSkip}
+                    min={1}
+                    max={4}
+                    step={1}
                     className="flex-1"
                 />
             </div>

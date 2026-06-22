@@ -17,6 +17,9 @@ import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import SamplingSettings from '../components/generator/SamplingSettings';
 import PromptPanel from '../components/generator/PromptPanel';
+import EnhancementsSection from '../components/generator/EnhancementsSection';
+import ControlNetSection from '../components/generator/ControlNetSection';
+import IPAdapterSection from '../components/generator/IPAdapterSection';
 import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
@@ -44,7 +47,11 @@ export default function InpaintGenerator() {
             selectedCheckpoint, selectedVae, selectedLoras,
             setSourceImage, setDenoise, setMaskImage, setMaskBlur,
             clearSourceImage, setSelectedCheckpoint, setSelectedVae,
-            randomizeSeed, addLora, removeLora, updateLora
+            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
+            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
+            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
+            addTriggerWords
         },
         providers, providersLoading,
         preflight: {
@@ -151,7 +158,15 @@ export default function InpaintGenerator() {
                 loras: selectedLoras,
                 vae: selectedVae,
                 maskBlur,
-                growMask: 6
+                growMask: 6,
+                clipSkip,
+                enableFreeU,
+                enablePAG,
+                pagScale,
+                enableLatentUpscale,
+                latentUpscaleMultiplier,
+                ipAdapters,
+                controlnets: []
             });
 
             const metadata = {
@@ -172,6 +187,10 @@ export default function InpaintGenerator() {
                 checkpoint: inpaintCheckpoint || selectedCheckpoint,
                 vae: selectedVae,
                 loras: selectedLoras,
+                clipSkip,
+                enableFreeU,
+                enablePAG,
+                pagScale,
                 usedInpaintModel: !!inpaintCheckpoint
             };
 
@@ -308,6 +327,20 @@ export default function InpaintGenerator() {
                         />
 
                         {/* Inpaint Model Detection */}
+                        <ControlNetSection
+                            controlnets={[]}
+                            addControlNet={addControlNet}
+                            removeControlNet={removeControlNet}
+                            updateControlNet={updateControlNet}
+                        />
+
+                        <IPAdapterSection
+                            ipAdapters={ipAdapters}
+                            addIpAdapter={addIpAdapter}
+                            removeIpAdapter={removeIpAdapter}
+                            updateIpAdapter={updateIpAdapter}
+                        />
+
                         {inpaintCheckpoint && (
                             <div className="bg-purple-900/20 border border-purple-700/50 rounded-lg p-3 flex items-center gap-3">
                                 <Sparkles size={18} className="text-purple-400" />
@@ -321,6 +354,19 @@ export default function InpaintGenerator() {
                                 </div>
                             </div>
                         )}
+
+                        <EnhancementsSection
+                            enableFreeU={enableFreeU}
+                            setEnableFreeU={setEnableFreeU}
+                            enablePAG={enablePAG}
+                            setEnablePAG={setEnablePAG}
+                            pagScale={pagScale}
+                            setPagScale={setPagScale}
+                            enableLatentUpscale={enableLatentUpscale}
+                            setEnableLatentUpscale={setEnableLatentUpscale}
+                            latentUpscaleMultiplier={latentUpscaleMultiplier}
+                            setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
+                        />
 
                         {/* VAE Selector */}
                         <div className="space-y-2">
