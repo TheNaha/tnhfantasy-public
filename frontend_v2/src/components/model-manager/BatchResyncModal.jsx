@@ -8,24 +8,39 @@ import { useQueryClient } from '@tanstack/react-query';
 export default function BatchResyncModal({ onClose }) {
     const [progress, setProgress] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [logs, setLogs] = useState([]);
     const queryClient = useQueryClient();
 
     useEffect(() => {
         const handleProgress = (payload) => {
             setProgress(payload);
-            if (payload.status === 'completed') {
+            
+            if (payload.status === 'processing') {
+                setLogs(prev => [...prev, `[PROCESSING] Fetching metadata for: ${payload.current_model}`]);
+            } else if (payload.status === 'completed') {
+                setLogs(prev => [...prev, `[DONE] Batch resync completed! ${payload.results?.success || 0} succeeded, ${payload.results?.failed || 0} failed.`]);
                 toast.success('Batch resync complete!');
                 setIsProcessing(false);
                 queryClient.invalidateQueries({ queryKey: ['models'] });
-                setTimeout(() => {
-                    onClose();
-                }, 1500);
+                // Do not auto-close so the user can read the logs.
+            }
+            
+            if (payload.results?.errors && payload.results.errors.length > 0) {
+                // Find the latest error that wasn't in the previous logs
+                const latestError = payload.results.errors[payload.results.errors.length - 1];
+                setLogs(prev => {
+                    const errorMsg = `[ERROR] Failed to fetch: ${latestError.error}`;
+                    if (!prev.includes(errorMsg)) {
+                        return [...prev, errorMsg];
+                    }
+                    return prev;
+                });
             }
         };
 
         ws.on('RESYNC_PROGRESS', handleProgress);
         return () => ws.off('RESYNC_PROGRESS', handleProgress);
-    }, [onClose, queryClient]);
+    }, [queryClient]);
 
     const handleStartResync = async () => {
         setIsProcessing(true);
@@ -87,6 +102,22 @@ export default function BatchResyncModal({ onClose }) {
                                 <div className="bg-gray-800/50 px-4 py-2 rounded-lg border border-red-900/30">
                                     <span className="text-red-400 font-bold">{progress.results?.failed || 0}</span> Failed
                                 </div>
+                            </div>
+                            
+                            <div className="mt-6 w-full bg-[#0B0E14] rounded-lg border border-gray-800 h-48 overflow-y-auto p-3 text-xs font-mono text-gray-400 flex flex-col gap-1">
+                                {logs.length === 0 ? (
+                                    <span className="text-gray-600 italic">Waiting for logs...</span>
+                                ) : (
+                                    logs.map((log, i) => (
+                                        <div key={i} className={
+                                            log.startsWith('[ERROR]') ? 'text-red-400' : 
+                                            log.startsWith('[DONE]') ? 'text-green-400 font-bold' : 
+                                            'text-gray-300'
+                                        }>
+                                            {log}
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         </div>
                     ) : (

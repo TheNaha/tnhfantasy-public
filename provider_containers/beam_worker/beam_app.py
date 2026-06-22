@@ -335,7 +335,7 @@ async def download_model(request: Request):
     )
     
     if res.get("status") == "success":
-        time.sleep(5)
+        await asyncio.sleep(5)
         if os.path.exists(progress_file):
             os.remove(progress_file)
             
@@ -701,7 +701,7 @@ async def download_model_endpoint(request: Request):
     )
 
     if result.get("status") == "success":
-        time.sleep(5)
+        await asyncio.sleep(5)
         if os.path.exists(progress_file):
             os.remove(progress_file)
         return {"status": "success", "path": path, "size": result.get("size", 0)}

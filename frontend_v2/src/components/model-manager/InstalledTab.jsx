@@ -313,6 +313,22 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         <RotateCw size={20} className="text-blue-400 hover:text-blue-300 drop-shadow-md" />
                     </button>
 
+                    <button
+                        onClick={async () => {
+                            try {
+                                const res = await api.post('/api/v2/models/maintenance/cleanup-orphans');
+                                toast.success(`Cleanup complete! Removed ${res.removed_models} orphaned models.`);
+                            } catch (err) {
+                                toast.error('Failed to cleanup orphans: ' + err.message);
+                            }
+                        }}
+                        className="p-3 bg-[#0B0E14]/80 hover:bg-black/40 rounded-xl border border-white/10 transition-all shadow-inner hover:shadow-[0_0_10px_rgba(255,255,255,0.1)]"
+                        title="Cleanup Orphaned Models"
+                        aria-label="Cleanup Orphaned Models"
+                    >
+                        <Trash2 size={20} className="text-red-400 hover:text-red-300 drop-shadow-md" />
+                    </button>
+
                     {availableTags.length > 0 && (
                         <div className="relative group">
                             <button className="flex items-center gap-2 px-5 py-3 bg-[#0B0E14]/80 border border-white/10 rounded-xl text-gray-300 hover:text-white hover:border-white/20 shadow-inner transition-all">

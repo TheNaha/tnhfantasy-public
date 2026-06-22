@@ -1,6 +1,6 @@
 from .schemas import *
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlmodel import Session
 from api.deps import get_session, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
@@ -146,6 +146,32 @@ async def resync_model_from_civitai(
     session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
     for tag in civitai_data.get("tags", []):
         session.add(ModelTag(model_id=model.id, tag=tag))
+        
+    # Update file sizes from versions
+    civitai_versions = civitai_data.get("modelVersions", [])
+    if civitai_versions:
+        from core.entities import ModelVersion, ModelFile
+        local_versions = session.exec(
+            select(ModelVersion).where(ModelVersion.model_id == model.id)
+        ).all()
+        for lv in local_versions:
+            # Find matching civitai version by id or name
+            cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
+            if not cv:
+                cv = next((v for v in civitai_versions if v.get("name", "").lower() == lv.name.lower()), None)
+            if cv:
+                civitai_files = cv.get("files", [])
+                if civitai_files:
+                    primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
+                    civitai_size_kb = primary_civitai.get("sizeKB")
+                    if civitai_size_kb is not None:
+                        local_files = session.exec(
+                            select(ModelFile).where(ModelFile.version_id == lv.id)
+                        ).all()
+                        for lf in local_files:
+                            if not lf.size_kb or lf.size_kb == 0:
+                                lf.size_kb = float(civitai_size_kb)
+                                session.add(lf)
     
     session.add(model)
     session.commit()
@@ -159,15 +185,129 @@ async def resync_model_from_civitai(
         "model": service.repo.model_to_dict(model)
     }
 
-@router.post("/resync-all")
-async def resync_all_models_from_civitai(session: Session = Depends(get_session)):
-    """
-    Re-sync all non-autodiscovered models from CivitAI.
-    """
-    from core.entities import ModelV2, ModelTag
-    from sqlmodel import select, delete
-    import asyncio
+async def run_background_resync():
+    """Run a full metadata resync for all eligible models."""
+    from infrastructure.database import get_session_context
     from infrastructure.http_client import get_http_client
+    from core.entities import ModelV2, ModelTag
+    from core.exceptions import ComfyError
+    from api.websocket_manager import broadcast_to_all
+    from sqlmodel import select, delete
+    
+    async with get_session_context() as bg_session:
+        # Get all models that are NOT auto-discovered and HAVE a civitai ID
+        models = bg_session.exec(
+            select(ModelV2)
+            .where(ModelV2.civitai_model_id != None)
+            .where(ModelV2.description.not_like("%Auto-discovered%"))
+        ).all()
+        
+        if not models:
+            return {"success": 0, "failed": 0, "errors": []}
+            
+        results = {"success": 0, "failed": 0, "errors": []}
+        total = len(models)
+        
+        await broadcast_to_all("RESYNC_PROGRESS", {
+            "status": "started",
+            "processed": 0,
+            "total": total,
+            "results": results,
+            "current_model": "Starting..."
+        })
+        
+        http_client = get_http_client()
+        
+        for i, model in enumerate(models):
+            await broadcast_to_all("RESYNC_PROGRESS", {
+                "status": "processing",
+                "processed": i,
+                "total": total,
+                "results": results,
+                "current_model": model.name
+            })
+            
+            # Fetch fresh data from CivitAI
+            url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+            try:
+                bg_model = bg_session.get(ModelV2, model.id)
+                if not bg_model:
+                    continue
+                    
+                response = await http_client.get(url, timeout=30.0)
+                if response.status_code != 200:
+                    raise ComfyError(f"CivitAI API error: {response.status_code}")
+                civitai_data = response.json()
+                
+                stats = civitai_data.get("stats") or {}
+                creator = civitai_data.get("creator") or {}
+                
+                bg_model.name = civitai_data.get("name") or bg_model.name
+                bg_model.description = civitai_data.get("description", bg_model.description)
+                bg_model.nsfw = civitai_data.get("nsfw", bg_model.nsfw)
+                
+                new_nsfw_level = civitai_data.get("nsfwLevel")
+                if new_nsfw_level is not None:
+                    bg_model.nsfw_level = new_nsfw_level
+                    
+                bg_model.creator_username = creator.get("username")
+                bg_model.creator_image = creator.get("image")
+                bg_model.stats_downloads = stats.get("downloadCount") or 0
+                bg_model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
+                bg_model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
+                bg_model.stats_comments = stats.get("commentCount") or 0
+                
+                # Update tags
+                bg_session.exec(delete(ModelTag).where(ModelTag.model_id == bg_model.id))
+                for tag in civitai_data.get("tags", []):
+                    bg_session.add(ModelTag(model_id=bg_model.id, tag=tag))
+                    
+                # Update file sizes
+                civitai_versions = civitai_data.get("modelVersions", [])
+                if civitai_versions:
+                    from core.entities import ModelVersion, ModelFile
+                    local_versions = bg_session.exec(
+                        select(ModelVersion).where(ModelVersion.model_id == bg_model.id)
+                    ).all()
+                    for lv in local_versions:
+                        cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
+                        if not cv:
+                            cv = next((v for v in civitai_versions if v.get("name", "").lower() == lv.name.lower()), None)
+                        if cv:
+                            civitai_files = cv.get("files", [])
+                            if civitai_files:
+                                primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
+                                civitai_size_kb = primary_civitai.get("sizeKB")
+                                if civitai_size_kb is not None:
+                                    local_files = bg_session.exec(
+                                        select(ModelFile).where(ModelFile.version_id == lv.id)
+                                    ).all()
+                                    for lf in local_files:
+                                        if not lf.size_kb or lf.size_kb == 0:
+                                            lf.size_kb = float(civitai_size_kb)
+                                            bg_session.add(lf)
+                                            
+                bg_session.add(bg_model)
+                bg_session.commit()
+                results["success"] += 1
+            except Exception as exc:
+                results["failed"] += 1
+                results["errors"].append({"model_id": str(model.id), "error": str(exc)})
+        
+        await broadcast_to_all("RESYNC_PROGRESS", {
+            "status": "completed",
+            "processed": total,
+            "total": total,
+            "results": results,
+            "current_model": "Done"
+        })
+        return results
+
+@router.post("/resync-all")
+async def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
+    from core.entities import ModelV2
+    from sqlmodel import select
     
     # Get all models that are NOT auto-discovered and HAVE a civitai ID
     models = session.exec(
@@ -179,82 +319,8 @@ async def resync_all_models_from_civitai(session: Session = Depends(get_session)
     if not models:
         return {"status": "no_models", "count": 0}
         
-    async def _background_resync():
-        async with get_session_context() as bg_session:
-            results = {"success": 0, "failed": 0, "errors": []}
-            total = len(models)
-            
-            await broadcast_to_all("RESYNC_PROGRESS", {
-                "status": "started",
-                "processed": 0,
-                "total": total,
-                "results": results,
-                "current_model": "Starting..."
-            })
-            
-            http_client = get_http_client()
-            
-            for i, model in enumerate(models):
-                await broadcast_to_all("RESYNC_PROGRESS", {
-                    "status": "processing",
-                    "processed": i,
-                    "total": total,
-                    "results": results,
-                    "current_model": model.name
-                })
-                
-                # Fetch fresh data from CivitAI
-                url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
-                try:
-                    # we must re-fetch model within the background session!
-                    bg_model = bg_session.get(ModelV2, model.id)
-                    if not bg_model:
-                        continue
-                        
-                    response = await http_client.get(url, timeout=30.0)
-                    if response.status_code != 200:
-                        raise ComfyError(f"CivitAI API error: {response.status_code}")
-                    civitai_data = response.json()
-                    
-                    stats = civitai_data.get("stats") or {}
-                    creator = civitai_data.get("creator") or {}
-                    
-                    bg_model.name = civitai_data.get("name") or bg_model.name
-                    bg_model.description = civitai_data.get("description", bg_model.description)
-                    bg_model.nsfw = civitai_data.get("nsfw", bg_model.nsfw)
-                    
-                    new_nsfw_level = civitai_data.get("nsfwLevel")
-                    if new_nsfw_level is not None:
-                        bg_model.nsfw_level = new_nsfw_level
-                        
-                    bg_model.creator_username = creator.get("username")
-                    bg_model.creator_image = creator.get("image")
-                    bg_model.stats_downloads = stats.get("downloadCount") or 0
-                    bg_model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
-                    bg_model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
-                    bg_model.stats_comments = stats.get("commentCount") or 0
-                    
-                    # Update tags
-                    bg_session.exec(delete(ModelTag).where(ModelTag.model_id == bg_model.id))
-                    for tag in civitai_data.get("tags", []):
-                        bg_session.add(ModelTag(model_id=bg_model.id, tag=tag))
-                        
-                    bg_session.add(bg_model)
-                    bg_session.commit()
-                    results["success"] += 1
-                except Exception as exc:
-                    results["failed"] += 1
-                    results["errors"].append({"model_id": str(model.id), "error": str(exc)})
-            
-            await broadcast_to_all("RESYNC_PROGRESS", {
-                "status": "completed",
-                "processed": total,
-                "total": total,
-                "results": results,
-                "current_model": "Done"
-            })
-            
-    asyncio.create_task(_background_resync())
+    background_tasks.add_task(run_background_resync)
+    
     return {"status": "processing", "count": len(models)}
 
 

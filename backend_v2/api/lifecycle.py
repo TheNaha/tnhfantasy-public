@@ -216,6 +216,17 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="data_cleanup")
     schedule_cleanup(run_data_cleanup, interval_seconds=3600)
 
+    logger.info("startup_init", phase="civitai_resync")
+    from api.routes.models.maintenance import run_background_resync
+    from infrastructure.scheduler import add_interval_job
+    # Run a full CivitAI resync every 24 hours
+    add_interval_job(
+        run_background_resync,
+        interval_seconds=86400,
+        job_id="civitai_resync_job",
+        start_immediately=False,
+    )
+
     logger.info("startup_init", phase="websocket")
     broadcast_task = start_background_task(
         ws_manager.start_broadcasting(),

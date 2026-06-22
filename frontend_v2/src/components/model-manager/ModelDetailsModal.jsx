@@ -213,11 +213,11 @@ export default function ModelDetailsModal({ file, onClose }) {
                                         <button
                                             onClick={handleDirectRefresh}
                                             disabled={refreshing}
-                                            className="p-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50"
+                                            className="flex items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-500 transition-colors disabled:opacity-50 text-sm font-medium"
                                             title="Refresh metadata from CivitAI"
-                                            aria-label="Refresh model metadata from CivitAI"
                                         >
-                                            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
+                                            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                                            {refreshing ? 'Refreshing...' : 'Resync Metadata'}
                                         </button>
                                     )}
                                     <button
