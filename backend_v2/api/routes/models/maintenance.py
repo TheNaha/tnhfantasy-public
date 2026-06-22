@@ -1,6 +1,6 @@
 from .schemas import *
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from api.deps import get_session, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
@@ -23,30 +23,23 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
     Remove models that have no versions (orphaned during failed imports or migration).
     These models cannot be used and should be cleaned up.
     """
-    from sqlmodel import select, delete
+    from sqlmodel import select, delete, func
     from core.entities import ModelV2, ModelVersion, ModelTag
     
-    # Find all models with no versions
-    all_models = session.exec(select(ModelV2)).all()
-    orphans = []
-    
-    for model in all_models:
-        version_count = len(list(session.exec(
-            select(ModelVersion).where(ModelVersion.model_id == model.id)
-        ).all()))
-        if version_count == 0:
-            orphans.append({"id": model.id, "name": model.name, "civitai_id": model.civitai_model_id})
+    # Find all models with no versions using a LEFT JOIN in a single query
+    orphans = session.exec(
+        select(ModelV2, func.count(ModelVersion.id).label("version_count"))
+        .outerjoin(ModelVersion, ModelVersion.model_id == ModelV2.id)
+        .group_by(ModelV2.id)
+        .having(func.count(ModelVersion.id) == 0)
+    ).all()
     
     # Delete orphans
     deleted = []
-    for orphan in orphans:
-        # Delete tags first
-        session.exec(delete(ModelTag).where(ModelTag.model_id == orphan["id"]))
-        # Delete model
-        model_to_delete = session.get(ModelV2, orphan["id"])
-        if model_to_delete:
-            session.delete(model_to_delete)
-            deleted.append(orphan["name"])
+    for model, _ in orphans:
+        session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
+        session.delete(model)
+        deleted.append(model.name)
     
     session.commit()
     

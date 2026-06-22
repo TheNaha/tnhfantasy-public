@@ -573,7 +573,9 @@ async def run_reconciliation_v2(
                     logger.warning("[V2 Reconciliation] Registration partially failed. Skipping deletion to prevent data loss.")
                     unregistered = []
                 else:
-                    unregistered = []
+                    # All files were successfully registered in the DB, so we
+                    # have persistent records.  Safe to delete the on-disk copies.
+                    unregistered = orphaned_file_infos
 
                 if unregistered:
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")

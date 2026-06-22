@@ -3,8 +3,6 @@ import JobDetailsModal from './JobDetailsModal';
 import { ImageComparison } from './ImageComparison';
 import CollectionsPanel from '../collections/CollectionsPanel';
 import SelectCollectionModal from '../collections/SelectCollectionModal';
-import ContextMenu from '../ContextMenu';
-
 /**
  * DashboardOverlays Component
  * @param {object} props

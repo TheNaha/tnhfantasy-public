@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
-import { useBrandingStore } from '../store/brandingStore';
+import { useBranding } from '../hooks/useBranding';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import {
     providerBadgeToneClass,
@@ -42,7 +42,7 @@ const EMPTY_STATS = Object.freeze({});
 export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
-    const branding = useBrandingStore(state => state.branding);
+    const { data: branding } = useBranding();
     const { providers, lbStats } = useProvidersPageData();
 
     const providerStatsMap = useMemo(() => {

@@ -30,10 +30,6 @@ vi.mock('../components/providers/AddModelToProviderModal', () => ({
     default: () => null,
 }));
 
-vi.mock('../components/providers/ReconciliationStatus', () => ({
-    default: () => null,
-}));
-
 vi.mock('../components/ConfirmationModal', () => ({
     default: () => null,
 }));

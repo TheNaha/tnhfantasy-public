@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { useSettings } from '../store/settingsStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { useTrackJob } from './useTrackJob';
 import useJobStore from '../store/jobStore';
 
 export function useTrackGenerationJob() {
     const navigate = useNavigate();
-    const settings = useSettings();
+    const redirectAfterGenerate = useSettingsStore((s) => s.settings?.generator?.redirectAfterGenerate);
+    const redirectDelay = useSettingsStore((s) => s.settings?.generator?.redirectDelay);
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
     const [generating, setGenerating] = useState(false);
@@ -29,8 +30,8 @@ export function useTrackGenerationJob() {
             setProgress(null);
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
-            if (settings.generator.redirectAfterGenerate) {
-                setTimeout(() => navigate('/'), settings.generator.redirectDelay);
+            if (redirectAfterGenerate) {
+                setTimeout(() => navigate('/'), redirectDelay);
             }
             return;
         }
@@ -60,7 +61,7 @@ export function useTrackGenerationJob() {
         });
     }, [
         trackedJob, liveJob, currentJobId,
-        navigate, settings.generator.redirectAfterGenerate, settings.generator.redirectDelay,
+        navigate, redirectAfterGenerate, redirectDelay,
     ]);
     /* eslint-enable react-hooks/set-state-in-effect */
 

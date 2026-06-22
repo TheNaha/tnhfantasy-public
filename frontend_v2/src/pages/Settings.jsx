@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Settings as SettingsIcon, RotateCcw, Save, Info, Server } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
-import { useBrandingStore } from '../store/brandingStore';
+import { useBranding, useSaveBranding } from '../hooks/useBranding';
 
 
 export default function Settings() {
@@ -150,21 +150,15 @@ export default function Settings() {
 
 // Branding Settings Component
 function BrandingSettings() {
-    const branding = useBrandingStore((state) => state.branding);
-    const isLoading = useBrandingStore((state) => state.isLoading);
-    const loadBranding = useBrandingStore((state) => state.loadBranding);
-    const saveBranding = useBrandingStore((state) => state.saveBranding);
+    const { data: branding, isLoading } = useBranding();
+    const saveBranding = useSaveBranding();
     const [localBranding, setLocalBranding] = useState(null);
-
-    useEffect(() => {
-        loadBranding();
-    }, [loadBranding]);
 
     const effectiveBranding = localBranding || branding;
 
     const handleSave = async () => {
         try {
-            await saveBranding(effectiveBranding);
+            await saveBranding.mutateAsync(effectiveBranding);
             setLocalBranding(null);
             toast.success('Branding updated! Refresh the page to see changes.');
         } catch {
@@ -179,7 +173,7 @@ function BrandingSettings() {
             faviconUrl: "/favicon.ico"
         };
         try {
-            await saveBranding(defaultBranding);
+            await saveBranding.mutateAsync(defaultBranding);
             setLocalBranding(null);
             toast.success('Branding reset to defaults. Refresh the page to see changes.');
         } catch {
