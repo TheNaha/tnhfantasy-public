@@ -3,6 +3,7 @@ import { Plus, X, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAddModelToProviders } from '../../hooks/useProviderModels';
 import { PROVIDER_MODEL_DIRECTORIES } from '../../constants/modelDirectories';
+import { createPortal } from 'react-dom';
 
 export default function AddModelToProviderModal({ providers, onClose }) {
     const [selectedProviders, setSelectedProviders] = useState([]);
@@ -48,7 +49,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
         }
     };
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-gray-800 rounded-xl border border-gray-700 max-w-2xl w-full">
                 <div className="border-b border-gray-700 px-6 py-4 flex items-center justify-between">
@@ -156,6 +157,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                     </div>
                 </form>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

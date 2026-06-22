@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { createPortal } from 'react-dom';
 
 const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
     const [name, setName] = useState('');
@@ -29,12 +30,12 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
 
     return (
         <AnimatePresence>
-            {isOpen && (
+            {isOpen && createPortal(
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
                     onClick={onClose}
                 >
-                    <motion.div
+                    <Motion.div
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
@@ -116,8 +117,9 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
                                 </button>
                             </div>
                         </form>
-                    </motion.div>
-                </div>
+                    </Motion.div>
+                </div>,
+                document.body
             )}
         </AnimatePresence>
     );

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, CheckCircle, XCircle, Clock, HardDrive, AlertCircle, RefreshCw, Trash2, Loader2, Search } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useProviderReconciliationState } from '../../hooks/useProvidersPageData';
@@ -325,10 +326,11 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
         return Content;
     }
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             {Content}
-        </div>
+        </div>,
+        document.body
     );
 }
 

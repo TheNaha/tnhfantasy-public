@@ -5,6 +5,7 @@ import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed, formatTimestamp } from '../../utils/dateTime';
 
 import { memo } from 'react';
+import { createPortal } from 'react-dom';
 
 // ⚡ Bolt: Wrap JobDetailsModal in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
@@ -59,7 +60,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     const providerName = getProviderDisplayName(job.provider_id);
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-gray-800 rounded-xl max-w-lg w-full max-h-[calc(85*var(--vh,1vh))] overflow-hidden border border-gray-700 flex flex-col !flex-nowrap shadow-2xl" onClick={e => e.stopPropagation()}>
                 {/* Header */}
@@ -286,6 +287,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 });

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Search, Loader2, Star, Download } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { createPortal } from 'react-dom';
 import { api } from '../../api';
 
 export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) {
@@ -36,7 +37,7 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
         setQuery(searchInput);
     };
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-5xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
                 
@@ -167,6 +168,7 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

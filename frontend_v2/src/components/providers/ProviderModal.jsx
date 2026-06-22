@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 
 const INPUT_CLASS = 'w-full rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-white outline-none transition-colors focus:border-blue-500';
@@ -148,7 +149,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         }
     };
 
-    return (
+    return createPortal(
         <motion.div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
             initial={{ opacity: 0 }}
@@ -402,7 +403,8 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                     </div>
                 </form>
             </motion.div>
-        </motion.div>
+        </motion.div>,
+        document.body
     );
 }
 

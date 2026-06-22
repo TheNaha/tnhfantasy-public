@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { X, Search, Plus, Download, Upload, Star, TrendingUp, FolderOpen } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import {
     usePrompts,
     usePromptCategories,
@@ -147,7 +148,7 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
 
     if (!isOpen) return null;
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-6xl max-h-[90vh] flex flex-col">
                 {/* Header */}
@@ -315,7 +316,8 @@ export const PromptLibrary = ({ isOpen, onClose, onSelectPrompt }) => {
                     }}
                 />
             )}
-        </div>
+        </div>,
+        document.body
     );
 };
 
