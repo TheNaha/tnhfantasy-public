@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Paintbrush, Settings2, Play, Trash2, Plus, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { Paintbrush, Settings2, Play, Trash2, Plus, Loader2, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
@@ -27,8 +27,7 @@ import useSettingsStore from '../store/settingsStore';
 import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
-import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import { SAMPLERS, SCHEDULERS } from '../constants/generation';
+import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 
@@ -47,11 +46,10 @@ export default function InpaintGenerator() {
             selectedCheckpoint, selectedVae, selectedLoras,
             setSourceImage, setDenoise, setMaskImage, setMaskBlur,
             clearSourceImage, setSelectedCheckpoint, setSelectedVae,
-            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
             enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
             randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
-            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
-            addTriggerWords
+            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter
         },
         providers, providersLoading,
         preflight: {
@@ -66,8 +64,9 @@ export default function InpaintGenerator() {
 
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
-    const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
+    const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
+    const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
     const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
@@ -332,6 +331,7 @@ export default function InpaintGenerator() {
                             addControlNet={addControlNet}
                             removeControlNet={removeControlNet}
                             updateControlNet={updateControlNet}
+                            controlNetModels={controlNetModels}
                         />
 
                         <IPAdapterSection

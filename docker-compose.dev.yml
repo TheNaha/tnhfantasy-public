@@ -43,11 +43,8 @@ services:
       - "5174:80"
     environment:
       - VITE_PROXY_TARGET=http://backend_v2:8002
-      # HMR config — connects through Traefik (HTTPS/WSS)
-      # Without these, HMR falls back to localhost:5174 (direct access)
-      - HMR_HOST=comfy.lan.thenaha.my.id
-      - HMR_PORT=443
-      - HMR_CLIENT_PORT=443
+      # Vite dev server host (for proper HMR host resolution behind Traefik)
+      # Vite reads VITE_HMR_HOST, VITE_HMR_PORT, VITE_HMR_PROTOCOL for HMR config
     # Mount source for Vite HMR (usePolling: true in vite.config.js)
     volumes:
       - ./frontend_v2/src:/app/src

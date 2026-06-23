@@ -42,7 +42,7 @@ export default function SimpleGenerator() {
             setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
             setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
             setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
-            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
             enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
             randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
             ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,

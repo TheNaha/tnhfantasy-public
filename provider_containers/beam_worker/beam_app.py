@@ -14,12 +14,8 @@ Deploy:
     beta9 deploy beam_app.py:comfy_storage
     beta9 deploy beam_app.py:comfy_download
 """
-try:
-    # Beam Cloud SDK module name
-    from beam import asgi, realtime, Image, Volume, QueueDepthAutoscaler
-except ModuleNotFoundError:
-    # Self-hosted/newer installations expose the same API under beta9
-    from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler
+# beam is the CLI alias for the beta9 Python package
+from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 import os
@@ -247,6 +243,7 @@ async def setup():
     return {"status": "success", "directories": dirs}
 
 
+# TODO: extract shared download progress logic
 @storage_app.post("/download-model")
 async def download_model(request: Request):
     """Download a model to the volume with shared validation pipeline."""
@@ -614,6 +611,7 @@ async def download_health():
     return {"status": "healthy", "type": "download"}
 
 
+# TODO: extract shared download progress logic
 @download_app.post("/download-model")
 async def download_model_endpoint(request: Request):
     """Download a model - delegated from main storage app for separate scaling."""

@@ -393,7 +393,6 @@ class ModelDownloader:
         return {
             "file_id": status_obj.file_id,
             "provider_id": provider_key,
-            "provider_id": provider_key,
             "status": status_obj.status,
             "storage_path": status_obj.storage_path,
             "size_bytes": status_obj.size_bytes,

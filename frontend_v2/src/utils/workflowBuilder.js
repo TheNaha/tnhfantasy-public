@@ -97,7 +97,7 @@ class BasePipeline {
                 ipadapter_file: ip.model
             });
 
-            const visionLoader = this.builder.addNode("CLIPVisionLoader", {
+            this.builder.addNode("CLIPVisionLoader", {
                 clip_name: ip.clipVision
             });
 

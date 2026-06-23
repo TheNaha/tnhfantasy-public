@@ -20,7 +20,7 @@ export function getOptimizedImageUrl(url, width = 450) {
             const urlObj = new URL(url, window.location.origin);
             urlObj.searchParams.set('width', width);
             return url.startsWith('http') ? urlObj.toString() : urlObj.pathname + urlObj.search;
-        } catch (e) {
+        } catch {
             // Fallback for extremely malformed URLs
             const separator = url.includes('?') ? '&' : '?';
             return `${url}${separator}width=${width}`;

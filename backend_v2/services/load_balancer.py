@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from core.entities import Provider, LoadBalancerState
 from infrastructure.repositories import ProviderRepository
 from infrastructure.logging import get_logger
-from infrastructure.cache import TTLCache
+from cachetools import TTLCache
 from infrastructure.http_client import get_http_client
 
 logger = get_logger("load_balancer")

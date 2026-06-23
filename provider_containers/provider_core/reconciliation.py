@@ -571,16 +571,17 @@ async def run_reconciliation_v2(
                     # SAFETY FIX: Since the registration API only returns a count and not specific 
                     # failed paths, it's unsafe to delete any of them without risking valid data loss.
                     logger.warning("[V2 Reconciliation] Registration partially failed. Skipping deletion to prevent data loss.")
-                    unregistered = []
+                    deletion_candidates = []
                 else:
                     # All files were successfully registered in the DB, so we
                     # have persistent records.  Safe to delete the on-disk copies.
-                    unregistered = orphaned_file_infos
+                    deletion_candidates = orphaned_file_infos
 
-                if unregistered:
+                if deletion_candidates:
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
+
                     if delete_enabled:
-                        for orphan_info in unregistered:
+                        for orphan_info in deletion_candidates:
                             try:
                                 deleted = await delete_file(orphan_info["path"])
                                 if deleted is False:
@@ -591,7 +592,7 @@ async def run_reconciliation_v2(
                             except Exception as exc:
                                 logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_info['path']}: {exc}")
                     else:
-                        logger.info(f"[V2 Reconciliation] Dry-run: would delete {len(unregistered)} orphaned files")
+                        logger.info(f"[V2 Reconciliation] Dry-run: would delete {len(deletion_candidates)} orphaned files")
                         logger.info(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")
             else:
                 logger.info("[V2 Reconciliation] No orphaned files to delete")

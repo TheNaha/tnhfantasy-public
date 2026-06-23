@@ -1,6 +1,5 @@
 import asyncio
 from sqlmodel import Session, create_engine, SQLModel
-from config import SQLITE_URL
 from tests.conftest import _DummyContainerManager, _DummyContainersClient, sample_provider_data
 from services.provider_service import ProviderService
 

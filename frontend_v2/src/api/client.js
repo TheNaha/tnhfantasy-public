@@ -77,11 +77,11 @@ async function request(endpoint, options = {}) {
     const { idempotencyKey, timeout, signal: userSignal, ...requestOptions } = options;
 
     const config = {
+        ...requestOptions,
         headers: {
             'Content-Type': 'application/json',
             ...requestOptions.headers,
         },
-        ...requestOptions,
     };
 
     if (idempotencyKey) {

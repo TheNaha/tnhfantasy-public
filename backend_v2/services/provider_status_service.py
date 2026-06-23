@@ -174,10 +174,7 @@ class ProviderStatusService:
         ).where(
             ModelVersion.is_enabled == True
         ).where(
-            or_(
-                ProviderVersionStatus.provider_id == provider_id,
-                ProviderVersionStatus.provider_id == provider_id
-            )
+            ProviderVersionStatus.provider_id == provider_id
         ).group_by(ProviderVersionStatus.status)
         
         status_counts = self.session.exec(stats_stmt).all()
@@ -233,10 +230,7 @@ class ProviderStatusService:
             count = self.session.exec(
                 select(func.count(ProviderVersionStatus.id))
                 .where(
-                    or_(
-                        ProviderVersionStatus.provider_id == provider_id,
-                        ProviderVersionStatus.provider_id == provider_id
-                    )
+                    ProviderVersionStatus.provider_id == provider_id
                 )
                 .where(ProviderVersionStatus.status == "ready")
             ).one()

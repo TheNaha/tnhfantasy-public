@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ImageIcon, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { ImageIcon, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
@@ -25,8 +25,7 @@ import useSettingsStore from '../store/settingsStore';
 import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
-import { BASIC_GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import { SAMPLERS, SCHEDULERS } from '../constants/generation';
+import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 
@@ -40,12 +39,11 @@ export default function Img2ImgGenerator() {
             sourceImage, denoise, setSourceImage, setDenoise, clearSourceImage,
             setSelectedCheckpoint, setSelectedVae,
             selectedCheckpoint, selectedVae, selectedLoras,
-            clipSkip, setClipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
+            clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
             enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
-            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
+            randomizeSeed, addLora, removeLora, updateLora, controlnets, addControlNet, removeControlNet, updateControlNet,
             ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
-            adetailerInpaintMasked, setAdetailerInpaintMasked,
-            adetailerModels, controlNetModels
+            adetailerInpaintMasked, setAdetailerInpaintMasked
         },
         providers, providersLoading,
         preflight: {
@@ -58,9 +56,11 @@ export default function Img2ImgGenerator() {
         }
     } = useGeneratorCore();
 
-    const { modelsByKey } = useModelDirectories(BASIC_GENERATOR_MODEL_REQUESTS);
+    const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
     const vaeModels = modelsByKey.vaeModels || [];
+    const controlNetModels = modelsByKey.controlNetModels || [];
+    const adetailerModels = modelsByKey.adetailerModels || [];
 
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
@@ -258,15 +258,6 @@ export default function Img2ImgGenerator() {
                         />
 
                         <EnhancementsSection
-                            adetailerInpaintMasked={adetailerInpaintMasked}
-                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
-                            adetailerModels={adetailerModels}
-                            enableFreeU={enableFreeU}
-                            setEnableFreeU={setEnableFreeU}
-                            enablePAG={enablePAG}
-                            setEnablePAG={setEnablePAG}
-                            pagScale={pagScale}
-                            setPagScale={setPagScale}
                             adetailerInpaintMasked={adetailerInpaintMasked}
                             setAdetailerInpaintMasked={setAdetailerInpaintMasked}
                             adetailerModels={adetailerModels}
