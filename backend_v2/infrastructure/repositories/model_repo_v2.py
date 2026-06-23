@@ -596,6 +596,8 @@ class ModelRepositoryV2:
             )
         ).where(
             ModelVersion.is_enabled == True,
+            ModelFile.download_url != None,
+            ModelFile.download_url != "",
             or_(
                 ProviderVersionStatus.id == None,
                 ProviderVersionStatus.status != "ready"
@@ -1212,7 +1214,13 @@ class ModelRepositoryV2:
         stmt = select(ModelV2)
         models = self.session.exec(stmt).all()
         deleted = 0
+        from datetime import datetime, timezone, timedelta
+        recent_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
         for m in models:
+            # Skip models created recently to avoid race conditions with initial download
+            if m.created_at and m.created_at > recent_threshold:
+                continue
+                
             has_viable = False
             for v in m.versions:
                 for f in v.files:

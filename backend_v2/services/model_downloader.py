@@ -49,67 +49,53 @@ class ModelDownloader:
         
         if not providers:
             return {"status": "skipped", "message": "No enabled providers"}
+            
+        # Add pending statuses for all relevant files and providers BEFORE triggering
+        all_versions = self.repo.get_versions_for_model(model_id)
+        target_versions = [v for v in all_versions if v.id in version_ids] if version_ids else all_versions
+        
+        for provider in providers:
+            for version in target_versions:
+                file = self.repo.get_primary_file_for_version(version.id)
+                if file:
+                    self.repo.update_provider_status(
+                        file_id=file.id,
+                        provider_id=provider.id,
+                        status="pending"
+                    )
         
         results = {"triggered": 0, "providers": []}
         
-        # Get versions to download
-        versions = self.repo.get_versions_for_model(model_id)
         http_client = get_http_client()
-        for version in versions:
-            if version_ids is not None and version.id not in version_ids:
-                continue
-            if not version.is_enabled:
-                continue
-                
-            file = self.repo.get_primary_file_for_version(version.id)
-            if not file or not file.download_url:
-                continue
+        for provider in providers:
+            container_name = f"comfy-provider-{provider.id}"
+            worker_url = f"http://{container_name}:8000"
             
-            storage_path = f"models/{model.directory}/{file.storage_filename}"
-            
-            token = None
-            if file.download_url:
-                if "huggingface.co" in file.download_url:
-                    token = os.getenv("HF_TOKEN", "")
-                elif "civitai.com" in file.download_url:
-                    token = os.getenv("CIVITAI_TOKEN", "")
-            
-            for provider in providers:
-                container_name = f"comfy-provider-{provider.id}"
-                worker_url = f"http://{container_name}:8000"
-                
-                try:
-                    payload = {
-                        "url": file.download_url,
-                        "path": storage_path,
-                        "token": token
-                    }
-                    response = await http_client.post(
-                        f"{worker_url}/download-model",
-                        json=payload,
-                        timeout=10.0,
-                    )
-                    if response.status_code == 200:
-                        results["triggered"] += 1
-                        results["providers"].append({
-                            "provider_id": provider.id,
-                            "file_id": file.id,
-                            "status": "queued"
-                        })
-                        self.repo.update_provider_status(
-                            file_id=file.id,
-                            
-                            status="downloading",
-                            storage_path=storage_path
-                        )
-                except Exception as e:
-                    logger.warning("provider_download_trigger_failed", provider_id=provider.id, error=str(e))
+            try:
+                response = await http_client.post(
+                    f"{worker_url}/reconcile",
+                    timeout=5.0,
+                )
+                if response.status_code == 200:
+                    results["triggered"] += 1
                     results["providers"].append({
                         "provider_id": provider.id,
-                        "file_id": file.id,
-                        "status": "error",
-                        "error": str(e)
+                        "status": "reconciling"
                     })
+                else:
+                    logger.warning("provider_reconcile_trigger_failed", provider_id=provider.id, status=response.status_code)
+                    results["providers"].append({
+                        "provider_id": provider.id,
+                        "status": "failed",
+                        "error": f"Status {response.status_code}"
+                    })
+            except Exception as e:
+                logger.warning("provider_reconcile_trigger_error", provider_id=provider.id, error=str(e))
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "error",
+                    "error": str(e)
+                })
         
         return results
 

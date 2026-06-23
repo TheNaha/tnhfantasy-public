@@ -103,6 +103,9 @@ export const providersApi = {
      */
     deploy: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
 
+    /** Poll the deploy status explicitly. */
+    getDeployStatus: (providerId) => api.get(`/api/providers/${providerId}/deploy-status`),
+
     /**
      * Run initial Modal setup (create volumes, upload base files, etc.).
      * Only needed once when a Modal provider is first configured.

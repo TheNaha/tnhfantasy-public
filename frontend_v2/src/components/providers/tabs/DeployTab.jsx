@@ -1,9 +1,22 @@
-
 import { Rocket, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { providersApi } from '../../../api';
 import { DataRow, StatusRow, ActionBtn, Notice } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
 
-export default function DeployTab({ deploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy, provider }) {
+export default function DeployTab({ deploy: initialDeploy, deployBadge, capabilities, capabilityReasons, loading, onDeploy, provider }) {
+    const { data: polledDeploy } = useQuery({
+        queryKey: ['deployStatus', provider?.id],
+        queryFn: async () => {
+            const res = await providersApi.getDeployStatus(provider.id);
+            return res.data;
+        },
+        enabled: Boolean(provider?.id && initialDeploy?.status === 'deploying'),
+        refetchInterval: 2000,
+    });
+
+    const deploy = polledDeploy || initialDeploy;
+
     return (
         <>
             <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">

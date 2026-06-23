@@ -337,7 +337,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                                             return (
                                                 <div key={providerId} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${colorClass}`}>
                                                     <span className="text-sm">{providerId.replace('modal-', '')}</span>
-                                                    <span className="text-xs capitalize">{status}</span>
+                                                    <span className="text-xs font-medium capitalize">{status}</span>
                                                 </div>
                                             );
                                         })}

@@ -195,25 +195,38 @@ class ProviderDeployService:
 
     async def get_provider_deploy_state(self, provider: Provider) -> Dict[str, Any]:
         state = read_deploy_state(provider)
-
+        from services.provider_runtime import resolve_provider_runtime
+        runtime = resolve_provider_runtime(provider)
+        
         if self._is_deploy_in_progress(state):
-            container_manager = None
-            try:
-                from services.container_manager import get_container_manager
-                container_manager = get_container_manager()
-            except Exception:
+            if runtime.mode in ("container_http", "discovery"):
+                http_client = get_http_client()
+                try:
+                    response = await http_client.get(f"{runtime.worker_url}/deploy-status", timeout=2.0)
+                    if response.status_code == 200:
+                        remote_state = response.json()
+                        await self._persist_deploy_state(provider, remote_state)
+                        return remote_state
+                except Exception:
+                    pass
+            else:
                 container_manager = None
-
-            if container_manager and not self._has_active_deploy_attempt_container(
-                container_manager,
-                provider.id,
-                state.get("attempt_id"),
-            ):
-                return await self._mark_deploy_state_failed(
-                    provider,
-                    state,
-                    message="Previous deployment container disappeared and state was marked failed",
-                )
+                try:
+                    from services.container_manager import get_container_manager
+                    container_manager = get_container_manager()
+                except Exception:
+                    container_manager = None
+    
+                if container_manager and not self._has_active_deploy_attempt_container(
+                    container_manager,
+                    provider.id,
+                    state.get("attempt_id"),
+                ):
+                    return await self._mark_deploy_state_failed(
+                        provider,
+                        state,
+                        message="Previous deployment container disappeared and state was marked failed",
+                    )
             return state
 
         if state.get("status") == "deploying":
@@ -241,7 +254,9 @@ class ProviderDeployService:
                     timeout=30.0,
                 )
                 response.raise_for_status()
-                return response.json()
+                res_data = response.json()
+                await self._persist_deploy_state(provider, res_data)
+                return res_data
             except httpx.TimeoutException as exc:
                 raise ProviderError(provider.id, "Deploy request timed out") from exc
             except (httpx.HTTPError, ValueError) as exc:
