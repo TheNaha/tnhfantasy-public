@@ -1205,21 +1205,29 @@ class ModelRepositoryV2:
         return deleted
 
     def cleanup_orphaned_models(self) -> int:
-        """Remove models whose files have no 'ready' or 'pending' status on any provider.
+        """Remove models whose files have NO provider status records at all.
         
-        This is the reverse reconciliation direction: when a model's files are
-        missing from all provider storage and can't be re-downloaded (all statuses
-        are 'failed' or missing), clean up the database records.
+        This is a conservative cleanup: only delete models where every file has
+        literally zero ProviderVersionStatus records. Models with any status
+        (including failed) are preserved — they may be in progress or retriable.
+        
+        Models created in the last 24 hours are always skipped to avoid race
+        conditions with download initialization.
         """
         stmt = select(ModelV2)
         models = self.session.exec(stmt).all()
         deleted = 0
         from datetime import datetime, timezone, timedelta
-        recent_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
+        recent_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
         for m in models:
-            # Skip models created recently to avoid race conditions with initial download
-            if m.created_at and m.created_at > recent_threshold:
-                continue
+            # Skip models created recently to avoid race conditions with initial download.
+            # SQLite may store datetimes as naive, so normalize before comparing.
+            if m.created_at:
+                created = m.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created > recent_threshold:
+                    continue
                 
             has_viable = False
             for v in m.versions:
@@ -1228,12 +1236,8 @@ class ModelRepositoryV2:
                         ProviderVersionStatus.file_id == f.id,
                     )
                     statuses = list(self.session.exec(status_stmt).all())
-                    if not statuses:
-                        continue
-                    has_ready_or_pending = any(
-                        s.status in ("ready", "pending", "downloading") for s in statuses
-                    )
-                    if has_ready_or_pending:
+                    if statuses:
+                        # Has at least one status record — not orphaned
                         has_viable = True
                         break
                 if has_viable:

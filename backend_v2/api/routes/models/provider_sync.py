@@ -203,7 +203,7 @@ async def batch_update_status(
             
             await service.update_provider_file_status(
                 file_id=file_id,
-                provider_name=provider_key,
+                provider_id=provider_key,
                 status=update.status,
                 storage_path=update.storage_path,
                 size_bytes=update.size_bytes
@@ -211,13 +211,6 @@ async def batch_update_status(
             updated += 1
         except Exception:
             failed += 1
-    
-    from api.deps import get_model_repo_v2
-    model_repo = get_model_repo_v2(session)
-    model_repo.garbage_collect_auto_discovered()
-    orphaned = model_repo.cleanup_orphaned_models()
-    if orphaned:
-        logger.info("reverse_reconciliation_cleaned", count=orphaned)
     
     return {"updated": updated, "failed": failed}
 
@@ -368,7 +361,7 @@ async def receive_batch_sync_progress(
             if item.status == "completed":
                 await service.update_provider_file_status(
                     file_id=file_id,
-                    provider_name=request.provider_id,
+                    provider_id=request.provider_id,
                     status="ready",
                     storage_path=f"models/{item.directory}/{item.model_name}",
                     size_bytes=item.size_bytes,
@@ -377,7 +370,7 @@ async def receive_batch_sync_progress(
             elif item.status == "failed":
                 await service.update_provider_file_status(
                     file_id=file_id,
-                    provider_name=request.provider_id,
+                    provider_id=request.provider_id,
                     status="failed",
                     storage_path=f"models/{item.directory}/{item.model_name}",
                 )
@@ -385,7 +378,7 @@ async def receive_batch_sync_progress(
             elif item.status == "pending":
                 await service.update_provider_file_status(
                     file_id=file_id,
-                    provider_name=request.provider_id,
+                    provider_id=request.provider_id,
                     status="pending",
                     storage_path=f"models/{item.directory}/{item.model_name}",
                 )

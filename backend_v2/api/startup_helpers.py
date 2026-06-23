@@ -39,13 +39,23 @@ async def recover_pending_jobs() -> None:
         logger.warning("job_recovery_failed", error=str(exc))
 
 
-def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120) -> None:
-    """Reset stale downloading entries and clean orphaned provider statuses.
+def cleanup_provider_state_artifacts(
+    stale_downloading_after_minutes: int = 120,
+    *,
+    skip_orphan_cleanup: bool = False,
+) -> None:
+    """Reset stale downloading entries and optionally clean orphaned provider statuses.
     
     Does NOT purge provider records — let the discovery heartbeat system
     (POST /api/v2/providers/discovery) upsert live provider records.
     Providers from old backups are harmless; they get overwritten when
     the live container sends its first discovery heartbeat.
+    
+    Args:
+        stale_downloading_after_minutes: Reset downloading statuses older than this.
+        skip_orphan_cleanup: If True, skip deleting orphaned provider statuses.
+            Use this on initial startup to avoid a race where providers haven't
+            re-registered yet and their statuses would be wrongly deleted.
     """
     try:
         from infrastructure.repositories import ProviderRepository
@@ -58,7 +68,9 @@ def cleanup_provider_state_artifacts(stale_downloading_after_minutes: int = 120)
             active_provider_ids = [p.id for p in all_providers]
 
             model_repo = ModelRepositoryV2(session)
-            orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
+            orphaned_result = {"deleted_count": 0, "orphaned_providers": []}
+            if not skip_orphan_cleanup:
+                orphaned_result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
             stale_before = datetime.now(timezone.utc) - timedelta(minutes=stale_downloading_after_minutes)
             stale_resets = model_repo.reset_stale_downloading_statuses(
                 stale_before=stale_before,

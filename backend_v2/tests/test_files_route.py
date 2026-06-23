@@ -176,9 +176,10 @@ class TestFilesRoute:
                 assert response.status_code == 200
                 assert response.headers["etag"] == '"etag"'
 
+    @patch("os.path.getsize", return_value=7)
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
-    def test_upload_file(self, mock_file, mock_makedirs, client):
+    def test_upload_file(self, mock_file, mock_makedirs, mock_getsize, client):
         files = {"file": ("test.png", b"content", "image/png")}
         with patch("api.routes.files.get_safe_path", return_value="/tmp/output/input"):
             response = client.post("/api/upload", files=files)

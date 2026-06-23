@@ -55,7 +55,7 @@ async def test_startup_application_autostarts_providers_after_cleanup():
         return broadcast_task
 
     with patch("api.lifecycle.create_db_and_tables"), \
-         patch("api.lifecycle.cleanup_provider_state_artifacts", side_effect=lambda: events.append("cleanup")), \
+         patch("api.lifecycle.cleanup_provider_state_artifacts", side_effect=lambda **kw: events.append("cleanup")), \
          patch("api.lifecycle.configure_worker_pool"), \
          patch("api.lifecycle.start_scheduler"), \
          patch("api.lifecycle.schedule_preview_prefetch"), \

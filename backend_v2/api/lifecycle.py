@@ -169,7 +169,7 @@ async def startup_application(process_job, ws_manager):
     create_db_and_tables()
 
     logger.info("startup_init", phase="provider_state_cleanup")
-    cleanup_provider_state_artifacts()
+    cleanup_provider_state_artifacts(skip_orphan_cleanup=True)
     
 
     logger.info("startup_init", phase="job_processor")

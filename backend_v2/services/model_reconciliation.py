@@ -114,7 +114,7 @@ class ModelReconciliationService:
                 if existing_file:
                     self.repo.update_provider_status(
                         file_id=existing_file.id,
-                        
+                        provider_id=provider_id,
                         status="ready",
                         storage_path=storage_path,
                         size_bytes=size_bytes,
@@ -166,7 +166,7 @@ class ModelReconciliationService:
 
                     self.repo.update_provider_status(
                         file_id=file.id,
-                        
+                        provider_id=provider_id,
                         status="ready",
                         storage_path=storage_path,
                         size_bytes=size_bytes,
