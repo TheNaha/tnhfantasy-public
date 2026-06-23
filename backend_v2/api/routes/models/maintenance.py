@@ -1,8 +1,8 @@
 from .schemas import *
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlmodel import Session
-from api.deps import get_session, get_model_service_v2
+from sqlmodel import Session, select, delete
+from api.deps import get_session, get_model_service_v2, get_http_client
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from api.routes.websocket import broadcast_to_all
 from infrastructure.database import get_session_context
@@ -11,6 +11,63 @@ from api.deps import model_logger
 logger = model_logger()
 
 router = APIRouter()
+
+
+def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
+    """
+    Apply CivitAI API response data to a model entity and its related tags/versions.
+    Shared by single-model resync and background resync.
+    """
+    from core.entities import ModelTag, ModelVersion, ModelFile
+
+    stats = civitai_data.get("stats") or {}
+    creator = civitai_data.get("creator") or {}
+
+    model.name = civitai_data.get("name") or model.name
+    model.description = civitai_data.get("description", model.description)
+    model.nsfw = civitai_data.get("nsfw", model.nsfw)
+
+    new_nsfw_level = civitai_data.get("nsfwLevel")
+    if new_nsfw_level is not None:
+        model.nsfw_level = new_nsfw_level
+
+    model.creator_username = creator.get("username")
+    model.creator_image = creator.get("image")
+    model.stats_downloads = stats.get("downloadCount") or 0
+    model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
+    model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
+    model.stats_comments = stats.get("commentCount") or 0
+
+    # Update tags - delete old and add new
+    session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
+    for tag in civitai_data.get("tags", []):
+        session.add(ModelTag(model_id=model.id, tag=tag))
+
+    # Update file sizes from versions
+    civitai_versions = civitai_data.get("modelVersions", [])
+    if civitai_versions:
+        local_versions = session.exec(
+            select(ModelVersion).where(ModelVersion.model_id == model.id)
+        ).all()
+        for lv in local_versions:
+            cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
+            if not cv:
+                cv = next((v for v in civitai_versions if v.get("name", "").lower() == lv.name.lower()), None)
+            if cv:
+                civitai_files = cv.get("files", [])
+                if civitai_files:
+                    primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
+                    civitai_size_kb = primary_civitai.get("sizeKB")
+                    if civitai_size_kb is not None:
+                        local_files = session.exec(
+                            select(ModelFile).where(ModelFile.version_id == lv.id)
+                        ).all()
+                        for lf in local_files:
+                            if not lf.size_kb or lf.size_kb == 0:
+                                lf.size_kb = float(civitai_size_kb)
+                                session.add(lf)
+
+    session.add(model)
 
 
 # ============================================================================
@@ -99,8 +156,7 @@ async def resync_model_from_civitai(
     Note: This only updates model-level metadata (name, description, stats).
     Version/file data cannot be updated without re-downloading.
     """
-    from core.entities import ModelV2, ModelTag
-    from sqlmodel import select, delete
+    from core.entities import ModelV2
     from api.deps import get_http_client
     
     # Get the model
@@ -122,58 +178,8 @@ async def resync_model_from_civitai(
     except Exception as e:
         raise ComfyError(f"Failed to fetch from CivitAI: {str(e)}")
     
-    # Update model metadata
-    stats = civitai_data.get("stats") or {}
-    creator = civitai_data.get("creator") or {}
-    
-    model.name = civitai_data.get("name") or model.name
-    model.description = civitai_data.get("description")
-    model.nsfw = civitai_data.get("nsfw", model.nsfw)
-    
-    # nsfwLevel might be absent or None
-    new_nsfw_level = civitai_data.get("nsfwLevel")
-    if new_nsfw_level is not None:
-        model.nsfw_level = new_nsfw_level
-        
-    model.creator_username = creator.get("username")
-    model.creator_image = creator.get("image")
-    model.stats_downloads = stats.get("downloadCount") or 0
-    model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
-    model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
-    model.stats_comments = stats.get("commentCount") or 0
-    
-    # Update tags - delete old and add new
-    session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
-    for tag in civitai_data.get("tags", []):
-        session.add(ModelTag(model_id=model.id, tag=tag))
-        
-    # Update file sizes from versions
-    civitai_versions = civitai_data.get("modelVersions", [])
-    if civitai_versions:
-        from core.entities import ModelVersion, ModelFile
-        local_versions = session.exec(
-            select(ModelVersion).where(ModelVersion.model_id == model.id)
-        ).all()
-        for lv in local_versions:
-            # Find matching civitai version by id or name
-            cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
-            if not cv:
-                cv = next((v for v in civitai_versions if v.get("name", "").lower() == lv.name.lower()), None)
-            if cv:
-                civitai_files = cv.get("files", [])
-                if civitai_files:
-                    primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
-                    civitai_size_kb = primary_civitai.get("sizeKB")
-                    if civitai_size_kb is not None:
-                        local_files = session.exec(
-                            select(ModelFile).where(ModelFile.version_id == lv.id)
-                        ).all()
-                        for lf in local_files:
-                            if not lf.size_kb or lf.size_kb == 0:
-                                lf.size_kb = float(civitai_size_kb)
-                                session.add(lf)
-    
-    session.add(model)
+    # Apply metadata using shared helper
+    _apply_civitai_metadata(model, civitai_data, session)
     session.commit()
     
     # Get service for dict conversion
@@ -189,10 +195,10 @@ async def run_background_resync():
     """Run a full metadata resync for all eligible models."""
     from infrastructure.database import get_session_context
     from api.deps import get_http_client
-    from core.entities import ModelV2, ModelTag
+    from core.entities import ModelV2
     from core.exceptions import ComfyError
     from api.websocket_manager import broadcast_to_all
-    from sqlmodel import select, delete
+    from sqlmodel import select
     
     async with get_session_context() as bg_session:
         # Get all models that are NOT auto-discovered and HAVE a civitai ID
@@ -227,7 +233,6 @@ async def run_background_resync():
                 "current_model": model.name
             })
             
-            # Fetch fresh data from CivitAI
             url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
             try:
                 bg_model = bg_session.get(ModelV2, model.id)
@@ -239,55 +244,7 @@ async def run_background_resync():
                     raise ComfyError(f"CivitAI API error: {response.status_code}")
                 civitai_data = response.json()
                 
-                stats = civitai_data.get("stats") or {}
-                creator = civitai_data.get("creator") or {}
-                
-                bg_model.name = civitai_data.get("name") or bg_model.name
-                bg_model.description = civitai_data.get("description", bg_model.description)
-                bg_model.nsfw = civitai_data.get("nsfw", bg_model.nsfw)
-                
-                new_nsfw_level = civitai_data.get("nsfwLevel")
-                if new_nsfw_level is not None:
-                    bg_model.nsfw_level = new_nsfw_level
-                    
-                bg_model.creator_username = creator.get("username")
-                bg_model.creator_image = creator.get("image")
-                bg_model.stats_downloads = stats.get("downloadCount") or 0
-                bg_model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
-                bg_model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
-                bg_model.stats_comments = stats.get("commentCount") or 0
-                
-                # Update tags
-                bg_session.exec(delete(ModelTag).where(ModelTag.model_id == bg_model.id))
-                for tag in civitai_data.get("tags", []):
-                    bg_session.add(ModelTag(model_id=bg_model.id, tag=tag))
-                    
-                # Update file sizes
-                civitai_versions = civitai_data.get("modelVersions", [])
-                if civitai_versions:
-                    from core.entities import ModelVersion, ModelFile
-                    local_versions = bg_session.exec(
-                        select(ModelVersion).where(ModelVersion.model_id == bg_model.id)
-                    ).all()
-                    for lv in local_versions:
-                        cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
-                        if not cv:
-                            cv = next((v for v in civitai_versions if v.get("name", "").lower() == lv.name.lower()), None)
-                        if cv:
-                            civitai_files = cv.get("files", [])
-                            if civitai_files:
-                                primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
-                                civitai_size_kb = primary_civitai.get("sizeKB")
-                                if civitai_size_kb is not None:
-                                    local_files = bg_session.exec(
-                                        select(ModelFile).where(ModelFile.version_id == lv.id)
-                                    ).all()
-                                    for lf in local_files:
-                                        if not lf.size_kb or lf.size_kb == 0:
-                                            lf.size_kb = float(civitai_size_kb)
-                                            bg_session.add(lf)
-                                            
-                bg_session.add(bg_model)
+                _apply_civitai_metadata(bg_model, civitai_data, bg_session)
                 bg_session.commit()
                 results["success"] += 1
             except Exception as exc:

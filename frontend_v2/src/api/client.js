@@ -13,7 +13,7 @@ const DEFAULT_TIMEOUT = 30000; // 30 seconds
 // Only use an absolute URL when the user explicitly sets VITE_API_URL or localStorage.
 const getBaseUrl = () => {
     const apiUrl = getApiUrl();
-    if (apiUrl && apiUrl !== DEFAULT_API_URL && import.meta.env.PROD) {
+    if (apiUrl && apiUrl !== DEFAULT_API_URL) {
         return apiUrl;
     }
     return '';

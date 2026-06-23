@@ -2,8 +2,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from api.deps import get_session
-from services.provider_service import ProviderService
+from api.deps import get_session, get_provider_service
 from api.deps import get_logger
 
 logger = get_logger("discovery_router")
@@ -35,7 +34,7 @@ async def handle_provider_discovery(
                 provider_type=payload.provider_type,
                 url=payload.internal_url)
 
-    service = ProviderService(session)
+    service = get_provider_service(session)
     await service.upsert_provider_from_discovery(
         provider_id=payload.provider_id,
         provider_type=payload.provider_type,

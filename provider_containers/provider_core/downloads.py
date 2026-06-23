@@ -113,7 +113,6 @@ def download_model_to_path(
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
     logger(f"[{log_prefix}] Starting: {label}")
-    logger(f"[{log_prefix}] URL: {resolved_url[:80]}...")
     logger(f"[{log_prefix}] Using temp file: {os.path.basename(temp_path)}")
 
     if auth_info["used_hf_token"]:

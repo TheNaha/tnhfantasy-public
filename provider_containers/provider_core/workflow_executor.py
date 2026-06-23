@@ -273,10 +273,30 @@ async def execute_comfy_workflow(
                 return
             except websockets.exceptions.ConnectionClosed as error:
                 _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
-                break
+                yield {
+                    "status": "error",
+                    "message": f"WebSocket connection closed: {error}",
+                    "code": 1006,
+                    "retryable": True,
+                    "details": {
+                        "reason": "websocket_closed",
+                        "prompt_id": prompt_id,
+                    },
+                }
+                return
             except Exception as error:
                 _log(logger, logging.ERROR, f"Workflow websocket error: {error}")
-                break
+                yield {
+                    "status": "error",
+                    "message": f"WebSocket error: {error}",
+                    "code": 500,
+                    "retryable": False,
+                    "details": {
+                        "reason": "websocket_error",
+                        "prompt_id": prompt_id,
+                    },
+                }
+                return
 
             if not isinstance(message, str):
                 continue

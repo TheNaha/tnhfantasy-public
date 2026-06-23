@@ -4,11 +4,14 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
     build_status_response, build_error_response
 )
+
+logger = get_logger("provider_core.router")
 
 class ProviderClient(Protocol):
     async def get_health(self) -> Dict[str, Any]: ...
@@ -62,10 +65,11 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
 
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
+        logger.error(f"Unhandled exception: {type(exc).__name__}: {exc}")
         return JSONResponse(
             status_code=500,
             content=build_error_response(
-                message=str(exc),
+                message="Internal server error",
                 retryable=True,
                 code=500,
             )

@@ -187,8 +187,6 @@ async def cancel_job(sid, data):
     
     # Import here to avoid circular imports
     from services.job_queue import job_queue
-    from services.job_service import JobService
-    from services.provider_service import ProviderService
     from core.entities import JobStatus
     from api.deps import get_session_context, get_job_service, get_provider_service
     from api.deps import get_http_client

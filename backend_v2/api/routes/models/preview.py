@@ -3,8 +3,6 @@ import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, Response
 
-import httpx
-
 from api.deps import get_session
 from core.exceptions import NotFoundError, ValidationError
 from api.deps import get_http_client

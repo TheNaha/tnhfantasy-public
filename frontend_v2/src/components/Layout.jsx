@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, memo } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
@@ -39,11 +39,7 @@ const NavItem = ({ to, icon: Icon, label }) => {
 
 const EMPTY_STATS = Object.freeze({});
 
-export default function Layout({ children }) {
-    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-    const [showShortcutsModal, setShowShortcutsModal] = useState(false);
-    const { data: branding } = useBranding();
-    const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
+const ProviderStatusPanel = memo(function ProviderStatusPanel() {
     const { providers, lbStats } = useProvidersPageData();
 
     const providerStatsMap = useMemo(() => {
@@ -64,6 +60,67 @@ export default function Layout({ children }) {
     }), [providerStatsMap, providers]);
 
     const runningProviderCount = providerEntries.filter((entry) => entry.summary.isOnline).length;
+
+    return (
+        <div className="p-4 border-t border-white/5">
+            <div className="glass-panel rounded-xl p-4 border border-white/10">
+                <div className="flex items-center justify-between mb-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
+                    <span className={`inline-block h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
+                </div>
+                {providerEntries.length > 0 ? (
+                    <div className="space-y-2">
+                        {providerEntries.map(({ provider, summary }) => {
+                            const statusMeta = [
+                                summary.jobsAssigned > 0 ? `${summary.jobsAssigned} jobs` : null,
+                                summary.downloadsActive > 0 ? `${summary.downloadsActive} dl` : null,
+                                summary.downloadsQueued > 0 ? `${summary.downloadsQueued} queued` : null,
+                            ].filter(Boolean).join(' · ');
+
+                            const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
+
+                            return (
+                                <div key={provider.id} className="flex items-start gap-2.5 group">
+                                    <span className={`mt-1 provider-dot shadow-[0_0_5px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
+                                                {provider.id}
+                                            </span>
+                                            <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
+                                                {summary.label}
+                                            </span>
+                                            {summary.isDisabled && (
+                                                <span className="text-[9px] text-gray-500 ml-auto font-medium">off</span>
+                                            )}
+                                        </div>
+                                        {subtitle && (
+                                            <p className="mt-1 truncate text-[10px] text-gray-500 group-hover:text-gray-400 transition-colors" title={subtitle}>
+                                                {subtitle}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <p className="text-xs text-gray-500">No providers connected</p>
+                )}
+                <div className="mt-3 pt-3 border-t border-white/5 text-[10px] font-medium text-gray-500 flex justify-between">
+                    <span>Active Providers</span>
+                    <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
+                </div>
+            </div>
+        </div>
+    );
+});
+
+export default function Layout({ children }) {
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+    const { data: branding } = useBranding();
+    const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -140,57 +197,7 @@ export default function Layout({ children }) {
                     <NavItem to="/settings" icon={Settings2} label="Settings" />
                 </nav>
 
-                <div className="p-4 border-t border-white/5">
-                    <div className="glass-panel rounded-xl p-4 border border-white/10">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
-                            <span className={`inline-block h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
-                        </div>
-                        {providerEntries.length > 0 ? (
-                            <div className="space-y-2">
-                                {providerEntries.map(({ provider, summary }) => {
-                                    const statusMeta = [
-                                        summary.jobsAssigned > 0 ? `${summary.jobsAssigned} jobs` : null,
-                                        summary.downloadsActive > 0 ? `${summary.downloadsActive} dl` : null,
-                                        summary.downloadsQueued > 0 ? `${summary.downloadsQueued} queued` : null,
-                                    ].filter(Boolean).join(' · ');
-
-                                    const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
-
-                                    return (
-                                        <div key={provider.id} className="flex items-start gap-2.5 group">
-                                            <span className={`mt-1 provider-dot shadow-[0_0_5px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
-                                                        {provider.id}
-                                                    </span>
-                                                    <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
-                                                        {summary.label}
-                                                    </span>
-                                                    {summary.isDisabled && (
-                                                        <span className="text-[9px] text-gray-500 ml-auto font-medium">off</span>
-                                                    )}
-                                                </div>
-                                                {subtitle && (
-                                                    <p className="mt-1 truncate text-[10px] text-gray-500 group-hover:text-gray-400 transition-colors" title={subtitle}>
-                                                        {subtitle}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <p className="text-xs text-gray-500">No providers connected</p>
-                        )}
-                        <div className="mt-3 pt-3 border-t border-white/5 text-[10px] font-medium text-gray-500 flex justify-between">
-                            <span>Active Providers</span>
-                            <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
-                        </div>
-                    </div>
-                </div>
+                <ProviderStatusPanel />
             </div>
 
             {/* Main Content */}

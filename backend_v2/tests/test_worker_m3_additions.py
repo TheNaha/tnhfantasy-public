@@ -103,7 +103,7 @@ def test_router_exception_handlers():
     assert response.status_code == 500
     payload = response.json()
     assert payload["status"] == "error"
-    assert "Something unexpected failed" in payload["message"]
+    assert "Internal server error" in payload["message"]
     assert payload["retryable"] is True
     assert payload["code"] == 500
 

@@ -71,10 +71,6 @@ def validate_downloaded_file(
                     detected_format = fmt
                     break
 
-            if not header_valid and header[0:1] == b"{":
-                header_valid = True
-                detected_format = "safetensors/json"
-
             if not header_valid:
                 lowered = header.lower()
                 if b"<html" in lowered or b"<!doctype" in lowered:

@@ -42,13 +42,10 @@ class SharedHttpClient:
     def __init__(self, config: HttpClientConfig = None):
         self.config = config or HttpClientConfig()
         self._client: Optional[httpx.AsyncClient] = None
-        self._lock = None
+        self._lock = asyncio.Lock()
     
     async def get_client(self) -> httpx.AsyncClient:
         """Get or create the shared HTTP client."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-            
         if self._client is None:
             async with self._lock:
                 if self._client is None:

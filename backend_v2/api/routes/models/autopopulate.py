@@ -45,7 +45,7 @@ async def get_autopopulate_pending(session: Session = Depends(get_session)):
 
 @router.get("/{model_id}/autopopulate-candidates")
 async def get_autopopulate_candidates(
-    model_id: str,
+    model_id: int,
     session: Session = Depends(get_session)
 ):
     """Return scored CivitAI search candidates for an auto-discovered model.
@@ -53,7 +53,7 @@ async def get_autopopulate_candidates(
     """
     service = ModelCivitaiSyncService(session)
     try:
-        return await service.search_civitai_candidates(model_id)
+        return await service.search_civitai_candidates(str(model_id))
     except ValueError as e:
         raise NotFoundError("Model", model_id)
     except Exception as e:
@@ -62,21 +62,20 @@ async def get_autopopulate_candidates(
 
 @router.get("/{model_id}/autopopulate-search")
 async def search_autopopulate_candidates(
-    model_id: str,
+    model_id: int,
     query: str,
     types: Optional[str] = None,
     session: Session = Depends(get_session)
 ):
     """Manual CivitAI search for autopopulate. Formats results like candidates."""
-    from services.external_model_service import ExternalModelService
+    from api.deps import get_external_model_service
     
     # Verify model exists
-    from core.entities import ModelV2
     model = session.exec(select(ModelV2).where(ModelV2.id == model_id)).first()
     if not model:
         raise NotFoundError("Model", model_id)
         
-    external = ExternalModelService()
+    external = get_external_model_service()
     search_kwargs = {"query": query, "limit": 20}
     if types:
         search_kwargs["types"] = types
@@ -106,7 +105,7 @@ async def search_autopopulate_candidates(
 
 @router.post("/{model_id}/autopopulate")
 async def autopopulate_model_details(
-    model_id: str, 
+    model_id: int, 
     request: Optional[AutopopulateRequest] = None,
     session: Session = Depends(get_session)
 ):

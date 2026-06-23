@@ -15,6 +15,7 @@ from infrastructure.repositories import ProviderRepository
 from infrastructure.logging import get_logger
 from cachetools import TTLCache
 from infrastructure.http_client import get_http_client
+from infrastructure.providers.runtime import get_provider_worker_base_url
 
 logger = get_logger("load_balancer")
 
@@ -290,7 +291,7 @@ class LoadBalancer:
                 port = provider.container_config["port"]
             
             # Default target name (inside Docker network / container DNS)
-            url = f"http://comfy-provider-{provider.id}:{port}/health"
+            url = f"{get_provider_worker_base_url(provider.id, port)}/health"
             
             client = get_http_client()
             response = await client.get(url, timeout=2.0)
@@ -442,7 +443,7 @@ class LoadBalancer:
                         if selected_provider.container_config and "port" in selected_provider.container_config:
                             port = selected_provider.container_config["port"]
                         
-                        url = f"http://comfy-provider-{selected_provider.id}:{port}/health"
+                        url = f"{get_provider_worker_base_url(selected_provider.id, port)}/health"
                         client = get_http_client()
                         res = await client.get(url, timeout=1.0)
                         if res.status_code == 200:

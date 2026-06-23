@@ -14,6 +14,7 @@
 #   DELETE /api/files/{filename}           – Delete a file and its thumbnail
 import os
 import json
+import base64
 from typing import Optional
 from fastapi import APIRouter, Response, Depends, UploadFile, File
 from core.exceptions import NotFoundError, ValidationError, ComfyError
@@ -37,6 +38,72 @@ router = APIRouter(tags=["files"])
 OUTPUT_DIR = settings.output_dir
 INPUT_DIR = settings.input_dir
 CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(os.path.dirname(__file__), "../../cache"))
+
+
+async def _sync_file_to_providers(session: Session, filename: str, content: bytes, directory: str = "input") -> dict:
+    """
+    Sync an uploaded file to all active providers.
+    Returns {"sync_status": str, "synced_count": int, "failed_count": int}.
+    """
+    from infrastructure.providers.runtime import get_provider_worker_base_url
+
+    sync_status = "local_only"
+    synced_count = 0
+    failed_count = 0
+
+    try:
+        service = get_provider_service(session)
+        providers = await service.list_providers()
+
+        active_providers = []
+        for p in providers:
+            p_id = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
+            enabled = p.get("enabled") if isinstance(p, dict) else getattr(p, "enabled", False)
+
+            if not enabled or not p_id:
+                continue
+
+            worker_url = get_provider_worker_base_url(p_id)
+            active_providers.append({"id": p_id, "worker_url": worker_url})
+
+        if active_providers:
+            from api.deps import get_http_client
+            http = get_http_client()
+            payload = {
+                "filename": filename,
+                "content_base64": base64.b64encode(content).decode(),
+                "directory": directory,
+            }
+
+            for provider in active_providers:
+                worker_url = provider["worker_url"]
+                provider_id = provider["id"]
+
+                try:
+                    response = await http.post(
+                        f"{worker_url}/upload-file",
+                        json=payload,
+                        timeout=30.0,
+                    )
+                    if response.status_code == 200:
+                        synced_count += 1
+                    else:
+                        failed_count += 1
+                        logger.warning("sync_provider_failed", provider_id=provider_id, status=response.status_code)
+                except Exception as e:
+                    failed_count += 1
+                    logger.warning("sync_provider_error", provider_id=provider_id, error=str(e))
+
+            if synced_count > 0:
+                sync_status = "synced"
+            elif failed_count > 0:
+                sync_status = "sync_failed"
+
+    except Exception as e:
+        logger.warning("sync_to_providers_failed", error=str(e), exc_info=True)
+        sync_status = "sync_failed"
+
+    return {"sync_status": sync_status, "synced_count": synced_count, "failed_count": failed_count}
 
 
 class BatchDeleteRequest(BaseModel):
@@ -86,35 +153,6 @@ def encode_filename_for_header(filename: str) -> str:
     from urllib.parse import quote
     encoded = quote(filename)
     return f"filename*=UTF-8''{encoded}"
-
-
-def matches_search(item, query):
-    """Check if item matches search query."""
-    if not query:
-        return True
-    query_lower = query.lower()
-    
-    if isinstance(item, dict):
-        name = item.get("name", "").lower()
-        metadata = item.get("metadata", {})
-        
-        if query_lower in name:
-            return True
-        
-        if isinstance(metadata, dict):
-            for key, value in metadata.items():
-                if isinstance(value, str) and query_lower in value.lower():
-                    return True
-                elif isinstance(value, list):
-                    for v in value:
-                        if isinstance(v, str) and query_lower in v.lower():
-                            return True
-        return False
-    
-    elif isinstance(item, str):
-        return query_lower in item.lower()
-    
-    return False
 
 
 def _scan_local_model_directory(model_type, search, sort, limit, offset):
@@ -576,27 +614,57 @@ async def serve_thumbnail(size: str, filename: str):
     raise NotFoundError("Resource", "File not found")
 
 
+MAX_UPLOAD_SIZE_MB = 500
+
+ALLOWED_UPLOAD_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff',
+    '.safetensors', '.ckpt', '.pt', '.pth', '.bin',
+    '.json', '.yaml', '.yml', '.txt', '.csv',
+    '.zip', '.tar', '.gz',
+    '.onnx', '.gguf',
+}
+
+
 @router.post("/api/upload")
 async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"):
     """Upload a file to storage."""
-    try:
-        content = await file.read()
-        
-        # Save locally
-        # Security check: ensure upload path is within OUTPUT_DIR
-        upload_dir = get_safe_path(OUTPUT_DIR, path)
-        os.makedirs(upload_dir, exist_ok=True)
-        
-        # Sanitize filename to prevent path traversal
-        filename = os.path.basename(file.filename)
+    from core.exceptions import ValidationError
 
-        file_path = os.path.join(upload_dir, filename)
-        with open(file_path, 'wb') as f:
-            f.write(content)
+    if not file.filename:
+        raise ValidationError("Filename is required")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise ValidationError(
+            f"File type '{ext}' is not allowed. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}"
+        )
+
+    if file.size is not None and file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise ValidationError(
+            f"File size exceeds the {MAX_UPLOAD_SIZE_MB} MB limit. "
+            f"Received: {file.size / (1024 * 1024):.1f} MB"
+        )
+
+    upload_dir = get_safe_path(OUTPUT_DIR, path)
+    os.makedirs(upload_dir, exist_ok=True)
+
+    filename = os.path.basename(file.filename)
+    file_path = os.path.join(upload_dir, filename)
+    
+    import shutil
+    with open(file_path, 'wb') as f:
+        shutil.copyfileobj(file.file, f)
         
-        return {"status": "success", "filename": filename}
-    except Exception as e:
-        raise ComfyError(str(e))
+    actual_size = os.path.getsize(file_path)
+    if actual_size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        os.remove(file_path)
+        raise ValidationError(
+            f"File size exceeds the {MAX_UPLOAD_SIZE_MB} MB limit. "
+            f"Received: {actual_size / (1024 * 1024):.1f} MB"
+        )
+
+    return {"status": "success", "filename": filename}
 
 
 @router.post("/api/upload/input")
@@ -640,73 +708,10 @@ async def upload_input_image(
         width, height = 0, 0
     
     # Sync to ALL active providers (so job can go to any of them)
-    sync_status = "local_only"
-    synced_count = 0
-    failed_count = 0
-    
-    try:
-        service = get_provider_service(session)
-        providers = await service.list_providers()
-        
-        logger.debug("upload_providers_found", count=len(providers))
-        
-        # Filter enabled providers and construct worker URLs
-        active_providers = []
-        for p in providers:
-            p_id = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
-            enabled = p.get("enabled") if isinstance(p, dict) else getattr(p, "enabled", False)
-            config = p.get("container_config") if isinstance(p, dict) else getattr(p, "container_config", {})
-            
-            if not enabled or not p_id:
-                logger.debug("upload_provider_skipped", provider_id=p_id, enabled=enabled)
-                continue
-            
-            # Construct worker URL from provider ID
-            # Container naming: comfy-provider-{id} running on internal port 8000
-            worker_url = f"http://comfy-provider-{p_id}:8000"
-            
-            logger.debug("upload_provider_active", provider_id=p_id, enabled=enabled, worker_url=worker_url)
-            active_providers.append({"id": p_id, "worker_url": worker_url})
-        
-        if active_providers:
-            from api.deps import get_http_client
-            http = get_http_client()
-            payload = {
-                "filename": unique_name,
-                "content_base64": base64.b64encode(content).decode(),
-                "directory": "input"
-            }
-            
-            for provider in active_providers:
-                worker_url = provider["worker_url"]
-                provider_id = provider["id"]
-                
-                try:
-                    response = await http.post(
-                        f"{worker_url}/upload-file",
-                        json=payload,
-                        timeout=30.0
-                    )
-                    
-                    if response.status_code == 200:
-                        synced_count += 1
-                        logger.debug("upload_provider_sync_success", provider_id=provider_id)
-                    else:
-                        failed_count += 1
-                        logger.warning("upload_provider_sync_failed", provider_id=provider_id, status=response.status_code, body=response.text[:100])
-                except Exception as e:
-                    failed_count += 1
-                    logger.warning("upload_sync_error", provider_id=provider_id, error=str(e))
-            
-            if synced_count > 0:
-                sync_status = "synced"
-            elif failed_count > 0:
-                sync_status = "sync_failed"
-                
-    except Exception as e:
-        logger.warning("upload_provider_sync_failed", error=str(e), exc_info=True)
-        sync_status = "sync_failed"
-    
+    sync_result = await _sync_file_to_providers(session, unique_name, content, "input")
+    synced_count = sync_result["synced_count"]
+    failed_count = sync_result["failed_count"]
+
     logger.info("upload_complete", filename=unique_name, synced=synced_count, failed=failed_count)
     
     return {
@@ -716,7 +721,7 @@ async def upload_input_image(
         "local_preview": f"/api/view/input/{unique_name}",
         "width": width,
         "height": height,
-        "sync_status": sync_status,
+        "sync_status": sync_result["sync_status"],
         "synced_providers": synced_count
     }
 
@@ -768,62 +773,14 @@ async def upload_mask_image(
         f.write(content)
     
     # Sync to ALL active providers
-    sync_status = "local_only"
-    synced_count = 0
-    
-    try:
-        service = get_provider_service(session)
-        providers = await service.list_providers()
-        
-        # Filter enabled providers and construct worker URLs
-        active_providers = []
-        for p in providers:
-            p_id = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
-            enabled = p.get("enabled") if isinstance(p, dict) else getattr(p, "enabled", False)
-            
-            if not enabled or not p_id:
-                continue
-            
-            # Construct worker URL: comfy-provider-{id}:8000
-            worker_url = f"http://comfy-provider-{p_id}:8000"
-            active_providers.append({"id": p_id, "worker_url": worker_url})
-        
-        if active_providers:
-            from api.deps import get_http_client
-            http = get_http_client()
-            payload = {
-                "filename": mask_filename,
-                "content_base64": base64.b64encode(content).decode(),
-                "directory": "input"
-            }
-            
-            for provider in active_providers:
-                worker_url = provider["worker_url"]
-                provider_id = provider["id"]
-                
-                try:
-                    response = await http.post(
-                        f"{worker_url}/upload-file",
-                        json=payload,
-                        timeout=30
-                    )
-                    if response.status_code == 200:
-                        synced_count += 1
-                        logger.info("upload_mask_synced", filename=mask_filename, provider_id=provider_id)
-                except Exception as e:
-                    logger.warning("upload_mask_sync_error", provider_id=provider_id, error=str(e))
-            
-            if synced_count > 0:
-                sync_status = "synced"
-    except Exception as e:
-        logger.warning("upload_mask_provider_sync_failed", error=str(e))
+    sync_result = await _sync_file_to_providers(session, mask_filename, content, "input")
     
     return {
         "status": "success",
         "filename": mask_filename,
         "path": f"input/{mask_filename}",
-        "sync_status": sync_status,
-        "synced_providers": synced_count
+        "sync_status": sync_result["sync_status"],
+        "synced_providers": sync_result["synced_count"]
     }
 
 

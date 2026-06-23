@@ -12,12 +12,13 @@ function canUseBrowserStorage() {
 // Get backend URL from environment or localStorage
 function getBackendUrl() {
     let url = DEFAULT_API_URL;
-    if (canUseBrowserStorage()) {
+    
+    // Environment variable takes highest priority (except for SSR fallback)
+    if (import.meta.env.VITE_API_URL) {
+        url = import.meta.env.VITE_API_URL;
+    } else if (canUseBrowserStorage()) {
         const stored = window.localStorage.getItem('comfy_backend_url');
         if (stored) url = stored;
-    } else if (import.meta.env.VITE_API_URL) {
-        // Check environment variable
-        url = import.meta.env.VITE_API_URL;
     }
 
     // Fix Firefox NS_ERROR_WEBSOCKET_CONNECTION_REFUSED

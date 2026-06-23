@@ -279,7 +279,7 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
             if not completed_at:
                 completed_at = file_data.get("modified_time", file_data.get("date", 0))
 
-            if cutoff_ts > 0 and float(completed_at) < cutoff_ts:
+            if cutoff_ts > 0 and (not completed_at or float(completed_at) < cutoff_ts):
                 continue
         
             detailed_stats["total_images"] += 1

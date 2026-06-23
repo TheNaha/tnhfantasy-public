@@ -66,55 +66,6 @@ class TestEncodeFilenameForHeader:
         assert "UTF-8" in result
 
 
-class TestMatchesSearch:
-    def test_no_query_matches_all(self):
-        from api.routes.files import matches_search
-        assert matches_search({"name": "test"}, "") is True
-        assert matches_search({"name": "test"}, None) is True
-
-    def test_matches_by_name(self):
-        from api.routes.files import matches_search
-        item = {"name": "my_model.safetensors", "metadata": {}}
-        assert matches_search(item, "my_model") is True
-
-    def test_no_match_by_name(self):
-        from api.routes.files import matches_search
-        item = {"name": "my_model.safetensors", "metadata": {}}
-        assert matches_search(item, "zzz_nomatch_xyz") is False
-
-    def test_matches_by_metadata_str(self):
-        from api.routes.files import matches_search
-        item = {"name": "model.safetensors", "metadata": {"author": "john_doe"}}
-        assert matches_search(item, "john_doe") is True
-
-    def test_matches_by_metadata_list(self):
-        from api.routes.files import matches_search
-        item = {"name": "model.safetensors", "metadata": {"tags": ["anime", "realistic"]}}
-        assert matches_search(item, "anime") is True
-
-    def test_no_match_in_metadata(self):
-        from api.routes.files import matches_search
-        item = {"name": "model.safetensors", "metadata": {"author": "john"}}
-        assert matches_search(item, "zzz_nomatch_xyz") is False
-
-    def test_string_item_match(self):
-        from api.routes.files import matches_search
-        assert matches_search("test_filename.png", "test") is True
-
-    def test_string_item_no_match(self):
-        from api.routes.files import matches_search
-        assert matches_search("test_filename.png", "zzz_nomatch_xyz") is False
-
-    def test_unknown_type_returns_false(self):
-        from api.routes.files import matches_search
-        assert matches_search(12345, "test") is False
-
-    def test_case_insensitive_match(self):
-        from api.routes.files import matches_search
-        item = {"name": "MyModel.SAFETENSORS", "metadata": {}}
-        assert matches_search(item, "mymodel") is True
-
-
 class TestFilesRouteEndpoints:
     def test_list_files(self, client):
         response = client.get("/api/files")

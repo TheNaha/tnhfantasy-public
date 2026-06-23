@@ -937,46 +937,6 @@ class FileStorage:
         return True
 
 
-# Entry point wrappers for FileStorage
-@app.function(
-    image=image,
-    volumes={"/mnt/data": vol},
-    timeout=300
-)
-def storage_get_file(path: str) -> bytes:
-    """Get file from volume (serverless function)."""
-    return FileStorage().read_file.remote(path)
-
-
-@app.function(
-    image=image,
-    volumes={"/mnt/data": vol},
-    timeout=300
-)
-def storage_delete_file(path: str) -> bool:
-    """Delete file from volume (serverless function)."""
-    return FileStorage().delete_file.remote(path)
-
-
-@app.function(
-    image=image,
-    volumes={"/mnt/data": vol},
-    timeout=300
-)
-def storage_list_files(directory: str = "models") -> list:
-    """List files in directory (serverless function)."""
-    return FileStorage().list_directory.remote(directory)
-
-
-@app.function(
-    image=image,
-    volumes={"/mnt/data": vol},
-    timeout=300
-)
-def storage_file_exists(path: str) -> bool:
-    """Check if file exists (serverless function)."""
-    return FileStorage().file_exists.remote(path)
-
 @app.function(
     image=image,
     volumes={"/mnt/data": vol},

@@ -19,6 +19,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_provider_service, get_container_manager
+from infrastructure.providers.runtime import get_provider_worker_base_url
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
 from services.provider_lifecycle_service import ProviderLifecycleService
@@ -161,7 +162,7 @@ async def wake_providers(session: Session = Depends(get_session)):
         async def ping_worker(provider_id: str):
             try:
                 await http_client.get(
-                    f"http://comfy-provider-{provider_id}:8000/health",
+                    f"{get_provider_worker_base_url(provider_id)}/health",
                     timeout=5.0,
                 )
             except Exception:

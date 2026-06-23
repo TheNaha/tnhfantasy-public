@@ -5,7 +5,6 @@ Includes reconciliation loop and startup helpers.
 
 import asyncio
 import os
-import platform
 import socket
 import traceback
 from typing import Callable, Awaitable, Optional

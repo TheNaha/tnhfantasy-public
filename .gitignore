@@ -41,6 +41,9 @@ data/db/comfy.db
 .ocx/
 .opencode/
 .agents/
+.jules/
+.Jules/
+jules.log
 test_async_gen.py
 provider_fixes.patch
 

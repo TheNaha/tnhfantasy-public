@@ -425,11 +425,9 @@ class GalleryIndexer:
                 
             # 2. Filter if search provided
             if search:
-                from api.routes.files import matches_search
                 filtered_keys = []
                 for k in keys:
                     file_data = self.files[k]
-                    # We can use the existing matches_search or simple string tracking
                     search_lower = search.lower()
                     if search_lower in file_data['name'].lower():
                         filtered_keys.append(k)
@@ -439,6 +437,13 @@ class GalleryIndexer:
                     for val in file_data.get('metadata', {}).values():
                         if isinstance(val, str) and search_lower in val.lower():
                             found = True
+                            break
+                        elif isinstance(val, list):
+                            for v in val:
+                                if isinstance(v, str) and search_lower in v.lower():
+                                    found = True
+                                    break
+                        if found:
                             break
                     if found:
                         filtered_keys.append(k)
