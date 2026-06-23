@@ -20,6 +20,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
     className = '',
     size = 'full', // 'medium' or 'full'
     aspectRatio = '1 / 1',
+    objectFit = null,
     onLoad,
     onError,
 }) {
@@ -59,6 +60,8 @@ const ProgressiveImage = memo(function ProgressiveImage({
         if (onLoad) onLoad();
     };
 
+    const isCover = objectFit === 'cover' || aspectRatio !== 'auto';
+
     return (
         <div
             ref={containerRef}
@@ -74,7 +77,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
                     resolutionX={32}
                     resolutionY={32}
                     punch={1}
-                    className={aspectRatio !== 'auto' ? 'absolute inset-0' : 'w-full h-auto'}
+                    className={isCover ? 'absolute inset-0' : 'w-full h-auto'}
                 />
             )}
 
@@ -89,7 +92,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
                     className={`
                         transition-opacity duration-500
                         ${isLoaded ? 'opacity-100' : 'opacity-0'}
-                        ${aspectRatio !== 'auto' ? 'absolute inset-0 w-full h-full object-cover' : 'max-w-full max-h-full object-contain'}
+                        ${isCover ? 'absolute inset-0 w-full h-full object-cover' : 'max-w-full max-h-full object-contain'}
                     `}
                     loading="lazy"
                 />

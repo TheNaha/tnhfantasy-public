@@ -208,7 +208,6 @@ export default function DiscoverTab() {
         if (!urlInput.trim()) return;
 
         setImporting(true);
-        setResults([]);
         try {
             const data = await api.post('/api/v2/models/external/parse', { url: urlInput });
             setImportedModel(data);
@@ -221,7 +220,6 @@ export default function DiscoverTab() {
 
     const handleModelSelect = (model) => {
         setImportedModel(model);
-        setResults([]);
     };
 
     useEffect(() => {
@@ -431,6 +429,11 @@ export default function DiscoverTab() {
                 </div>
             )}
 
+            {/* Modal Overlay for ModelImportCard */}
+            {importedModel && (
+                <ModelImportCard model={importedModel} onCancel={() => setImportedModel(null)} />
+            )}
+
             {/* Content Area */}
             {loading ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -438,8 +441,6 @@ export default function DiscoverTab() {
                         <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
                     ))}
                 </div>
-            ) : importedModel ? (
-                <ModelImportCard model={importedModel} onCancel={() => setImportedModel(null)} />
             ) : results.length > 0 ? (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

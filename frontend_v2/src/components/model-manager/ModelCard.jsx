@@ -41,6 +41,13 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-[#0B0E14] via-[#0B0E14]/60 to-transparent opacity-90 transition-opacity duration-300 group-hover:opacity-75" />
 
+                {/* Base Model badge */}
+                {model.modelVersions?.[0]?.baseModel && (
+                    <div className="absolute top-3 left-3 bg-purple-500/20 text-purple-300 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-purple-500/30 shadow-lg backdrop-blur-md">
+                        {model.modelVersions[0].baseModel}
+                    </div>
+                )}
+
                 {/* Installed badge */}
                 {isInstalled && (
                     <div className="absolute top-3 right-3 bg-green-500/20 text-green-400 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border border-green-500/30 shadow-lg flex items-center gap-1.5 backdrop-blur-md">

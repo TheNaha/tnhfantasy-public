@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { Terminal, Loader2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { providersApi } from '../../../api';
@@ -13,7 +13,7 @@ export default function LiveConsoleTab({ providerId }) {
         enabled: !!providerId,
     });
 
-    const logs = data?.logs || [];
+    const logs = useMemo(() => data?.logs || [], [data?.logs]);
 
     useEffect(() => {
         // Auto-scroll to bottom

@@ -35,6 +35,7 @@ function ModelPreviewImage({ model, size = 'md', className = '' }) {
         className={`${sizeClass} bg-gray-800 flex-shrink-0 ${size === 'lg' ? 'transition-transform group-hover:scale-105' : ''} ${className}`}
         size="medium"
         aspectRatio={size === 'sm' ? '1/1' : 'auto'}
+        objectFit="cover"
         onError={(e) => {
           e.target.style.display = 'none';
         }}

@@ -8,26 +8,15 @@ import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
-
-const ONLINE_RUNTIME_STATES = new Set(['running', 'starting', 'active', 'connected']);
-const AVAILABLE_MODEL_STATES = new Set(['ready', 'installed', 'available', 'completed']);
-
-function normalizeModelStatus(statusData) {
-    if (typeof statusData === 'string') {
-        return statusData.toLowerCase();
-    }
-    if (statusData && typeof statusData === 'object' && typeof statusData.status === 'string') {
-        return statusData.status.toLowerCase();
-    }
-    return 'unknown';
-}
-
-function isProviderOnline(provider) {
-    if (!provider || provider.enabled === false) {
-        return false;
-    }
-    return ONLINE_RUNTIME_STATES.has(provider.runtime_state?.status);
-}
+import {
+    ONLINE_RUNTIME_STATES,
+    AVAILABLE_MODEL_STATES,
+    normalizeModelStatus,
+    isProviderOnline,
+    formatAvailabilityBadgeLabel,
+    availabilityTone,
+    getModelAvailabilitySummary
+} from '../utils/modelAvailability';
 
 function modelStatusTone(status) {
     if (AVAILABLE_MODEL_STATES.has(status)) {
@@ -38,22 +27,6 @@ function modelStatusTone(status) {
     }
     if (status === 'failed') {
         return 'text-red-300 bg-red-500/15 border-red-500/30';
-    }
-    return 'text-gray-300 bg-gray-500/15 border-gray-500/30';
-}
-
-function availabilityTone(availability) {
-    if (availability === 'Available' || availability === 'Available (offline)') {
-        return 'text-green-300 bg-green-500/15 border-green-500/30';
-    }
-    if (availability === 'Partial') {
-        return 'text-yellow-300 bg-yellow-500/15 border-yellow-500/30';
-    }
-    if (availability === 'Unavailable') {
-        return 'text-red-300 bg-red-500/15 border-red-500/30';
-    }
-    if (availability === 'Loading providers') {
-        return 'text-blue-300 bg-blue-500/15 border-blue-500/30';
     }
     return 'text-gray-300 bg-gray-500/15 border-gray-500/30';
 }
@@ -216,42 +189,8 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
         (row) => row.online && AVAILABLE_MODEL_STATES.has(row.modelStatus)
     ).length;
 
-    let modelAvailability = providersLoading ? 'Loading providers' : 'Unknown';
-    // Determine availability based on ALL providers (not just online ones)
-    // Provider statuses indicate what models are available on which providers
-    if (providersLoading) {
-        modelAvailability = 'Loading providers';
-    } else {
-        // Check ALL providers that have this model (whether online or not)
-        const allProvidersWithModel = Object.entries(providerStatuses)
-            .filter(([, statusData]) => {
-                const status = normalizeModelStatus(statusData);
-                return AVAILABLE_MODEL_STATES.has(status);
-            })
-            .map(([providerId]) => providerId);
-
-        // Count how many of those providers are currently online
-        const availableAndOnline = allProvidersWithModel.filter(id => onlineProviderIds.has(id)).length;
-        const availableTotal = allProvidersWithModel.length;
-
-        if (onlineProviderCount > 0) {
-            // We have online providers - show real-time availability
-            if (availableAndOnline === onlineProviderCount) {
-                modelAvailability = 'Available';
-            } else if (availableAndOnline > 0) {
-                modelAvailability = 'Partial';
-            } else {
-                modelAvailability = 'Unavailable';
-            }
-        } else if (availableTotal > 0) {
-            // No providers currently online, but model is available on some providers
-            modelAvailability = 'Available (offline)';
-        } else if (Object.keys(providerStatuses).length > 0) {
-            // No providers online and model not available on any
-            modelAvailability = 'Unavailable';
-        }
-        // If both are 0, keep 'Unknown'
-    }
+    const availabilitySummary = getModelAvailabilitySummary(providerStatuses, runtimeProviders, { providersLoading });
+    const modelAvailability = formatAvailabilityBadgeLabel(availabilitySummary.label);
 
 
 
@@ -402,7 +341,7 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${row.online ? 'text-green-300 bg-green-500/10 border-green-500/30' : 'text-gray-300 bg-gray-500/10 border-gray-500/30'}`}>
-                                                        {row.online ? 'online' : row.runtimeStatus}
+                                                        {row.online ? 'online' : 'offline'}
                                                     </span>
                                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] capitalize ${modelStatusTone(row.modelStatus)}`}>
                                                         {row.modelStatus}

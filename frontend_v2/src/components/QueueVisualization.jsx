@@ -77,7 +77,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
             runningJobs: runningProcessed,
             pendingJobs: pendingProcessed
         };
-    }, [activeJobs]);
+    }, [activeJobs, allJobs]);
 
     // Don't render if queue is empty
     if (queue.length === 0) return null;
