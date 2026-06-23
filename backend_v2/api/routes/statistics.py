@@ -13,8 +13,8 @@ import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter
-from infrastructure.cache import cache_stats
-from infrastructure.logging import get_logger
+from api.deps import cache_stats
+from api.deps import get_logger
 from services.gallery_indexer import gallery_indexer
 from config import settings
 

@@ -1,5 +1,6 @@
 import { useState, useMemo, memo, useId } from 'react';
 import { useActiveJobs } from '../hooks/useActiveJobs';
+import useJobStore from '../store/jobStore';
 import { Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 
@@ -13,10 +14,35 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
 
     // Use active jobs from React Query
     const { data: activeJobs = [] } = useActiveJobs();
+    const allJobs = useJobStore(state => state.jobs);
+
     const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {
+        // Merge Zustand jobs into activeJobs to get realtime progress
+        const jobMap = new Map();
+        activeJobs.forEach(job => {
+            jobMap.set(job.id, { ...job });
+        });
+        
+        Object.keys(allJobs).forEach(id => {
+            if (jobMap.has(id)) {
+                jobMap.set(id, { ...jobMap.get(id), ...allJobs[id] });
+            } else {
+                jobMap.set(id, { id, ...allJobs[id] });
+            }
+        });
+        
+        const mergedJobs = Array.from(jobMap.values());
+
         // Filter for active items only and sort
-        const running = activeJobs.filter(j => j.status === 'running' || j.status === 'processing');
-        const pending = activeJobs.filter(j => j.status === 'pending' || j.status === 'queued')
+        const runningStatuses = [
+            'sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 
+            'pre-generation', 'pre_generation', 'generating', 'post-processing', 
+            'post_processing', 'generating-blurhash', 'generating_blurhash', 
+            'generating-thumbnails', 'generating_thumbnails', 'running', 'processing'
+        ];
+        
+        const running = mergedJobs.filter(j => runningStatuses.includes(j.status));
+        const pending = mergedJobs.filter(j => j.status === 'pending' || j.status === 'queued')
             .sort((a, b) => (a.queue_position || 999) - (b.queue_position || 999));
 
         // Calculate basic stats/ETAs locally since we have state

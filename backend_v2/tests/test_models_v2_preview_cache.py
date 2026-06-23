@@ -140,7 +140,7 @@ async def test_get_model_preview_image_deduplicates_concurrent_fetches(monkeypat
     clear_dedup_cache()
     calls = 0
 
-    async def fake_fetch(_model_id, _version_id=None, _image_index=0):
+    async def fake_fetch(_model_id, _version_id=None, _image_index=0, **kwargs):
         nonlocal calls
         calls += 1
         await asyncio.sleep(0)

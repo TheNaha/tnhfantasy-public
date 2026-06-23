@@ -7,9 +7,9 @@ import httpx
 
 from api.deps import get_session
 from core.exceptions import NotFoundError, ValidationError
-from infrastructure.http_client import get_http_client
-from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.logging import model_logger
+from api.deps import get_http_client
+from api.deps import deduplicated, make_key
+from api.deps import model_logger
 from services.model_preview_service import get_preview_deduplicated, prefetch_stale_model_previews
 
 logger = model_logger()
@@ -18,12 +18,12 @@ router = APIRouter()
 
 
 @router.get("/preview/{model_id}")
-async def get_model_preview_image(model_id: int, version_id: int = None, image_index: int = 0):
+async def get_model_preview_image(model_id: int, version_id: int = None, image_index: int = 0, width: int = None):
     if image_index < 0:
         raise ValidationError("image_index must be >= 0")
 
     image_data, content_type, cache_hit = await get_preview_deduplicated(
-        model_id, version_id, image_index
+        model_id, version_id, image_index, width
     )
 
     if not image_data:

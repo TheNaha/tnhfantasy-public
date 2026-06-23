@@ -201,7 +201,6 @@ class TestModelServiceV2ProviderStatus:
         status_obj = SimpleNamespace(
             file_id=42,
             provider_id="modal-primary",
-            provider_name="modal-primary",
             status="ready",
             storage_path="models/checkpoints/test.safetensors",
             size_bytes=123,
@@ -212,7 +211,7 @@ class TestModelServiceV2ProviderStatus:
         with patch("services.load_balancer.LoadBalancer.invalidate_model_availability_cache") as invalidate_cache:
             result = await service.update_provider_file_status(
                 file_id=42,
-                provider_name="modal-primary",
+                provider_id="modal-primary",
                 status="ready",
                 storage_path="models/checkpoints/test.safetensors",
                 size_bytes=123,

@@ -11,9 +11,8 @@
  *   Models             – selectedCheckpoint, selectedVae, selectedClip,
  *                        selectedClip2, selectedLoras[], controlnets[]
  *   Enhancements       – hiresFix settings, adetailer settings
- *   Img2Img / Inpaint  – sourceImage, denoise, maskImage, maskBlur
- *   Saved prompts      – savedPrompts[] (synced from server via promptStore)
- *   Presets            – savedPresets[] (parameter bundles, local only)
+ *   Img2Img / Inpaint  - sourceImage, denoise, maskImage, maskBlur
+ *   Presets            - savedPresets[] (parameter bundles, local only)
  *
  * AUTO-APPLY:
  *   When a checkpoint is selected and `autoApplyModelSettings` is true, the
@@ -166,8 +165,7 @@ export const useGeneratorStore = create(
             maskImage: null,      // Base64 data URL of the mask for inpainting
             maskBlur: 4,          // Blur mask edges (0-20 pixels)
 
-            // Saved Prompts
-            savedPrompts: [],
+
 
             // Saved Presets (Parameters only)
             savedPresets: [
@@ -270,7 +268,7 @@ export const useGeneratorStore = create(
             clearSourceImage: () => set({ sourceImage: null, maskImage: null }),
             clearMask: () => set({ maskImage: null }),
 
-            setSavedPrompts: (savedPrompts) => set({ savedPrompts }),
+
 
             addPreset: (preset) => set((state) => ({
                 savedPresets: [...state.savedPresets, { ...preset, id: Date.now().toString() }]

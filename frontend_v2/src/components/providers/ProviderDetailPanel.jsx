@@ -7,7 +7,7 @@ import {
 import { motion } from 'framer-motion';
 import { providerBadgeToneClass, summarizeProviderStatus } from '../../utils/providerStatus';
 import JobCard from '../dashboard/JobCard';
-import useJobStore from '../../store/jobStore';
+
 import { useActiveJobs } from '../../hooks/useActiveJobs';
 
 import RuntimeTab from './tabs/RuntimeTab';
@@ -39,31 +39,12 @@ export default function ProviderDetailPanel({
 }) {
     const [activeTab, setActiveTab] = useState('runtime');
     const { data: baseJobs = [] } = useActiveJobs();
-    const allJobs = useJobStore(state => state.jobs);
-    
     const activeJobs = useMemo(() => {
-        // Merge base jobs with runtime updates from Zustand
-        const jobMap = new Map();
-        
-        // Add all base jobs
-        baseJobs.forEach(job => {
-            jobMap.set(job.id, { ...job });
-        });
-        
-        // Apply Zustand updates, adding any missing jobs that are active
-        Object.keys(allJobs).forEach(id => {
-            if (jobMap.has(id)) {
-                jobMap.set(id, { ...jobMap.get(id), ...allJobs[id] });
-            } else {
-                jobMap.set(id, { id, ...allJobs[id] });
-            }
-        });
-        
-        return Array.from(jobMap.values()).filter(j => 
+        return baseJobs.filter(j => 
             j.provider_id === provider.id && 
             !['completed', 'failed', 'cancelled', 'error'].includes(j.status)
         );
-    }, [baseJobs, allJobs, provider.id]);
+    }, [baseJobs, provider.id]);
 
     const runtime = provider.runtime_state ?? EMPTY_OBJECT;
     const deploy = provider.deploy_state ?? EMPTY_OBJECT;

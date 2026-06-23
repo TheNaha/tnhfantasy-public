@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
+import ProgressiveImage from '../ProgressiveImage';
+import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
@@ -404,13 +406,13 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                             >
                                 <div className="absolute inset-0">
                                     {file.preview ? (
-                                        <img
+                                        <ProgressiveImage
                                             src={file.preview}
+                                            medium={getOptimizedImageUrl(file.preview, 450)}
                                             alt={file.display_name || file.name}
                                             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                            loading="lazy"
-                                            decoding="async"
-                                            fetchPriority="low"
+                                            size="medium"
+                                            aspectRatio="2/3"
                                             onError={(e) => {
                                                 if (file.civitai_id) {
                                                     const proxyPreview = `/api/v2/models/preview/${file.civitai_id}?image_index=0`;
@@ -423,13 +425,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                             }}
                                         />
                                     ) : file.civitai_id ? (
-                                        <img
+                                        <ProgressiveImage
                                             src={`/api/v2/models/preview/${file.civitai_id}?image_index=0`}
                                             alt={file.display_name || file.name}
                                             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                            loading="lazy"
-                                            decoding="async"
-                                            fetchPriority="low"
+                                            size="medium"
+                                            aspectRatio="2/3"
                                             onError={(e) => { e.target.style.display = 'none'; }}
                                         />
                                     ) : (

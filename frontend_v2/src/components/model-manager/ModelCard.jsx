@@ -1,4 +1,6 @@
 import { Download, Image as ImageIcon, Check, Heart } from 'lucide-react';
+import ProgressiveImage from '../ProgressiveImage';
+import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 
 export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
 
@@ -7,6 +9,7 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
         ? `/api/v2/models/preview/${model.id}?image_index=0`
         : null;
     const previewImage = directPreviewImage || cachedPreviewImage;
+    const optimizedImage = directPreviewImage ? getOptimizedImageUrl(directPreviewImage, 450) : cachedPreviewImage;
     const isInstalled = installedInfo?.model_installed;
 
     return (
@@ -19,21 +22,20 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
         >
             <div className="aspect-[2/3] bg-[#0B0E14] relative">
                 {previewImage ? (
-                    <img
+                    <ProgressiveImage
                         src={previewImage}
+                        medium={optimizedImage}
                         alt={model.name}
                         className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                        loading="lazy"
-                        decoding="async"
-                        fetchPriority="low"
+                        size="medium"
+                        aspectRatio="2/3"
                         onError={(e) => {
                             if (cachedPreviewImage && e.currentTarget.src !== cachedPreviewImage) {
                                 e.currentTarget.src = cachedPreviewImage;
-                                return;
                             }
-                            e.target.style.display = 'none';
                         }}
                     />
+
                 ) : (
                     <div className="absolute inset-0 flex items-center justify-center text-gray-600/50 bg-gradient-to-br from-black/60 to-black/20">
                         <ImageIcon size={48} className="opacity-30" />

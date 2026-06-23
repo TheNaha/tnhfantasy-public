@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from api.deps import get_session, get_session_sync, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
-from infrastructure.logging import model_logger
+from api.deps import model_logger
 
 logger = model_logger()
 

@@ -21,7 +21,7 @@ from services.job_processing import finalize_persisted_job_outputs, normalize_ex
 from core.exceptions import NotFoundError
 from services.provider_client import ProviderCallError
 from core.entities import JobStatus
-from infrastructure.logging import get_logger
+from api.deps import get_logger
 
 logger = get_logger("worker_ws")
 

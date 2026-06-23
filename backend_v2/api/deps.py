@@ -23,7 +23,13 @@ from infrastructure.database import (
     get_session_sync as db_get_session_sync,
 )
 from core.events import event_bus, EventBus
-from infrastructure.logging import get_logger
+from infrastructure.logging import get_logger, api_logger, model_logger
+from infrastructure.http_client import get_http_client
+from infrastructure.background_tasks import start_background_task
+from infrastructure.request_dedup import deduplicated, make_key
+from infrastructure.providers import create_provider_client
+from infrastructure.image_processor import read_image_metadata
+from infrastructure.cache import cache_stats
 
 logger = get_logger("api_deps")
 
@@ -60,6 +66,12 @@ def get_provider_service(session: Session):
     """Get provider service instance."""
     from services.provider_service import ProviderService
     return ProviderService(session)
+
+
+def get_model_repo_v2(session: Session):
+    """Get model repo V2 instance."""
+    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+    return ModelRepositoryV2(session)
 
 
 def get_model_service_v2(session: Session):

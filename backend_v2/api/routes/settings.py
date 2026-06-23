@@ -20,8 +20,7 @@ from sqlmodel import Session
 
 import config as app_config
 from api.deps import get_session
-from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-from infrastructure.logging import get_logger
+from api.deps import get_logger
 
 logger = get_logger("settings_route")
 
@@ -490,19 +489,20 @@ async def get_presets(session: Session = Depends(get_session)):
     from sqlmodel import select
     from core.entities import ModelFile
     
-    preset_paths = [f"models/{p['type']}/{p['filename']}" for p in PRESETS]
-    installed_files = set(
+    preset_filenames = [p['filename'] for p in PRESETS]
+    
+    # We just check by storage_filename since these are presets
+    installed_filenames = set(
         row[0] for row in session.exec(
-            select(ModelFile.storage_path).where(ModelFile.storage_path.in_(preset_paths))
+            select(ModelFile.storage_filename).where(ModelFile.storage_filename.in_(preset_filenames))
         ).all()
     )
     
     presets = []
     for preset in PRESETS:
-        storage_path = f"models/{preset['type']}/{preset['filename']}"
         presets.append({
             **preset,
-            "installed": storage_path in installed_files
+            "installed": preset['filename'] in installed_filenames
         })
     
     return {"presets": presets}

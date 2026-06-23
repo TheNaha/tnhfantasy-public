@@ -5,7 +5,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_model_service_v2
-from infrastructure.logging import model_logger
+from api.deps import model_logger
 from .schemas import UpdateProviderStatusRequest
 
 logger = model_logger()
@@ -27,10 +27,10 @@ async def get_provider_statuses(
     return await service.get_model_provider_statuses(model_id)
 
 
-@router.put("/files/{file_id}/providers/{provider_name}/status")
+@router.put("/files/{file_id}/providers/{provider_id}/status")
 async def update_file_provider_status(
     file_id: int,
-    provider_name: str,
+    provider_id: str,
     request: UpdateProviderStatusRequest,
     session: Session = Depends(get_session)
 ):
@@ -38,7 +38,7 @@ async def update_file_provider_status(
     service = get_model_service_v2(session)
     result = await service.update_provider_file_status(
         file_id=file_id,
-        provider_name=provider_name,
+        provider_id=provider_id,
         status=request.status,
         storage_path=request.storage_path,
         size_bytes=request.size_bytes,
@@ -48,7 +48,7 @@ async def update_file_provider_status(
     # Emit WebSocket event to replace polling
     from core.events import emit_model_status_update
     await emit_model_status_update(
-        provider_id=provider_name,
+        provider_id=provider_id,
         file_id=file_id,
         status=request.status,
         extra={"storage_path": request.storage_path, "size_bytes": request.size_bytes}
@@ -85,9 +85,9 @@ async def register_discovered_models(
 # RECONCILIATION ENDPOINTS
 # ============================================================================
 
-@router.get("/providers/{provider_name}/pending-downloads")
+@router.get("/providers/{provider_id}/pending-downloads")
 def get_pending_downloads(
-    provider_name: str,
+    provider_id: str,
     session: Session = Depends(get_session)
 ):
     """
@@ -95,7 +95,7 @@ def get_pending_downloads(
     Used by worker for reconciliation.
     """
     service = get_model_service_v2(session)
-    pending = service.get_pending_downloads(provider_name)
+    pending = service.get_pending_downloads(provider_id)
     return {"files": pending}
 
 
@@ -212,8 +212,8 @@ async def batch_update_status(
         except Exception:
             failed += 1
     
-    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-    model_repo = ModelRepositoryV2(session)
+    from api.deps import get_model_repo_v2
+    model_repo = get_model_repo_v2(session)
     model_repo.garbage_collect_auto_discovered()
     orphaned = model_repo.cleanup_orphaned_models()
     if orphaned:
@@ -222,9 +222,9 @@ async def batch_update_status(
     return {"updated": updated, "failed": failed}
 
 
-@router.delete("/providers/{provider_name}/reset-status")
+@router.delete("/providers/{provider_id}/reset-status")
 def reset_provider_status(
-    provider_name: str,
+    provider_id: str,
     session: Session = Depends(get_session)
 ):
     """
@@ -232,14 +232,14 @@ def reset_provider_status(
     This will force re-download of ALL files on next reconciliation.
     Use with caution!
     """
-    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+    from api.deps import get_model_repo_v2
 
-    model_repo = ModelRepositoryV2(session)
-    count = model_repo.delete_all_statuses_for_provider(provider_name)
+    model_repo = get_model_repo_v2(session)
+    count = model_repo.delete_all_statuses_for_provider(provider_id)
     
     return {
         "status": "success",
-        "message": f"Reset {count} status entries for provider '{provider_name}'",
+        "message": f"Reset {count} status entries for provider '{provider_id}'",
         "deleted_count": count
     }
 
@@ -258,8 +258,8 @@ async def cleanup_orphaned_models(
     exist in the database but are no longer present on any provider
     (all statuses are 'failed' or missing) are cleaned up.
     """
-    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-    model_repo = ModelRepositoryV2(session)
+    from api.deps import get_model_repo_v2
+    model_repo = get_model_repo_v2(session)
     deleted = model_repo.cleanup_orphaned_models()
     return {"deleted": deleted}
 

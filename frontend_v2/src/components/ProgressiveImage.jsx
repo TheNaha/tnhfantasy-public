@@ -21,6 +21,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
     size = 'full', // 'medium' or 'full'
     aspectRatio = '1 / 1',
     onLoad,
+    onError,
 }) {
     const [isLoaded, setIsLoaded] = useState(false);
     const shouldLoadImmediately = size === 'full';
@@ -84,6 +85,7 @@ const ProgressiveImage = memo(function ProgressiveImage({
                     src={imageSrc}
                     alt={alt}
                     onLoad={handleLoad}
+                    onError={onError}
                     className={`
                         transition-opacity duration-500
                         ${isLoaded ? 'opacity-100' : 'opacity-0'}

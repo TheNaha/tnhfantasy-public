@@ -140,36 +140,7 @@ export function mergeModalStats(current, patch) {
     });
 }
 
-// Fetch models for a provider
-export function useProviderModels(providerId, status = null) {
-    return useQuery({
-        queryKey: ['providerModels', providerId, status],
-        queryFn: async () => {
-            let url = `/api/providers/${providerId}/models`;
-            if (status) {
-                url += `?status=${status}`;
-            }
-            return api.get(url);
-        },
-        enabled: !!providerId,
-    });
-}
 
-// Remove model from provider
-export function useRemoveModelFromProvider() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: ({ directory, modelName, providerId }) => {
-            return api.delete(
-                `/api/providers/${providerId}/models?directory=${encodeURIComponent(directory)}&filename=${encodeURIComponent(modelName)}`
-            );
-        },
-        onSuccess: (_, { providerId }) => {
-            queryClient.invalidateQueries({ queryKey: ['providerModels', providerId] });
-        },
-    });
-}
 
 // Add model to providers
 export function useAddModelToProviders() {
@@ -183,10 +154,8 @@ export function useAddModelToProviders() {
                 provider_ids: providerIds,
             });
         },
-        onSuccess: (_, { providerIds }) => {
-            providerIds.forEach((providerId) => {
-                queryClient.invalidateQueries({ queryKey: ['providerModels', providerId] });
-            });
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['providers-page', 'providers'] });
         },
     });
 }

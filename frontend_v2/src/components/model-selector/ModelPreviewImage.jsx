@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
+import ProgressiveImage from '../ProgressiveImage';
+import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 
 function ModelPreviewImage({ model, size = 'md', className = '' }) {
   const sizeClass = size === 'sm'
@@ -10,15 +12,17 @@ function ModelPreviewImage({ model, size = 'md', className = '' }) {
     ? 'w-10 h-10 rounded'
     : 'absolute inset-0';
 
+  const previewWidth = size === 'sm' ? 150 : 450;
+
   if (model?.preview) {
     return (
-      <img
+      <ProgressiveImage
         src={model.preview}
+        medium={getOptimizedImageUrl(model.preview, previewWidth)}
         alt={model?.display_name || model?.name}
         className={`${sizeClass} bg-gray-800 flex-shrink-0 ${size === 'lg' ? 'transition-transform group-hover:scale-105' : ''} ${className}`}
-        loading={size === 'lg' ? 'lazy' : undefined}
-        decoding="async"
-        fetchPriority={size === 'lg' ? 'low' : undefined}
+        size="medium"
+        aspectRatio={size === 'sm' ? '1/1' : 'auto'}
         onError={(e) => {
           if (model?.civitai_id) {
             const versionPreviewId = model.selectedVersionPreviewId || model.selectedVersionId;
@@ -45,13 +49,12 @@ function ModelPreviewImage({ model, size = 'md', className = '' }) {
       params.set('version_id', String(versionPreviewId));
     }
     return (
-      <img
+      <ProgressiveImage
         src={`/api/v2/models/preview/${model.civitai_id}?${params.toString()}`}
         alt={model?.display_name || model?.name}
         className={`${sizeClass} bg-gray-800 flex-shrink-0 ${size === 'lg' ? 'transition-transform group-hover:scale-105' : ''} ${className}`}
-        loading={size === 'lg' ? 'lazy' : undefined}
-        decoding="async"
-        fetchPriority={size === 'lg' ? 'low' : undefined}
+        size="medium"
+        aspectRatio={size === 'sm' ? '1/1' : 'auto'}
         onError={(e) => {
           e.target.style.display = 'none';
         }}

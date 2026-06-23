@@ -133,7 +133,7 @@ async def test_run_reconciliation_v2_marks_existing_pending_files_ready(monkeypa
     monkeypatch.setattr("provider_core.reconciliation.push_reconciliation_event", AsyncMock(return_value=True))
 
     validate_existing = AsyncMock(return_value={"total_invalid": 0, "total_partial": 0})
-    list_existing_files = AsyncMock(return_value={pending_file["storage_path"]})
+    list_existing_files = AsyncMock(return_value={pending_file["storage_path"]: {"size": pending_file["size_kb"] * 1024, "modified_at": 12345}})
     download_file = AsyncMock()
     delete_file = AsyncMock()
 
@@ -186,9 +186,10 @@ async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans
     report_status = AsyncMock()
     monkeypatch.setattr("provider_core.reconciliation.report_file_status_v2", report_status)
     monkeypatch.setattr("provider_core.reconciliation.push_reconciliation_event", AsyncMock(return_value=True))
+    monkeypatch.setattr("provider_core.reconciliation.register_discovered_files", AsyncMock(return_value={"imported": 1, "failed": 0}))
 
     validate_existing = AsyncMock(return_value={"total_invalid": 1, "total_partial": 0})
-    list_existing_files = AsyncMock(return_value={orphan_path})
+    list_existing_files = AsyncMock(return_value={orphan_path: {"size": 4096, "modified_at": 12345}})
     download_file = AsyncMock()
     delete_file = AsyncMock(return_value=True)
 

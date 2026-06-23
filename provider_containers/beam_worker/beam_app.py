@@ -366,10 +366,11 @@ async def delete_model(request: Request):
     
     try:
         os.remove(full_path)
-        for ext in [".json", ".preview.png"]:
-            side_file = os.path.splitext(full_path)[0] + ext
-            if os.path.exists(side_file):
-                os.remove(side_file)
+        if not path.endswith((".json", ".preview.png")):
+            for ext in [".json", ".preview.png"]:
+                side_file = os.path.splitext(full_path)[0] + ext
+                if os.path.exists(side_file):
+                    os.remove(side_file)
         return {"success": True, "message": f"Deleted {path}"}
     except Exception as e:
         return {"success": False, "message": str(e)}

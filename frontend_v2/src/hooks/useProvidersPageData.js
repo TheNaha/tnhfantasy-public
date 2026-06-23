@@ -202,17 +202,7 @@ async function ensureProvidersRealtime(queryClient) {
                 },
             );
 
-            if (providerId) {
-                queryClient.setQueriesData(
-                    { queryKey: ['providerModels', providerId] },
-                    (current) => {
-                        if (!current) {
-                            return current;
-                        }
-                        return mergeProviderSyncStatus(current, payload);
-                    },
-                );
-            }
+
 
             if (!hasExpectedSchema || !providersPatched) {
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });

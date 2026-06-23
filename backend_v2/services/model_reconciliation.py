@@ -114,7 +114,7 @@ class ModelReconciliationService:
                 if existing_file:
                     self.repo.update_provider_status(
                         file_id=existing_file.id,
-                        provider_name=provider_id,
+                        
                         status="ready",
                         storage_path=storage_path,
                         size_bytes=size_bytes,
@@ -166,7 +166,7 @@ class ModelReconciliationService:
 
                     self.repo.update_provider_status(
                         file_id=file.id,
-                        provider_name=provider_id,
+                        
                         status="ready",
                         storage_path=storage_path,
                         size_bytes=size_bytes,
@@ -187,9 +187,9 @@ class ModelReconciliationService:
             "files": results,
         }
 
-    def get_pending_downloads(self, provider_name: str) -> List[Dict[str, Any]]:
+    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
         """Get files pending download for a provider (sync method for worker)."""
-        return self.repo.get_pending_downloads(provider_name)
+        return self.repo.get_pending_downloads(provider_id)
 
     def get_full_cache(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get all model metadata for reconciliation (sync method for worker)."""

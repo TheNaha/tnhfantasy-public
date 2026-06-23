@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from api.deps import get_session
 from core.exceptions import ValidationError
-from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.logging import api_logger
+from api.deps import deduplicated, make_key
+from api.deps import api_logger
 from services.job_submission_service import JobSubmissionService
 
 logger = api_logger()

@@ -196,7 +196,7 @@ class ModelServiceV2:
     async def update_provider_file_status(
         self,
         file_id: int,
-        provider_name: str,
+        provider_id: str,
         status: str,
         storage_path: Optional[str] = None,
         size_bytes: Optional[int] = None,
@@ -205,7 +205,7 @@ class ModelServiceV2:
         """Update provider status for a file."""
         return await self.downloader.update_provider_file_status(
             file_id=file_id,
-            provider_name=provider_name,
+            provider_id=provider_id,
             status=status,
             storage_path=storage_path,
             size_bytes=size_bytes,
@@ -220,9 +220,9 @@ class ModelServiceV2:
     # RECONCILIATION OPERATIONS
     # =========================================================================
 
-    def get_pending_downloads(self, provider_name: str) -> List[Dict[str, Any]]:
-        """Get files pending download for a provider (sync method for worker)."""
-        return self.reconciliation.get_pending_downloads(provider_name)
+    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
+        """Get pending downloads for a specific provider."""
+        return self.reconciliation.get_pending_downloads(provider_id)
 
     def get_full_cache(self) -> Dict[str, List[Dict[str, Any]]]:
         """Get all model metadata for reconciliation (sync method for worker)."""
@@ -263,11 +263,16 @@ class ModelServiceV2:
         
         # Filter by base_model if specified (need to check versions)
         if base_model:
-            filtered = []
-            for model in models:
-                versions = self.repo.get_versions_for_model(model.id)
-                if any(v.base_model == base_model for v in versions):
-                    filtered.append(model)
-            models = filtered
+            model_ids = [m.id for m in models]
+            if not model_ids:
+                return []
+            
+            stmt = select(ModelVersion.model_id).where(
+                ModelVersion.model_id.in_(model_ids),
+                ModelVersion.base_model == base_model
+            ).distinct()
+            matching_model_ids = set(self.session.exec(stmt).all())
+            
+            models = [m for m in models if m.id in matching_model_ids]
         
         return self.repo.models_to_dict(models, include_versions=False)

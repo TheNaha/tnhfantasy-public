@@ -6,7 +6,7 @@ from api.deps import get_session, get_model_service_v2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from api.routes.websocket import broadcast_to_all
 from infrastructure.database import get_session_context
-from infrastructure.logging import model_logger
+from api.deps import model_logger
 
 logger = model_logger()
 
@@ -101,7 +101,7 @@ async def resync_model_from_civitai(
     """
     from core.entities import ModelV2, ModelTag
     from sqlmodel import select, delete
-    from infrastructure.http_client import get_http_client
+    from api.deps import get_http_client
     
     # Get the model
     model = session.get(ModelV2, model_id)
@@ -188,7 +188,7 @@ async def resync_model_from_civitai(
 async def run_background_resync():
     """Run a full metadata resync for all eligible models."""
     from infrastructure.database import get_session_context
-    from infrastructure.http_client import get_http_client
+    from api.deps import get_http_client
     from core.entities import ModelV2, ModelTag
     from core.exceptions import ComfyError
     from api.websocket_manager import broadcast_to_all
@@ -339,7 +339,7 @@ async def backfill_provider_statuses(
     from core.entities import Provider
     from sqlmodel import select
     from services.provider_runtime import resolve_provider_runtime
-    from infrastructure.http_client import get_http_client
+    from api.deps import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
 
     service = get_model_service_v2(session)

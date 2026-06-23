@@ -26,9 +26,9 @@ from services.provider_service import ProviderService
 from services.provider_lifecycle_service import ProviderLifecycleService
 from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
-from infrastructure.background_tasks import start_background_task
-from infrastructure.http_client import get_http_client
-from infrastructure.logging import api_logger
+from api.deps import start_background_task
+from api.deps import get_http_client
+from api.deps import api_logger
 from config import get_worker_backend_url
 
 logger = api_logger()
@@ -171,7 +171,7 @@ async def get_provider_status_card(provider_id: str, session: Session = Depends(
 async def get_provider_live_metrics(provider_id: str, session: Session = Depends(get_session)):
     """Fetch live metrics directly from the remote provider container."""
     from services.provider_runtime import resolve_provider_runtime
-    from infrastructure.http_client import get_http_client
+    from api.deps import get_http_client
     import time
     
     service = get_provider_service(session)
@@ -262,7 +262,7 @@ async def remove_model_from_provider(
 ):
     """Delete a model file from one provider and mark it pending again in V2."""
     from services.model_service import ModelServiceV2
-    from infrastructure.providers import create_provider_client
+    from api.deps import create_provider_client
 
     normalized_directory = directory.replace("models/", "", 1)
     service = ModelServiceV2(session)
@@ -424,7 +424,7 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
     Should be run once after deleting providers to clean up orphaned status entries
     from before the cascade delete feature was added.
     """
-    from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+    from api.deps import get_model_repo_v2
     
     # Get list of active provider IDs
     service = get_provider_service(session)
@@ -432,7 +432,7 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
     active_provider_ids = [p["id"] for p in providers]
     
     # Clean up orphaned statuses
-    model_repo = ModelRepositoryV2(session)
+    model_repo = get_model_repo_v2(session)
     result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
     stale_reset_count = model_repo.reset_stale_downloading_statuses(
         stale_before=datetime.now(timezone.utc) - timedelta(minutes=120),

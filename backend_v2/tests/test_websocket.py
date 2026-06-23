@@ -116,7 +116,7 @@ async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_j
 @patch("services.job_queue.job_queue")
 @patch("services.job_service.JobService")
 @patch("services.provider_service.ProviderService")
-@patch("infrastructure.http_client.get_http_client")
+@patch("api.deps.get_http_client")
 @patch("infrastructure.database.get_session_context")
 async def test_cancel_job_active(mock_get_session, mock_get_http, mock_provider_service_cls, mock_job_service_cls, mock_job_queue, mock_sio):
     sid = "test_sid"

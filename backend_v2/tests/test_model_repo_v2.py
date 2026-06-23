@@ -235,12 +235,12 @@ class TestModelRepositoryV2ProviderStatus:
 
         result = repo.update_provider_status(
             file_id=file_obj.id,
-            provider_name="modal-primary",
+            provider_id="modal-primary",
             status="ready"
         )
         assert result is not None
         assert result.provider_id == "modal-primary"
-        assert result.provider_name == "modal-primary"
+        assert result.provider_id == "modal-primary"
         assert result.status == "ready"
 
     def test_update_provider_status_backfills_legacy_provider_name_rows(self, repo, civitai_data):
@@ -251,7 +251,7 @@ class TestModelRepositoryV2ProviderStatus:
 
         legacy_status = ProviderVersionStatus(
             file_id=file_obj.id,
-            provider_name="modal-primary",
+            provider_id="modal-primary",
             status="downloading",
         )
         repo.session.add(legacy_status)
@@ -259,12 +259,12 @@ class TestModelRepositoryV2ProviderStatus:
 
         updated = repo.update_provider_status(
             file_id=file_obj.id,
-            provider_name="modal-primary",
+            provider_id="modal-primary",
             status="ready",
         )
 
         assert updated.provider_id == "modal-primary"
-        assert updated.provider_name == "modal-primary"
+        assert updated.provider_id == "modal-primary"
         assert updated.status == "ready"
 
     def test_get_pending_downloads(self, repo, civitai_data):
@@ -283,7 +283,7 @@ class TestModelRepositoryV2ProviderStatus:
         files = repo.get_files_for_version(versions[0].id)
         repo.update_provider_status(
             file_id=files[0].id,
-            provider_name="modal-primary",
+            provider_id="modal-primary",
             status="ready"
         )
         count = repo.delete_all_statuses_for_provider("modal-primary")
@@ -297,12 +297,12 @@ class TestModelRepositoryV2ProviderStatus:
 
         modal_status = repo.update_provider_status(
             file_id=file_obj.id,
-            provider_name="modal-primary",
+            provider_id="modal-primary",
             status="downloading"
         )
         beam_status = repo.update_provider_status(
             file_id=file_obj.id,
-            provider_name="beam-main",
+            provider_id="beam-main",
             status="downloading"
         )
 

@@ -14,7 +14,7 @@ from api.routes.files import batch_get_metadata, BatchMetadataRequest
 # Mock image processor to avoid PIL dependency
 @pytest.fixture
 def mock_read_metadata():
-    with patch("infrastructure.image_processor.read_image_metadata") as mock:
+    with patch("api.deps.read_image_metadata") as mock:
         mock.return_value = {"workflow": {}, "prompt": {}, "blurhash": "LEHV6nWB2yk8pyo0adR*.7kCMdnj"}
         yield mock
 

@@ -98,7 +98,7 @@ class ModelDownloader:
                         })
                         self.repo.update_provider_status(
                             file_id=file.id,
-                            provider_name=provider.id,
+                            
                             status="downloading",
                             storage_path=storage_path
                         )
@@ -369,7 +369,7 @@ class ModelDownloader:
     async def update_provider_file_status(
         self,
         file_id: int,
-        provider_name: str,
+        provider_id: str,
         status: str,
         storage_path: Optional[str] = None,
         size_bytes: Optional[int] = None,
@@ -378,13 +378,13 @@ class ModelDownloader:
         """Update provider status for a file."""
         status_obj = self.repo.update_provider_status(
             file_id=file_id,
-            provider_name=provider_name,
+            provider_id=provider_id,
             status=status,
             storage_path=storage_path,
             size_bytes=size_bytes,
             error_message=error_message
         )
-        provider_key = status_obj.provider_id or status_obj.provider_name or provider_name
+        provider_key = status_obj.provider_id or provider_id
 
         # Provider readiness changed; clear model-aware routing memoization.
         from services.load_balancer import LoadBalancer
@@ -393,7 +393,7 @@ class ModelDownloader:
         return {
             "file_id": status_obj.file_id,
             "provider_id": provider_key,
-            "provider_name": provider_key,
+            "provider_id": provider_key,
             "status": status_obj.status,
             "storage_path": status_obj.storage_path,
             "size_bytes": status_obj.size_bytes,

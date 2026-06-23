@@ -4,7 +4,7 @@ from sqlmodel import Session
 
 from api.deps import get_session
 from services.provider_service import ProviderService
-from infrastructure.logging import get_logger
+from api.deps import get_logger
 
 logger = get_logger("discovery_router")
 

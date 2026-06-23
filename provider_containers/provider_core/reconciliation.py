@@ -580,16 +580,16 @@ async def run_reconciliation_v2(
                 if unregistered:
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
                     if delete_enabled:
-                        for orphan_path in unregistered:
+                        for orphan_info in unregistered:
                             try:
-                                deleted = await delete_file(orphan_path)
+                                deleted = await delete_file(orphan_info["path"])
                                 if deleted is False:
-                                    logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}")
+                                    logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_info['path']}")
                                     continue
                                 reconciliation_state.increment_deletions_completed()
-                                logger.info(f"[V2 Reconciliation] ✓ Deleted: {orphan_path}")
+                                logger.info(f"[V2 Reconciliation] ✓ Deleted: {orphan_info['path']}")
                             except Exception as exc:
-                                logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_path}: {exc}")
+                                logger.error(f"[V2 Reconciliation] ✗ Failed to delete {orphan_info['path']}: {exc}")
                     else:
                         logger.info(f"[V2 Reconciliation] Dry-run: would delete {len(unregistered)} orphaned files")
                         logger.info(f"[V2 Reconciliation] Set RECONCILIATION_DELETE_ORPHANS=true to enable deletion")

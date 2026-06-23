@@ -48,23 +48,17 @@ class ModelRepositoryV2:
         self.session = session
 
     @staticmethod
-    def _status_provider_key(status: ProviderVersionStatus) -> Optional[str]:
-        """Return provider ID using legacy provider_name as fallback."""
-        return status.provider_id or status.provider_name
+    def _get_provider_key(status: ProviderVersionStatus) -> str:
+        """Return provider ID."""
+        return status.provider_id
 
     def _provider_match_clause(self, provider_key: str):
-        """Build a provider filter that matches both canonical and legacy columns."""
-        return or_(
-            ProviderVersionStatus.provider_id == provider_key,
-            ProviderVersionStatus.provider_name == provider_key,
-        )
+        """Build a provider filter."""
+        return ProviderVersionStatus.provider_id == provider_key
 
     def _provider_match_clause_many(self, provider_keys: List[str]):
-        """Build a provider filter for multiple providers with legacy fallback."""
-        return or_(
-            ProviderVersionStatus.provider_id.in_(provider_keys),
-            ProviderVersionStatus.provider_name.in_(provider_keys),
-        )
+        """Build a provider filter for multiple providers."""
+        return ProviderVersionStatus.provider_id.in_(provider_keys)
     
     # =========================================================================
     # MODEL CRUD
@@ -162,10 +156,10 @@ class ModelRepositoryV2:
                 # Extension priority
                 if name.endswith(".safetensors"):
                     score -= 100
+                elif name.endswith(".gguf"):
+                    score -= 75  # Prefer GGUF over ckpt
                 elif name.endswith((".ckpt", ".pt", ".pth", ".bin")):
                     score -= 50
-                elif name.endswith(".gguf"):
-                    score += 100  # Penalize GGUF
                     
                 # Primary flag priority
                 if f.get("primary", False):
@@ -277,10 +271,10 @@ class ModelRepositoryV2:
                 # Extension priority
                 if name.endswith(".safetensors"):
                     score -= 100
+                elif name.endswith(".gguf"):
+                    score -= 75  # Prefer GGUF over ckpt
                 elif name.endswith((".ckpt", ".pt", ".pth", ".bin")):
                     score -= 50
-                elif name.endswith(".gguf"):
-                    score += 100  # Penalize GGUF
                     
                 # Primary flag priority
                 if f.get("primary", False):
@@ -585,7 +579,7 @@ class ModelRepositoryV2:
     # PROVIDER STATUS OPERATIONS
     # =========================================================================
     
-    def get_pending_downloads(self, provider_name: str) -> List[Dict[str, Any]]:
+    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
         """
         Get files pending download for a provider.
         Returns file info with version and model context.
@@ -598,7 +592,7 @@ class ModelRepositoryV2:
             ProviderVersionStatus,
             and_(
                 ProviderVersionStatus.file_id == ModelFile.id,
-                self._provider_match_clause(provider_name)
+                self._provider_match_clause(provider_id)
             )
         ).where(
             ModelVersion.is_enabled == True,
@@ -627,13 +621,13 @@ class ModelRepositoryV2:
     def get_provider_status(
         self, 
         file_id: int, 
-        provider_name: str
+        provider_id: str
     ) -> Optional[ProviderVersionStatus]:
         """Get provider status for a specific file."""
         stmt = select(ProviderVersionStatus).where(
             and_(
                 ProviderVersionStatus.file_id == file_id,
-                self._provider_match_clause(provider_name)
+                self._provider_match_clause(provider_id)
             )
         )
         return self.session.exec(stmt).first()
@@ -641,7 +635,7 @@ class ModelRepositoryV2:
     def get_provider_statuses_for_files(
         self,
         file_ids: List[int],
-        provider_name: str,
+        provider_id: str,
     ) -> Dict[int, ProviderVersionStatus]:
         """Get provider statuses for many files in one query."""
         if not file_ids:
@@ -650,7 +644,7 @@ class ModelRepositoryV2:
         stmt = select(ProviderVersionStatus).where(
             and_(
                 ProviderVersionStatus.file_id.in_(file_ids),
-                self._provider_match_clause(provider_name),
+                self._provider_match_clause(provider_id),
             )
         )
         statuses = self.session.exec(stmt).all()
@@ -659,20 +653,19 @@ class ModelRepositoryV2:
     def update_provider_status(
         self,
         file_id: int,
-        provider_name: str,
+        provider_id: str,
         status: str,
         storage_path: Optional[str] = None,
         size_bytes: Optional[int] = None,
         error_message: Optional[str] = None
     ) -> ProviderVersionStatus:
         """Update or create provider status for a file."""
-        existing = self.get_provider_status(file_id, provider_name)
+        existing = self.get_provider_status(file_id, provider_id)
         
         if existing:
             if not existing.provider_id:
-                existing.provider_id = provider_name
-            if not existing.provider_name:
-                existing.provider_name = provider_name
+                existing.provider_id = provider_id
+            
             existing.status = status
             if status == "downloading":
                 existing.queued_at = datetime.now(timezone.utc)
@@ -694,8 +687,7 @@ class ModelRepositoryV2:
         else:
             new_status = ProviderVersionStatus(
                 file_id=file_id,
-                provider_id=provider_name,
-                provider_name=provider_name,
+                provider_id=provider_id,
                 status=status,
                 storage_path=storage_path,
                 size_bytes=size_bytes,
@@ -715,7 +707,7 @@ class ModelRepositoryV2:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Get all provider statuses for a model's files.
-        Returns dict keyed by provider_id with legacy provider_name fallback.
+        Returns dict keyed by provider_id.
         """
         # Get all files for this model's versions
         stmt = select(ProviderVersionStatus, ModelFile, ModelVersion).join(
@@ -726,7 +718,7 @@ class ModelRepositoryV2:
         
         result: Dict[str, Dict[str, Any]] = {}
         for status, file, version in self.session.exec(stmt).all():
-            provider_key = self._status_provider_key(status)
+            provider_key = self._get_provider_key(status)
             if not provider_key:
                 continue
 
@@ -747,7 +739,7 @@ class ModelRepositoryV2:
         
         return result
     
-    def delete_all_statuses_for_provider(self, provider_name: str) -> int:
+    def delete_all_statuses_for_provider(self, provider_id: str) -> int:
         """
         Delete all ProviderVersionStatus records for a given provider.
         Used when deleting a provider to cascade cleanup.
@@ -756,7 +748,7 @@ class ModelRepositoryV2:
             Number of records deleted
         """
         stmt = select(ProviderVersionStatus).where(
-            self._provider_match_clause(provider_name)
+            self._provider_match_clause(provider_id)
         )
         statuses = list(self.session.exec(stmt).all())
         count = len(statuses)
@@ -782,7 +774,7 @@ class ModelRepositoryV2:
         from sqlalchemy import distinct
         
         # Get all unique provider identifiers in ProviderVersionStatus.
-        stmt = select(distinct(func.coalesce(ProviderVersionStatus.provider_id, ProviderVersionStatus.provider_name)))
+        stmt = select(distinct(ProviderVersionStatus.provider_id))
         all_provider_names = {
             provider_key
             for provider_key in self.session.exec(stmt).all()
@@ -794,8 +786,8 @@ class ModelRepositoryV2:
         orphaned_providers = list(all_provider_names - active_set)
         
         total_deleted = 0
-        for provider_name in orphaned_providers:
-            count = self.delete_all_statuses_for_provider(provider_name)
+        for provider_id in orphaned_providers:
+            count = self.delete_all_statuses_for_provider(provider_id)
             total_deleted += count
         
         return {
@@ -946,7 +938,7 @@ class ModelRepositoryV2:
             model_id = version.model_id
             if model_id not in result:
                 result[model_id] = {}
-            provider_key = self._status_provider_key(status)
+            provider_key = self._get_provider_key(status)
             if not provider_key:
                 continue
             if provider_key not in result[model_id]:

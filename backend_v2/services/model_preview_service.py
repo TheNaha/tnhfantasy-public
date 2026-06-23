@@ -39,12 +39,15 @@ PREVIEW_PREFETCH_JITTER_SECONDS = resolve_env_float("COMFY_PREVIEW_PREFETCH_JITT
 PREVIEW_PREFETCH_ITEM_DELAY_SECONDS = resolve_env_float("COMFY_PREVIEW_PREFETCH_ITEM_DELAY_SECONDS", 2.0, 0.0)
 
 
-def get_cache_path(model_id: int, version_id: int = None, image_index: int = 0) -> str:
+def get_cache_path(model_id: int, version_id: int = None, image_index: int = 0, width: int = None) -> str:
     """Get cache path for a model preview image."""
     os.makedirs(PREVIEW_CACHE_DIR, exist_ok=True)
+    
+    width_suffix = f"_{width}" if width else ""
+    
     if version_id is not None:
-        return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{version_id}_{image_index}.img")
-    return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{image_index}.img")
+        return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{version_id}_{image_index}{width_suffix}.img")
+    return os.path.join(PREVIEW_CACHE_DIR, f"{model_id}_{image_index}{width_suffix}.img")
 
 
 def _get_cache_meta_path(cache_path: str) -> str:
@@ -213,14 +216,18 @@ async def fetch_civitai_preview(
     version_id: int = None,
     image_index: int = 0,
     force_refresh: bool = False,
+    width: int = None,
 ) -> Tuple[Optional[bytes], Optional[str], bool]:
     """Fetch preview image from CivitAI API and cache it using non-blocking I/O.
     Returns (image_data, content_type, is_cache_hit).
     """
-    cache_path = get_cache_path(model_id, version_id, image_index)
+    cache_path = get_cache_path(model_id, version_id, image_index, width)
     cache_meta_path = _get_cache_meta_path(cache_path)
-    failure_marker_path = _get_failure_marker_path(cache_path)
-    not_found_marker_path = _get_not_found_marker_path(cache_path)
+    
+    # Use base path for markers so we don't duplicate failures
+    base_cache_path = get_cache_path(model_id, version_id, image_index)
+    failure_marker_path = _get_failure_marker_path(base_cache_path)
+    not_found_marker_path = _get_not_found_marker_path(base_cache_path)
 
     has_recent_not_found = await asyncio.to_thread(
         _has_recent_failure,
@@ -261,38 +268,92 @@ async def fetch_civitai_preview(
         if cached_content is not None:
             return cached_content, cached_content_type, True
 
-    try:
-        from services.external_model_service import ExternalModelService, ExternalModelServiceError
-        external_service = ExternalModelService()
-        model_data = await external_service.get_civitai_model(model_id)
+    base_image_data = None
+    base_content_type = None
 
-        image_url = _select_preview_url(model_data, version_id, image_index)
-        if not image_url:
-            return None, None, False
-
-        client = get_http_client()
-        img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
-        img_response.raise_for_status()
-        image_data = img_response.content
-        content_type = img_response.headers.get('Content-Type', 'image/jpeg')
-
-        await asyncio.to_thread(
-            _save_preview_to_cache,
-            cache_path,
-            cache_meta_path,
-            image_data,
-            content_type,
+    if width is not None and not force_refresh:
+        base_meta_path = _get_cache_meta_path(base_cache_path)
+        base_image_data, base_content_type = await asyncio.to_thread(
+            _load_preview_from_cache,
+            base_cache_path,
+            base_meta_path,
         )
-        await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
-        await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
-        return image_data, content_type, False
 
-    except ExternalModelServiceError as e:
-        if e.status_code == 404:
-            await asyncio.to_thread(_mark_failure, not_found_marker_path)
+    if base_image_data is None:
+        try:
+            from services.external_model_service import ExternalModelService, ExternalModelServiceError
+            external_service = ExternalModelService()
+            model_data = await external_service.get_civitai_model(model_id)
+    
+            image_url = _select_preview_url(model_data, version_id, image_index)
+            if not image_url:
+                return None, None, False
+    
+            client = get_http_client()
+            img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
+            img_response.raise_for_status()
+            base_image_data = img_response.content
+            base_content_type = img_response.headers.get('Content-Type', 'image/jpeg')
+    
+            base_meta_path = _get_cache_meta_path(base_cache_path)
+            await asyncio.to_thread(
+                _save_preview_to_cache,
+                base_cache_path,
+                base_meta_path,
+                base_image_data,
+                base_content_type,
+            )
             await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
-            logger.info(
-                "civitai_preview_model_not_found",
+            await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
+            
+        except ExternalModelServiceError as e:
+            if e.status_code == 404:
+                await asyncio.to_thread(_mark_failure, not_found_marker_path)
+                await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+                logger.info(
+                    "civitai_preview_model_not_found",
+                    model_id=model_id,
+                    version_id=version_id,
+                    image_index=image_index,
+                    error=str(e),
+                )
+                return None, None, False
+    
+            await asyncio.to_thread(_mark_failure, failure_marker_path)
+            logger.warning(
+                "civitai_preview_fetch_failed",
+                model_id=model_id,
+                version_id=version_id,
+                image_index=image_index,
+                error=str(e),
+            )
+            return None, None, False
+        except httpx.HTTPStatusError as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code == 404:
+                await asyncio.to_thread(_mark_failure, not_found_marker_path)
+                await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+                logger.info(
+                    "civitai_preview_http_404",
+                    model_id=model_id,
+                    version_id=version_id,
+                    image_index=image_index,
+                )
+                return None, None, False
+    
+            await asyncio.to_thread(_mark_failure, failure_marker_path)
+            logger.warning(
+                "civitai_preview_http_error",
+                model_id=model_id,
+                version_id=version_id,
+                image_index=image_index,
+                error=str(e),
+            )
+            return None, None, False
+        except Exception as e:
+            await asyncio.to_thread(_mark_failure, failure_marker_path)
+            logger.error(
+                "civitai_preview_unexpected_error",
                 model_id=model_id,
                 version_id=version_id,
                 image_index=image_index,
@@ -300,61 +361,59 @@ async def fetch_civitai_preview(
             )
             return None, None, False
 
-        await asyncio.to_thread(_mark_failure, failure_marker_path)
-        logger.warning(
-            "civitai_preview_fetch_failed",
-            model_id=model_id,
-            version_id=version_id,
-            image_index=image_index,
-            error=str(e),
-        )
-        return None, None, False
-    except httpx.HTTPStatusError as e:
-        status_code = getattr(getattr(e, "response", None), "status_code", None)
-        if status_code == 404:
-            await asyncio.to_thread(_mark_failure, not_found_marker_path)
-            await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
-            logger.info(
-                "civitai_preview_model_not_found",
-                model_id=model_id,
-                version_id=version_id,
-                image_index=image_index,
-                error=str(e),
-            )
-            return None, None, False
+    if width is None:
+        return base_image_data, base_content_type, False
+        
+    def _resize(data: bytes, w: int, content_type: str) -> Tuple[bytes, str]:
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(data))
+            if img.mode == 'RGBA':
+                bg = Image.new('RGB', img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail((w, w), Image.Resampling.LANCZOS)
+            out = io.BytesIO()
+            fmt = "JPEG"
+            if "png" in content_type.lower():
+                fmt = "PNG"
+            elif "webp" in content_type.lower():
+                fmt = "WEBP"
+            img.save(out, format=fmt, quality=85)
+            return out.getvalue(), f"image/{fmt.lower()}"
+        except Exception as e:
+            logger.error("preview_resize_failed", error=str(e))
+            return data, content_type
 
-        await asyncio.to_thread(_mark_failure, failure_marker_path)
-        logger.warning(
-            "civitai_preview_fetch_failed",
-            model_id=model_id,
-            version_id=version_id,
-            image_index=image_index,
-            error=str(e),
-        )
-        return None, None, False
-    except Exception as e:
-        await asyncio.to_thread(_mark_failure, failure_marker_path)
-        logger.warning(
-            "civitai_preview_fetch_failed",
-            model_id=model_id,
-            version_id=version_id,
-            image_index=image_index,
-            error=str(e),
-        )
-        return None, None, False
+    resized_data, resized_content_type = await asyncio.to_thread(_resize, base_image_data, width, base_content_type)
+    
+    await asyncio.to_thread(
+        _save_preview_to_cache,
+        cache_path,
+        cache_meta_path,
+        resized_data,
+        resized_content_type,
+    )
+    
+    return resized_data, resized_content_type, False
 
 
-async def get_preview_deduplicated(model_id: int, version_id: int = None, image_index: int = 0) -> Tuple[Optional[bytes], Optional[str], bool]:
+
+async def get_preview_deduplicated(model_id: int, version_id: int = None, image_index: int = 0, width: int = None) -> Tuple[Optional[bytes], Optional[str], bool]:
     """Fetch preview using deduplication."""
     dedup_key = make_key(
         "civitai_preview",
         model_id,
         version_id if version_id is not None else "default",
         image_index,
+        width if width is not None else "full",
     )
     return await deduplicated(
         dedup_key,
-        lambda: fetch_civitai_preview(model_id, version_id, image_index),
+        lambda: fetch_civitai_preview(model_id, version_id, image_index, width=width),
     )
 
 

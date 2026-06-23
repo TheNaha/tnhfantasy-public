@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from api.deps import get_session
 from core.entities import Prompt
-from infrastructure.logging import get_logger
+from api.deps import get_logger
 
 logger = get_logger("prompts_route")
 

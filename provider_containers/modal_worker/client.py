@@ -169,7 +169,7 @@ class ModalProviderClient(BaseProviderClient):
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
         success = await storage.delete_file.remote.aio(request.path)
-        if success:
+        if success and not request.path.endswith((".json", ".preview.png")):
             import os
             base_path, _ = os.path.splitext(request.path)
             try:

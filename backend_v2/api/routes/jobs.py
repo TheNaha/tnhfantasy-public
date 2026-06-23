@@ -22,8 +22,8 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_job_service
-from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.logging import api_logger
+from api.deps import deduplicated, make_key
+from api.deps import api_logger
 from services.job_submission_service import JobSubmissionService
 from services.job_queue import job_queue
 from core.entities import JobStatus

@@ -176,7 +176,7 @@ class ProviderStatusService:
         ).where(
             or_(
                 ProviderVersionStatus.provider_id == provider_id,
-                ProviderVersionStatus.provider_name == provider_id
+                ProviderVersionStatus.provider_id == provider_id
             )
         ).group_by(ProviderVersionStatus.status)
         
@@ -235,7 +235,7 @@ class ProviderStatusService:
                 .where(
                     or_(
                         ProviderVersionStatus.provider_id == provider_id,
-                        ProviderVersionStatus.provider_name == provider_id
+                        ProviderVersionStatus.provider_id == provider_id
                     )
                 )
                 .where(ProviderVersionStatus.status == "ready")

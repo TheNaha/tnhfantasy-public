@@ -26,7 +26,7 @@ import tempfile
 import asyncio
 
 from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
-from infrastructure.logging import get_logger
+from api.deps import get_logger
 from config import settings
 
 logger = get_logger("files_route")
@@ -669,7 +669,7 @@ async def upload_input_image(
             active_providers.append({"id": p_id, "worker_url": worker_url})
         
         if active_providers:
-            from infrastructure.http_client import get_http_client
+            from api.deps import get_http_client
             http = get_http_client()
             payload = {
                 "filename": unique_name,
@@ -789,7 +789,7 @@ async def upload_mask_image(
             active_providers.append({"id": p_id, "worker_url": worker_url})
         
         if active_providers:
-            from infrastructure.http_client import get_http_client
+            from api.deps import get_http_client
             http = get_http_client()
             payload = {
                 "filename": mask_filename,
@@ -992,7 +992,7 @@ async def proxy_file(
     session: Session = Depends(get_session)
 ):
     """Proxy file from provider storage."""
-    from infrastructure.providers import create_provider_client
+    from api.deps import create_provider_client
     
     service = get_provider_service(session)
     provider_data = await service.get_provider(provider_id)
@@ -1043,7 +1043,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
     Returns:
         Dict mapping paths to their metadata
     """
-    from infrastructure.image_processor import read_image_metadata
+    from api.deps import read_image_metadata
     from services.gallery_indexer import gallery_indexer
     
     results = {}

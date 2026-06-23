@@ -146,19 +146,26 @@ class BeamProviderClient(BaseProviderClient):
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         client = get_http_client()
         download_url = BEAM_DOWNLOAD_URL or BEAM_STORAGE_URL
-        response = await client.post(
-            f"{download_url}/download-model",
-            json={
-                "url": request.url, "path": request.path,
-                "token": request.token or determine_download_token(request.url, HF_TOKEN, CIVITAI_TOKEN),
-                "preview_url": request.preview_url, "metadata": request.metadata
-            },
-            headers=get_beam_headers(),
-            timeout=1800.0
-        )
-        if response.status_code == 200:
-            return response.json()
-        raise HTTPException(status_code=response.status_code, detail=response.text)
+        
+        async def _do_download():
+            try:
+                response = await client.post(
+                    f"{download_url}/download-model",
+                    json={
+                        "url": request.url, "path": request.path,
+                        "token": request.token or determine_download_token(request.url, HF_TOKEN, CIVITAI_TOKEN),
+                        "preview_url": request.preview_url, "metadata": request.metadata
+                    },
+                    headers=get_beam_headers(),
+                    timeout=1800.0
+                )
+                if response.status_code != 200:
+                    logger.error(f"Beam download failed with status {response.status_code}: {response.text}")
+            except Exception as e:
+                logger.error(f"Beam download exception: {e}")
+
+        asyncio.create_task(_do_download())
+        return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         client = get_http_client()

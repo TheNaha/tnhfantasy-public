@@ -66,7 +66,7 @@ class TestModelsV2Extended:
         assert "models" in response.json()
 
     def test_cleanup_orphans(self, client):
-        response = client.post("/api/v2/models/cleanup-orphans")
+        response = client.post("/api/v2/models/maintenance/cleanup-orphans")
         assert response.status_code == 200
 
     def test_get_all_storage_paths(self, client):
@@ -92,7 +92,7 @@ class TestModelsV2Extended:
     def test_model_resync(self, client, sample_model_v2_data):
         create_resp = client.post("/api/v2/models", json=sample_model_v2_data)
         model_id = create_resp.json()["id"]
-        response = client.post(f"/api/v2/models/{model_id}/resync")
+        response = client.post(f"/api/v2/models/maintenance/{model_id}/resync")
         assert response.status_code in (200, 202, 500, 502)
 
     def test_set_default_version(self, client, sample_model_v2_data):

@@ -34,14 +34,30 @@ The `./data` directory is mounted into all containers at `/data`. This shared vo
 - Database (`data/db/comfy.db`)
 
 ### Start the Application
+There are two ways to run the application: Production and Development.
+
+**Production Mode:**
+Runs the optimized, pre-built frontend and backend without hot-reloading.
 1. Ensure the `.env` file is properly configured.
 2. Run the following command from the root directory:
    ```bash
    docker-compose up -d --build
    ```
-3. The application should now be accessible.
+
+**Development Mode:**
+Runs the application with hot-reloading for both backend and frontend. The provider containers are omitted by default to save resources, but can be included using the `--profile providers` flag.
+1. Start core only (Backend + Frontend):
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+   ```
+2. Start with providers included:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -d
+   ```
+
+The application should now be accessible.
    - **Frontend:** Port 5174 (dev) or 80 (prod via Traefik).
-   - **Backend:** Port 8002 (internal, not exposed directly in production).
+   - **Backend:** Port 8002 (internal, but exposed in dev).
 
 ### Adding a Provider
 1. Copy the `provider-modal` block in `docker-compose.yml`.
