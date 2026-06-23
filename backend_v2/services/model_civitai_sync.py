@@ -196,19 +196,25 @@ class ModelCivitaiSyncService:
                 matched_ids.add(matched_version.id)
                 matched_version.civitai_version_id = civitai_version.get("id")
 
-                # Update file size from CivitAI data if currently 0
+                # Update file metadata from CivitAI data (size, download_url)
                 civitai_files = civitai_version.get("files", [])
                 if civitai_files:
                     primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
                     civitai_size_kb = primary_civitai.get("sizeKB")
-                    if civitai_size_kb is not None:
-                        existing_files = self.session.exec(
-                            select(ModelFile).where(ModelFile.version_id == matched_version.id)
-                        ).all()
-                        for ef in existing_files:
-                            if not ef.size_kb or ef.size_kb == 0:
-                                ef.size_kb = float(civitai_size_kb)
-                                self.session.add(ef)
+                    civitai_download_url = primary_civitai.get("downloadUrl")
+                    existing_files = self.session.exec(
+                        select(ModelFile).where(ModelFile.version_id == matched_version.id)
+                    ).all()
+                    for ef in existing_files:
+                        changed = False
+                        if civitai_size_kb is not None and (not ef.size_kb or ef.size_kb == 0):
+                            ef.size_kb = float(civitai_size_kb)
+                            changed = True
+                        if civitai_download_url and not ef.download_url:
+                            ef.download_url = civitai_download_url
+                            changed = True
+                        if changed:
+                            self.session.add(ef)
 
                 if "Auto-discovered" in (matched_version.description or ""):
                     matched_version.description = civitai_version.get("description", matched_version.description)

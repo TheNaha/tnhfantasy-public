@@ -42,6 +42,9 @@ def build_authenticated_download_request(
     headers: Dict[str, str] = {}
     resolved_url = url
 
+    if not url:
+        raise ValueError("download_url is empty or None — model may need to be re-added from CivitAI")
+
     resolved_hf_token = token if token and token.startswith("hf_") else hf_token
     resolved_civitai_token = token if token and not token.startswith("hf_") else civitai_token
 

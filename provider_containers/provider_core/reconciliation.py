@@ -453,6 +453,27 @@ async def run_reconciliation_v2(
                 http_client=shared_http_client,
             )
 
+        # Safety net: report ALL expected files that exist on this provider
+        # as "ready", including files that have no ProviderVersionStatus
+        # records at all (e.g. after a DB cleanup bug or provider ID change).
+        already_ready_paths = {item["storage_path"] for item in already_ready}
+        statusless_expected = [
+            {"storage_path": path, "status": "ready"}
+            for path in all_expected_paths
+            if path in existing_files and path not in already_ready_paths
+        ]
+        if statusless_expected:
+            logger.info(
+                f"[V2 Reconciliation] Ensuring {len(statusless_expected)} "
+                f"expected+existing files have ready status..."
+            )
+            await batch_update_file_status_v2(
+                backend_url,
+                provider_id,
+                statusless_expected,
+                http_client=shared_http_client,
+            )
+
         reconciliation_state.set_download_queue(downloads_needed)
         reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)
         logger.info(f"[V2 Reconciliation] {len(downloads_needed)} files need downloading, {len(already_ready)} already ready")
