@@ -27,14 +27,16 @@ export default function ConfirmationModal({
         handleCancel(); // Close after confirming
     };
 
-    return (
+    return createPortal(
         <AnimatePresence>
-            {isOpen && createPortal(
+            {isOpen && (
                 <div
+                    key="confirmation-modal-overlay"
                     className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
                     onClick={handleCancel}
                 >
                     <Motion.div
+                        key="confirmation-modal-content"
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby={titleId}
@@ -83,9 +85,9 @@ export default function ConfirmationModal({
                             </div>
                         </div>
                     </Motion.div>
-                </div>,
-                document.body
+                </div>
             )}
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }

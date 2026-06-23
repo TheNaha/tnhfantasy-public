@@ -102,10 +102,21 @@ def _load_preview_from_cache(cache_path: str, cache_meta_path: str) -> tuple:
 
 
 def _save_preview_to_cache(cache_path: str, cache_meta_path: str, image_data: bytes, content_type: str) -> None:
-    with open(cache_path, 'wb') as image_file:
-        image_file.write(image_data)
-    with open(cache_meta_path, 'w', encoding='utf-8') as meta_file:
-        meta_file.write(content_type)
+    import uuid
+    tmp_cache_path = f"{cache_path}.{uuid.uuid4().hex}.tmp"
+    tmp_meta_path = f"{cache_meta_path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(tmp_cache_path, 'wb') as image_file:
+            image_file.write(image_data)
+        with open(tmp_meta_path, 'w', encoding='utf-8') as meta_file:
+            meta_file.write(content_type)
+        os.replace(tmp_cache_path, cache_path)
+        os.replace(tmp_meta_path, cache_meta_path)
+    finally:
+        if os.path.exists(tmp_cache_path):
+            os.remove(tmp_cache_path)
+        if os.path.exists(tmp_meta_path):
+            os.remove(tmp_meta_path)
 
 
 def _select_preview_url(model_data: Dict[str, Any], version_id: Optional[int], image_index: int) -> Optional[str]:
@@ -280,31 +291,40 @@ async def fetch_civitai_preview(
         )
 
     if base_image_data is None:
+        from services.external_model_service import ExternalModelServiceError
         try:
-            from services.external_model_service import ExternalModelService, ExternalModelServiceError
-            external_service = ExternalModelService()
-            model_data = await external_service.get_civitai_model(model_id)
-    
-            image_url = _select_preview_url(model_data, version_id, image_index)
-            if not image_url:
+            async def _fetch_base():
+                from services.external_model_service import ExternalModelService
+                external_service = ExternalModelService()
+                model_data = await external_service.get_civitai_model(model_id)
+        
+                image_url = _select_preview_url(model_data, version_id, image_index)
+                if not image_url:
+                    return None, None
+        
+                client = get_http_client()
+                img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
+                img_response.raise_for_status()
+                b_image_data = img_response.content
+                b_content_type = img_response.headers.get('Content-Type', 'image/jpeg')
+        
+                base_meta_path = _get_cache_meta_path(base_cache_path)
+                await asyncio.to_thread(
+                    _save_preview_to_cache,
+                    base_cache_path,
+                    base_meta_path,
+                    b_image_data,
+                    b_content_type,
+                )
+                await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
+                await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
+                return b_image_data, b_content_type
+
+            base_dedup_key = make_key("civitai_preview_base", model_id, version_id if version_id is not None else "default", image_index)
+            base_image_data, base_content_type = await deduplicated(base_dedup_key, _fetch_base)
+            
+            if base_image_data is None:
                 return None, None, False
-    
-            client = get_http_client()
-            img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
-            img_response.raise_for_status()
-            base_image_data = img_response.content
-            base_content_type = img_response.headers.get('Content-Type', 'image/jpeg')
-    
-            base_meta_path = _get_cache_meta_path(base_cache_path)
-            await asyncio.to_thread(
-                _save_preview_to_cache,
-                base_cache_path,
-                base_meta_path,
-                base_image_data,
-                base_content_type,
-            )
-            await asyncio.to_thread(_clear_failure_marker, failure_marker_path)
-            await asyncio.to_thread(_clear_failure_marker, not_found_marker_path)
             
         except ExternalModelServiceError as e:
             if e.status_code == 404:

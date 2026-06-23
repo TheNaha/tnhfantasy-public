@@ -397,6 +397,8 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         );
                         const showAvailabilityBadge = availability.hasStatusData;
                         const availabilityLabel = formatAvailabilityBadgeLabel(availability.label);
+                        const proxyPreviewUrl = file.civitai_id ? `/api/v2/models/preview/${file.civitai_id}?image_index=0` : null;
+                        const previewImage = proxyPreviewUrl || file.preview;
 
                         return (
                             <div
@@ -405,28 +407,10 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                 className="group relative bg-[#0B0E14]/80 rounded-2xl overflow-hidden border border-white/5 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all duration-300 aspect-[2/3] cursor-pointer"
                             >
                                 <div className="absolute inset-0">
-                                    {file.preview ? (
+                                    {previewImage ? (
                                         <ProgressiveImage
-                                            src={file.preview}
-                                            medium={getOptimizedImageUrl(file.preview, 450)}
-                                            alt={file.display_name || file.name}
-                                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                            size="medium"
-                                            aspectRatio="2/3"
-                                            onError={(e) => {
-                                                if (file.civitai_id) {
-                                                    const proxyPreview = `/api/v2/models/preview/${file.civitai_id}?image_index=0`;
-                                                    if (e.currentTarget.src !== proxyPreview) {
-                                                        e.currentTarget.src = proxyPreview;
-                                                        return;
-                                                    }
-                                                }
-                                                e.target.style.display = 'none';
-                                            }}
-                                        />
-                                    ) : file.civitai_id ? (
-                                        <ProgressiveImage
-                                            src={`/api/v2/models/preview/${file.civitai_id}?image_index=0`}
+                                            src={previewImage}
+                                            medium={getOptimizedImageUrl(previewImage, 450)}
                                             alt={file.display_name || file.name}
                                             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                             size="medium"

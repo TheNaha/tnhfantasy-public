@@ -14,43 +14,23 @@ function ModelPreviewImage({ model, size = 'md', className = '' }) {
 
   const previewWidth = size === 'sm' ? 150 : 450;
 
-  if (model?.preview) {
-    return (
-      <ProgressiveImage
-        src={model.preview}
-        medium={getOptimizedImageUrl(model.preview, previewWidth)}
-        alt={model?.display_name || model?.name}
-        className={`${sizeClass} bg-gray-800 flex-shrink-0 ${size === 'lg' ? 'transition-transform group-hover:scale-105' : ''} ${className}`}
-        size="medium"
-        aspectRatio={size === 'sm' ? '1/1' : 'auto'}
-        onError={(e) => {
-          if (model?.civitai_id) {
-            const versionPreviewId = model.selectedVersionPreviewId || model.selectedVersionId;
-            const params = new URLSearchParams({ image_index: '0' });
-            if (versionPreviewId) {
-              params.set('version_id', String(versionPreviewId));
-            }
-            const proxyPreview = `/api/v2/models/preview/${model.civitai_id}?${params.toString()}`;
-            if (e.currentTarget.src !== proxyPreview) {
-              e.currentTarget.src = proxyPreview;
-              return;
-            }
-          }
-          e.target.style.display = 'none';
-        }}
-      />
-    );
-  }
-
+  let proxyPreviewUrl = null;
   if (model?.civitai_id) {
     const versionPreviewId = model.selectedVersionPreviewId || model.selectedVersionId;
     const params = new URLSearchParams({ image_index: '0' });
     if (versionPreviewId) {
       params.set('version_id', String(versionPreviewId));
     }
+    proxyPreviewUrl = `/api/v2/models/preview/${model.civitai_id}?${params.toString()}`;
+  }
+
+  const previewImage = proxyPreviewUrl || model?.preview;
+
+  if (previewImage) {
     return (
       <ProgressiveImage
-        src={`/api/v2/models/preview/${model.civitai_id}?${params.toString()}`}
+        src={previewImage}
+        medium={getOptimizedImageUrl(previewImage, previewWidth)}
         alt={model?.display_name || model?.name}
         className={`${sizeClass} bg-gray-800 flex-shrink-0 ${size === 'lg' ? 'transition-transform group-hover:scale-105' : ''} ${className}`}
         size="medium"

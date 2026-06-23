@@ -3,13 +3,13 @@ import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 
 export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
-
+    // ALWAYS use backend proxy for Civitai models so the backend caches and resizes them!
+    const proxyUrl = (source === 'civitai' && model.id) ? `/api/v2/models/preview/${model.id}?image_index=0` : null;
     const directPreviewImage = model.modelVersions?.[0]?.images?.[0]?.url || null;
-    const cachedPreviewImage = (source === 'civitai' && model.id)
-        ? `/api/v2/models/preview/${model.id}?image_index=0`
-        : null;
-    const previewImage = directPreviewImage || cachedPreviewImage;
-    const optimizedImage = directPreviewImage ? getOptimizedImageUrl(directPreviewImage, 450) : cachedPreviewImage;
+    
+    const previewImage = proxyUrl || directPreviewImage;
+    const optimizedImage = previewImage ? getOptimizedImageUrl(previewImage, 450) : null;
+    
     const isInstalled = installedInfo?.model_installed;
 
     return (
@@ -30,9 +30,7 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
                         size="medium"
                         aspectRatio="2/3"
                         onError={(e) => {
-                            if (cachedPreviewImage && e.currentTarget.src !== cachedPreviewImage) {
-                                e.currentTarget.src = cachedPreviewImage;
-                            }
+                            e.target.style.display = 'none';
                         }}
                     />
 

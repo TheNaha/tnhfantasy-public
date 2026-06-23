@@ -126,16 +126,19 @@ export default function CivitaiSearchModal({ initialQuery, onClose, onSelect }) 
                             {results.items.map(model => (
                                 <div key={model.id} className="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden hover:border-blue-500/50 transition-colors flex flex-col group">
                                     <div className="aspect-[2/3] bg-gray-900 relative">
-                                        {model.modelVersions?.[0]?.images?.[0]?.url && (
-                                            <ProgressiveImage 
-                                                src={model.modelVersions[0].images[0].url} 
-                                                medium={getOptimizedImageUrl(model.modelVersions[0].images[0].url, 450)}
-                                                alt={model.name}
-                                                className="absolute inset-0 w-full h-full object-cover"
-                                                size="medium"
-                                                aspectRatio="2/3"
-                                            />
-                                        )}
+                                        {model.modelVersions?.[0]?.images?.[0]?.url && (() => {
+                                            const proxyUrl = `/api/v2/models/preview/${model.id}?image_index=0`;
+                                            return (
+                                                <ProgressiveImage 
+                                                    src={proxyUrl} 
+                                                    medium={getOptimizedImageUrl(proxyUrl, 450)}
+                                                    alt={model.name}
+                                                    className="absolute inset-0 w-full h-full object-cover"
+                                                    size="medium"
+                                                    aspectRatio="2/3"
+                                                />
+                                            );
+                                        })()}
                                         <div className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs px-2 py-1 rounded">
                                             {model.type}
                                         </div>

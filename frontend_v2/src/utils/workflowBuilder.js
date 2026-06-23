@@ -366,7 +366,7 @@ class DefaultPipeline extends BasePipeline {
                 model: currentModel,
                 positive: positiveConditioning,
                 negative: negativeConditioning,
-                latent_image: vaeEncode1
+                latent_image: finalLatent
             }), 0];
         }
 
