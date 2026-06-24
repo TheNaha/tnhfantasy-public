@@ -112,7 +112,7 @@ export default function ModelImportCard({ model, onCancel }) {
                 </div>
 
                 {/* Right: Details */}
-                <div className="flex-1 p-6 space-y-6 overflow-y-auto relative flex flex-col">
+                <div className="flex-1 p-6 space-y-4 md:space-y-6 overflow-y-auto relative flex flex-col">
                     <div className="flex justify-between items-start">
                         <div>
                             <h2 className="text-2xl font-bold text-white">{model.name}</h2>

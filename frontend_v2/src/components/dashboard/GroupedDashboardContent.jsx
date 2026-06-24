@@ -260,7 +260,7 @@ export default memo(function GroupedDashboardContent({
     }, [toggleSelection]);
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-4 md:space-y-8">
             {sortedGroupedEntries.map(([date, groupItems]) => (
                 <div key={date}>
                     <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
@@ -330,7 +330,7 @@ export default memo(function GroupedDashboardContent({
                             ))}
                         </div>
                     ) : (
-                        <div className="space-y-8 max-w-3xl mx-auto">
+                        <div className="space-y-4 md:space-y-8 max-w-3xl mx-auto">
                             {groupItems.map((item) => (
                                 item.type === 'job' ? (
                                     <JobCard key={item.id} job={item} onClick={handleJobClick} onDelete={handleJobDelete} />

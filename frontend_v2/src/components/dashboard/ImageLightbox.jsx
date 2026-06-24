@@ -141,7 +141,7 @@ export default memo(function ImageLightbox({
 
                 {/* Sidebar */}
                 <div className="w-full lg:w-80 h-1/3 lg:h-full bg-gray-900 border-t lg:border-t-0 lg:border-l border-gray-800 p-6 overflow-y-auto flex-shrink-0">
-                    <div className="space-y-6">
+                    <div className="space-y-4 md:space-y-6">
                         <div>
                             <h3 className="font-bold text-lg mb-2">Details</h3>
                             <p className="text-sm text-gray-400 break-all">{displayImage.name}</p>
@@ -196,7 +196,7 @@ export default memo(function ImageLightbox({
                                 <Loader2 className="animate-spin text-gray-500" />
                             </div>
                         ) : metadata ? (
-                            <div className="space-y-6">
+                            <div className="space-y-4 md:space-y-6">
                                 {/* Main Stats */}
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="bg-gray-800 p-3 rounded-lg border border-gray-700">

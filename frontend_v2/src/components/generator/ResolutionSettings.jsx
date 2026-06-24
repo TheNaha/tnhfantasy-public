@@ -64,7 +64,7 @@ const ResolutionSettings = memo(function ResolutionSettings() {
     );
 
     return (
-        <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 lg:space-y-6 mb-4">
+        <div className="glass-panel p-5 rounded-2xl border border-white/5 shadow-xl space-y-4 lg:space-y-4 md:space-y-6 mb-4">
             <div className="flex justify-between items-center">
                 <h3 className="text-base lg:text-lg font-bold text-white tracking-wide">Parameters</h3>
                 <PresetManager />

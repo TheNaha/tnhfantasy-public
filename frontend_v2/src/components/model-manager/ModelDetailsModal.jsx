@@ -193,7 +193,7 @@ export default function ModelDetailsModal({ file, onClose }) {
                 </div>
 
                 {/* Right: Details */}
-                <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+                <div className="flex-1 p-6 space-y-4 md:space-y-6 overflow-y-auto">
                     <div className="flex justify-between items-start">
                         <div>
                             <h2 className="text-2xl font-bold text-white">{displayName}</h2>

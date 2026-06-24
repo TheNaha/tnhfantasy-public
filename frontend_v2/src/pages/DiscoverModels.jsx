@@ -3,12 +3,12 @@ import { DiscoverTab } from '../components/model-manager';
 
 export default function DiscoverModels() {
     return (
-        <div className="min-h-screen p-4 lg:p-8 relative">
-            <div className="max-w-7xl mx-auto space-y-6">
+        <div className="relative w-full">
+            <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
                 {/* Header */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
-                        <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 flex items-center gap-3 drop-shadow-md tracking-tight">
+                        <h1 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 flex items-center gap-3 drop-shadow-md tracking-tight">
                             <Globe size={32} className="text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.6)]" />
                             Discover Models
                         </h1>
@@ -17,7 +17,7 @@ export default function DiscoverModels() {
                 </div>
 
                 {/* Content */}
-                <div className="glass-panel rounded-3xl border border-white/5 min-h-[600px] p-6 shadow-2xl relative overflow-hidden">
+                <div className="glass-panel rounded-3xl border border-white/5 min-h-[600px] p-4 md:p-6 shadow-2xl relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
                     <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 pointer-events-none" />
                     <div className="relative z-10">

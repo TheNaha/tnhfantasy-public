@@ -273,7 +273,7 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                         />
 
                     {/* Content */}
-                    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+                    <div className="p-4 md:p-6 space-y-4 md:space-y-4 md:space-y-6">
                         {metadata?.description?.includes("Auto-discovered") && (
                             <div className="p-4 bg-yellow-900/20 border border-yellow-700/30 rounded-xl flex justify-between items-center">
                                 <div className="flex items-center gap-2 text-yellow-500">

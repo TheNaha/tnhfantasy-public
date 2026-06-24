@@ -17,7 +17,7 @@ export function DashboardHeader({
     return (
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-                <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+                <h1 className="text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
                     Gallery
                 </h1>
                 <p className="text-gray-400 mt-1 text-sm">Your generations and active jobs</p>

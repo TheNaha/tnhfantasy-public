@@ -192,7 +192,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                 {CATEGORIES.map(cat => (
                     <button

@@ -9,7 +9,7 @@ export default function FeedCardDetails({
   if (!showDetails) return null;
 
   return (
-    <div id={detailsId} className="p-6 space-y-6 bg-gray-900/30 border-t border-gray-800">
+    <div id={detailsId} className="p-6 space-y-4 md:space-y-6 bg-gray-900/30 border-t border-gray-800">
       {detailsLoading ? (
         <div className="flex gap-2 items-center text-gray-500 text-sm">
           <Loader2 className="animate-spin" size={14} /> Loading details...

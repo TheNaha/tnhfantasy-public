@@ -62,7 +62,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                <form onSubmit={handleSubmit} className="p-6 space-y-4 md:space-y-6">
                     {/* Model Info */}
                     <div>
                         <label className="block text-sm font-medium text-gray-300 mb-2">

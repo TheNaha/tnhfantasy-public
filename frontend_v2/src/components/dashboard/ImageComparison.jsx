@@ -125,7 +125,7 @@ export const ImageComparison = ({ images, onClose }) => {
                 <div className="w-full lg:w-80 bg-gray-900 border-l border-gray-800 overflow-y-auto p-4">
                     <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">Parameters</h3>
 
-                    <div className="space-y-6">
+                    <div className="space-y-4 md:space-y-6">
                         {metaKeys.map(key => (
                             <div key={key}>
                                 <div className="text-xs text-gray-500 uppercase mb-1">{key}</div>

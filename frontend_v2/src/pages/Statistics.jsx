@@ -294,12 +294,12 @@ const Statistics = () => {
                 variants={containerVariants}
                 initial="hidden"
                 animate="show"
-                className="max-w-7xl mx-auto space-y-8 relative z-10"
+                className="max-w-7xl mx-auto space-y-4 md:space-y-8 relative z-10"
                 style={{ opacity: 1 }}
             >
                 <motion.div variants={itemVariants} className="flex flex-col md:flex-row md:items-end justify-between gap-6 glass-panel p-8 rounded-3xl border border-white/5 shadow-2xl">
                     <div>
-                        <h1 className="text-3xl font-black mb-2 tracking-tight bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-md">
+                        <h1 className="text-2xl md:text-3xl font-black mb-2 tracking-tight bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent drop-shadow-md">
                             Telemetry & Insights
                         </h1>
                         <p className="text-gray-400 font-medium tracking-wide">
@@ -321,7 +321,7 @@ const Statistics = () => {
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-blue-500/40 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)] relative overflow-hidden">
+                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-4 md:p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-blue-500/40 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)] relative overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                         <div className="bg-blue-500/10 p-4 rounded-2xl text-blue-400 ring-1 ring-blue-500/30 group-hover:bg-blue-500/20 transition-colors shadow-inner relative z-10">
                             <Sparkles size={28} className="drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
@@ -331,7 +331,7 @@ const Statistics = () => {
                             <p className="text-gray-300 text-sm font-medium leading-relaxed">{getTopCheckpointInsight()}</p>
                         </div>
                     </motion.div>
-                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-purple-500/40 hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] relative overflow-hidden">
+                    <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-4 md:p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-purple-500/40 hover:shadow-[0_0_30px_rgba(168,85,247,0.15)] relative overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                         <div className="bg-purple-500/10 p-4 rounded-2xl text-purple-400 ring-1 ring-purple-500/30 group-hover:bg-purple-500/20 transition-colors shadow-inner relative z-10">
                             <Zap size={28} className="drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" />
@@ -344,7 +344,7 @@ const Statistics = () => {
                 </motion.div>
 
                 <motion.div variants={itemVariants} className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-4 md:p-4 md:p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Image size={48} />
                         </div>
@@ -355,7 +355,7 @@ const Statistics = () => {
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data.total_images ?? 0}</div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-4 md:p-4 md:p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Clock size={48} />
                         </div>
@@ -366,7 +366,7 @@ const Statistics = () => {
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{data?.performance?.avg_time || 0}<span className="text-xl text-gray-500 ml-1">s</span></div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
+                    <motion.div whileHover={{ y: -5 }} className="glass-panel p-4 md:p-4 md:p-6 rounded-3xl border border-white/5 hover:border-white/10 hover:shadow-lg transition-all duration-300 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                             <Hash size={48} />
                         </div>
@@ -377,7 +377,7 @@ const Statistics = () => {
                         <div className="text-4xl font-black tracking-tight text-white relative z-10 drop-shadow-md">{Object.keys(data?.prompts?.keywords || {}).length}</div>
                     </motion.div>
 
-                    <motion.div whileHover={{ y: -5 }} className="bg-gradient-to-br from-emerald-500/10 to-[#0B0E14]/80 backdrop-blur-md p-6 rounded-3xl border border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_20px_rgba(52,211,153,0.1)] transition-all duration-300 relative overflow-hidden group">
+                    <motion.div whileHover={{ y: -5 }} className="bg-gradient-to-br from-emerald-500/10 to-[#0B0E14]/80 backdrop-blur-md p-4 md:p-6 rounded-3xl border border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-[0_0_20px_rgba(52,211,153,0.1)] transition-all duration-300 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-4 opacity-10 text-emerald-400 group-hover:opacity-20 transition-opacity">
                             <Activity size={48} />
                         </div>
@@ -425,7 +425,7 @@ const Statistics = () => {
                                     <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1 flex items-center gap-2">
                                         <Cpu size={14} /> GPU Hours
                                     </div>
-                                    <div className="text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
+                                    <div className="text-2xl md:text-3xl font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]">
                                         {TOTAL_HOURS.toFixed(2)}<span className="text-lg text-emerald-600/50 ml-1 font-bold">h</span>
                                     </div>
                                 </div>

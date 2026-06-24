@@ -397,7 +397,7 @@ export default function Dashboard() {
                 isPulling={isPulling}
                 threshold={80}
             />
-            <div className="max-w-7xl mx-auto space-y-8">
+            <div className="max-w-7xl mx-auto space-y-4 md:space-y-8">
                 <QueueVisualization onJobClick={handleJobClick} />
 
                 <DashboardHeaderToolbar

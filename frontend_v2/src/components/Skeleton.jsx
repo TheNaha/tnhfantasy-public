@@ -86,7 +86,7 @@ export function GallerySkeleton({ count = 8, mode = "grid" }) {
 
     // Feed mode - uses FeedCardSkeleton for accurate layout matching
     return (
-        <div className="space-y-6 max-w-3xl mx-auto">
+        <div className="space-y-4 md:space-y-6 max-w-3xl mx-auto">
             {Array.from({ length: count }).map((_, i) => (
                 <FeedCardSkeleton key={i} />
             ))}

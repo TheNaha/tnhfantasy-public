@@ -148,7 +148,7 @@ export default function ReconciliationStatus({ providerId, onClose, inline = fal
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4 md:space-y-6">
                     {/* Message */}
                     {status.message && (
                         <div className="text-sm text-gray-300 bg-gray-900/50 rounded-lg px-4 py-2 border border-gray-700">

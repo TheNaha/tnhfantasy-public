@@ -227,7 +227,7 @@ export default function SimpleGenerator() {
             </div>
 
             <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-3 lg:gap-8">
-                <div className="lg:col-span-2 space-y-3 lg:space-y-6 order-last lg:order-none">
+                <div className="lg:col-span-2 space-y-3 lg:space-y-4 md:space-y-6 order-last lg:order-none">
                     <PromptPanel />
 
                     <ModelSection
@@ -313,7 +313,7 @@ export default function SimpleGenerator() {
                     />
                 </div>
 
-                <div className="order-first lg:order-none space-y-4 lg:space-y-6">
+                <div className="order-first lg:order-none space-y-4 lg:space-y-4 md:space-y-6">
                     <GeneratorReadinessPanel
                         providers={providers}
                         providersLoading={providersLoading}

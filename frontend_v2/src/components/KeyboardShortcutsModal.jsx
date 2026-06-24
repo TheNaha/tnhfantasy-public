@@ -60,7 +60,7 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
                         </div>
 
                         {/* Content */}
-                        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                        <div className="flex-1 overflow-y-auto p-6 space-y-4 md:space-y-8">
                             {Object.entries(shortcuts).map(([category, items]) => (
                                 <div key={category}>
                                     <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">

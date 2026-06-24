@@ -155,7 +155,7 @@ export default function Providers() {
 
     return (
         <motion.div
-            className="mx-auto max-w-7xl p-6"
+            className="mx-auto max-w-7xl"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
@@ -163,7 +163,7 @@ export default function Providers() {
         >
             {/* ── Page Header ── */}
             <div className="mb-6">
-                <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 drop-shadow-md tracking-tight mb-1">Providers</h1>
+                <h1 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 drop-shadow-md tracking-tight mb-1">Providers</h1>
                 <p className="text-sm text-gray-400 font-medium tracking-wide">
                     {providers.length} provider{providers.length !== 1 ? 's' : ''} configured
                     {onlineCount > 0 && (

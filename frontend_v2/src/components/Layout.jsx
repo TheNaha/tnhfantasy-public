@@ -165,7 +165,7 @@ export default function Layout({ children }) {
                 "fixed inset-y-0 left-0 z-50 w-64 bg-[#0B0E14]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-transform duration-300 lg:static lg:translate-x-0 shadow-2xl shadow-black/50",
                 isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
             )}>
-                <div className="p-6 flex items-center justify-between border-b border-white/5 h-16 lg:h-auto">
+                <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 h-16 lg:h-auto">
                     <div className="flex items-center gap-3">
                         <img src={safeBranding.logoUrl} alt="Logo" className="w-8 h-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.3)]" />
                         <h1 className="text-xl font-bold text-gradient-primary tracking-tight">

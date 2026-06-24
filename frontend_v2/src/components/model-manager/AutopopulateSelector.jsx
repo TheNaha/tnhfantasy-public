@@ -103,7 +103,7 @@ export default function AutopopulateSelector({ modelId, modelName, modelType, on
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 md:space-y-6">
                     {/* Local Model Summary */}
                     <div className="bg-gray-800/40 border border-gray-700/50 rounded-xl p-4">
                         <div className="flex items-start justify-between">

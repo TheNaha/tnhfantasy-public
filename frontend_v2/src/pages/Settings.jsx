@@ -60,17 +60,17 @@ export default function Settings() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="min-h-screen p-4 lg:p-8"
+            className="w-full"
         >
-            <div className="max-w-6xl mx-auto space-y-8">
+            <div className="max-w-6xl mx-auto space-y-4 md:space-y-8">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 glass-panel p-6 rounded-3xl border border-white/5 shadow-2xl">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 glass-panel p-4 md:p-6 rounded-3xl border border-white/5 shadow-2xl">
                     <div className="flex items-center gap-5">
                         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 shadow-inner">
                             <SettingsIcon className="text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]" size={32} />
                         </div>
                         <div>
-                            <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 tracking-tight drop-shadow-md">
+                            <h1 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 tracking-tight drop-shadow-md">
                                 Settings
                             </h1>
                             <p className="text-gray-400 font-medium tracking-wide mt-1">Customize your ComfyUI experience</p>
@@ -191,7 +191,7 @@ function BrandingSettings() {
     }
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 pb-6 border-b border-white/5">
                 <div>
                     <h2 className="text-2xl font-bold tracking-wide text-white">Branding</h2>
@@ -298,7 +298,7 @@ function BrandingSettings() {
 // UI Settings Component
 function UISettings({ settings, onUpdate, onReset, onTestToast }) {
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">UI / UX Settings</h2>
                 <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
@@ -440,7 +440,7 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
 // Gallery Settings Component
 function GallerySettings({ settings, onUpdate, onReset }) {
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">Gallery Settings</h2>
                 <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
@@ -501,7 +501,7 @@ function GallerySettings({ settings, onUpdate, onReset }) {
 // Models Settings Component
 function ModelsSettings({ settings, onUpdate, onReset }) {
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">Model Manager Settings</h2>
                 <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
@@ -547,7 +547,7 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
 // Generator Settings Component
 function GeneratorSettings({ settings, onUpdate, onReset }) {
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">Generator Settings</h2>
                 <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">

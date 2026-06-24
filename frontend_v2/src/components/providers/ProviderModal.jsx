@@ -171,7 +171,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                     Providers now use a unified runtime, deploy, and credential model.
                 </p>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
+                <form onSubmit={handleSubmit} className="space-y-4 md:space-y-6">
                     <Section title="Basics">
                         <div className="grid gap-4 md:grid-cols-2">
                             <Field label="Provider ID">

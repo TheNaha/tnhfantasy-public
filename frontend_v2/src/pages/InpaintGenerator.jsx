@@ -262,7 +262,7 @@ export default function InpaintGenerator() {
 
             <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-8">
                 {/* Left Column: Canvas & Settings */}
-                <div className="lg:col-span-2 space-y-4 lg:space-y-6">
+                <div className="lg:col-span-2 space-y-4 lg:space-y-4 md:space-y-6">
 
                     {/* Source Image / Canvas */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">
@@ -446,7 +446,7 @@ export default function InpaintGenerator() {
                 </div>
 
                 {/* Right Column: Parameters */}
-                <div className="space-y-4 lg:space-y-6">
+                <div className="space-y-4 lg:space-y-4 md:space-y-6">
                     <GeneratorReadinessPanel
                         providers={providers}
                         providersLoading={providersLoading}
