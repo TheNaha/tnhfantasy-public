@@ -726,3 +726,16 @@ textarea,
 .toolbar-strip button.warning:hover {
   background: rgba(245, 158, 11, 0.15);
 }
+
+/* React Flow Controls Dark Mode Override */
+.react-flow__controls-button {
+  background-color: rgba(17, 24, 39, 0.9) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  fill: rgba(255, 255, 255, 0.7) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: rgba(31, 41, 55, 1) !important;
+  fill: #fff !important;
+}

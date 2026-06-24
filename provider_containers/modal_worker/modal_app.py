@@ -540,8 +540,8 @@ class ComfyUINodeExtractor:
         import time
 
         logger.info("[ComfyUINodeExtractor] Starting CPU-only server...")
-        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port), "--cpu"]
-        subprocess.Popen(cmd)
+        cmd = ["comfy", "launch", "--", "--listen", "0.0.0.0", "--port", str(self.port), "--cpu"]
+        server_process = subprocess.Popen(cmd)
         
         # Wait for ready
         deadline = time.time() + 60
@@ -566,10 +566,13 @@ class ComfyUINodeExtractor:
             data = response.json()
             logger.info(f"[ComfyUINodeExtractor] Successfully extracted object_info ({len(data)} nodes).")
         finally:
-            # Kill the server
+            # Kill the server gracefully
             logger.info("[ComfyUINodeExtractor] Shutting down CPU server...")
-            subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
-            subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+            server_process.terminate()
+            try:
+                server_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server_process.kill()
             
         return data
 

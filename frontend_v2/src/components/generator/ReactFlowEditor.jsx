@@ -9,15 +9,23 @@ import {
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
+  Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useObjectInfo } from '../../hooks/useObjectInfo';
 import { NodeRegistry } from '../../utils/NodeRegistry';
+import { PRESET_WORKFLOWS } from '../../utils/presets';
 import ComfyNode from './ComfyNode';
+import DeletableEdge from './DeletableEdge';
 import NodeSidebar from './NodeSidebar';
+import RegistryContext from './RegistryContext';
 
 const nodeTypes = {
   comfy: ComfyNode,
+};
+
+const edgeTypes = {
+  deletable: DeletableEdge,
 };
 
 const initialNodes = [];
@@ -27,6 +35,20 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
   const { data: objectInfo, isLoading, error } = useObjectInfo(providerId);
   const registry = useMemo(() => objectInfo ? new NodeRegistry(objectInfo) : null, [objectInfo]);
   
+  // Load initial state from local storage
+  const [initialNodes, initialEdges] = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('tnh-comfy-workflow');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.nodes && parsed.edges) return [parsed.nodes, parsed.edges];
+      }
+    } catch (e) {
+      console.warn("Failed to parse saved workflow", e);
+    }
+    return [[], []];
+  }, []);
+
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
 
@@ -35,11 +57,12 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
     [setEdges],
   );
 
-  // Notify parent of graph changes so it can compile to ComfyUI JSON
+  // Notify parent of graph changes and save to local storage
   React.useEffect(() => {
     if (onGraphChange) {
       onGraphChange(nodes, edges);
     }
+    localStorage.setItem('tnh-comfy-workflow', JSON.stringify({ nodes, edges }));
   }, [nodes, edges, onGraphChange]);
 
   // Define drag and drop handlers for a sidebar (Phase 4.3)
@@ -65,8 +88,6 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
         position,
         data: { 
           nodeType: type, 
-          registry,
-          // Widgets are initialized later
           widgets: {}
         },
       };
@@ -101,34 +122,57 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
 
 
   return (
-    <div className="w-full h-full relative flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl glass-panel">
-      {/* Sidebar for Node Palette */}
-      <NodeSidebar registry={registry} />
+    <RegistryContext.Provider value={registry}>
+      <div className="w-full h-full relative flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl glass-panel">
+        {/* Sidebar for Node Palette */}
+        <NodeSidebar registry={registry} />
 
-      <div className="flex-1 h-full relative" onDrop={onDrop} onDragOver={onDragOver}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={(changes) => setNodes((nds) => applyNodeChanges(changes, nds))}
-          onEdgesChange={(changes) => setEdges((eds) => applyEdgeChanges(changes, eds))}
-          onConnect={onConnect}
-          nodeTypes={nodeTypes}
-          fitView
-          className="bg-[#0B0E14]"
-          defaultEdgeOptions={{
-            style: { strokeWidth: 3, stroke: '#3B82F6' },
-            type: 'smoothstep'
-          }}
-        >
-          <Background color="#ffffff" variant="dots" gap={20} size={1} opacity={0.05} />
-          <Controls className="fill-white/70 bg-white/5 border-white/10" />
-          <MiniMap 
-            nodeColor={() => '#3B82F6'} 
-            maskColor="rgba(11, 14, 20, 0.8)"
-            className="bg-white/5 border border-white/10 rounded-xl overflow-hidden" 
-          />
-        </ReactFlow>
+        <div className="flex-1 h-full relative" onDrop={onDrop} onDragOver={onDragOver}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={(changes) => setNodes((nds) => applyNodeChanges(changes, nds))}
+            onEdgesChange={(changes) => setEdges((eds) => applyEdgeChanges(changes, eds))}
+            onConnect={onConnect}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            className="bg-[#0B0E14]"
+            defaultEdgeOptions={{
+              type: 'deletable',
+              style: { strokeWidth: 3, stroke: '#3B82F6' },
+            }}
+          >
+            <Panel position="top-right" className="bg-gray-900/80 backdrop-blur-md border border-gray-700 p-2 rounded-xl flex gap-2">
+              <select 
+                className="bg-gray-800 text-sm text-gray-200 border border-gray-600 rounded px-2 py-1 outline-none"
+                onChange={(e) => {
+                  const preset = PRESET_WORKFLOWS[e.target.value];
+                  if (preset) {
+                    setNodes(preset.nodes);
+                    setEdges(preset.edges);
+                  }
+                  e.target.value = "";
+                }}
+                defaultValue=""
+              >
+                <option value="" disabled>Load Preset...</option>
+                {Object.keys(PRESET_WORKFLOWS).map(k => (
+                  <option key={k} value={k}>{PRESET_WORKFLOWS[k].name}</option>
+                ))}
+              </select>
+            </Panel>
+            <Background color="#ffffff" variant="dots" gap={20} size={1} opacity={0.05} />
+            <Controls className="fill-white/70 bg-white/5 border-white/10" />
+            <MiniMap 
+              nodeColor={() => '#3B82F6'} 
+              maskColor="rgba(11, 14, 20, 0.8)"
+              className="border border-white/10 rounded-xl overflow-hidden" 
+              style={{ backgroundColor: '#111827' }}
+            />
+          </ReactFlow>
+        </div>
       </div>
-    </div>
+    </RegistryContext.Provider>
   );
 }

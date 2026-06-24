@@ -738,9 +738,9 @@ async def get_object_info():
     import time
     
     port = 8189
-    logger.info("[Extractor] Starting CPU-only server...")
-    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port), "--cpu"]
-    proc = subprocess.Popen(cmd)
+    logger.info("[ComfyUINodeExtractor] Starting CPU-only server...")
+    cmd = ["comfy", "launch", "--", "--listen", "0.0.0.0", "--port", str(port), "--cpu"]
+    server_process = subprocess.Popen(cmd)
     
     # Wait for ready
     deadline = time.time() + 60
@@ -756,7 +756,7 @@ async def get_object_info():
         time.sleep(1)
         
     if not ready:
-        proc.kill()
+        server_process.kill()
         return {"error": "ComfyUI failed to start in CPU mode for extraction"}
         
     try:
@@ -765,8 +765,13 @@ async def get_object_info():
         data = response.json()
         logger.info(f"[Extractor] Successfully extracted object_info ({len(data)} nodes).")
     finally:
-        subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
-        subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+        # Kill the server gracefully
+        logger.info("[ComfyUINodeExtractor] Shutting down CPU server...")
+        server_process.terminate()
+        try:
+            server_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server_process.kill()
         
     return data
 

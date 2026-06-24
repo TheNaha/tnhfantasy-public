@@ -16,7 +16,7 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
     This routes to the provider's CPU extraction endpoint.
     """
     repo = ProviderRepository(session)
-    provider = repo.get_by_id(provider_id)
+    provider = repo.get(provider_id)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
         

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, Loader2 } from 'lucide-react';
+import { Play, Loader2, Settings2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
@@ -15,6 +15,7 @@ import { compileReactFlowToComfy } from '../utils/WorkflowCompiler';
 export default function AdvancedGenerator() {
     const navigate = useNavigate();
     const [editorMode, setEditorMode] = useState('visual'); // 'visual' or 'json'
+    const [showRunway, setShowRunway] = useState(false);
     const [workflowJson, setWorkflowJson] = useState("");
     const [reactFlowState, setReactFlowState] = useState({ nodes: [], edges: [] });
     const [generating, setGenerating] = useState(false);
@@ -78,6 +79,10 @@ export default function AdvancedGenerator() {
     }, [trackedJob, currentJobId, navigate, redirectAfterGenerate, redirectDelay]);
     /* eslint-enable react-hooks/set-state-in-effect */
 
+    const handleGraphChange = useCallback((nodes, edges) => {
+        setReactFlowState({ nodes, edges });
+    }, []);
+
     const handleGenerate = async () => {
         try {
             let workflow;
@@ -120,7 +125,7 @@ export default function AdvancedGenerator() {
     };
 
     return (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className={`grid grid-cols-1 gap-6 transition-all ${showRunway || editorMode === 'json' ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
             <div className="h-[calc(100vh-140px)] flex flex-col">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <div className="flex items-center gap-4">
@@ -140,14 +145,25 @@ export default function AdvancedGenerator() {
                         </button>
                     </div>
                 </div>
-                <button
-                    onClick={handleGenerate}
-                    disabled={generating || (editorMode === 'json' && !workflowJson)}
-                    className="px-6 py-2 bg-green-600 rounded-lg font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                    {generating ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
-                    Run Workflow
-                </button>
+                <div className="flex items-center gap-3">
+                    {editorMode === 'visual' && (
+                        <button
+                            onClick={() => setShowRunway(!showRunway)}
+                            className={`p-2 rounded-lg transition-colors border ${showRunway ? 'bg-blue-600/20 text-blue-400 border-blue-500/50' : 'bg-gray-900 text-gray-400 border-gray-800 hover:text-gray-200'}`}
+                            title="Toggle Settings & Runway"
+                        >
+                            <Settings2 size={20} />
+                        </button>
+                    )}
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generating || (editorMode === 'json' && !workflowJson)}
+                        className="px-6 py-2 bg-green-600 rounded-lg font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                        {generating ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
+                        Run Workflow
+                    </button>
+                </div>
             </div>
 
             {progress && (
@@ -170,7 +186,7 @@ export default function AdvancedGenerator() {
                     // We just pass the first provider as default for now, users can select it later if needed
                     <ReactFlowEditor 
                         providerId={providers && providers.length > 0 ? providers[0].id : null}
-                        onGraphChange={(nodes, edges) => setReactFlowState({ nodes, edges })} 
+                        onGraphChange={handleGraphChange} 
                     />
                 ) : (
                     <div className="flex-1 bg-gray-950 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
@@ -194,19 +210,21 @@ export default function AdvancedGenerator() {
             />
             </div>
 
-            <div className="space-y-4">
-                <GeneratorReadinessPanel
-                    providers={providers}
-                    providersLoading={providersLoading}
-                    validationSummary={validationSummary}
-                    isChecking={preflightChecking}
-                    title="Advanced Runway"
-                    hint="Use the same preflight checks as the guided generators before running raw workflow JSON."
-                />
-                <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-sm text-gray-400">
-                    Advanced mode preserves the raw ComfyUI workflow path, but validation still checks whether the referenced models exist on any enabled provider before queueing the job.
+            {(showRunway || editorMode === 'json') && (
+                <div className="space-y-4">
+                    <GeneratorReadinessPanel
+                        providers={providers}
+                        providersLoading={providersLoading}
+                        validationSummary={validationSummary}
+                        isChecking={preflightChecking}
+                        title="Advanced Runway"
+                        hint="Use the same preflight checks as the guided generators before running raw workflow JSON."
+                    />
+                    <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 text-sm text-gray-400">
+                        Advanced mode preserves the raw ComfyUI workflow path, but validation still checks whether the referenced models exist on any enabled provider before queueing the job.
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }
