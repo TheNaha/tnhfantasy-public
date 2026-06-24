@@ -16,10 +16,12 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.11",
+    "@xyflow/react": "^12.11.1",
     "blurhash": "^2.0.5",
     "clsx": "^2.1.1",
     "dompurify": "^3.3.3",
     "framer-motion": "^12.23.24",
+    "idb-keyval": "^6.2.5",
     "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-blurhash": "^0.3.0",

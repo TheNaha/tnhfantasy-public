@@ -258,6 +258,11 @@ class ModalProviderClient(BaseProviderClient):
         validate_fn = get_modal_function("validate_models")
         return await validate_fn.remote.aio(MODEL_DIRECTORIES, False)
 
+    async def get_object_info(self) -> Dict[str, Any]:
+        ComfyUINodeExtractor = modal.Cls.from_name(MODAL_APP_NAME, "ComfyUINodeExtractor")
+        extractor = ComfyUINodeExtractor()
+        return await extractor.get_object_info.remote.aio()
+
     async def run_reconciliation(self) -> Dict[str, Any]:
         async def validate_existing(delete_invalid: bool):
             validate_fn = get_modal_function("validate_models")

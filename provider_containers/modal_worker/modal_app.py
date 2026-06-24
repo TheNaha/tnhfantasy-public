@@ -515,6 +515,63 @@ class ComfyUISnapshot:
             self._completed_runs = 0
 
 
+# =============================================================================
+# EXTRACTOR MODE: CPU-only node extraction (for React Flow generator)
+# =============================================================================
+@app.cls(
+    image=image,
+    cpu=COMFYUI_CPU,
+    gpu=None,  # CPU only
+    volumes={"/mnt/data": vol},
+    timeout=300,
+    max_containers=1,
+)
+class ComfyUINodeExtractor:
+    """
+    CPU-only class to extract object_info from ComfyUI.
+    This avoids booting expensive GPUs just to list custom nodes.
+    """
+    port: int = 8189
+    
+    @modal.method()
+    def get_object_info(self) -> Dict[str, Any]:
+        import requests
+        import subprocess
+        import time
+
+        logger.info("[ComfyUINodeExtractor] Starting CPU-only server...")
+        cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(self.port), "--cpu"]
+        subprocess.Popen(cmd)
+        
+        # Wait for ready
+        deadline = time.time() + 60
+        ready = False
+        while time.time() < deadline:
+            try:
+                response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
+                if response.status_code == 200:
+                    ready = True
+                    break
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(1)
+            
+        if not ready:
+            raise RuntimeError("ComfyUI failed to start in CPU mode for extraction.")
+            
+        # Fetch object_info
+        try:
+            response = requests.get(f"http://127.0.0.1:{self.port}/object_info", timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"[ComfyUINodeExtractor] Successfully extracted object_info ({len(data)} nodes).")
+        finally:
+            # Kill the server
+            logger.info("[ComfyUINodeExtractor] Shutting down CPU server...")
+            subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
+            subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+            
+        return data
 
 
 # NOTE: Worker container now calls ComfyUIStable or ComfyUISnapshot directly

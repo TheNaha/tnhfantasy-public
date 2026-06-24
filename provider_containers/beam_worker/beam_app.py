@@ -723,3 +723,62 @@ async def download_model_endpoint(request: Request):
 def comfy_download():
     """Dedicated download endpoint for model downloads (separate scaling from storage)."""
     return download_app
+
+
+# =============================================================================
+# Extractor Deployment (CPU-only node mapping)
+# =============================================================================
+
+extractor_app = FastAPI(title="ComfyUI Extractor Server")
+
+@extractor_app.get("/object_info")
+async def get_object_info():
+    import requests
+    import subprocess
+    import time
+    
+    port = 8189
+    logger.info("[Extractor] Starting CPU-only server...")
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port), "--cpu"]
+    proc = subprocess.Popen(cmd)
+    
+    # Wait for ready
+    deadline = time.time() + 60
+    ready = False
+    while time.time() < deadline:
+        try:
+            response = requests.get(f"http://127.0.0.1:{port}", timeout=2)
+            if response.status_code == 200:
+                ready = True
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        
+    if not ready:
+        proc.kill()
+        return {"error": "ComfyUI failed to start in CPU mode for extraction"}
+        
+    try:
+        response = requests.get(f"http://127.0.0.1:{port}/object_info", timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"[Extractor] Successfully extracted object_info ({len(data)} nodes).")
+    finally:
+        subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
+        subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+        
+    return data
+
+@rest_api(
+    name="comfyui-extractor",
+    cpu=1,
+    memory="4Gi",
+    image=gpu_image,
+    volumes=[Volume(VOL_NAME, mount_path="/mnt/data")],
+    timeout=300,
+    keep_warm_seconds=0,
+)
+def comfy_extractor():
+    """CPU endpoint for extracting ComfyUI node definitions."""
+    return extractor_app

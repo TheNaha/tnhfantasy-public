@@ -9,10 +9,14 @@ import useProvidersPageData from '../hooks/useProvidersPageData';
 import { useTrackJob } from '../hooks/useTrackJob';
 import useSettingsStore from '../store/settingsStore';
 import { generateApi, createIdempotencyKey } from '../api';
+import ReactFlowEditor from '../components/generator/ReactFlowEditor';
+import { compileReactFlowToComfy } from '../utils/WorkflowCompiler';
 
 export default function AdvancedGenerator() {
     const navigate = useNavigate();
+    const [editorMode, setEditorMode] = useState('visual'); // 'visual' or 'json'
     const [workflowJson, setWorkflowJson] = useState("");
+    const [reactFlowState, setReactFlowState] = useState({ nodes: [], edges: [] });
     const [generating, setGenerating] = useState(false);
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
@@ -76,7 +80,14 @@ export default function AdvancedGenerator() {
 
     const handleGenerate = async () => {
         try {
-            const workflow = JSON.parse(workflowJson);
+            let workflow;
+            if (editorMode === 'visual') {
+                workflow = compileReactFlowToComfy(reactFlowState.nodes, reactFlowState.edges);
+                setWorkflowJson(JSON.stringify(workflow, null, 2)); // Update JSON view just in case
+            } else {
+                workflow = JSON.parse(workflowJson);
+            }
+            
             setGenerating(true);
             setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
 
@@ -112,10 +123,26 @@ export default function AdvancedGenerator() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="h-[calc(100vh-140px)] flex flex-col">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                <h2 className="text-2xl font-bold">Advanced Workflow</h2>
+                <div className="flex items-center gap-4">
+                    <h2 className="text-2xl font-bold">Advanced Workflow</h2>
+                    <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
+                        <button
+                            onClick={() => setEditorMode('visual')}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${editorMode === 'visual' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                            Visual Graph
+                        </button>
+                        <button
+                            onClick={() => setEditorMode('json')}
+                            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${editorMode === 'json' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                            Raw JSON
+                        </button>
+                    </div>
+                </div>
                 <button
                     onClick={handleGenerate}
-                    disabled={generating || !workflowJson}
+                    disabled={generating || (editorMode === 'json' && !workflowJson)}
                     className="px-6 py-2 bg-green-600 rounded-lg font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                     {generating ? <Loader2 className="animate-spin" size={18} /> : <Play size={18} />}
@@ -138,16 +165,26 @@ export default function AdvancedGenerator() {
                 </div>
             )}
 
-            <div className="flex-1 bg-gray-950 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
-                <div className="bg-gray-900 px-4 py-2 border-b border-gray-800 text-xs text-gray-400 font-mono">
-                    WORKFLOW JSON
-                </div>
-                <textarea
-                    className="flex-1 w-full bg-gray-950 p-4 font-mono text-sm text-green-400 outline-none resize-none"
-                    placeholder="Paste ComfyUI API Format JSON here..."
-                    value={workflowJson}
-                    onChange={(e) => setWorkflowJson(e.target.value)}
-                />
+            <div className="flex-1 overflow-hidden flex flex-col">
+                {editorMode === 'visual' ? (
+                    // We just pass the first provider as default for now, users can select it later if needed
+                    <ReactFlowEditor 
+                        providerId={providers && providers.length > 0 ? providers[0].id : null}
+                        onGraphChange={(nodes, edges) => setReactFlowState({ nodes, edges })} 
+                    />
+                ) : (
+                    <div className="flex-1 bg-gray-950 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
+                        <div className="bg-gray-900 px-4 py-2 border-b border-gray-800 text-xs text-gray-400 font-mono">
+                            WORKFLOW JSON
+                        </div>
+                        <textarea
+                            className="flex-1 w-full h-full bg-gray-950 p-4 font-mono text-sm text-green-400 outline-none resize-none"
+                            placeholder="Paste ComfyUI API Format JSON here..."
+                            value={workflowJson}
+                            onChange={(e) => setWorkflowJson(e.target.value)}
+                        />
+                    </div>
+                )}
             </div>
 
             <MissingModelsDialog

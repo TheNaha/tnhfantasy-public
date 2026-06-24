@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from api.error_handlers import register_exception_handlers
 from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
-from api.routes import models, models_external, prompts, collections
+from api.routes import models, models_external, prompts, collections, nodes
 from api.routes import worker_ws, discovery
 from api.routes.websocket import socket_app
 from config import settings, get_cors_origins
@@ -89,6 +89,7 @@ def configure_app(app: FastAPI):
     app.include_router(models.router)
     app.include_router(prompts.router)
     app.include_router(collections.router)
+    app.include_router(nodes.router)
     app.include_router(worker_ws.router)
     app.include_router(discovery.router)
 

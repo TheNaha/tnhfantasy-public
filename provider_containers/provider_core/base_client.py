@@ -171,3 +171,7 @@ class BaseProviderClient(abc.ABC):
     @abc.abstractmethod
     async def validate_all_models(self) -> Dict[str, Any]:
         pass
+
+    @abc.abstractmethod
+    async def get_object_info(self) -> Dict[str, Any]:
+        pass

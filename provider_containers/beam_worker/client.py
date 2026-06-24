@@ -43,6 +43,7 @@ BEAM_GPU_TYPE = os.getenv("BEAM_GPU_TYPE", "RTX4090")
 BEAM_GPU_URL = os.getenv("BEAM_GPU_URL", "")
 BEAM_STORAGE_URL = os.getenv("BEAM_STORAGE_URL", "")
 BEAM_DOWNLOAD_URL = os.getenv("BEAM_DOWNLOAD_URL", "")
+BEAM_EXTRACTOR_URL = os.getenv("BEAM_EXTRACTOR_URL", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 CIVITAI_TOKEN = os.getenv("CIVITAI_TOKEN", "")
@@ -309,10 +310,24 @@ class BeamProviderClient(BaseProviderClient):
 
     async def validate_all_models(self) -> Dict[str, Any]:
         client = get_http_client()
-        response = await client.post(f"{BEAM_STORAGE_URL}/validate-all-models", json={"delete_invalid": False}, headers=get_beam_headers(), timeout=120.0)
-        if response.status_code == 200:
-            return response.json()
-        return {"error": f"HTTP {response.status_code}", "total_valid": 0, "total_invalid": 0, "total_partial": 0, "by_directory": {}}
+        response = await client.post(
+            f"{BEAM_STORAGE_URL}/validate-all-models",
+            headers=get_beam_headers(),
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_object_info(self) -> Dict[str, Any]:
+        client = get_http_client()
+        extractor_url = BEAM_EXTRACTOR_URL or BEAM_STORAGE_URL
+        response = await client.get(
+            f"{extractor_url}/object_info",
+            headers=get_beam_headers(),
+            timeout=120.0,
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def run_reconciliation(self) -> Dict[str, Any]:
         async def validate_existing(delete_invalid: bool):

@@ -34,6 +34,7 @@ class ProviderClient(Protocol):
     def get_reconciliation_status(self) -> Dict[str, Any]: ...
     def get_config(self) -> Dict[str, Any]: ...
     def update_config(self, new_config: Dict[str, Any]) -> Dict[str, Any]: ...
+    async def get_object_info(self) -> Dict[str, Any]: ...
 
 def attach_provider_routes(app: FastAPI, client: ProviderClient):
     @app.exception_handler(StarletteHTTPException)
@@ -158,3 +159,7 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     @app.get("/reconciliation-status")
     async def reconciliation_status():
         return client.get_reconciliation_status()
+
+    @app.get("/object-info")
+    async def object_info():
+        return await client.get_object_info()
