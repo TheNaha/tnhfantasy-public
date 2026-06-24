@@ -45,7 +45,7 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
     Sync an uploaded file to all active providers.
     Returns {"sync_status": str, "synced_count": int, "failed_count": int}.
     """
-    from infrastructure.providers.runtime import get_provider_worker_base_url
+    from services.provider_runtime import resolve_provider_runtime
 
     sync_status = "local_only"
     synced_count = 0
@@ -63,8 +63,15 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
             if not enabled or not p_id:
                 continue
 
-            worker_url = get_provider_worker_base_url(p_id)
-            active_providers.append({"id": p_id, "worker_url": worker_url})
+            provider_entity = service.get_provider(p_id)
+            if not provider_entity:
+                continue
+            
+            runtime = resolve_provider_runtime(provider_entity)
+            if not runtime.worker_url:
+                continue
+                
+            active_providers.append({"id": p_id, "worker_url": runtime.worker_url})
 
         if active_providers:
             from api.deps import get_http_client
@@ -221,7 +228,11 @@ async def list_files_endpoint(
     limit: int = 20, 
     offset: int = 0, 
     sort: str = "date_desc", 
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    base_model: Optional[str] = None,
+    model_type: Optional[str] = None,
+    show_nsfw: bool = True,
+    tags: Optional[str] = None
 ):
     """List files in a directory with pagination and search."""
     
@@ -239,14 +250,14 @@ async def list_files_endpoint(
 
     # Handle Models directories - query from SQLite model service
     if directory.startswith("models/"):
-        model_type = directory.replace("models/", "")
+        model_dir_type = directory.replace("models/", "")
         
         try:
             async with get_session_context() as db_session:
                 model_service = get_model_service_v2(db_session)
 
                 # Get models for this directory from SQLite
-                models = await model_service.list_models_by_directory(model_type)
+                models = await model_service.list_models_by_directory(model_dir_type)
             
             # Format V2 data for frontend compatibility
             valid_files = []
@@ -267,7 +278,7 @@ async def list_files_endpoint(
                 size_kb = file_info.get("size_kb", 0)
                 
                 # Get base model and trained words from default version
-                base_model = default_version.get("base_model", "") if default_version else ""
+                version_base_model = default_version.get("base_model", "") if default_version else ""
                 trained_words = default_version.get("trained_words", []) if default_version else []
                 
                 # Get preview image URL
@@ -299,7 +310,7 @@ async def list_files_endpoint(
                     "model_id": model.get("id"),
                     "civitai_id": civitai_id,
                     # Version info
-                    "base_model": base_model,
+                    "base_model": version_base_model,
                     "trained_words": trained_words,
                     "version_count": len(versions),
                     "default_version": default_version.get("name", "") if default_version else "",
@@ -340,6 +351,18 @@ async def list_files_endpoint(
                 
                 valid_files.append(file_data)
             
+            # Apply filters
+            if base_model and base_model != "all":
+                valid_files = [f for f in valid_files if f.get("base_model") == base_model]
+            if model_type and model_type != "all":
+                valid_files = [f for f in valid_files if f.get("type") == model_type]
+            if not show_nsfw:
+                valid_files = [f for f in valid_files if not f.get("nsfw", False)]
+            
+            if tags:
+                tag_list = [t.strip() for t in tags.split(",")]
+                valid_files = [f for f in valid_files if all(tag in f.get("tags", []) for tag in tag_list)]
+            
             # Sort
             if sort == "date_desc":
                 valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
@@ -360,7 +383,7 @@ async def list_files_endpoint(
         # Run in thread pool to avoid blocking I/O
         return await asyncio.to_thread(
             _scan_local_model_directory,
-            model_type,
+            model_dir_type,
             search,
             sort,
             limit,

@@ -44,15 +44,15 @@ services:
       backend_v2:
         condition: service_healthy
     ports:
-      # Host port 5174 → container port 80 (for direct localhost access)
-      - "5174:80"
+      # Host port 5174 → container port 5174 (for direct localhost access)
+      - "5174:5174"
     labels:
       - traefik.enable=true
       - traefik.docker.network=proxy
       - traefik.http.routers.comfyui-frontend.rule=Host(`comfy.lan.thenaha.my.id`) || Host(`100.150.0.4`)
       - traefik.http.routers.comfyui-frontend.entrypoints=websecure
       - traefik.http.routers.comfyui-frontend.tls=true
-      - traefik.http.services.comfyui-frontend.loadbalancer.server.port=80
+      - traefik.http.services.comfyui-frontend.loadbalancer.server.port=5174
       - homepage.group=Projects
       - homepage.name=ComfyUI
       - homepage.icon=https://cdn.jsdelivr.net/gh/selfhst/icons@main/svg/comfyui.svg
@@ -63,7 +63,7 @@ services:
       - proxy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5174/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

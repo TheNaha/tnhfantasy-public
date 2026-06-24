@@ -26,23 +26,12 @@ import { persist } from 'zustand/middleware';
 const useStore = create(
     persist(
         (set, get) => ({
-            // Favorites state (still local - simple and fast)
-            favorites: [],
-            toggleFavorite: (filename) => set((state) => {
-                const newFavorites = state.favorites.includes(filename)
-                    ? state.favorites.filter(f => f !== filename)
-                    : [...state.favorites, filename];
-                return { favorites: newFavorites };
-            }),
-            isFavorite: (filename) => get().favorites.includes(filename),
-
             activeCollection: null,
             setActiveCollection: (id) => set({ activeCollection: id }),
         }),
         {
             name: 'comfy-storage',
             partialize: (state) => ({
-                favorites: state.favorites,
                 activeCollection: state.activeCollection,
             }),
         }

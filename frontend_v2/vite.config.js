@@ -37,15 +37,15 @@ export default defineConfig({
     proxy: {
       '/api': {
         // Use VITE_PROXY_TARGET for server-side proxy (Docker hostname)
-        // Falls back to VITE_API_URL then localhost
-        target: process.env.VITE_PROXY_TARGET || process.env.VITE_API_URL || 'http://localhost:8002',
+        // Falls back to VITE_API_URL
+        target: process.env.VITE_PROXY_TARGET || process.env.VITE_API_URL,
         changeOrigin: true,
         secure: false,
         ws: true,
         configure: (proxy) => configureProxyErrorLogging(proxy, '/api'),
       },
       '/socket.io': {
-        target: process.env.VITE_PROXY_TARGET || process.env.VITE_API_URL || 'http://localhost:8002',
+        target: process.env.VITE_PROXY_TARGET || process.env.VITE_API_URL,
         changeOrigin: true,
         secure: false,
         ws: true,

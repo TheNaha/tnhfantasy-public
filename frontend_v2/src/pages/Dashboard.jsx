@@ -13,6 +13,7 @@ import * as ws from '../api/websocket';
 // Hooks
 import { useGallery } from '../hooks/useGallery';
 import { useDashboardItems } from '../hooks/useDashboardItems';
+import { useFavorites } from '../hooks/useFavorites';
 import { useSelectedImageState } from '../hooks/useSelectedImageState';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import {
@@ -55,8 +56,7 @@ export default function Dashboard() {
     const toastSuccessDuration = useSettingsStore((state) => state.settings.ui.toastSuccessDuration);
     const toastErrorDuration = useSettingsStore((state) => state.settings.ui.toastErrorDuration);
     
-    const favorites = useStore((state) => state.favorites);
-    const toggleFavorite = useStore((state) => state.toggleFavorite);
+    const { favorites, isFavorite: fastIsFavorite, toggleFavorite } = useFavorites();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
     
@@ -188,9 +188,6 @@ export default function Dashboard() {
         if (!selectedImage) return [];
         return selectedImage.siblingImages || [selectedImage];
     }, [selectedImage]);
-
-    const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
-    const fastIsFavorite = useCallback((filename) => favoritesSet.has(filename), [favoritesSet]);
 
     const handleToggleFavorite = useCallback((filename) => {
         const wasFavorite = fastIsFavorite(filename);

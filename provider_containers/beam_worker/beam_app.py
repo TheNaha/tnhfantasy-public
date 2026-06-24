@@ -243,11 +243,7 @@ async def setup():
     return {"status": "success", "directories": dirs}
 
 
-# TODO: extract shared download progress logic
-@storage_app.post("/download-model")
-async def download_model(request: Request):
-    """Download a model to the volume with shared validation pipeline."""
-    data = await request.json()
+async def shared_download_model(data: dict):
     url = data.get("url")
     path = data.get("path")
     token = data.get("token")
@@ -338,6 +334,11 @@ async def download_model(request: Request):
             
     return res
 
+@storage_app.post("/download-model")
+async def download_model(request: Request):
+    """Download a model to the volume with shared validation pipeline."""
+    return await shared_download_model(await request.json())
+
 
 @storage_app.post("/list-models")
 async def list_models(request: Request):
@@ -358,11 +359,16 @@ async def delete_model(request: Request):
     path = data.get("path")
     full_path = get_safe_path("/mnt/data", path)
     
-    if not os.path.exists(full_path):
+    if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
         return {"success": False, "message": f"Not found: {path}"}
     
     try:
-        os.remove(full_path)
+        if os.path.exists(full_path):
+            os.remove(full_path)
+            
+        if os.path.exists(full_path + ".downloading"):
+            os.remove(full_path + ".downloading")
+            
         if not path.endswith((".json", ".preview.png", ".sha256")):
             for ext in [".json", ".preview.png", ".sha256"]:
                 side_file = os.path.splitext(full_path)[0] + ext
@@ -412,10 +418,10 @@ async def upload_file(request: Request):
     directory = data.get("directory", "input")
     
     content = base64.b64decode(content_base64)
-    dir_path = get_safe_path("/mnt/data", directory)
-    os.makedirs(dir_path, exist_ok=True)
+    full_path = get_safe_path("/mnt/data", f"{directory}/{filename}")
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
     
-    with open(get_safe_path(dir_path, filename), "wb") as f:
+    with open(full_path, "wb") as f:
         f.write(content)
     
     return {"success": True, "path": f"{directory}/{filename}", "size": len(content)}
@@ -611,101 +617,13 @@ async def download_health():
     return {"status": "healthy", "type": "download"}
 
 
-# TODO: extract shared download progress logic
 @download_app.post("/download-model")
 async def download_model_endpoint(request: Request):
     """Download a model - delegated from main storage app for separate scaling."""
-    data = await request.json()
-    url = data.get("url")
-    path = data.get("path")
-    token = data.get("token")
-    preview_url = data.get("preview_url")
-    metadata = data.get("metadata")
-
-    base_path = "/mnt/data"
-    try:
-        full_path = get_safe_path(base_path, path)
-    except Exception as e:
-        logger.error(f"[Download] Path traversal blocked: {e}")
-        return {"status": "error", "message": "Invalid path"}
-
-    import asyncio
-    
-    progress_dir = "/mnt/data/downloads"
-    os.makedirs(progress_dir, exist_ok=True)
-    safe_name = os.path.basename(path)
-    progress_file = os.path.join(progress_dir, f"{safe_name}.json")
-    
-    last_progress_update = [0.0]
-    
-    def progress_callback(payload: Dict[str, Any]):
-        status = payload.get("status")
-        now = time.time()
-        
-        if status == "starting":
-            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", ""
-        elif status == "downloading":
-            if now - last_progress_update[0] < 0.5:
-                return
-            last_progress_update[0] = now
-            total_bytes = payload.get("total_bytes", 0) or 0
-            downloaded_bytes = payload.get("downloaded_bytes", 0) or 0
-            speed_mbps = payload.get("speed_mbps", 0.0) or 0.0
-            eta_seconds = int(payload.get("eta_seconds", 0) or 0)
-            percent = int(payload.get("percent", 0) or 0)
-            
-            downloaded_str = f"{downloaded_bytes / (1024 ** 2):.2f} MB"
-            total_str = f"{total_bytes / (1024 ** 2):.2f} MB" if total_bytes > 0 else "Unknown"
-            speed_str = f"{speed_mbps:.2f} MB/s"
-            eta_str = f"{eta_seconds}s"
-            msg = ""
-        elif status == "success":
-            percent, speed_str, eta_str, downloaded_str, total_str, msg = 100, "", "", "", "", "Download complete"
-        elif status == "message":
-            status = "error"
-            percent, speed_str, eta_str, downloaded_str, total_str, msg = 0, "", "", "", "", payload.get("message", "Download failed")
-        else:
-            return
-            
-        try:
-            with open(progress_file, "w") as f:
-                json.dump({
-                    "filename": safe_name,
-                    "status": status,
-                    "percent": percent,
-                    "speed": speed_str,
-                    "eta": eta_str,
-                    "downloaded": downloaded_str,
-                    "total": total_str,
-                    "message": msg,
-                    "updated_at": now
-                }, f)
-        except Exception:
-            pass
-
-    result = await asyncio.to_thread(
-        download_model_to_path,
-        url=url,
-        full_path=full_path,
-        path=path,
-        token=token,
-        hf_token=os.environ.get("HF_TOKEN"),
-        civitai_token=os.environ.get("CIVITAI_TOKEN"),
-        preview_url=preview_url,
-        metadata=metadata,
-        log=print,
-        log_prefix="Download",
-        progress_callback=progress_callback,
-        validation_unknown_header_log_prefix="Validate",
-    )
-
-    if result.get("status") == "success":
-        await asyncio.sleep(5)
-        if os.path.exists(progress_file):
-            os.remove(progress_file)
-        return {"status": "success", "path": path, "size": result.get("size", 0)}
-
-    return {"status": "error", "message": result.get("message", "Download failed")}
+    res = await shared_download_model(await request.json())
+    if res.get("status") == "success":
+        return {"status": "success", "path": request.json().get("path") if hasattr(request.json, "get") else (await request.json()).get("path"), "size": res.get("size", 0)}
+    return {"status": "error", "message": res.get("message", "Download failed")}
 
 
 @asgi(

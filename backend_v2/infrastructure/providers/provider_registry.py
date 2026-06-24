@@ -51,9 +51,14 @@ class HttpFileProxy:
 
     async def delete_file(self, path: str) -> bool:
         client = get_http_client()
-        encoded_path = urllib.parse.quote(path, safe="/")
-        url = f"{self.base_url}/delete-file/{encoded_path}"
-        response = await client.delete(url)
+        url = f"{self.base_url}/delete-file"
+        try:
+            response = await client.request("DELETE", url, json={"path": path})
+            if response.status_code == 200:
+                return True
+        except Exception:
+            pass
+        response = await client.post(url, json={"path": path})
         return response.status_code == 200
 
     def get_proxy_url(self) -> str:

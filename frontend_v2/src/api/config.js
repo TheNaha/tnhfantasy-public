@@ -3,7 +3,7 @@
  * Centralized configuration for backend endpoints.
  */
 
-export const DEFAULT_API_URL = 'http://localhost:8002';
+export const DEFAULT_API_URL = '';
 
 function canUseBrowserStorage() {
     return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';

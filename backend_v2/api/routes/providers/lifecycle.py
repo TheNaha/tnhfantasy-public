@@ -23,8 +23,8 @@ from .crud import AddCustomProviderModelRequest
 from api.deps import get_session, get_provider_service, get_container_manager
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
-from services.provider_lifecycle_service import ProviderLifecycleService
-from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
+from api.deps import get_provider_lifecycle_service, get_provider_status_service
+from services.provider_status_service import invalidate_provider_status_caches
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from api.deps import start_background_task
 from api.deps import get_http_client
@@ -72,8 +72,9 @@ def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> No
     invalidate_provider_status_caches(provider_id)
 
 
-def _get_provider_lifecycle_service(session: Session) -> ProviderLifecycleService:
+def _get_provider_lifecycle_service(session: Session):
     provider_service = get_provider_service(session)
+    from services.provider_lifecycle_service import ProviderLifecycleService
     return ProviderLifecycleService(
         session,
         provider_service=provider_service,
@@ -150,7 +151,7 @@ async def get_provider_status_cards(session: Session = Depends(get_session)):
     """Return canonical provider status payloads for all configured providers."""
     service = get_provider_service(session)
     providers = await service.list_providers()
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     cards = await status_service.build_provider_status_cards(providers)
 
     return {
@@ -163,7 +164,7 @@ async def get_provider_status_cards(session: Session = Depends(get_session)):
 async def get_provider_status_card(provider_id: str, session: Session = Depends(get_session)):
     """Return canonical provider status payload for a single provider."""
     service = get_provider_service(session)
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     return await status_service.build_provider_status_card(provider_id)
 
 
@@ -224,14 +225,14 @@ async def get_provider_modal_stats(provider_id: str, session: Session = Depends(
     # Get provider to verify it exists
     service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     return await status_service.get_provider_storage_stats(provider_id, provider)
 
 
 @router.get("/{provider_id}/sync-status")
 async def get_provider_sync_status(provider_id: str, session: Session = Depends(get_session)):
     """Return V2-backed sync counts for a provider."""
-    status_service = ProviderStatusService(session)
+    status_service = get_provider_status_service(session)
     return await status_service.get_provider_sync_status(provider_id)
 
 

@@ -169,14 +169,6 @@ class ModalProviderClient(BaseProviderClient):
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
         success = await storage.delete_file.remote.aio(request.path)
-        if success and not request.path.endswith((".json", ".preview.png", ".sha256")):
-            import os
-            base_path, _ = os.path.splitext(request.path)
-            for ext in [".json", ".preview.png", ".sha256"]:
-                try:
-                    await storage.delete_file.remote.aio(f"{base_path}{ext}")
-                except Exception:
-                    pass
         return {"success": success, "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}", "provider": PROVIDER_ID}
 
     async def get_file(self, path: str) -> StreamingResponse:

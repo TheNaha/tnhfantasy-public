@@ -418,11 +418,39 @@ async def update_branding(request: BrandingRequest):
 # SESSION MANAGEMENT
 # ============================================================================
 
+FAVORITES_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "favorites.json")
+
+def get_favorites_list() -> list:
+    os.makedirs(os.path.dirname(FAVORITES_CONFIG_PATH), exist_ok=True)
+    if os.path.exists(FAVORITES_CONFIG_PATH):
+        try:
+            with open(FAVORITES_CONFIG_PATH, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_favorites_list(favorites: list):
+    os.makedirs(os.path.dirname(FAVORITES_CONFIG_PATH), exist_ok=True)
+    with open(FAVORITES_CONFIG_PATH, 'w') as f:
+        json.dump(favorites, f, indent=2)
+
+class FavoritesRequest(BaseModel):
+    favorites: list[str]
+
+@router.get("/favorites")
+async def get_favorites():
+    return {"status": "success", "favorites": get_favorites_list()}
+
+@router.post("/favorites")
+async def update_favorites(request: FavoritesRequest):
+    save_favorites_list(request.favorites)
+    return {"status": "success", "favorites": request.favorites}
+
 @router.post("/session")
 async def start_session():
     """Start a session (for compatibility)."""
     return {"status": "ready"}
-
 
 @router.get("/session")
 async def get_session_status():

@@ -21,8 +21,8 @@ from pydantic import BaseModel
 from api.deps import get_session, get_provider_service, get_container_manager
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
-from services.provider_lifecycle_service import ProviderLifecycleService
-from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
+from api.deps import get_provider_lifecycle_service, get_provider_status_service
+from services.provider_status_service import invalidate_provider_status_caches
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from api.deps import start_background_task
 from api.deps import get_http_client

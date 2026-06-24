@@ -22,8 +22,8 @@ from api.deps import get_session, get_provider_service, get_container_manager
 from infrastructure.providers.runtime import get_provider_worker_base_url
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
-from services.provider_lifecycle_service import ProviderLifecycleService
-from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
+from api.deps import get_provider_lifecycle_service, get_provider_status_service
+from services.provider_status_service import invalidate_provider_status_caches
 from core.exceptions import NotFoundError, ProviderError, ValidationError
 from api.deps import start_background_task
 from api.deps import get_http_client
@@ -184,7 +184,7 @@ async def list_providers(session: Session = Depends(get_session)):
     """List all providers."""
     service = get_provider_service(session)
     providers = await service.list_providers()
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     records = await status_service.build_provider_records(providers)
     return {"providers": records, "count": len(records)}
 
@@ -197,7 +197,7 @@ async def create_provider(
     """Create a new provider."""
     service = get_provider_service(session)
     provider = await service.create_provider(request.model_dump())
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 
 
@@ -208,7 +208,7 @@ async def get_provider(
 ):
     """Get a provider by ID."""
     service = get_provider_service(session)
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider_id)
 
 
@@ -222,7 +222,7 @@ async def update_provider(
     service = get_provider_service(session)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     provider = await service.update_provider(provider_id, updates)
-    status_service = ProviderStatusService(session, provider_service=service)
+    status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 
 

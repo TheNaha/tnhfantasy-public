@@ -100,3 +100,22 @@ def get_container_manager():
     except Exception as e:
         logger.warning("container_manager_init_failed", error=str(e))
         return None
+
+def get_job_submission_service(session: Session):
+    from services.job_submission_service import JobSubmissionService
+    return JobSubmissionService(session)
+
+
+def get_provider_lifecycle_service(session: Session):
+    from services.provider_lifecycle_service import ProviderLifecycleService
+    return ProviderLifecycleService(session)
+
+
+def get_provider_status_service(session: Session):
+    from services.provider_status_service import ProviderStatusService
+    return ProviderStatusService(session)
+
+
+def get_model_civitai_sync_service(session: Session):
+    from services.model_civitai_sync import ModelCivitaiSyncService
+    return ModelCivitaiSyncService(session)

@@ -162,10 +162,7 @@ Behavior:
 - `GET /api/files/proxy/{provider_id}/{path}`: Proxy file access from a provider.
 - `POST /api/files/metadata/batch`: Get metadata for multiple files in batch.
 
-### Kaggle
 
-- `GET /api/kaggle/worker.py`: Worker script for Kaggle notebooks.
-- `GET /api/kaggle/setup`: Setup code generator for Kaggle notebooks.
 
 ### Health
 

@@ -5,9 +5,20 @@
 
 import api from './client';
 export const filesApi = {
-    // List files with pagination
     list: (params = {}, options = {}) => {
-        const query = new URLSearchParams(params).toString();
+        const searchParams = new URLSearchParams();
+        if (params.directory) searchParams.append('directory', params.directory);
+        if (params.limit) searchParams.append('limit', params.limit);
+        if (params.offset) searchParams.append('offset', params.offset);
+        if (params.sort) searchParams.append('sort', params.sort);
+        if (params.search) searchParams.append('search', params.search);
+        
+        if (params.base_model) searchParams.append('base_model', params.base_model);
+        if (params.model_type) searchParams.append('model_type', params.model_type);
+        if (params.show_nsfw !== undefined) searchParams.append('show_nsfw', params.show_nsfw);
+        if (params.tags) searchParams.append('tags', params.tags);
+
+        const query = searchParams.toString();
         return api.get(`/api/files${query ? `?${query}` : ''}`, options);
     },
 

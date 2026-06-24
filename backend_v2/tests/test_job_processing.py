@@ -48,18 +48,28 @@ def _add_provider(session: Session, provider_id: str, priority: int, container_c
 
 
 async def _get_job_from_fresh_session(session: Session, job_id: str, attempts: int = 250):
-    bind = session.get_bind()
+    job_service = JobService(session)
     for _ in range(attempts):
-        with Session(bind) as fresh_session:
-            fresh_job_service = JobService(fresh_session)
-            job = await fresh_job_service.get_job(job_id)
-            if job.status == JobStatus.COMPLETED:
-                return job
+        session.expire_all()
+        job = await job_service.get_job(job_id)
+        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            return job
         await asyncio.sleep(0.05)
 
-    with Session(bind) as fresh_session:
-        fresh_job_service = JobService(fresh_session)
-        return await fresh_job_service.get_job(job_id)
+    session.expire_all()
+    return await job_service.get_job(job_id)
+
+
+async def _wait_for_provider_stats(session: Session, provider_id: str, expected_assigned: int, attempts=50):
+    for _ in range(attempts):
+        stats = await LoadBalancer(session, strategy="priority").get_stats()
+        provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+        if provider_stats[provider_id]["jobs_assigned"] == expected_assigned:
+            return provider_stats
+        await asyncio.sleep(0.05)
+    
+    stats = await LoadBalancer(session, strategy="priority").get_stats()
+    return {item["id"]: item for item in stats["provider_stats"]}
 
 
 @pytest.fixture(autouse=True)
@@ -127,8 +137,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
-    stats = await LoadBalancer(session, strategy="priority").get_stats()
-    provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+    provider_stats = await _wait_for_provider_stats(session, "provider-2", expected_assigned=0)
     assert provider_stats["provider-1"]["jobs_assigned"] == 0
     assert provider_stats["provider-1"]["failures"] == 1
     assert provider_stats["provider-2"]["jobs_assigned"] == 0
@@ -162,8 +171,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
     assert updated_job.status == JobStatus.COMPLETED
     assert updated_job.provider_id == "provider-2"
 
-    stats = await LoadBalancer(session, strategy="priority").get_stats()
-    provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+    provider_stats = await _wait_for_provider_stats(session, "provider-2", expected_assigned=0)
     assert provider_stats["provider-1"]["jobs_assigned"] == 0
     assert provider_stats["provider-1"]["failures"] == 1
     assert provider_stats["provider-2"]["jobs_assigned"] == 0

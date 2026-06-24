@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from api.deps import get_session, get_job_service
 from api.deps import deduplicated, make_key
 from api.deps import api_logger
-from services.job_submission_service import JobSubmissionService
+from api.deps import get_job_submission_service
 from services.job_queue import job_queue
 from core.entities import JobStatus
 
@@ -71,7 +71,7 @@ async def validate_workflow(
     Returns detailed breakdown to allow UI to show missing models
     and offer download triggers.
     """
-    submission_service = JobSubmissionService(session)
+    submission_service = get_job_submission_service(session)
     response = submission_service.build_validation_response(
         request.workflow,
         preferred_provider_id=request.preferred_provider_id,
@@ -101,7 +101,7 @@ async def create_job(
       return the same response during a short deduplication window.
     - If omitted, each request creates a new job.
     """
-    submission_service = JobSubmissionService(session)
+    submission_service = get_job_submission_service(session)
 
     async def _create_and_enqueue():
         job = await submission_service.create_and_enqueue_job(
@@ -139,7 +139,7 @@ async def list_jobs(
 
 
 @router.get("/active")
-async def get_active_jobs(session: Session = Depends(get_session)):
+def get_active_jobs(session: Session = Depends(get_session)):
     """Get all active (pending/running) jobs to rehydrate frontend state."""
     service = get_job_service(session)
     pending = service.get_pending_jobs()
@@ -165,7 +165,7 @@ async def get_active_jobs(session: Session = Depends(get_session)):
 
 
 @router.get("/queue")
-async def get_queue_status(session: Session = Depends(get_session)):
+def get_queue_status(session: Session = Depends(get_session)):
     """
     Get queue status with ETA estimates.
     Returns pending and running jobs with estimated completion times.
@@ -216,7 +216,7 @@ async def get_queue_status(session: Session = Depends(get_session)):
 
 
 @router.get("/stats/summary")
-async def get_job_stats(session: Session = Depends(get_session)):
+def get_job_stats(session: Session = Depends(get_session)):
     """Get job statistics."""
     service = get_job_service(session)
     return service.get_job_stats()
@@ -248,7 +248,7 @@ async def retry_job(
     if original_job.status != JobStatus.FAILED:
         raise ValidationError("Only failed jobs can be retried")
     
-    submission_service = JobSubmissionService(session)
+    submission_service = get_job_submission_service(session)
     new_job = await submission_service.create_and_enqueue_job(
         original_job.workflow,
         original_job.metadata_,

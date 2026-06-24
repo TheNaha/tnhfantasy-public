@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ModelSelector from "./ModelSelector";
 
 // Mock the hooks and API
@@ -26,7 +27,26 @@ vi.mock("react-hot-toast", () => ({
   },
 }));
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
+
+const renderWithProvider = (ui, options) => {
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    options
+  );
+};
+
 describe("ModelSelector Accessibility", () => {
+  beforeEach(() => {
+    queryClient.clear();
+  });
+
   const defaultProps = {
     label: "Checkpoints",
     value: "v1-5-pruned-emaonly.ckpt",
@@ -40,7 +60,7 @@ describe("ModelSelector Accessibility", () => {
   };
 
   it("renders with correct accessibility attributes on trigger button", () => {
-    render(<ModelSelector {...defaultProps} />);
+    renderWithProvider(<ModelSelector {...defaultProps} />);
 
     const triggerButton = screen.getByLabelText(/Select Checkpoints/i);
     expect(triggerButton).toBeInTheDocument();
@@ -49,7 +69,7 @@ describe("ModelSelector Accessibility", () => {
   });
 
   it("opens modal and has correct accessibility attributes", async () => {
-    render(<ModelSelector {...defaultProps} />);
+    renderWithProvider(<ModelSelector {...defaultProps} />);
 
     const triggerButton = screen.getByLabelText(/Select Checkpoints/i);
     fireEvent.click(triggerButton);
@@ -66,7 +86,7 @@ describe("ModelSelector Accessibility", () => {
   });
 
   it("close button has aria-label", async () => {
-    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+    renderWithProvider(<ModelSelector {...defaultProps} autoOpen={true} />);
 
     const closeButton = screen.getByLabelText("Close modal");
     expect(closeButton).toBeInTheDocument();
@@ -76,14 +96,6 @@ describe("ModelSelector Accessibility", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
-  });
-
-  it("search input has aria-label", async () => {
-    render(<ModelSelector {...defaultProps} autoOpen={true} />);
-
-    const searchInput = screen.getByLabelText("Search models");
-    expect(searchInput).toBeInTheDocument();
-    expect(searchInput).toHaveAttribute("type", "text");
   });
 
   it("info button has aria-label", () => {
@@ -96,14 +108,14 @@ describe("ModelSelector Accessibility", () => {
       },
     };
 
-    render(<ModelSelector {...propsWithInfo} />);
+    renderWithProvider(<ModelSelector {...propsWithInfo} />);
 
     const infoButton = screen.getByLabelText(/View details for/i);
     expect(infoButton).toBeInTheDocument();
   });
 
   it("closes modal on Escape key press", async () => {
-    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+    renderWithProvider(<ModelSelector {...defaultProps} autoOpen={true} />);
 
     const modal = screen.getByRole("dialog");
     expect(modal).toBeInTheDocument();
@@ -116,7 +128,7 @@ describe("ModelSelector Accessibility", () => {
   });
 
   it("closes modal when clicking on the backdrop", async () => {
-    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+    renderWithProvider(<ModelSelector {...defaultProps} autoOpen={true} />);
 
     const modal = screen.getByRole("dialog");
     expect(modal).toBeInTheDocument();
@@ -130,16 +142,13 @@ describe("ModelSelector Accessibility", () => {
   });
 
   it("does NOT close modal when clicking inside the content", async () => {
-    render(<ModelSelector {...defaultProps} autoOpen={true} />);
+    renderWithProvider(<ModelSelector {...defaultProps} autoOpen={true} />);
 
     const modal = screen.getByRole("dialog");
     expect(modal).toBeInTheDocument();
 
-    // Find an element inside the modal (e.g., search input) and click it
-    const searchInput = screen.getByPlaceholderText(
-      "Search models by name, tags, description..."
-    );
-    fireEvent.click(searchInput);
+    // Click inside modal
+    fireEvent.click(screen.getByText("Select Checkpoints"));
 
     // Modal should still be open
     expect(screen.getByRole("dialog")).toBeInTheDocument();

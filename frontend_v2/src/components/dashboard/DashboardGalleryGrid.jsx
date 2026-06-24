@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react';
-import { GallerySkeleton } from '../Skeleton';
+
 import EmptyState from '../EmptyState';
 import { TimelineView } from './TimelineView';
 import GroupedDashboardContent from './GroupedDashboardContent';
@@ -61,7 +61,11 @@ export default function DashboardGalleryGrid({
     isFetchingNextPage,
 }) {
     if (isLoading) {
-        return <GallerySkeleton count={12} mode={viewMode} />;
+        return (
+            <div className="flex justify-center items-center h-64">
+                <Loader2 className="animate-spin text-blue-500" size={32} />
+            </div>
+        );
     }
 
     if (displayedItems.length === 0) {

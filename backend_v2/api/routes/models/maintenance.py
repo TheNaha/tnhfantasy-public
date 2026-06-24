@@ -189,7 +189,6 @@ async def resync_model_from_civitai(
 
 async def run_background_resync():
     """Run a full metadata resync for all eligible models."""
-    from infrastructure.database import get_session_context
     from api.deps import get_http_client
     from core.entities import ModelV2
     from core.exceptions import ComfyError
@@ -222,31 +221,46 @@ async def run_background_resync():
         })
         
         http_client = get_http_client()
-        
-        for i, model in enumerate(models):
+        import asyncio
+
+        batch_size = 5
+        for i in range(0, len(models), batch_size):
+            batch = models[i:i+batch_size]
+            
             await broadcast_to_all("RESYNC_PROGRESS", {
                 "status": "processing",
                 "processed": i,
                 "total": total,
                 "results": results,
-                "current_model": model.name
+                "current_model": f"Batch {i//batch_size + 1}"
             })
             
-            url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
-            try:
-                bg_model = model
-                    
-                response = await http_client.get(url, timeout=30.0)
-                if response.status_code != 200:
-                    raise ComfyError(f"CivitAI API error: {response.status_code}")
-                civitai_data = response.json()
-                
-                _apply_civitai_metadata(bg_model, civitai_data, bg_session)
-                bg_session.commit()
-                results["success"] += 1
-            except Exception as exc:
-                results["failed"] += 1
-                results["errors"].append({"model_id": str(model.id), "error": str(exc)})
+            async def fetch_civitai(model):
+                url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+                try:
+                    response = await http_client.get(url, timeout=30.0)
+                    if response.status_code != 200:
+                        return model, None, ComfyError(f"API error: {response.status_code}")
+                    return model, response.json(), None
+                except Exception as exc:
+                    return model, None, exc
+            
+            fetch_tasks = [fetch_civitai(m) for m in batch]
+            fetched_results = await asyncio.gather(*fetch_tasks)
+            
+            for model, civitai_data, exc in fetched_results:
+                if exc:
+                    results["failed"] += 1
+                    results["errors"].append({"model_id": str(model.id), "error": str(exc)})
+                elif civitai_data:
+                    try:
+                        _apply_civitai_metadata(model, civitai_data, bg_session)
+                        results["success"] += 1
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append({"model_id": str(model.id), "error": str(e)})
+            
+            bg_session.commit()
         
         await broadcast_to_all("RESYNC_PROGRESS", {
             "status": "completed",

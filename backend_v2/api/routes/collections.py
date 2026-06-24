@@ -53,7 +53,7 @@ class CollectionBulkImport(BaseModel):
 # CRUD endpoints
 
 @router.get("")
-async def list_collections(session: Session = Depends(get_session)):
+def list_collections(session: Session = Depends(get_session)):
     """List all collections with image counts."""
     # Get collections with image counts
     query = text("""
@@ -74,7 +74,7 @@ async def list_collections(session: Session = Depends(get_session)):
 
 
 @router.post("/import")
-async def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
+def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
     """Bulk import collections (for migration from localStorage)."""
     imported = []
     
@@ -116,7 +116,7 @@ async def import_collections(data: CollectionBulkImport, session: Session = Depe
 
 
 @router.get("/{collection_id}")
-async def get_collection(
+def get_collection(
     collection_id: int, 
     include_images: bool = Query(True),
     session: Session = Depends(get_session)
@@ -149,7 +149,7 @@ async def get_collection(
 
 
 @router.post("")
-async def create_collection(data: CollectionCreate, session: Session = Depends(get_session)):
+def create_collection(data: CollectionCreate, session: Session = Depends(get_session)):
     """Create a new collection."""
     collection = Collection(
         name=data.name,
@@ -164,7 +164,7 @@ async def create_collection(data: CollectionCreate, session: Session = Depends(g
 
 
 @router.put("/{collection_id}")
-async def update_collection(
+def update_collection(
     collection_id: int, 
     data: CollectionUpdate, 
     session: Session = Depends(get_session)
@@ -187,7 +187,7 @@ async def update_collection(
 
 
 @router.delete("/{collection_id}")
-async def delete_collection(collection_id: int, session: Session = Depends(get_session)):
+def delete_collection(collection_id: int, session: Session = Depends(get_session)):
     """Delete a collection (images are NOT deleted, only the association)."""
     collection = session.get(Collection, collection_id)
     if not collection:
@@ -207,7 +207,7 @@ async def delete_collection(collection_id: int, session: Session = Depends(get_s
 
 
 @router.post("/{collection_id}/images")
-async def add_images_to_collection(
+def add_images_to_collection(
     collection_id: int, 
     data: AddImages, 
     session: Session = Depends(get_session)
@@ -247,7 +247,7 @@ async def add_images_to_collection(
 
 
 @router.delete("/{collection_id}/images")
-async def remove_images_from_collection(
+def remove_images_from_collection(
     collection_id: int, 
     data: AddImages, 
     session: Session = Depends(get_session)
@@ -286,7 +286,7 @@ async def remove_images_from_collection(
 
 
 @router.get("/export")
-async def export_collections(session: Session = Depends(get_session)):
+def export_collections(session: Session = Depends(get_session)):
     """Export all collections (for backup)."""
     from collections import defaultdict
 

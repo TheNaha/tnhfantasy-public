@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select
 from api.deps import get_session
-from services.model_civitai_sync import ModelCivitaiSyncService
+from api.deps import get_model_civitai_sync_service
 from core.entities import ModelV2
 from api.deps import get_session_context
 from api.deps import get_logger
@@ -51,7 +51,7 @@ async def get_autopopulate_candidates(
     """Return scored CivitAI search candidates for an auto-discovered model.
     Used by the frontend AutopopulateSelector so users can pick the right match.
     """
-    service = ModelCivitaiSyncService(session)
+    service = get_model_civitai_sync_service(session)
     try:
         return await service.search_civitai_candidates(str(model_id))
     except ValueError as e:
@@ -109,7 +109,7 @@ async def autopopulate_model_details(
     request: Optional[AutopopulateRequest] = None,
     session: Session = Depends(get_session)
 ):
-    service = ModelCivitaiSyncService(session)
+    service = get_model_civitai_sync_service(session)
     target_id = request.civitai_id if request else None
     try:
         return await service.autopopulate_model(model_id, target_civitai_id=target_id)
@@ -154,7 +154,7 @@ async def autopopulate_all_models(
                     "current_model": model.name
                 })
                 
-                service = ModelCivitaiSyncService(session)
+                service = get_model_civitai_sync_service(session)
                 await service.autopopulate_model(str(model.id))
                 results["success"] += 1
             except ValueError:

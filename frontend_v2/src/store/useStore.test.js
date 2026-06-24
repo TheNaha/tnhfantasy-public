@@ -17,23 +17,8 @@ describe('useStore basic state', () => {
         useStore = storeMod.default;
 
         useStore.setState({
-            viewMode: 'grid',
-            favorites: [],
             activeCollection: null,
         });
-    });
-
-
-
-    it('manages favorites', () => {
-        expect(useStore.getState().favorites).toEqual([]);
-        useStore.getState().toggleFavorite('image1.png');
-        expect(useStore.getState().favorites).toEqual(['image1.png']);
-        expect(useStore.getState().isFavorite('image1.png')).toBe(true);
-        
-        useStore.getState().toggleFavorite('image1.png');
-        expect(useStore.getState().favorites).toEqual([]);
-        expect(useStore.getState().isFavorite('image1.png')).toBe(false);
     });
 
     it('manages activeCollection', () => {

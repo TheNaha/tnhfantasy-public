@@ -15,7 +15,7 @@ const TriggerBox = memo(function TriggerBox({
   onInfoClick,
   onAddTriggerWords,
   directory,
-  setModels,
+  refetch,
 }) {
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
 
@@ -172,13 +172,10 @@ const TriggerBox = memo(function TriggerBox({
                                   );
                                   toast.success(`Set "${version.name}" as default`);
                                   if (directory) {
-                                    const res = await filesApi.list({ directory });
-                                    setModels(res.files || []);
-                                    const updatedModel = (res.files || []).find(
-                                      (m) => m.model_id === baseModel.model_id,
-                                    );
-                                    if (updatedModel && onChange) {
-                                      onChange({ ...updatedModel, _originalModel: updatedModel });
+                                    if (refetch) await refetch();
+                                    // If we need the updated model, we fetch it locally or just pass the current version
+                                    if (onChange) {
+                                      onChange({ ...baseModel, default_version: version.name });
                                     }
                                   }
                                   setShowVersionDropdown(false);

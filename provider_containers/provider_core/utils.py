@@ -20,9 +20,9 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
 
     # Resolve full path
     if not clean_path.strip():
-        full_path = os.path.realpath(base_dir)
-    else:
-        full_path = os.path.realpath(os.path.join(base_dir, clean_path))
+        raise ValueError("Invalid path: path cannot be empty")
+        
+    full_path = os.path.realpath(os.path.join(base_dir, clean_path))
         
     base_path = os.path.realpath(base_dir)
 

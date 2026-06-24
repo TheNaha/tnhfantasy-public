@@ -5,6 +5,7 @@ import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 import toast from 'react-hot-toast';
 import { filesApi, api } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { MODEL_MANAGER_CATEGORIES } from '../../constants/modelDirectories';
 import { getProviderDisplayName } from '../../utils/providerUtils';
@@ -26,9 +27,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     useEffect(() => {
         localStorage.setItem('modelManagerCategory', category);
     }, [category]);
-    const [files, setFiles] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [loadingMore, setLoadingMore] = useState(false);
+
     const [selectedModel, setSelectedModel] = useState(null);
     const [showBatchModal, setShowBatchModal] = useState(false);
     const [showBatchResyncModal, setShowBatchResyncModal] = useState(false);
@@ -40,76 +39,61 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [filterType, setFilterType] = useState('all');
     const [showNSFW, setShowNSFW] = useState(true);
     const [availableTags, setAvailableTags] = useState([]);
-    const [, setOffset] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
-    const offsetRef = useRef(0);
     const { providers, isLoading: providersLoading } = useProvidersPageData();
 
-    const fetchFiles = useCallback(async (reset = false, search = "") => {
-        if (reset) {
-            setLoading(true);
-            setOffset(0);
-            offsetRef.current = 0;
-            setFiles([]);
-            setHasMore(true);
-            setAvailableTags([]);
-        } else {
-            setLoadingMore(true);
-        }
+    const path = CATEGORIES.find(c => c.id === category)?.path;
 
-        try {
-            const path = CATEGORIES.find(c => c.id === category)?.path;
-            if (!path) return;
-
-            const currentOffset = reset ? 0 : offsetRef.current;
+    const {
+        data,
+        fetchNextPage,
+        hasNextPage,
+        isFetching,
+        isFetchingNextPage,
+        refetch,
+    } = useInfiniteQuery({
+        queryKey: ['installed-models', path, searchTerm, sortBy, filterBaseModel, filterType, showNSFW, selectedTags],
+        queryFn: async ({ pageParam = 0 }) => {
+            if (!path) return { files: [], total: 0 };
             const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
-            const params = {
+            const res = await filesApi.list({
                 directory: path,
                 limit: itemsPerPage,
-                offset: currentOffset,
-                sort: sortMap[sortBy] || "name_asc"
-            };
-            if (search) params.search = search;
-
-            const data = await filesApi.list(params);
-            const newFiles = data.files || [];
-
-            if (reset) {
-                setFiles(newFiles);
-                setOffset(itemsPerPage);
-                offsetRef.current = itemsPerPage;
-            } else {
-                setFiles(prev => {
-                    const existingNames = new Set(prev.map(f => f.name));
-                    const uniqueNewFiles = newFiles.filter(f => !existingNames.has(f.name));
-                    return [...prev, ...uniqueNewFiles];
-                });
-                offsetRef.current += itemsPerPage;
-                setOffset(offsetRef.current);
-            }
-
-            // Only has more if we received a full page AND there's a total indicating more
-            const total = data.total || 0;
-            const loadedSoFar = currentOffset + newFiles.length;
-            setHasMore(newFiles.length >= itemsPerPage && loadedSoFar < total);
-
-            setAvailableTags(prev => {
-                const tags = new Set(prev);
-                newFiles.forEach(f => {
-                    if (f.tags) {
-                        f.tags.forEach(t => tags.add(t));
-                    }
-                });
-                return Array.from(tags).sort();
+                offset: pageParam,
+                sort: sortMap[sortBy] || "name_asc",
+                search: searchTerm,
+                base_model: filterBaseModel !== 'all' ? filterBaseModel : undefined,
+                model_type: filterType !== 'all' ? filterType : undefined,
+                show_nsfw: showNSFW,
+                tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
             });
-        } catch (e) {
-            console.error("Failed to fetch files", e);
-            toast.error("Failed to load installed models");
-        } finally {
-            setLoading(false);
-            setLoadingMore(false);
+            return res;
+        },
+        getNextPageParam: (lastPage, allPages) => {
+            const loaded = allPages.reduce((acc, page) => acc + (page.files?.length || 0), 0);
+            return (lastPage.files?.length >= itemsPerPage && loaded < (lastPage.total || 0)) ? loaded : undefined;
+        },
+        enabled: !!path,
+    });
+
+    const filteredFiles = useMemo(() => {
+        return data?.pages.flatMap(page => page.files || []) || [];
+    }, [data]);
+
+    const loading = isFetching && !isFetchingNextPage;
+    const loadingMore = isFetchingNextPage;
+    const hasMore = hasNextPage;
+
+    useEffect(() => {
+        // Collect tags from all fetched models so far
+        const tags = new Set(availableTags);
+        filteredFiles.forEach(f => {
+            if (f.tags) f.tags.forEach(t => tags.add(t));
+        });
+        const tagsArr = Array.from(tags).sort();
+        if (tagsArr.length > availableTags.length) {
+            setAvailableTags(tagsArr);
         }
-    }, [category, itemsPerPage, sortBy]);
+    }, [filteredFiles]);
 
     const handleCheckDependencies = async (file) => {
         if (!file.model_id) return;
@@ -128,39 +112,16 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         }
     };
 
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            fetchFiles(true, searchTerm);
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [searchTerm, category, sortBy, fetchFiles]);  // Added sortBy
-
     const handleRefresh = () => {
-        fetchFiles(true, searchTerm);
+        refetch();
     };
 
     const sentinelRef = useInfiniteScroll({
         hasMore: hasMore && !loading,
-        onLoadMore: () => fetchFiles(false),
+        onLoadMore: () => fetchNextPage(),
         loading: loadingMore,
         rootMargin: '400px'
     });
-
-    const filteredFiles = useMemo(() => {
-        let result = files.filter(file => {
-            // ⚡ Bolt: Combined filters into a single pass to prevent O(N * 4) iteration overhead
-            const matchesTags = selectedTags.length === 0 ||
-                selectedTags.every(tag => file.tags?.includes(tag));
-
-            const matchesBaseModel = filterBaseModel === 'all' || file.base_model === filterBaseModel;
-            const matchesType = filterType === 'all' || file.type === filterType;
-            const matchesNSFW = showNSFW || !file.nsfw;
-
-            return matchesTags && matchesBaseModel && matchesType && matchesNSFW;
-        });
-
-        return result;
-    }, [files, selectedTags, filterBaseModel, filterType, showNSFW]);
 
     const handleDelete = async (file) => {
         const displayName = file.display_name || file.name;
@@ -184,7 +145,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 await filesApi.deleteMultiple([file.name]);
                 toast.success("Deleted " + displayName);
             }
-            fetchFiles(true);
+            refetch();
         } catch (e) {
             console.error("Delete failed:", e);
             toast.error("Error deleting model");

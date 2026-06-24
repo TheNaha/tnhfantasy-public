@@ -916,11 +916,23 @@ class FileStorage:
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
         
-        if not os.path.exists(full_path):
+        if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
             return False
         
         try:
-            await asyncio.to_thread(os.remove, full_path)
+            if os.path.exists(full_path):
+                await asyncio.to_thread(os.remove, full_path)
+                
+            if os.path.exists(full_path + ".downloading"):
+                await asyncio.to_thread(os.remove, full_path + ".downloading")
+                
+            if not path.endswith((".json", ".preview.png", ".sha256")):
+                base_path, _ = os.path.splitext(full_path)
+                for ext in [".json", ".preview.png", ".sha256"]:
+                    side_file = base_path + ext
+                    if os.path.exists(side_file):
+                        await asyncio.to_thread(os.remove, side_file)
+            
             await asyncio.to_thread(vol.commit)  # Persist changes
             return True
         except Exception as e:

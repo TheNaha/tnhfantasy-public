@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Search, Loader2, Download, Globe, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
-import { ModelCardSkeleton } from '../Skeleton';
+
 import ModelCard from './ModelCard';
 import ModelImportCard from './ModelImportCard';
 

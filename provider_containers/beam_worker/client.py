@@ -117,16 +117,15 @@ class BeamProviderClient(BaseProviderClient):
                                     return
                                 continue
                             except websockets.exceptions.ConnectionClosed:
+                                yield json.dumps(build_error_response("Websocket connection closed unexpectedly", retryable=True)) + "\n"
                                 break
                                 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                 return
-                            try:
-                                update = json.loads(message)
-                                yield json.dumps(update, cls=CustomJSONEncoder) + "\n"
-                            except json.JSONDecodeError:
-                                pass
+                            if isinstance(message, bytes):
+                                message = message.decode('utf-8')
+                            yield message + "\n"
             except asyncio.TimeoutError:
                 yield json.dumps(build_error_response(f"Inference timed out after {inference_timeout}s", retryable=True, code=408)) + "\n"
             except Exception as e:

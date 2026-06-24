@@ -2,6 +2,7 @@ import { useState, useEffect, memo, useRef, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
 import TriggerBox from "./model-selector/TriggerBox";
 import ModelFilterBar from "./model-selector/ModelFilterBar";
@@ -28,17 +29,49 @@ const ModelSelector = memo(function ModelSelector({
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
   const [search, setSearch] = useState("");
-  const [models, setModels] = useState(initialModels);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [internalSelectedModel, setInternalSelectedModel] = useState(null);
-  const [hasMore, setHasMore] = useState(true);
-
-  const offsetRef = useRef(0);
-  const loadingRef = useRef(false);
-  const loadingMoreRef = useRef(false);
-  const abortControllerRef = useRef(null);
   const [expandedModel, setExpandedModel] = useState(null);
+
+  const [sortBy, setSortBy] = useState("name");
+  const [filterBaseModel, setFilterBaseModel] = useState("all");
+  const [filterType, setFilterType] = useState("all");
+  const [showNSFW, setShowNSFW] = useState(true);
+
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ['models', directory, search, sortBy, filterBaseModel, filterType, showNSFW],
+    queryFn: async ({ pageParam = 0, signal }) => {
+      if (!directory) return { files: [] };
+      const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
+      return filesApi.list({
+        directory,
+        limit: 50,
+        offset: pageParam,
+        sort: sortMap[sortBy] || "name_asc",
+        search,
+        base_model: filterBaseModel !== "all" ? filterBaseModel : undefined,
+        model_type: filterType !== "all" ? filterType : undefined,
+        show_nsfw: showNSFW,
+      }, { signal });
+    },
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((acc, page) => acc + (page.files?.length || 0), 0);
+      return (lastPage.files?.length === 50) ? loaded : undefined;
+    },
+    enabled: isOpen && !!directory,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const models = useMemo(() => {
+    if (!directory && initialModels?.length > 0) return initialModels;
+    return data?.pages.flatMap(page => page.files || []) || [];
+  }, [data, directory, initialModels]);
 
   const selectedModel = useMemo(() => {
     let sm = externalSelectedModel || internalSelectedModel;
@@ -108,15 +141,6 @@ const ModelSelector = memo(function ModelSelector({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, handleClose]);
 
-  const [sortBy, setSortBy] = useState("name");
-  const [filterBaseModel, setFilterBaseModel] = useState("all");
-  const [filterType, setFilterType] = useState("all");
-  const [showNSFW, setShowNSFW] = useState(true);
-
-  useEffect(() => {
-    if (initialModels?.length > 0) setModels(initialModels);
-  }, [initialModels]);
-
   useEffect(() => {
     if (!externalSelectedModel && value) {
       const found = models.find((m) => m.name === value);
@@ -130,67 +154,9 @@ const ModelSelector = memo(function ModelSelector({
     }
   }, [value, models, preview, metadata, externalSelectedModel]);
 
-  const fetchModels = useCallback(async (loadMore = false) => {
-    if (!directory) return;
-    if (!loadMore && abortControllerRef.current) abortControllerRef.current.abort();
-
-    if (loadMore) {
-      if (loadingMoreRef.current) return;
-      loadingMoreRef.current = true;
-      setLoadingMore(true);
-    } else {
-      loadingRef.current = true;
-      setLoading(true);
-    }
-
-    const abortController = new AbortController();
-    if (!loadMore) abortControllerRef.current = abortController;
-
-    try {
-      const currentOffset = loadMore ? offsetRef.current : 0;
-      const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
-      const params = new URLSearchParams({
-        directory, limit: "50", offset: currentOffset.toString(), sort: sortMap[sortBy] || "name_asc",
-      });
-      if (search) params.append("search", search);
-
-      const data = await filesApi.list(Object.fromEntries(params.entries()), { signal: abortController.signal });
-      const newModels = data.files || [];
-
-      if (loadMore) {
-        setModels((prev) => [...prev, ...newModels]);
-        offsetRef.current = currentOffset + 50;
-      } else {
-        setModels(newModels);
-        offsetRef.current = 50;
-      }
-      setHasMore(newModels.length === 50);
-    } catch (error) {
-      if (error.name === 'AbortError') return;
-      console.error("Failed to fetch models", error);
-    } finally {
-      if (loadMore) { loadingMoreRef.current = false; setLoadingMore(false); }
-      else { loadingRef.current = false; setLoading(false); }
-    }
-  }, [directory, search, sortBy]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    if (!directory && initialModels.length > 0) return;
-    if (!directory) return;
-
-    if (initialModels.length > 0 && search === "" && sortBy === "name") {
-        offsetRef.current = initialModels.length;
-        return;
-    }
-
-    offsetRef.current = 0;
-    setHasMore(true);
-    const timer = setTimeout(() => fetchModels(false), 300);
-    return () => { clearTimeout(timer); if (abortControllerRef.current) abortControllerRef.current.abort(); };
-  }, [isOpen, directory, initialModels.length, search, sortBy, fetchModels]);
-
   const filteredAndSortedModels = useMemo(() => {
+    if (directory) return models;
+    // Client side filtering ONLY if using initialModels (no directory provided)
     let result = [...models];
     if (filterBaseModel !== "all" || filterType !== "all" || !showNSFW) {
       result = result.filter((m) => {
@@ -210,12 +176,12 @@ const ModelSelector = memo(function ModelSelector({
       }
     });
     return result;
-  }, [models, sortBy, filterBaseModel, filterType, showNSFW]);
+  }, [models, directory, sortBy, filterBaseModel, filterType, showNSFW]);
 
   const sentinelRef = useInfiniteScroll({
-    hasMore: hasMore && !loading,
-    onLoadMore: () => fetchModels(true),
-    loading: loadingMore,
+    hasMore: hasNextPage && !isFetching,
+    onLoadMore: () => fetchNextPage(),
+    loading: isFetchingNextPage,
     rootMargin: "300px",
   });
 
@@ -241,7 +207,7 @@ const ModelSelector = memo(function ModelSelector({
         onInfoClick={onInfoClick}
         onAddTriggerWords={onAddTriggerWords}
         directory={directory}
-        setModels={setModels}
+        refetch={refetch}
       />
 
       {/* Modal */}
@@ -289,7 +255,7 @@ const ModelSelector = memo(function ModelSelector({
 
             {/* Grid */}
             <div className="flex-1 overflow-y-auto p-4">
-              {loading ? (
+              {isFetching && !isFetchingNextPage ? (
                 <div className="flex justify-center py-20 text-gray-500">
                   <Loader2 className="animate-spin" />
                 </div>
@@ -320,7 +286,7 @@ const ModelSelector = memo(function ModelSelector({
 
               <div ref={sentinelRef} className="h-4" />
 
-              {loadingMore && (
+              {isFetchingNextPage && (
                 <div className="flex justify-center py-4">
                   <Loader2 className="animate-spin text-gray-400" size={24} />
                 </div>

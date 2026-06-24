@@ -175,7 +175,6 @@ async def worker_websocket(
     Once connected, they will receive jobs and send results.
     """
     # Import here to avoid circular imports
-    from services.provider_service import ProviderService
     
     # Authenticate
     try:
@@ -238,7 +237,6 @@ async def worker_websocket(
                 worker.current_job = job_id
                 logger.info("job_started", job_id=job_id)
                 async with get_session_context() as session:
-                    from services.job_service import JobService
                     from core.entities import JobStatus
                     job_service = get_job_service(session)
                     await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to external worker...")
@@ -265,7 +263,6 @@ async def worker_websocket(
 
                     if updates:
                         async with get_session_context() as session:
-                            from services.job_service import JobService
 
                             job_service = get_job_service(session)
                             await job_service.update_job(job_id, **updates)
@@ -277,7 +274,6 @@ async def worker_websocket(
                     outputs = normalize_external_outputs(result.get("outputs", []))
                 except ValueError as exc:
                     async with get_session_context() as session:
-                        from services.job_service import JobService
                         from core.entities import JobStatus
 
                         job_service = get_job_service(session)
@@ -293,7 +289,6 @@ async def worker_websocket(
                 
                 try:
                     async with get_session_context() as session:
-                        from services.job_service import JobService
                         job_service = get_job_service(session)
                         await finalize_persisted_job_outputs(
                             job_service=job_service,
@@ -318,7 +313,6 @@ async def worker_websocket(
                 
                 try:
                     async with get_session_context() as session:
-                        from services.job_service import JobService
                         from core.entities import JobStatus
                         job_service = get_job_service(session)
                         await job_service.update_job(

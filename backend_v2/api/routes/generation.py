@@ -25,7 +25,7 @@ from api.deps import get_session
 from core.exceptions import ValidationError
 from api.deps import deduplicated, make_key
 from api.deps import api_logger
-from services.job_submission_service import JobSubmissionService
+from api.deps import get_job_submission_service
 
 logger = api_logger()
 
@@ -120,7 +120,7 @@ async def generate(
         if not request.workflow:
             raise ValidationError("workflow is required", field="workflow")
         
-        submission_service = JobSubmissionService(session)
+        submission_service = get_job_submission_service(session)
 
         async def _create_generation_job():
             job = await submission_service.create_and_enqueue_job(
@@ -166,7 +166,7 @@ async def generate_batch(
         if not request.workflows:
             raise ValidationError("workflows array is required", field="workflows")
         
-        submission_service = JobSubmissionService(session)
+        submission_service = get_job_submission_service(session)
 
         async def _create_batch_jobs():
             created_jobs = []
