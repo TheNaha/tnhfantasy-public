@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from api.deps import get_session
 from services.model_civitai_sync import ModelCivitaiSyncService
 from core.entities import ModelV2
-from infrastructure.database import get_session_context
+from api.deps import get_session_context
 from api.deps import get_logger
 
 from pydantic import BaseModel

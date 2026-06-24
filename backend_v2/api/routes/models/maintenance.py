@@ -5,7 +5,7 @@ from sqlmodel import Session, select, delete
 from api.deps import get_session, get_model_service_v2, get_http_client
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from api.routes.websocket import broadcast_to_all
-from infrastructure.database import get_session_context
+from api.deps import get_session_context
 from api.deps import model_logger
 
 logger = model_logger()
@@ -46,9 +46,7 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
     # Update file sizes from versions
     civitai_versions = civitai_data.get("modelVersions", [])
     if civitai_versions:
-        local_versions = session.exec(
-            select(ModelVersion).where(ModelVersion.model_id == model.id)
-        ).all()
+        local_versions = model.versions
         for lv in local_versions:
             cv = next((v for v in civitai_versions if v.get("id") == lv.civitai_version_id), None)
             if not cv:
@@ -59,9 +57,7 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
                     primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
                     civitai_size_kb = primary_civitai.get("sizeKB")
                     if civitai_size_kb is not None:
-                        local_files = session.exec(
-                            select(ModelFile).where(ModelFile.version_id == lv.id)
-                        ).all()
+                        local_files = lv.files
                         for lf in local_files:
                             if not lf.size_kb or lf.size_kb == 0:
                                 lf.size_kb = float(civitai_size_kb)
@@ -197,8 +193,10 @@ async def run_background_resync():
     from api.deps import get_http_client
     from core.entities import ModelV2
     from core.exceptions import ComfyError
-    from api.websocket_manager import broadcast_to_all
+    from api.routes.websocket import broadcast_to_all
     from sqlmodel import select
+    
+    from sqlalchemy.orm import selectinload
     
     async with get_session_context() as bg_session:
         # Get all models that are NOT auto-discovered and HAVE a civitai ID
@@ -206,6 +204,7 @@ async def run_background_resync():
             select(ModelV2)
             .where(ModelV2.civitai_model_id != None)
             .where(ModelV2.description.not_like("%Auto-discovered%"))
+            .options(selectinload(ModelV2.versions).selectinload(ModelVersion.files))
         ).all()
         
         if not models:
@@ -235,9 +234,7 @@ async def run_background_resync():
             
             url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
             try:
-                bg_model = bg_session.get(ModelV2, model.id)
-                if not bg_model:
-                    continue
+                bg_model = model
                     
                 response = await http_client.get(url, timeout=30.0)
                 if response.status_code != 200:

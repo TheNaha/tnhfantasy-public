@@ -112,14 +112,14 @@ class BeamProviderClient(BaseProviderClient):
                                 message = await asyncio.wait_for(ws.recv(), timeout=2.0)
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
-                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                    yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                     return
                                 continue
                             except websockets.exceptions.ConnectionClosed:
                                 break
                                 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                 return
                             try:
                                 update = json.loads(message)

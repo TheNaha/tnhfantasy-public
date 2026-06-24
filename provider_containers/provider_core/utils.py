@@ -18,11 +18,12 @@ def get_safe_path(base_dir: str, requested_path: str) -> str:
     # Remove leading slashes to prevent absolute path interpretation
     clean_path = requested_path.lstrip("/\\")
 
-    if not clean_path.strip():
-        raise ValueError("Invalid path: path cannot be empty")
-
     # Resolve full path
-    full_path = os.path.realpath(os.path.join(base_dir, clean_path))
+    if not clean_path.strip():
+        full_path = os.path.realpath(base_dir)
+    else:
+        full_path = os.path.realpath(os.path.join(base_dir, clean_path))
+        
     base_path = os.path.realpath(base_dir)
 
     # Check if the resolved path starts with the base path

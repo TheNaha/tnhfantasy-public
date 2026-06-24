@@ -105,7 +105,7 @@ class ModalProviderClient(BaseProviderClient):
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
                                     task.cancel()
-                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                                    yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                     return
                                 continue
                             
@@ -119,7 +119,7 @@ class ModalProviderClient(BaseProviderClient):
 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 task.cancel()
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled by user"}) + "\n"
+                                yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                 return
 
                             # Backwards compatibility for old Modal deployments
@@ -169,24 +169,21 @@ class ModalProviderClient(BaseProviderClient):
         FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
         storage = FileStorage()
         success = await storage.delete_file.remote.aio(request.path)
-        if success and not request.path.endswith((".json", ".preview.png")):
+        if success and not request.path.endswith((".json", ".preview.png", ".sha256")):
             import os
             base_path, _ = os.path.splitext(request.path)
-            try:
-                await storage.delete_file.remote.aio(f"{base_path}.json")
-            except Exception:
-                pass
-            try:
-                await storage.delete_file.remote.aio(f"{base_path}.preview.png")
-            except Exception:
-                pass
+            for ext in [".json", ".preview.png", ".sha256"]:
+                try:
+                    await storage.delete_file.remote.aio(f"{base_path}{ext}")
+                except Exception:
+                    pass
         return {"success": success, "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}", "provider": PROVIDER_ID}
 
     async def get_file(self, path: str) -> StreamingResponse:
         try:
             FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
             storage = FileStorage()
-            file_contents = await storage.get_file.remote.aio(path)
+            file_contents = await storage.read_file.remote.aio(path)
             return Response(content=file_contents, media_type="application/octet-stream")
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
@@ -288,8 +285,9 @@ class ModalProviderClient(BaseProviderClient):
                 raise RuntimeError(result.get("message", "Download failed"))
 
         async def delete_file(storage_path: str):
-            delete_file_func = get_modal_function("storage_delete_file")
-            await delete_file_func.remote.aio(storage_path)
+            FileStorage = modal.Cls.from_name(MODAL_APP_NAME, "FileStorage")
+            storage = FileStorage()
+            await storage.delete_file.remote.aio(storage_path)
             return True
 
         return await self._start_reconciliation_task(

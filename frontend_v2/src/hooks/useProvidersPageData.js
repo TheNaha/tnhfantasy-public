@@ -2,12 +2,8 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { providersApi } from '../api';
 import * as ws from '../api/websocket';
-import {
-    extractProviderId,
-    normalizeReconciliationState,
-    unwrapEventData,
-} from './providerRealtimeTransforms';
-import { mergeProviderSyncStatus } from './useProviderModels';
+import { extractProviderId, unwrapPayload as unwrapEventData } from '../utils/providerUtils';
+import { mergeProviderSyncStatus, normalizeProviderSyncStatus } from './useProviderModels';
 
 export const PROVIDERS_PAGE_QUERY_KEYS = {
     providers: ['providers-page', 'providers'],
@@ -69,7 +65,7 @@ function mergeReconciliationState(currentProviders, event) {
 
     return patchProviders(currentProviders, providerId, (provider) => ({
         ...provider,
-        reconciliation_state: normalizeReconciliationState(payload, provider.reconciliation_state || {}),
+        reconciliation_state: mergeProviderSyncStatus(provider.reconciliation_state || {}, payload),
     }));
 }
 
@@ -310,7 +306,7 @@ export function useProviderReconciliationState(providerId, { realtime = true } =
             if (!provider) {
                 return null;
             }
-            return normalizeReconciliationState({}, provider.reconciliation_state || {});
+            return normalizeProviderSyncStatus(provider.reconciliation_state || {});
         },
     });
 

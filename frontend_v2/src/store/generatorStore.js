@@ -359,7 +359,7 @@ export const useGeneratorStore = create(
             name: 'generator-storage', // name of the item in the storage (must be unique)
             partialize: (state) => {
                 // eslint-disable-next-line no-unused-vars
-                const { sourceImage, maskImage, ...rest } = state;
+                const { sourceImage, maskImage, preflightResult, ...rest } = state;
                 return rest;
             }
         }

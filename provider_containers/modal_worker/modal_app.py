@@ -723,7 +723,7 @@ async def validate_models(directories: list[str] = ["models/checkpoints"], delet
             
             if delete_invalid and should_delete:
                 os.remove(full_path)
-                for ext in [".json", ".preview.png"]:
+                for ext in [".json", ".preview.png", ".sha256"]:
                     side_file = os.path.splitext(full_path)[0] + ext
                     if os.path.exists(side_file):
                         os.remove(side_file)
