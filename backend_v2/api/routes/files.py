@@ -491,8 +491,8 @@ async def view_file_endpoint(path: str):
                     "Content-Disposition": f"attachment; {encode_filename_for_header(filename)}"
                 }
             )
-    except ValidationError:
-        pass
+    except ValidationError as e:
+        logger.warning("invalid_filename_path", error=str(e))
     
     # Try input directory for Img2Img/Inpaint source images
     if path.startswith("input/"):
@@ -579,7 +579,7 @@ async def serve_thumbnail(size: str, filename: str):
                 )
         except Exception as e:
             # Fallback to standard search if path manipulation fails
-            pass
+            logger.warning("thumbnail_path_inference_failed", error=str(e))
 
     # Search priority:
     # 1. New WebP in thumb directory with date hierarchy (output/thumb/YYYY/MM/DD/name.webp)
@@ -860,8 +860,8 @@ async def delete_single_file(filename: str):
 
         try:
             local_path = get_safe_path(OUTPUT_DIR, safe_filename)
-        except ValidationError:
-            pass
+        except ValidationError as e:
+            logger.warning("delete_file_path_invalid", error=str(e))
 
         if local_path and os.path.exists(local_path):
             os.remove(local_path)

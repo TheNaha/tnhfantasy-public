@@ -15,6 +15,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Generator
 
+from fastapi import Depends
 from sqlmodel import Session
 
 from infrastructure.database import (
@@ -106,9 +107,14 @@ def get_job_submission_service(session: Session):
     return JobSubmissionService(session)
 
 
-def get_provider_lifecycle_service(session: Session):
+def get_provider_lifecycle_service(session: Session = Depends(get_session)):
     from services.provider_lifecycle_service import ProviderLifecycleService
-    return ProviderLifecycleService(session)
+    from services.provider_status_service import invalidate_provider_status_caches
+    return ProviderLifecycleService(
+        session,
+        container_manager=get_container_manager(),
+        invalidate_caches=invalidate_provider_status_caches,
+    )
 
 
 def get_provider_status_service(session: Session):
@@ -124,3 +130,13 @@ def get_model_civitai_sync_service(session: Session):
 def get_provider_worker_url(provider_id: str) -> str:
     from infrastructure.providers.runtime import get_provider_worker_base_url
     return get_provider_worker_base_url(provider_id)
+
+
+def get_collection_repo(session: Session):
+    from infrastructure.repositories.collection_repo import CollectionRepository
+    return CollectionRepository(session)
+
+
+def get_prompt_repo(session: Session):
+    from infrastructure.repositories.prompt_repo import PromptRepository
+    return PromptRepository(session)

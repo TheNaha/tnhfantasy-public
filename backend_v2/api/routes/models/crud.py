@@ -39,20 +39,9 @@ def get_all_storage_paths(session: Session = Depends(get_session)):
     Used by worker to determine what files should exist vs what to delete.
     Returns paths like: models/checkpoints/model_v1_12345.safetensors
     """
-    from sqlmodel import select
-    from core.entities import ModelFile, ModelVersion, ModelV2
-    
-    # Query all files with their model directory
-    stmt = select(ModelFile, ModelVersion, ModelV2).join(
-        ModelVersion, ModelFile.version_id == ModelVersion.id
-    ).join(
-        ModelV2, ModelVersion.model_id == ModelV2.id
-    )
-    
-    paths = []
-    for file, version, model in session.exec(stmt).all():
-        storage_path = f"models/{model.directory}/{file.storage_filename}"
-        paths.append(storage_path)
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
+    paths = repo.get_all_storage_paths()
     
     return {"paths": paths, "count": len(paths)}
 
@@ -72,13 +61,11 @@ def check_installed_versions(
     
     Use this before showing the import dialog to mark installed versions.
     """
-    from sqlmodel import select
-    from core.entities import ModelV2, ModelVersion
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     
     # Check if model exists
-    model = session.exec(
-        select(ModelV2).where(ModelV2.civitai_model_id == civitai_model_id)
-    ).first()
+    model = repo.get_model_by_civitai_id(civitai_model_id)
     
     if not model:
         return {
@@ -88,9 +75,7 @@ def check_installed_versions(
         }
     
     # Get installed versions for this model
-    versions = session.exec(
-        select(ModelVersion).where(ModelVersion.model_id == model.id)
-    ).all()
+    versions = repo.get_versions_for_model(model.id)
     
     installed_version_ids = [v.civitai_version_id for v in versions if v.civitai_version_id]
     
@@ -122,17 +107,15 @@ def check_installed_versions_batch(
       }
     }
     """
-    from sqlmodel import select
-    from core.entities import ModelV2, ModelVersion
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
 
     requested_ids = [mid for mid in request.civitai_model_ids if isinstance(mid, int)]
     if not requested_ids:
         return {"models": {}}
 
     unique_ids = sorted(set(requested_ids))
-    models = session.exec(
-        select(ModelV2).where(ModelV2.civitai_model_id.in_(unique_ids))
-    ).all()
+    models = repo.get_models_by_civitai_ids(unique_ids)
 
     if not models:
         return {
@@ -148,9 +131,7 @@ def check_installed_versions_batch(
         }
 
     model_ids = [model.id for model in models if model.id is not None]
-    versions = session.exec(
-        select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
-    ).all()
+    versions = repo.get_versions_for_models(model_ids)
 
     versions_by_model_id = {}
     for version in versions:
@@ -204,8 +185,8 @@ async def add_model(
     - If model+version already exists, that version is skipped
     - New versions of existing models CAN be added
     """
-    from core.entities import ModelVersion
-    from sqlmodel import select
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     
     service = get_model_service_v2(session)
     
@@ -220,9 +201,7 @@ async def add_model(
     new_version_ids = []
     
     for version_id in selected_version_ids:
-        existing = session.exec(
-            select(ModelVersion).where(ModelVersion.civitai_version_id == version_id)
-        ).first()
+        existing = repo.get_version_by_civitai_id(version_id)
         if existing:
             already_installed.append(version_id)
         else:
@@ -246,6 +225,7 @@ async def add_model(
         result["message"] = f"Imported {len(new_version_ids)} new versions, skipped {len(already_installed)} already installed"
     
     return result
+
 
 
 @router.get("/directory/{directory}")
@@ -278,6 +258,27 @@ async def search_by_tag(
     """Search models by tag."""
     service = get_model_service_v2(session)
     return await service.search_by_tag(tag)
+
+
+@router.get("/{model_id}")
+async def get_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Get model with versions, files, and images."""
+    service = get_model_service_v2(session)
+    return await service.get_model(model_id)
+
+
+@router.delete("/{model_id}")
+async def delete_model(
+    model_id: int,
+    session: Session = Depends(get_session)
+):
+    """Delete a model and all related data."""
+    service = get_model_service_v2(session)
+    await service.delete_model(model_id)
+    return {"status": "success"}
 
 
 # ============================================================================

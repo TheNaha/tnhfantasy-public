@@ -5,6 +5,7 @@ import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
 /**
  * TimelineView Component
@@ -64,6 +65,12 @@ export const TimelineView = memo(function TimelineView({
         return Object.values(groups).sort((a, b) => b.timestamp - a.timestamp);
     }, [items]);
 
+    const virtualizer = useWindowVirtualizer({
+        count: timelineGroups.length,
+        estimateSize: () => 600,
+        overscan: 2,
+    });
+
     if (timelineGroups.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center py-20 text-gray-500">
@@ -78,20 +85,33 @@ export const TimelineView = memo(function TimelineView({
             {/* Timeline Line */}
             <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-transparent hidden md:block" />
 
-            <div className="space-y-12">
-                {timelineGroups.map((group, groupIndex) => {
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                    const group = timelineGroups[virtualItem.index];
                     const stats = group.stats;
 
                     return (
-                        <Motion.div
-                            key={group.date}
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: groupIndex * 0.05 }}
-                            className="relative"
+                        <div
+                            key={virtualItem.key}
+                            data-index={virtualItem.index}
+                            ref={virtualizer.measureElement}
+                            style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                transform: `translateY(${virtualItem.start}px)`,
+                                paddingBottom: '3rem'
+                            }}
                         >
-                            {/* Date Header */}
-                            <div className="flex items-center gap-4 mb-6 md:pl-20">
+                            <Motion.div
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0 }}
+                                className="relative"
+                            >
+                                {/* Date Header */}
+                                <div className="flex items-center gap-4 mb-6 md:pl-20">
                                 {/* Timeline Dot */}
                                 <div className="absolute left-6 w-4 h-4 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full border-4 border-gray-900 shadow-lg hidden md:block" />
 
@@ -156,7 +176,8 @@ export const TimelineView = memo(function TimelineView({
                                     ))}
                                 </AnimatePresence>
                             </div>
-                        </Motion.div>
+                            </Motion.div>
+                        </div>
                     );
                 })}
             </div>

@@ -311,28 +311,33 @@ async def shared_download_model(data: dict):
         except Exception:
             pass
 
-    res = await asyncio.to_thread(
-        download_model_to_path,
-        url=url,
-        full_path=full_path,
-        path=path,
-        token=token,
-        hf_token=os.environ.get("HF_TOKEN"),
-        civitai_token=os.environ.get("CIVITAI_TOKEN"),
-        preview_url=preview_url,
-        metadata=metadata,
-        log=print,
-        log_prefix="Download",
-        progress_callback=progress_callback,
-        validation_unknown_header_log_prefix="Validate",
-    )
-    
-    if res.get("status") == "success":
-        await asyncio.sleep(5)
-        if os.path.exists(progress_file):
-            os.remove(progress_file)
+    try:
+        res = await asyncio.to_thread(
+            download_model_to_path,
+            url=url,
+            full_path=full_path,
+            path=path,
+            token=token,
+            hf_token=os.environ.get("HF_TOKEN"),
+            civitai_token=os.environ.get("CIVITAI_TOKEN"),
+            preview_url=preview_url,
+            metadata=metadata,
+            log=print,
+            log_prefix="Download",
+            progress_callback=progress_callback,
+            validation_unknown_header_log_prefix="Validate",
+        )
+        
+        if res.get("status") == "success":
+            await asyncio.sleep(5)
             
-    return res
+        return res
+    finally:
+        if os.path.exists(progress_file):
+            try:
+                os.remove(progress_file)
+            except Exception:
+                pass
 
 @storage_app.post("/download-model")
 async def download_model(request: Request):
@@ -344,7 +349,9 @@ async def download_model(request: Request):
 async def list_models(request: Request):
     """List models in a directory."""
     data = await request.json()
-    directory = data.get("directory", "models/checkpoints")
+    directory = data.get("directory")
+    if not directory:
+        raise HTTPException(status_code=400, detail="directory is required")
     
     from provider_core.models_utils import list_models_with_metadata_internal
     files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
@@ -415,7 +422,9 @@ async def upload_file(request: Request):
     data = await request.json()
     filename = data.get("filename")
     content_base64 = data.get("content_base64")
-    directory = data.get("directory", "input")
+    directory = data.get("directory")
+    if not directory:
+        raise HTTPException(status_code=400, detail="directory is required")
     
     content = base64.b64decode(content_base64)
     full_path = get_safe_path("/mnt/data", f"{directory}/{filename}")
@@ -434,7 +443,9 @@ async def validate_models(request: Request):
     import asyncio
     
     data = await request.json()
-    directory = data.get("directory", "models/checkpoints")
+    directory = data.get("directory")
+    if not directory:
+        raise HTTPException(status_code=400, detail="directory is required")
     delete_invalid = data.get("delete_invalid", False)
     
     try:
@@ -479,7 +490,7 @@ async def validate_models(request: Request):
                     invalid_models.append(model_info)
                     if delete_invalid:
                         os.remove(full_path)
-                        for ext in [".json", ".preview.png"]:
+                        for ext in [".json", ".preview.png", ".sha256"]:
                             side_file = os.path.splitext(full_path)[0] + ext
                             if os.path.exists(side_file):
                                 os.remove(side_file)
@@ -567,13 +578,13 @@ async def comfy_gpu(event):
         try:
             event = json.loads(event)
         except json.JSONDecodeError:
-            yield {"status": "error", "message": f"Invalid JSON: {event[:100]}"}
+            yield json.dumps({"status": "error", "message": f"Invalid JSON: {event[:100]}"})
             return
     
     workflow = event.get("workflow", {})
     
     if not workflow:
-        yield {"status": "error", "message": "No workflow provided"}
+        yield json.dumps({"status": "error", "message": "No workflow provided"})
         return  # Exit generator early
     
     logger.info(f"[comfy_gpu] Received workflow with {len(workflow)} nodes")

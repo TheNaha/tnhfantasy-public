@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
-import useJobStore from '../../store/jobStore';
+import { useTrackJob } from '../../hooks/useTrackJob';
 import useGlobalClock from '../../hooks/useGlobalClock';
 
 const PHASE_CONFIG = {
@@ -41,7 +41,7 @@ const ElapsedTime = memo(function ElapsedTime({ createdAt, isProcessing }) {
 });
 
 const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
-    const realtimeJob = useJobStore(state => state.jobs[initialJob.id]);
+    const { data: realtimeJob } = useTrackJob(initialJob.id);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
 
     const phase = useMemo(() => getJobPhase(job), [job]);

@@ -23,8 +23,10 @@ from .crud import AddCustomProviderModelRequest
 from api.deps import get_session, get_provider_service, get_container_manager
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
-from api.deps import get_provider_lifecycle_service, get_provider_status_service
+from api.deps import get_provider_lifecycle_service, get_provider_status_service, get_model_service_v2
 from services.provider_status_service import invalidate_provider_status_caches
+from services.provider_lifecycle_service import ProviderLifecycleService
+from services.model_service import ModelServiceV2
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from api.deps import start_background_task
 from api.deps import get_http_client
@@ -72,15 +74,7 @@ def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> No
     invalidate_provider_status_caches(provider_id)
 
 
-def _get_provider_lifecycle_service(session: Session):
-    provider_service = get_provider_service(session)
-    from services.provider_lifecycle_service import ProviderLifecycleService
-    return ProviderLifecycleService(
-        session,
-        provider_service=provider_service,
-        container_manager=get_container_manager(),
-        invalidate_caches=_invalidate_provider_runtime_caches,
-    )
+# _get_provider_lifecycle_service has been removed in favor of api.deps.get_provider_lifecycle_service
 
 
 @router.get("/containers/status")
@@ -204,9 +198,13 @@ async def get_provider_live_metrics(provider_id: str, session: Session = Depends
 
 
 @router.get("/{provider_id}/logs")
-async def get_provider_logs(provider_id: str, tail: int = 500, session: Session = Depends(get_session)):
+async def get_provider_logs(
+    provider_id: str,
+    tail: int = 500,
+    session: Session = Depends(get_session)
+):
     """Fetch recent container logs for a provider."""
-    lifecycle = _get_provider_lifecycle_service(session)
+    lifecycle = get_provider_lifecycle_service(session)
     result = lifecycle.get_container_logs(provider_id, tail=tail)
     if "error" in result:
         return {"logs": [], "error": result["error"]}
@@ -262,11 +260,10 @@ async def remove_model_from_provider(
     session: Session = Depends(get_session)
 ):
     """Delete a model file from one provider and mark it pending again in V2."""
-    from services.model_service import ModelServiceV2
+    service = get_model_service_v2(session)
     from api.deps import create_provider_client
 
     normalized_directory = directory.replace("models/", "", 1)
-    service = ModelServiceV2(session)
     file = service.repo.get_file_by_storage_path(normalized_directory, filename)
     if not file:
         raise NotFoundError("Resource", "Model file not found")
@@ -309,8 +306,7 @@ async def add_custom_model_to_providers(
     session: Session = Depends(get_session)
 ):
     """Create a V2 custom model entry and trigger downloads for the selected providers."""
-    from services.model_service import ModelServiceV2
-
+    service = get_model_service_v2(session)
     model_name = request.model_data.get("name", "").strip()
     model_url = request.model_data.get("url", "").strip()
     model_type = request.model_data.get("type")
@@ -318,7 +314,6 @@ async def add_custom_model_to_providers(
     if not model_name or not model_url:
         raise ValidationError("Model name and URL are required")
 
-    service = ModelServiceV2(session)
     result = await service.add_custom_model(
         name=model_name,
         directory=request.directory,
@@ -339,14 +334,24 @@ async def add_custom_model_to_providers(
 # ============================================================================
 
 
+@router.post("/{provider_id}/models/sync")
+async def trigger_provider_sync(
+    provider_id: str,
+    session: Session = Depends(get_session)
+):
+    """Trigger a reconciliation sync for a provider."""
+    lifecycle = get_provider_lifecycle_service(session)
+    return await lifecycle.sync_provider_models(provider_id)
+
+
 @router.post("/{provider_id}/setup")
 async def setup_provider(
     provider_id: str,
     session: Session = Depends(get_session)
 ):
     """Run Modal's setup_models function to initialize directories."""
+    lifecycle = get_provider_lifecycle_service(session)
     try:
-        lifecycle = _get_provider_lifecycle_service(session)
         return await lifecycle.setup_provider(provider_id)
     except ProviderError as exc:
         detail = str(exc)

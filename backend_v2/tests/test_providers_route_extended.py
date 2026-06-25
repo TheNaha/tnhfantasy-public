@@ -186,7 +186,7 @@ class TestProvidersRouteReconcile:
             }
         )
 
-        with patch("api.routes.providers.reconciliation._get_provider_lifecycle_service", return_value=lifecycle):
+        with patch("api.routes.providers.reconciliation.get_provider_lifecycle_service", return_value=lifecycle):
             response = client.post("/api/providers/test-provider/reconcile")
 
         assert response.status_code == 400

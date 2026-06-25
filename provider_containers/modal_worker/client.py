@@ -147,7 +147,9 @@ class ModalProviderClient(BaseProviderClient):
         except Exception as e:
             if job_id:
                 await self.job_tracker.end_job(job_id)
-            raise HTTPException(status_code=500, detail=str(e))
+            async def stream_err():
+                yield json.dumps(build_error_response(f"Internal error: {e}", retryable=False, code=500)) + "\n"
+            return StreamingResponse(stream_err(), status_code=500, media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
         setup_func = get_modal_function("setup_models")

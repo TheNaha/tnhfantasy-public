@@ -63,7 +63,7 @@ class TestProviderModels:
         assert req.content_base64 == "base64data"
 
     def test_validate_models_request(self):
-        req = ValidateModelsRequest()
+        req = ValidateModelsRequest(directory="models/checkpoints")
         assert req.directory == "models/checkpoints" # default
         assert req.delete_invalid is False # default
 

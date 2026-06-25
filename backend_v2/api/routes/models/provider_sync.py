@@ -106,30 +106,6 @@ def get_model_cache(session: Session = Depends(get_session)):
     return {"models": service.get_full_cache()}
 
 
-@router.get("/{model_id}")
-async def get_model(
-    model_id: int,
-    session: Session = Depends(get_session)
-):
-    """Get model with versions, files, and images."""
-    service = get_model_service_v2(session)
-    return await service.get_model(model_id)
-
-
-@router.delete("/{model_id}")
-async def delete_model(
-    model_id: int,
-    session: Session = Depends(get_session)
-):
-    """Delete a model and all related data."""
-    service = get_model_service_v2(session)
-    await service.delete_model(model_id)
-    return {"status": "success"}
-
-
-
-
-
 # ============================================================================
 # BATCH UPDATES (for worker efficiency)
 # ============================================================================
@@ -162,9 +138,8 @@ async def batch_update_status(
     - By file_id (preferred, faster)
     - By storage_path (used when file_id unknown, e.g., reporting missing files)
     """
-    from sqlmodel import select
-    from core.entities import ModelFile, ModelVersion, ModelV2
-    
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     service = get_model_service_v2(session)
     provider_key = request.provider_id or request.provider_name
     if not provider_key:
@@ -174,18 +149,7 @@ async def batch_update_status(
     path_to_file_id = None
     
     if paths:
-        stmt = select(ModelFile, ModelVersion, ModelV2).join(
-            ModelVersion, ModelFile.version_id == ModelVersion.id
-        ).join(
-            ModelV2, ModelVersion.model_id == ModelV2.id
-        )
-        filenames = [p.split('/')[-1] for p in paths]
-        stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
-        
-        path_to_file_id = {}
-        for file, version, model in session.exec(stmt).all():
-            storage_path = f"models/{model.directory}/{file.storage_filename}"
-            path_to_file_id[storage_path] = file.id
+        path_to_file_id = repo.get_file_ids_by_storage_paths(paths)
     
     updated = 0
     failed = 0
@@ -335,18 +299,18 @@ async def receive_batch_sync_progress(
     Receive batch sync progress from worker.
     Updates multiple model statuses in a single request.
     """
-    from sqlmodel import select
-    from core.entities import ModelFile, ModelVersion, ModelV2
-
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     service = get_model_service_v2(session)
+    
+    # We can pass empty list to get all of them
+    path_to_file_id = repo.get_file_ids_by_storage_paths([])
     file_id_by_key = {}
-    stmt = select(ModelFile, ModelVersion, ModelV2).join(
-        ModelVersion, ModelFile.version_id == ModelVersion.id
-    ).join(
-        ModelV2, ModelVersion.model_id == ModelV2.id
-    )
-    for file, _version, model in session.exec(stmt).all():
-        file_id_by_key[(model.directory, file.storage_filename)] = file.id
+    for path, file_id in path_to_file_id.items():
+        # path is models/directory/filename
+        parts = path.split('/')
+        if len(parts) >= 3:
+            file_id_by_key[(parts[1], parts[2])] = file_id
     
     updated = 0
     failed = 0

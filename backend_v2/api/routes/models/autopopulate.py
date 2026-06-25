@@ -21,10 +21,9 @@ class AutopopulateRequest(BaseModel):
 
 
 def _get_models_needing_population(session: Session) -> list:
-    auto_discovered = session.exec(
-        select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
-    ).all()
-    return [m for m in auto_discovered if m.civitai_model_id is None]
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
+    return repo.get_models_needing_population()
 
 @router.get("/autopopulate-pending")
 async def get_autopopulate_pending(session: Session = Depends(get_session)):
@@ -71,7 +70,9 @@ async def search_autopopulate_candidates(
     from api.deps import get_external_model_service
     
     # Verify model exists
-    model = session.exec(select(ModelV2).where(ModelV2.id == model_id)).first()
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
+    model = repo.get_model(model_id)
     if not model:
         raise NotFoundError("Model", model_id)
         
@@ -144,6 +145,7 @@ async def autopopulate_all_models(
             "current_model": "Starting..."
         })
         
+        service = get_model_civitai_sync_service(session)
         for i, model in enumerate(models_to_process):
             try:
                 await broadcast_to_all("AUTOPOPULATE_PROGRESS", {
@@ -154,7 +156,6 @@ async def autopopulate_all_models(
                     "current_model": model.name
                 })
                 
-                service = get_model_civitai_sync_service(session)
                 await service.autopopulate_model(str(model.id))
                 results["success"] += 1
             except ValueError:
@@ -205,9 +206,9 @@ async def get_autopopulate_status(
     session: Session = Depends(get_session)
 ):
     needs_population = _get_models_needing_population(session)
-    total = session.exec(
-        select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
-    ).all()
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
+    total = repo.get_auto_discovered_models()
 
     return {
         "total_auto_discovered": len(total),

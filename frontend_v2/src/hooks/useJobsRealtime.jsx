@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
-import useJobStore from '../store/jobStore';
 import toast from 'react-hot-toast';
 
 export function useJobsRealtime() {
@@ -71,14 +70,18 @@ export function useJobsRealtime() {
             }
         }));
 
-        // 2. Job Progress/Updated -> Update in Zustand store to prevent expensive re-renders
+        // 2. Job Progress/Updated -> Update in React Query
         const handleUpdate = (event) => {
             const job = event.data?.job || event;
             markEventReceived();
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
             
-            // Push high-frequency updates to the lightweight Zustand store
-            useJobStore.getState().updateJob(job.id, job);
+            // Update the single source of truth
+            queryClient.setQueryData(['jobs', job.id], (old) => old ? { ...old, ...job } : job);
+            
+            queryClient.setQueryData(['jobs', 'active'], (old = []) => {
+                return old.map(j => j.id === job.id ? { ...j, ...job } : j);
+            });
         };
 
         unsubs.push(ws.on(ws.EventTypes.JOB_PROGRESS, handleUpdate));
@@ -103,9 +106,6 @@ export function useJobsRealtime() {
                 old ? { ...old, ...job } : job
             );
             queryClient.invalidateQueries({ queryKey: ['gallery'] });
-            
-            // CLEANUP ZUSTAND TO PREVENT MEMORY LEAKS
-            useJobStore.getState().removeJob(job.id);
 
             if (type === 'completed') {
                 toast.success(

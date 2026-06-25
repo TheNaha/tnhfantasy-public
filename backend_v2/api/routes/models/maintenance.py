@@ -80,12 +80,9 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
     from core.entities import ModelV2, ModelVersion, ModelTag
     
     # Find all models with no versions using a LEFT JOIN in a single query
-    orphans = session.exec(
-        select(ModelV2, func.count(ModelVersion.id).label("version_count"))
-        .outerjoin(ModelVersion, ModelVersion.model_id == ModelV2.id)
-        .group_by(ModelV2.id)
-        .having(func.count(ModelVersion.id) == 0)
-    ).all()
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
+    orphans = repo.get_orphan_models()
     
     # Delete orphans
     deleted = []
@@ -192,19 +189,11 @@ async def run_background_resync():
     from api.deps import get_http_client
     from core.entities import ModelV2
     from core.exceptions import ComfyError
-    from api.routes.websocket import broadcast_to_all
-    from sqlmodel import select
-    
-    from sqlalchemy.orm import selectinload
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(bg_session)
     
     async with get_session_context() as bg_session:
-        # Get all models that are NOT auto-discovered and HAVE a civitai ID
-        models = bg_session.exec(
-            select(ModelV2)
-            .where(ModelV2.civitai_model_id != None)
-            .where(ModelV2.description.not_like("%Auto-discovered%"))
-            .options(selectinload(ModelV2.versions).selectinload(ModelVersion.files))
-        ).all()
+        models = repo.get_models_for_resync()
         
         if not models:
             return {"success": 0, "failed": 0, "errors": []}
@@ -275,14 +264,11 @@ async def run_background_resync():
 async def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
     from core.entities import ModelV2
-    from sqlmodel import select
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     
     # Get all models that are NOT auto-discovered and HAVE a civitai ID
-    models = session.exec(
-        select(ModelV2)
-        .where(ModelV2.civitai_model_id != None)
-        .where(ModelV2.description.not_like("%Auto-discovered%"))
-    ).all()
+    models = repo.get_models_for_resync(include_relations=False)
     
     if not models:
         return {"status": "no_models", "count": 0}
@@ -312,9 +298,9 @@ async def backfill_provider_statuses(
 
     service = get_model_service_v2(session)
 
-    providers = session.exec(
-        select(Provider).where(Provider.enabled == True)
-    ).all()
+    from api.deps import get_provider_service
+    provider_service = get_provider_service(session)
+    providers = await provider_service.get_enabled_providers()
 
     all_models = await service.list_models(include_versions=True)
     all_files_by_path = {}

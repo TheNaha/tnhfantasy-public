@@ -55,51 +55,37 @@ class CollectionBulkImport(BaseModel):
 @router.get("")
 def list_collections(session: Session = Depends(get_session)):
     """List all collections with image counts."""
-    # Get collections with image counts
-    query = text("""
-        SELECT c.*, COUNT(ci.id) as image_count
-        FROM collections c
-        LEFT JOIN collection_images ci ON c.id = ci.collection_id
-        GROUP BY c.id
-        ORDER BY c.updated_at DESC
-    """)
-    
-    result = session.execute(query)
-    collections = []
-    for row in result:
-        row_dict = dict(row._mapping)
-        collections.append(row_dict)
-    
-    return {"collections": collections}
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    return {"collections": repo.list_collections_with_counts()}
 
 
 @router.post("/import")
 def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
     """Bulk import collections (for migration from localStorage)."""
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
     imported = []
     
     for col_data in data.collections:
-        # Create collection
         collection = Collection(
             name=col_data.get("name", "Untitled"),
             color=col_data.get("color", "#3B82F6"),
             description=col_data.get("description")
         )
-        session.add(collection)
-        session.flush()  # Get the ID
+        repo.create_collection(collection)
         
-        # Add images
         images = col_data.get("images", [])
         for filename in images:
             img = CollectionImage(
                 collection_id=collection.id,
                 image_filename=filename
             )
-            session.add(img)
+            repo.add_collection_image(img)
             
-        # Set thumbnail
         if images:
             collection.thumbnail = images[0]
+            repo.update_collection(collection)
             
         imported.append({
             "id": collection.id,
@@ -122,7 +108,9 @@ def get_collection(
     session: Session = Depends(get_session)
 ):
     """Get a single collection with its images."""
-    collection = session.get(Collection, collection_id)
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
     
@@ -137,11 +125,7 @@ def get_collection(
     }
     
     if include_images:
-        # Get all images in this collection
-        stmt = select(CollectionImage).where(
-            CollectionImage.collection_id == collection_id
-        ).order_by(CollectionImage.added_at.desc())
-        images = session.exec(stmt).all()
+        images = repo.get_collection_images(collection_id)
         result["images"] = [img.image_filename for img in images]
         result["image_count"] = len(images)
     
@@ -151,12 +135,14 @@ def get_collection(
 @router.post("")
 def create_collection(data: CollectionCreate, session: Session = Depends(get_session)):
     """Create a new collection."""
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
     collection = Collection(
         name=data.name,
         color=data.color,
         description=data.description
     )
-    session.add(collection)
+    repo.create_collection(collection)
     session.commit()
     session.refresh(collection)
     
@@ -170,7 +156,9 @@ def update_collection(
     session: Session = Depends(get_session)
 ):
     """Update a collection's name, color, or description."""
-    collection = session.get(Collection, collection_id)
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
     
@@ -179,7 +167,7 @@ def update_collection(
         setattr(collection, key, value)
     
     collection.updated_at = datetime.now(timezone.utc)
-    session.add(collection)
+    repo.update_collection(collection)
     session.commit()
     session.refresh(collection)
     
@@ -189,18 +177,13 @@ def update_collection(
 @router.delete("/{collection_id}")
 def delete_collection(collection_id: int, session: Session = Depends(get_session)):
     """Delete a collection (images are NOT deleted, only the association)."""
-    collection = session.get(Collection, collection_id)
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
     
-    # Delete all image associations first
-    session.execute(
-        text("DELETE FROM collection_images WHERE collection_id = :id"),
-        {"id": collection_id}
-    )
-    
-    # Delete the collection
-    session.delete(collection)
+    repo.delete_collection(collection)
     session.commit()
     
     return {"success": True, "message": f"Collection {collection_id} deleted"}
@@ -213,33 +196,28 @@ def add_images_to_collection(
     session: Session = Depends(get_session)
 ):
     """Add images to a collection."""
-    collection = session.get(Collection, collection_id)
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
     
     added = []
     for filename in data.images:
-        # Check if already exists
-        existing = session.exec(
-            select(CollectionImage).where(
-                CollectionImage.collection_id == collection_id,
-                CollectionImage.image_filename == filename
-            )
-        ).first()
+        existing = repo.get_collection_image(collection_id, filename)
         
         if not existing:
             ci = CollectionImage(
                 collection_id=collection_id,
                 image_filename=filename
             )
-            session.add(ci)
+            repo.add_collection_image(ci)
             added.append(filename)
     
-    # Update collection thumbnail to newest image
     if added:
         collection.thumbnail = added[0]
         collection.updated_at = datetime.now(timezone.utc)
-        session.add(collection)
+        repo.update_collection(collection)
     
     session.commit()
     
@@ -253,31 +231,18 @@ def remove_images_from_collection(
     session: Session = Depends(get_session)
 ):
     """Remove images from a collection."""
-    collection = session.get(Collection, collection_id)
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
+    collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
     
-    removed = 0
-    for filename in data.images:
-        result = session.execute(
-            text("""
-                DELETE FROM collection_images 
-                WHERE collection_id = :col_id AND image_filename = :filename
-            """),
-            {"col_id": collection_id, "filename": filename}
-        )
-        removed += result.rowcount
+    removed = repo.remove_collection_images(collection_id, data.images)
     
-    # Update thumbnail if needed
-    remaining = session.exec(
-        select(CollectionImage).where(
-            CollectionImage.collection_id == collection_id
-        ).order_by(CollectionImage.added_at.desc()).limit(1)
-    ).first()
-    
+    remaining = repo.get_latest_collection_image(collection_id)
     collection.thumbnail = remaining.image_filename if remaining else None
     collection.updated_at = datetime.now(timezone.utc)
-    session.add(collection)
+    repo.update_collection(collection)
     session.commit()
     
     return {"success": True, "removed": removed}
@@ -289,15 +254,15 @@ def remove_images_from_collection(
 def export_collections(session: Session = Depends(get_session)):
     """Export all collections (for backup)."""
     from collections import defaultdict
+    from api.deps import get_collection_repo
+    repo = get_collection_repo(session)
 
-    collections = session.exec(select(Collection)).all()
+    collections = repo.get_all_collections()
     if not collections:
         return {"collections": []}
 
     collection_ids = [c.id for c in collections]
-    all_images = session.exec(
-        select(CollectionImage).where(CollectionImage.collection_id.in_(collection_ids))
-    ).all()
+    all_images = repo.get_images_for_collections(collection_ids)
 
     images_by_collection = defaultdict(list)
     for img in all_images:

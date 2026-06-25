@@ -44,6 +44,13 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
             message = detail.get("message") or detail.get("detail") or str(detail)
         else:
             message = str(detail)
+            
+        import json
+        if request.url.path.rstrip("/").endswith("/inference"):
+            async def stream():
+                yield json.dumps(build_error_response(message=message, retryable=exc.status_code >= 500, code=exc.status_code)) + "\n"
+            return StreamingResponse(stream(), status_code=exc.status_code, media_type="application/x-ndjson")
+
         return JSONResponse(
             status_code=exc.status_code,
             content=build_error_response(
@@ -55,10 +62,17 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        import json
+        message = f"Validation error: {exc.errors()}"
+        if request.url.path.rstrip("/").endswith("/inference"):
+            async def stream():
+                yield json.dumps(build_error_response(message=message, retryable=False, code=422)) + "\n"
+            return StreamingResponse(stream(), status_code=422, media_type="application/x-ndjson")
+
         return JSONResponse(
             status_code=422,
             content=build_error_response(
-                message=f"Validation error: {exc.errors()}",
+                message=message,
                 retryable=False,
                 code=422,
             )
@@ -67,6 +81,13 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         logger.error(f"Unhandled exception: {type(exc).__name__}: {exc}")
+        
+        import json
+        if request.url.path.rstrip("/").endswith("/inference"):
+            async def stream():
+                yield json.dumps(build_error_response(message="Internal server error", retryable=True, code=500)) + "\n"
+            return StreamingResponse(stream(), status_code=500, media_type="application/x-ndjson")
+
         return JSONResponse(
             status_code=500,
             content=build_error_response(

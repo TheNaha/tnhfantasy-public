@@ -664,27 +664,32 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
         if status == "message":
             update_progress("error", message=payload.get("message", "Download failed"))
 
-    result = download_model_to_path(
-        url=url,
-        full_path=full_path,
-        path=path,
-        token=token,
-        hf_token=os.environ.get("HF_TOKEN"),
-        civitai_token=os.environ.get("CIVITAI_TOKEN"),
-        preview_url=preview_url,
-        metadata=info,
-        log=logger.info,
-        log_prefix="Download",
-        progress_callback=progress_callback,
-    )
+    try:
+        result = download_model_to_path(
+            url=url,
+            full_path=full_path,
+            path=path,
+            token=token,
+            hf_token=os.environ.get("HF_TOKEN"),
+            civitai_token=os.environ.get("CIVITAI_TOKEN"),
+            preview_url=preview_url,
+            metadata=info,
+            log=logger.info,
+            log_prefix="Download",
+            progress_callback=progress_callback,
+        )
 
-    if result.get("status") == "success":
-        vol.commit()
-        time.sleep(5)
+        if result.get("status") == "success":
+            vol.commit()
+            time.sleep(5)
+            
+        return result
+    finally:
         if os.path.exists(progress_file):
-            os.remove(progress_file)
-
-    return result
+            try:
+                os.remove(progress_file)
+            except Exception:
+                pass
 
 LIGHTWEIGHT_SCALEDOWN = 15
 
@@ -713,7 +718,7 @@ async def list_models_with_metadata(directory: str):
     max_containers=VALIDATE_MAX_CONTAINERS
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
-async def validate_models(directories: list[str] = ["models/checkpoints"], delete_invalid: bool = False):
+async def validate_models(directories: list[str], delete_invalid: bool = False):
     await vol.reload.aio()
     """
     Validate all models in specified directories.

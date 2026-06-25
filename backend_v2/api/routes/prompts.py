@@ -148,8 +148,9 @@ async def get_favorites(
     session: Session = Depends(get_session)
 ):
     """Get favorite prompts."""
-    stmt = select(Prompt).where(Prompt.favorite == True).order_by(Prompt.usage_count.desc()).limit(limit)
-    prompts = session.exec(stmt).all()
+    from api.deps import get_prompt_repo
+    repo = get_prompt_repo(session)
+    prompts = repo.get_favorite_prompts(limit)
     return {"prompts": prompts}
 
 
@@ -159,8 +160,9 @@ async def get_most_used(
     session: Session = Depends(get_session)
 ):
     """Get most frequently used prompts."""
-    stmt = select(Prompt).order_by(Prompt.usage_count.desc()).limit(limit)
-    prompts = session.exec(stmt).all()
+    from api.deps import get_prompt_repo
+    repo = get_prompt_repo(session)
+    prompts = repo.get_top_prompts(limit)
     return {"prompts": prompts}
 
 
@@ -335,5 +337,7 @@ async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_
 @router.get("/export")
 async def export_prompts(session: Session = Depends(get_session)):
     """Export all prompts as JSON (for backup)."""
-    prompts = session.exec(select(Prompt)).all()
+    from api.deps import get_prompt_repo
+    repo = get_prompt_repo(session)
+    prompts = repo.get_all_prompts()
     return {"prompts": prompts}

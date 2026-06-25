@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
 import { useTrackJob } from './useTrackJob';
-import useJobStore from '../store/jobStore';
 
 export function useTrackGenerationJob() {
     const navigate = useNavigate();
@@ -12,14 +11,11 @@ export function useTrackGenerationJob() {
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
     const [generating, setGenerating] = useState(false);
-    const { data: trackedJob } = useTrackJob(currentJobId);
-
-    const liveJob = useJobStore(state => state.jobs[currentJobId]);
+    const { data: jobData } = useTrackJob(currentJobId);
 
     // legitimate: syncing state from external WebSocket subscription
     /* eslint-disable react-hooks/set-state-in-effect */
     useEffect(() => {
-        const jobData = liveJob ? { ...trackedJob, ...liveJob } : trackedJob;
         if (!currentJobId || !jobData) return;
 
         const isQueued = jobData.status === 'pending' || jobData.status === 'queued';
@@ -60,7 +56,7 @@ export function useTrackGenerationJob() {
             node: jobData.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
         });
     }, [
-        trackedJob, liveJob, currentJobId,
+        jobData, currentJobId,
         navigate, redirectAfterGenerate, redirectDelay,
     ]);
     /* eslint-enable react-hooks/set-state-in-effect */

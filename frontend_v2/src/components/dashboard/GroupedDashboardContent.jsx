@@ -8,25 +8,10 @@ import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { formatTimestamp } from '../../utils/dateTime';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
-function formatTimestamp(timestamp) {
-    if (!timestamp) {
-        return 'Unknown date';
-    }
 
-    let date;
-    if (typeof timestamp === 'string') {
-        date = new Date(timestamp.endsWith('Z') ? timestamp : `${timestamp}Z`);
-    } else if (timestamp > 1e12) {
-        date = new Date(timestamp);
-    } else if (timestamp > 0) {
-        date = new Date(timestamp * 1000);
-    } else {
-        return 'Unknown date';
-    }
-
-    return Number.isNaN(date.getTime()) ? 'Unknown date' : date.toLocaleString();
-}
 
 // ⚡ Bolt: Extract inner item renderers into memoized components to prevent re-rendering all DOM nodes
 // for unselected items when the parent's `selectedFiles` Set changes.
@@ -259,10 +244,30 @@ export default memo(function GroupedDashboardContent({
         images.forEach((image) => toggleSelection(image.name));
     }, [toggleSelection]);
 
+    const virtualizer = useWindowVirtualizer({
+        count: sortedGroupedEntries.length,
+        estimateSize: () => 800,
+        overscan: 2,
+    });
+
     return (
-        <div className="space-y-4 md:space-y-8">
-            {sortedGroupedEntries.map(([date, groupItems]) => (
-                <div key={date}>
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+                const [date, groupItems] = sortedGroupedEntries[virtualItem.index];
+                return (
+                <div 
+                    key={virtualItem.key}
+                    data-index={virtualItem.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                        paddingBottom: '2rem'
+                    }}
+                >
                     <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
                         <Calendar size={16} /> {formatDateLabel(date)}
                     </h3>
@@ -365,7 +370,8 @@ export default memo(function GroupedDashboardContent({
                         </div>
                     )}
                 </div>
-            ))}
+                );
+            })}
         </div>
     );
 });

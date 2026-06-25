@@ -131,8 +131,8 @@ def _calculate_statistics() -> Dict[str, Any]:
                 try:
                     date = datetime.fromtimestamp(completed_at).strftime("%Y-%m-%d")
                     stats["images_by_date"][date] = stats["images_by_date"].get(date, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("statistics_date_parsing_failed", error=str(e))
 
     except Exception as e:
         logger.error("statistics_calculation_failed", error=str(e))
@@ -271,8 +271,8 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
                         # e.g., "2026-06-22T17:21:42.123Z"
                         job_completed_at = job_completed_at.replace("Z", "+00:00")
                         completed_at = datetime.fromisoformat(job_completed_at).timestamp()
-                    except ValueError:
-                        pass
+                    except ValueError as e:
+                        logger.warning("job_completed_at_parse_failed", error=str(e))
                 elif isinstance(job_completed_at, (int, float)):
                     completed_at = float(job_completed_at)
             
@@ -309,8 +309,8 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
                     weekday = str(dt.weekday())
                     detailed_stats["timeline"]["weekday"][weekday] = \
                         detailed_stats["timeline"]["weekday"].get(weekday, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("timeline_data_parse_failed", error=str(e))
 
             # === MODEL DATA ===
             # Checkpoints

@@ -21,14 +21,14 @@ from pydantic import BaseModel
 from api.deps import get_session, get_provider_service, get_container_manager
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
-from api.deps import get_provider_lifecycle_service, get_provider_status_service
 from services.provider_status_service import invalidate_provider_status_caches
+from api.deps import get_provider_lifecycle_service
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from api.deps import start_background_task
 from api.deps import get_http_client
 from api.deps import api_logger
 from config import get_worker_backend_url
-from .lifecycle import _get_provider_lifecycle_service, _invalidate_provider_runtime_caches
+from .lifecycle import _invalidate_provider_runtime_caches
 
 logger = api_logger()
 
@@ -79,7 +79,7 @@ async def reconcile_provider(
 ):
     """Trigger model reconciliation for a provider."""
     try:
-        lifecycle = _get_provider_lifecycle_service(session)
+        lifecycle = get_provider_lifecycle_service(session)
         result = await lifecycle.trigger_reconciliation(provider_id, force=force)
     except ProviderError as exc:
         detail = str(exc)
@@ -104,7 +104,7 @@ async def get_reconciliation_status(
 ):
     """Get current reconciliation status for a provider."""
     try:
-        lifecycle = _get_provider_lifecycle_service(session)
+        lifecycle = get_provider_lifecycle_service(session)
         return await lifecycle.get_reconciliation_status(provider_id)
     except httpx.HTTPStatusError as exc:
         raise ProviderError(provider_id, "Failed to get reconciliation status") from exc

@@ -514,17 +514,11 @@ PRESETS = [
 @router.get("/presets")
 async def get_presets(session: Session = Depends(get_session)):
     """Returns a list of curated models with installation status."""
-    from sqlmodel import select
-    from core.entities import ModelFile
+    from api.deps import get_model_repo_v2
+    repo = get_model_repo_v2(session)
     
     preset_filenames = [p['filename'] for p in PRESETS]
-    
-    # We just check by storage_filename since these are presets
-    installed_filenames = set(
-        row[0] for row in session.exec(
-            select(ModelFile.storage_filename).where(ModelFile.storage_filename.in_(preset_filenames))
-        ).all()
-    )
+    installed_filenames = set(repo.get_existing_filenames(preset_filenames))
     
     presets = []
     for preset in PRESETS:

@@ -252,8 +252,7 @@ describe('Milestone 5 React Query Hooks', () => {
         });
 
         await waitFor(async () => {
-            const useJobStore = (await import('../store/jobStore')).default;
-            const job = useJobStore.getState().jobs['j1'];
+            const job = queryClient.getQueryData(['jobs', 'j1']);
             expect(job.progress).toBe(45);
         });
     });

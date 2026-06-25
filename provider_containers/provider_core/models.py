@@ -45,12 +45,12 @@ class UploadFileRequest(BaseModel):
     """Request for uploading a file to provider storage."""
     filename: str
     content_base64: str
-    directory: str = "input"
+    directory: str
 
 
 class ValidateModelsRequest(BaseModel):
     """Request for validating models in a directory."""
-    directory: str = "models/checkpoints"
+    directory: str
     delete_invalid: bool = False
 
 
