@@ -31,6 +31,14 @@ export const filesApi = {
         files: filenames
     }),
 
+    // Download multiple files as a ZIP archive
+    batchDownload: async (filenames) => {
+        const response = await api.post('/api/files/batch-download', {
+            files: filenames
+        });
+        return await response.blob();
+    },
+
     /**
      * Upload image for Img2Img or Inpainting.
      * Saves locally and syncs to the specified provider's Modal volume.

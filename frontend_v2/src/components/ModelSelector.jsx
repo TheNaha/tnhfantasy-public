@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, memo, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
@@ -29,7 +29,11 @@ const ModelSelector = memo(function ModelSelector({
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
   const [search, setSearch] = useState("");
-  const [internalSelectedModel, setInternalSelectedModel] = useState(null);
+  const [prevAutoOpen, setPrevAutoOpen] = useState(autoOpen);
+  if (autoOpen !== prevAutoOpen) {
+    setPrevAutoOpen(autoOpen);
+    if (autoOpen) setIsOpen(true);
+  }
   const [expandedModel, setExpandedModel] = useState(null);
 
   const [sortBy, setSortBy] = useState("name");
@@ -72,6 +76,17 @@ const ModelSelector = memo(function ModelSelector({
     if (!directory && initialModels?.length > 0) return initialModels;
     return data?.pages.flatMap(page => page.files || []) || [];
   }, [data, directory, initialModels]);
+
+  const internalSelectedModel = useMemo(() => {
+    if (!externalSelectedModel && value) {
+      const found = models.find((m) => m.name === value);
+      if (found) {
+        return { ...found, preview: found.preview || preview, metadata: found.metadata || metadata };
+      }
+      return { name: value, preview, metadata };
+    }
+    return null;
+  }, [value, models, preview, metadata, externalSelectedModel]);
 
   const selectedModel = useMemo(() => {
     let sm = externalSelectedModel || internalSelectedModel;
@@ -125,9 +140,7 @@ const ModelSelector = memo(function ModelSelector({
     };
   }, []);
 
-  useEffect(() => {
-    if (autoOpen) setIsOpen(true);
-  }, [autoOpen]);
+
 
   const handleClose = useCallback(() => {
     setIsOpen(false);
@@ -141,18 +154,7 @@ const ModelSelector = memo(function ModelSelector({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, handleClose]);
 
-  useEffect(() => {
-    if (!externalSelectedModel && value) {
-      const found = models.find((m) => m.name === value);
-      if (found) {
-        setInternalSelectedModel({ ...found, preview: found.preview || preview, metadata: found.metadata || metadata });
-      } else {
-        setInternalSelectedModel({ name: value, preview, metadata });
-      }
-    } else if (!externalSelectedModel && !value) {
-      setInternalSelectedModel(null);
-    }
-  }, [value, models, preview, metadata, externalSelectedModel]);
+
 
   const filteredAndSortedModels = useMemo(() => {
     if (directory) return models;

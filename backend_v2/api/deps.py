@@ -119,3 +119,8 @@ def get_provider_status_service(session: Session):
 def get_model_civitai_sync_service(session: Session):
     from services.model_civitai_sync import ModelCivitaiSyncService
     return ModelCivitaiSyncService(session)
+
+
+def get_provider_worker_url(provider_id: str) -> str:
+    from infrastructure.providers.runtime import get_provider_worker_base_url
+    return get_provider_worker_base_url(provider_id)

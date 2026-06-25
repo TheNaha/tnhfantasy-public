@@ -25,7 +25,7 @@ import { persist } from 'zustand/middleware';
  */
 const useStore = create(
     persist(
-        (set, get) => ({
+        (set) => ({
             activeCollection: null,
             setActiveCollection: (id) => set({ activeCollection: id }),
         }),

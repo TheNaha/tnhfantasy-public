@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.11",
+    "@tanstack/react-virtual": "^3.14.3",
     "@xyflow/react": "^12.11.1",
     "blurhash": "^2.0.5",
     "clsx": "^2.1.1",

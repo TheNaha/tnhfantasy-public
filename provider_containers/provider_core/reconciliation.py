@@ -602,6 +602,9 @@ async def run_reconciliation_v2(
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
 
                     if delete_enabled:
+                        safe_limit = calculate_safe_deletion_limit(len(existing_files), len(deletion_candidates))
+                        deletion_candidates = deletion_candidates[:safe_limit]
+
                         for orphan_info in deletion_candidates:
                             try:
                                 deleted = await delete_file(orphan_info["path"])

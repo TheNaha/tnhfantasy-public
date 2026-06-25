@@ -1152,10 +1152,19 @@ class ModelRepositoryV2:
         models = list(self.session.exec(stmt).all())
         
         migrated = []
+        if not models:
+            return {"migrated": migrated, "count": 0}
+            
+        model_ids = [m.id for m in models]
+        versions_stmt = select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
+        all_versions = self.session.exec(versions_stmt).all()
+        versions_by_model = {}
+        for v in all_versions:
+            versions_by_model.setdefault(v.model_id, []).append(v)
         
         for model in models:
             # Get the default version to check base_model
-            versions = self.get_versions_for_model(model.id)
+            versions = versions_by_model.get(model.id, [])
             if not versions:
                 continue
             

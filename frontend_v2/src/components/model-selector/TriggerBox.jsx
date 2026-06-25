@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { Check, ChevronDown, Layers, Info, Star } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api, filesApi } from '../../api';
+import { api } from '../../api';
 import ModelPreviewImage from './ModelPreviewImage';
 
 const TriggerBox = memo(function TriggerBox({

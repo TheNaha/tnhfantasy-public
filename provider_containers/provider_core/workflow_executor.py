@@ -10,6 +10,7 @@ import uuid
 from typing import Any, AsyncGenerator, Dict, List
 
 from provider_core.http_client import get_http_client
+from provider_core.utils import get_safe_path
 
 
 IMAGE_FETCH_FILESYSTEM = "filesystem"
@@ -120,7 +121,15 @@ def _collect_images_from_filesystem(
             subfolder = image.get("subfolder") or ""
             folder_type = image.get("type", "output")
             base_dir = output_dir if folder_type == "output" else temp_dir
-            filepath = os.path.join(base_dir, subfolder, filename) if subfolder else os.path.join(base_dir, filename)
+            
+            try:
+                if subfolder:
+                    filepath = get_safe_path(base_dir, os.path.join(subfolder, filename))
+                else:
+                    filepath = get_safe_path(base_dir, filename)
+            except ValueError as error:
+                _log(logger, logging.ERROR, f"Invalid path for output image {filename}: {error}")
+                continue
 
             try:
                 with open(filepath, "rb") as file_obj:
@@ -273,6 +282,12 @@ async def execute_comfy_workflow(
                 return
             except websockets.exceptions.ConnectionClosed as error:
                 _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
+                try:
+                    client = get_http_client()
+                    await client.post(f"http://{server_address}/interrupt", timeout=5.0)
+                except Exception as e:
+                    _log(logger, logging.ERROR, f"Failed to send interrupt after connection closed: {e}")
+
                 yield {
                     "status": "error",
                     "message": f"WebSocket connection closed: {error}",

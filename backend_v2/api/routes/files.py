@@ -118,6 +118,48 @@ class BatchDeleteRequest(BaseModel):
     files: List[str]
 
 
+class BatchDownloadRequest(BaseModel):
+    files: List[str]
+
+
+@router.post("/api/files/batch-download")
+async def batch_download(request: BatchDownloadRequest):
+    """Create a ZIP file of multiple images for batch download."""
+    import zipfile
+    from services.gallery_indexer import gallery_indexer
+    
+    fd, temp_path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    
+    try:
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for filename in request.files:
+                indexed_path = gallery_indexer.get_path(filename)
+                if not indexed_path:
+                    indexed_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
+                
+                if indexed_path and os.path.exists(indexed_path):
+                    zipf.write(indexed_path, arcname=os.path.basename(filename))
+                else:
+                    try:
+                        safe_path = get_safe_path(OUTPUT_DIR, filename)
+                        if os.path.exists(safe_path):
+                            zipf.write(safe_path, arcname=os.path.basename(filename))
+                    except Exception:
+                        pass
+                        
+        return FileResponse(
+            temp_path,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=batch_download.zip"},
+            background=BackgroundTask(os.remove, temp_path)
+        )
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        from core.exceptions import ComfyError
+        raise ComfyError(f"Failed to create batch download: {str(e)}")
+
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
     Resolve and validate a path to prevent directory traversal.

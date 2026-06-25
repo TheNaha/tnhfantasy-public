@@ -1,29 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback } from 'react';
 import { Play, Loader2, Settings2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import useProvidersPageData from '../hooks/useProvidersPageData';
-import { useTrackJob } from '../hooks/useTrackJob';
-import useSettingsStore from '../store/settingsStore';
+import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
 import { generateApi, createIdempotencyKey } from '../api';
 import ReactFlowEditor from '../components/generator/ReactFlowEditor';
 import { compileReactFlowToComfy } from '../utils/WorkflowCompiler';
 
 export default function AdvancedGenerator() {
-    const navigate = useNavigate();
     const [editorMode, setEditorMode] = useState('visual'); // 'visual' or 'json'
     const [showRunway, setShowRunway] = useState(false);
     const [workflowJson, setWorkflowJson] = useState("");
     const [reactFlowState, setReactFlowState] = useState({ nodes: [], edges: [] });
-    const [generating, setGenerating] = useState(false);
-    const [currentJobId, setCurrentJobId] = useState(null);
-    const [progress, setProgress] = useState(null);
-    const { data: trackedJob } = useTrackJob(currentJobId);
-    const redirectAfterGenerate = useSettingsStore(state => state.settings.generator.redirectAfterGenerate);
-    const redirectDelay = useSettingsStore(state => state.settings.generator.redirectDelay);
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const {
         isChecking: preflightChecking,
@@ -34,50 +25,13 @@ export default function AdvancedGenerator() {
         runWithPreflight,
     } = useGenerationPreflight();
 
-    // legitimate: syncing state from external WebSocket subscription
-    /* eslint-disable react-hooks/set-state-in-effect */
-    useEffect(() => {
-        if (!currentJobId || !trackedJob) return;
-
-        const isQueued = trackedJob.status === 'pending' || trackedJob.status === 'queued';
-        const progressValue = trackedJob.overall_progress ?? trackedJob.progress ?? 0;
-
-        if (trackedJob.status === 'completed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.success('Generation complete!', { icon: '✨' });
-            if (redirectAfterGenerate) {
-                setTimeout(() => navigate('/'), redirectDelay);
-            }
-            return;
-        }
-
-        if (trackedJob.status === 'failed') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast.error(`Generation failed: ${trackedJob.error || 'Unknown error'}`);
-            return;
-        }
-
-        if (trackedJob.status === 'cancelled') {
-            setGenerating(false);
-            setProgress(null);
-            setCurrentJobId(null);
-            toast('Generation cancelled');
-            return;
-        }
-
-        setGenerating(true);
-        setProgress({
-            value: progressValue,
-            max: 100,
-            status: isQueued ? 'queued' : trackedJob.status,
-            node: trackedJob.message || (isQueued ? 'Job queued...' : `${progressValue}%`),
-        });
-    }, [trackedJob, currentJobId, navigate, redirectAfterGenerate, redirectDelay]);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    const {
+        setCurrentJobId,
+        progress,
+        setProgress,
+        generating,
+        setGenerating,
+    } = useTrackGenerationJob();
 
     const handleGraphChange = useCallback((nodes, edges) => {
         setReactFlowState({ nodes, edges });

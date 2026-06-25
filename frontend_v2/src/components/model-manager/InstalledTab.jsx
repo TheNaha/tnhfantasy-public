@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Search, Filter, X, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2 } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
@@ -93,7 +93,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         if (tagsArr.length > availableTags.length) {
             setAvailableTags(tagsArr);
         }
-    }, [filteredFiles]);
+    }, [filteredFiles, availableTags]);
 
     const handleCheckDependencies = async (file) => {
         if (!file.model_id) return;

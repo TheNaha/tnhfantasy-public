@@ -28,8 +28,7 @@ const edgeTypes = {
   deletable: DeletableEdge,
 };
 
-const initialNodes = [];
-const initialEdges = [];
+
 
 export default function ReactFlowEditor({ providerId, onGraphChange }) {
   const { data: objectInfo, isLoading, error } = useObjectInfo(providerId);
@@ -51,6 +50,7 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
 
   const [nodes, setNodes] = useNodesState(initialNodes);
   const [edges, setEdges] = useEdgesState(initialEdges);
+  const [reactFlowInstance, setReactFlowInstance] = React.useState(null);
 
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge(params, eds)),
@@ -76,11 +76,12 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
       event.preventDefault();
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
+      if (!reactFlowInstance) return;
 
-      const position = {
-        x: event.clientX - 200, // naive offset
-        y: event.clientY - 100,
-      };
+      const position = reactFlowInstance.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
 
       const newNode = {
         id: `node_${Date.now()}`,
@@ -94,7 +95,7 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
 
       setNodes((nds) => nds.concat(newNode));
     },
-    [setNodes, registry],
+    [setNodes, reactFlowInstance],
   );
 
   if (isLoading) {
@@ -134,6 +135,7 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
             onNodesChange={(changes) => setNodes((nds) => applyNodeChanges(changes, nds))}
             onEdgesChange={(changes) => setEdges((eds) => applyEdgeChanges(changes, eds))}
             onConnect={onConnect}
+            onInit={setReactFlowInstance}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView

@@ -34,18 +34,18 @@ export function useDashboardSelection({
         const filesToDownload = Array.from(selectedFiles);
         toast.promise(
             (async () => {
-                for (const filename of filesToDownload) {
-                    const link = document.createElement('a');
-                    link.href = `/api/view/output/${filename}`;
-                    link.download = filename;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                }
+                const blob = await filesApi.batchDownload(filesToDownload);
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `comfyui_batch_${Date.now()}.zip`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
             })(),
             {
-                loading: `Downloading ${filesToDownload.length} images...`,
+                loading: `Zipping and downloading ${filesToDownload.length} images...`,
                 success: `Downloaded ${filesToDownload.length} images!`,
                 error: 'Download failed'
             }

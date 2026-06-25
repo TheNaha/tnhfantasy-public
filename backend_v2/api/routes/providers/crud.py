@@ -8,8 +8,6 @@
 #   DELETE /api/providers/{id}         – Remove provider + cascade status records
 #   GET    /api/providers/load-balancing – Current LB strategy
 #   PUT    /api/providers/load-balancing – Update LB strategy
-#   POST   /api/providers/{id}/reconcile – Trigger model sync
-#   GET/POST /api/providers/{id}/container/* – Container lifecycle management
 from typing import Dict, Any, Optional, List
 import asyncio
 from datetime import datetime, timezone, timedelta
@@ -18,8 +16,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_provider_service, get_container_manager
-from infrastructure.providers.runtime import get_provider_worker_base_url
+from api.deps import get_session, get_provider_service, get_container_manager, get_provider_worker_url
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
 from api.deps import get_provider_lifecycle_service, get_provider_status_service
@@ -162,12 +159,11 @@ async def wake_providers(session: Session = Depends(get_session)):
         async def ping_worker(provider_id: str):
             try:
                 await http_client.get(
-                    f"{get_provider_worker_base_url(provider_id)}/health",
+                    f"{get_provider_worker_url(provider_id)}/health",
                     timeout=5.0,
                 )
             except Exception:
-                return None
-            return None
+                pass
 
         await asyncio.gather(
             *(ping_worker(provider.id) for provider in active_providers),
