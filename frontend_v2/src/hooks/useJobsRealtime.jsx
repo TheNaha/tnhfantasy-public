@@ -140,6 +140,13 @@ export function useJobsRealtime() {
         unsubs.push(ws.on('connection', (data) => {
             if (data.connected) {
                 dismissConnectionToast();
+            } else if (document.visibilityState === 'visible') {
+                if (!connectionToastIdRef.current) {
+                    connectionToastIdRef.current = toast.error(
+                        'Disconnected from server. Trying to reconnect...',
+                        { id: 'mobile-connection-error', duration: Infinity }
+                    );
+                }
             }
         }));
 

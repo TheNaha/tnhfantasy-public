@@ -1,10 +1,11 @@
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from typing import Dict, Any
 
 from api.deps import get_session, get_provider_service
 from services.provider_runtime import resolve_provider_runtime
+from core.exceptions import NotFoundError, ValidationError, ProviderTimeoutError, ProviderError
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -17,11 +18,11 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
     service = get_provider_service(session)
     provider = service.get_provider(provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found")
+        raise NotFoundError("Provider", provider_id)
         
     runtime = resolve_provider_runtime(provider)
     if not runtime.worker_url:
-        raise HTTPException(status_code=400, detail="Provider does not have a valid worker URL for extraction")
+        raise ValidationError("Provider does not have a valid worker URL for extraction")
         
     try:
         # Increase timeout because CPU extraction spins up ComfyUI
@@ -30,6 +31,6 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
             response.raise_for_status()
             return response.json()
     except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Timeout while waiting for provider to extract node definitions")
+        raise ProviderTimeoutError(provider_id, "Timeout while waiting for provider to extract node definitions")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch object_info from provider: {e}")
+        raise ProviderError(provider_id, f"Failed to fetch object_info from provider: {e}")

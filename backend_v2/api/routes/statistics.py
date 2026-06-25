@@ -523,7 +523,7 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
     return detailed_stats
 
 
-from fastapi import APIRouter, HTTPException
+from core.exceptions import ComfyError
 
 @router.get("")
 @cache_stats
@@ -532,7 +532,7 @@ async def get_statistics():
     if not gallery_indexer.is_ready:
         await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
     if not gallery_indexer.is_ready:
-        raise HTTPException(status_code=503, detail="Gallery indexer is still scanning files. Please wait.")
+        raise ComfyError("Gallery indexer is still scanning files. Please wait.", code="SERVICE_UNAVAILABLE")
         
     return await asyncio.to_thread(_calculate_statistics)
 
@@ -547,7 +547,7 @@ async def get_detailed_statistics(timeRange: str = "all"):
     if not gallery_indexer.is_ready:
         await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
     if not gallery_indexer.is_ready:
-        raise HTTPException(status_code=503, detail="Gallery indexer is still scanning files. Please wait.")
+        raise ComfyError("Gallery indexer is still scanning files. Please wait.", code="SERVICE_UNAVAILABLE")
         
     return await asyncio.to_thread(_calculate_detailed_statistics, timeRange)
 

@@ -382,7 +382,8 @@ class TestHttpFileProxy:
         mock_response.status_code = 200
 
         mock_client = AsyncMock()
-        mock_client.delete = AsyncMock(return_value=mock_response)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.post = AsyncMock(return_value=mock_response)
         with patch("infrastructure.providers.provider_registry.get_http_client", return_value=mock_client):
             result = await proxy.delete_file("models/test.safetensors")
         assert result is True
@@ -393,7 +394,8 @@ class TestHttpFileProxy:
         mock_response.status_code = 404
 
         mock_client = AsyncMock()
-        mock_client.delete = AsyncMock(return_value=mock_response)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client.post = AsyncMock(return_value=mock_response)
         with patch("infrastructure.providers.provider_registry.get_http_client", return_value=mock_client):
             result = await proxy.delete_file("models/test.safetensors")
         assert result is False

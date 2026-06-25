@@ -1186,19 +1186,24 @@ class ModelRepositoryV2:
     def garbage_collect_auto_discovered(self) -> int:
         stmt = select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
         models = self.session.exec(stmt).all()
+        if not models:
+            return 0
+            
+        model_ids = [m.id for m in models]
+        statuses_map = self._bulk_load_provider_statuses_by_model(model_ids)
+        
         deleted = 0
         for m in models:
             has_active = False
-            for v in m.versions:
-                for f in v.files:
-                    status_stmt = select(ProviderVersionStatus).where(
-                        ProviderVersionStatus.file_id == f.id,
-                        ProviderVersionStatus.status.in_(["ready", "downloading", "pending"])
-                    )
-                    if self.session.exec(status_stmt).first():
+            provider_data = statuses_map.get(m.id, {})
+            for p_key, p_info in provider_data.items():
+                for f in p_info.get("files", []):
+                    if f.get("status") in ["ready", "downloading", "pending"]:
                         has_active = True
                         break
-                if has_active: break
+                if has_active:
+                    break
+            
             if not has_active:
                 self.delete_model(m.id)
                 deleted += 1
@@ -1216,6 +1221,12 @@ class ModelRepositoryV2:
         """
         stmt = select(ModelV2)
         models = self.session.exec(stmt).all()
+        if not models:
+            return 0
+            
+        model_ids = [m.id for m in models]
+        statuses_map = self._bulk_load_provider_statuses_by_model(model_ids)
+        
         deleted = 0
         from datetime import datetime, timezone, timedelta
         recent_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -1230,18 +1241,9 @@ class ModelRepositoryV2:
                     continue
                 
             has_viable = False
-            for v in m.versions:
-                for f in v.files:
-                    status_stmt = select(ProviderVersionStatus).where(
-                        ProviderVersionStatus.file_id == f.id,
-                    )
-                    statuses = list(self.session.exec(status_stmt).all())
-                    if statuses:
-                        # Has at least one status record — not orphaned
-                        has_viable = True
-                        break
-                if has_viable:
-                    break
+            if m.id in statuses_map and statuses_map[m.id]:
+                has_viable = True
+                
             if not has_viable:
                 self.delete_model(m.id)
                 deleted += 1
