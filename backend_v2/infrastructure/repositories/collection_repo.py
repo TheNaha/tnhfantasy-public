@@ -55,22 +55,36 @@ class CollectionRepository:
         )
         return self.session.exec(stmt).first()
 
+    def get_collection_images_by_filenames(self, collection_id: int, filenames: List[str]) -> List[CollectionImage]:
+        if not filenames:
+            return []
+        stmt = select(CollectionImage).where(
+            CollectionImage.collection_id == collection_id,
+            CollectionImage.image_filename.in_(filenames)
+        )
+        return self.session.exec(stmt).all()
+
     def add_collection_image(self, collection_image: CollectionImage):
         self.session.add(collection_image)
         self.session.flush()
 
+    def add_collection_images(self, collection_images: List[CollectionImage]):
+        if not collection_images:
+            return
+        self.session.add_all(collection_images)
+        self.session.flush()
+
     def remove_collection_images(self, collection_id: int, filenames: List[str]) -> int:
-        removed = 0
-        for filename in filenames:
-            result = self.session.execute(
-                text("""
-                    DELETE FROM collection_images 
-                    WHERE collection_id = :col_id AND image_filename = :filename
-                """),
-                {"col_id": collection_id, "filename": filename}
-            )
-            removed += result.rowcount
-        return removed
+        if not filenames:
+            return 0
+            
+        from sqlalchemy import delete
+        stmt = delete(CollectionImage).where(
+            CollectionImage.collection_id == collection_id,
+            CollectionImage.image_filename.in_(filenames)
+        )
+        result = self.session.execute(stmt)
+        return result.rowcount
 
     def get_latest_collection_image(self, collection_id: int) -> Optional[CollectionImage]:
         stmt = select(CollectionImage).where(

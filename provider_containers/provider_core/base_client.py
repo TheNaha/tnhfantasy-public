@@ -26,13 +26,14 @@ class BaseProviderClient(abc.ABC):
 
     async def get_storage_stats(self) -> Dict[str, Any]:
         try:
-            # We must import ListModelsRequest here to avoid circular imports if needed,
-            # or it should be passed from models
-            from provider_core.models import ListModelsRequest
-            result = await self.list_models(ListModelsRequest(directory=""))
-            files = result.get("files", [])
+            from provider_core.models import ListModelsRequest, MODEL_DIRECTORIES
+            all_files = []
+            for directory in MODEL_DIRECTORIES:
+                result = await self.list_models(ListModelsRequest(directory=directory))
+                all_files.extend(result.get("files", []))
+                
             by_directory = {}
-            for file in files:
+            for file in all_files:
                 path = file.get("path", "")
                 if not path:
                     continue
@@ -46,7 +47,7 @@ class BaseProviderClient(abc.ABC):
                 
             return {
                 "provider_id": self.provider_id,
-                "total": len(files),
+                "total": len(all_files),
                 "by_directory": by_directory
             }
         except Exception as e:

@@ -52,8 +52,10 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
         
     files = []
     for name, file_size in file_entries:
+        file_path = f"{directory}/{name}" if directory else name
         file_data = {
             "name": name,
+            "path": file_path,
             "type": "file",
             "size": file_size
         }

@@ -5,7 +5,7 @@
  *   - Routing: React Router v6 with lazy-loaded page components to minimise
  *     the initial JS bundle.  AnimatePresence wraps route transitions for
  *     smooth page animations via Framer Motion.
- *   - State: Zustand stores (jobStore) are initialised
+ *   - State: Zustand stores (settingsStore) are initialised
  *     here for global realtime flows. Provider server-state is owned by React
  *     Query hooks consumed by layout/pages.
  *   - Data fetching: React Query (QueryClient) provides server-state caching.

@@ -76,12 +76,16 @@ def import_collections(data: CollectionBulkImport, session: Session = Depends(ge
         repo.create_collection(collection)
         
         images = col_data.get("images", [])
+        new_images = []
         for filename in images:
             img = CollectionImage(
                 collection_id=collection.id,
                 image_filename=filename
             )
-            repo.add_collection_image(img)
+            new_images.append(img)
+            
+        if new_images:
+            repo.add_collection_images(new_images)
             
         if images:
             collection.thumbnail = images[0]
@@ -203,16 +207,20 @@ def add_images_to_collection(
         raise NotFoundError("Collection", str(collection_id))
     
     added = []
+    existing_images = repo.get_collection_images_by_filenames(collection_id, data.images)
+    existing_filenames = {img.image_filename for img in existing_images}
+    
+    new_images = []
     for filename in data.images:
-        existing = repo.get_collection_image(collection_id, filename)
-        
-        if not existing:
+        if filename not in existing_filenames:
             ci = CollectionImage(
                 collection_id=collection_id,
                 image_filename=filename
             )
-            repo.add_collection_image(ci)
+            new_images.append(ci)
             added.append(filename)
+            
+    repo.add_collection_images(new_images)
     
     if added:
         collection.thumbnail = added[0]

@@ -18,8 +18,8 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_provider_service, get_container_manager
-from core.events import Event, EventType, emit_provider_stats, event_bus
+from api.deps import get_session, get_provider_service, get_container_manager, get_event_bus
+from core.events import Event, EventType, emit_provider_stats
 from services.provider_service import ProviderService
 from services.provider_status_service import invalidate_provider_status_caches
 from api.deps import get_provider_lifecycle_service
@@ -125,7 +125,8 @@ class ReconciliationEventRequest(BaseModel):
 async def push_reconciliation_event(
     provider_id: str,
     request: ReconciliationEventRequest,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    event_bus = Depends(get_event_bus)
 ):
     """
     Receive reconciliation events from worker containers.

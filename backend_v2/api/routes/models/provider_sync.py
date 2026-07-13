@@ -246,7 +246,10 @@ async def receive_sync_progress(
     Worker calls this endpoint to report download progress.
     Backend emits WebSocket event to frontend.
     """
-    from core.events import event_bus, Event, EventType
+    from core.events import Event, EventType
+    from api.deps import get_event_bus
+    
+    event_bus = get_event_bus()
     
     # Determine event type based on status
     if request.status == "downloading":

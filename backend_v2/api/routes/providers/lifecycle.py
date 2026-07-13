@@ -47,9 +47,8 @@ router = APIRouter()
 
 
 @router.get("/containers/list")
-def list_all_containers():
+def list_all_containers(container_manager = Depends(get_container_manager)):
     """List all provider containers."""
-    container_manager = get_container_manager()
     if not container_manager:
         return {
             "containers": [],
@@ -78,7 +77,10 @@ def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> No
 
 
 @router.get("/containers/status")
-async def get_all_container_statuses(session: Session = Depends(get_session)):
+async def get_all_container_statuses(
+    session: Session = Depends(get_session),
+    container_manager = Depends(get_container_manager)
+):
     """
     Get status of all provider containers in a single call.
     Cached for 10 seconds to reduce Docker/Podman queries.
@@ -87,7 +89,6 @@ async def get_all_container_statuses(session: Session = Depends(get_session)):
     if 'all_statuses' in _container_status_cache:
         return _container_status_cache['all_statuses']
     
-    container_manager = get_container_manager()
     if not container_manager:
         return {
             "statuses": {},
@@ -392,7 +393,8 @@ async def get_provider_deploy_status(
 @router.post("/{provider_id}/deploy")
 async def deploy_provider_app(
     provider_id: str,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    container_manager = Depends(get_container_manager)
 ):
     """
     Deploy provider app (Modal or Beam) by running CLI commands in the worker container.
@@ -404,7 +406,6 @@ async def deploy_provider_app(
     - Provider credentials set as environment variables
     - Backend files mounted at /backend/ (via HOST_BACKEND_PATH volume)
     """
-    container_manager = get_container_manager()
     service = get_provider_service(session)
     result = await service.deploy_provider_app(provider_id, container_manager)
     if result.get("status") == "already_running":

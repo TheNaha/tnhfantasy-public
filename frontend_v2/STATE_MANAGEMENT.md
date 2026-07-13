@@ -33,13 +33,12 @@ Use Zustand for:
 - **UI State**: Modal open/closed, active tabs, sidebar collapsed
 - **Form State**: Draft inputs, temporary selections
 - **Client-only Data**: Theme preferences, UI layout settings
-- **Realtime Process State**: Real-time job updates via `jobStore`
-- **Collection UI Cache**: Active collection selection plus lazily hydrated collection images in `useStore`
+- **Collection UI Cache**: Active collection selection in `useStore`
 
 **Example Stores:**
 
-- `settingsStore.js` - User preferences (branding, theme)
-- `useStore.js` - Gallery UI state, favorites, and active collection cache
+- `settingsStore.js` - User preferences (branding, theme, viewMode)
+- `useStore.js` - Gallery UI state (active collection cache)
 
 ### React Query - Server Data
 
@@ -139,8 +138,8 @@ const mutation = useMutation({
 ### useStore.js
 
 - **Purpose**: Gallery UI state
-- **State**: `viewMode`, `favorites[]`, `activeCollection`
-- **Methods**: `setViewMode()`, `toggleFavorite()`, `setActiveCollection()`
+- **State**: `activeCollection`
+- **Methods**: `setActiveCollection()`
 
 ### generatorStore.js
 

@@ -377,8 +377,13 @@ async def delete_model(request: Request):
             os.remove(full_path + ".downloading")
             
         if not path.endswith((".json", ".preview.png", ".sha256")):
-            for ext in [".json", ".preview.png", ".sha256"]:
-                side_file = os.path.splitext(full_path)[0] + ext
+            base_path, _ = os.path.splitext(full_path)
+            side_files = [
+                base_path + ".json",
+                base_path + ".preview.png",
+                full_path + ".sha256"
+            ]
+            for side_file in side_files:
                 if os.path.exists(side_file):
                     os.remove(side_file)
         return {"success": True, "message": f"Deleted {path}"}

@@ -933,8 +933,12 @@ class FileStorage:
                 
             if not path.endswith((".json", ".preview.png", ".sha256")):
                 base_path, _ = os.path.splitext(full_path)
-                for ext in [".json", ".preview.png", ".sha256"]:
-                    side_file = base_path + ext
+                side_files = [
+                    base_path + ".json",
+                    base_path + ".preview.png",
+                    full_path + ".sha256"
+                ]
+                for side_file in side_files:
                     if os.path.exists(side_file):
                         await asyncio.to_thread(os.remove, side_file)
             

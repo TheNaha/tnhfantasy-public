@@ -17,7 +17,7 @@ from sqlmodel import Session
 from pydantic import BaseModel
 
 from api.deps import get_session, get_provider_service, get_container_manager, get_provider_worker_url
-from core.events import Event, EventType, emit_provider_stats, event_bus
+from core.events import Event, EventType, emit_provider_stats
 from services.provider_service import ProviderService
 from api.deps import get_provider_lifecycle_service, get_provider_status_service
 from services.provider_status_service import invalidate_provider_status_caches

@@ -18,7 +18,8 @@ import os
 from typing import Dict, Set, Any
 from datetime import datetime, timezone
 
-from core.events import event_bus, Event, EventType
+from core.events import Event, EventType
+from api.deps import get_event_bus
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ class WebSocketManager:
         # Subscribe to all topics
         topics = ["job", "download", "provider", "reconciliation", "model"]
         
-        async for event in event_bus.subscribe_multiple(topics, max_queue_size=WS_BROADCAST_QUEUE_SIZE):
+        async for event in get_event_bus().subscribe_multiple(topics, max_queue_size=WS_BROADCAST_QUEUE_SIZE):
             if not self._running:
                 break
             
@@ -290,7 +291,7 @@ async def request_replay(sid, data):
         await sio.emit('error', {'message': 'last_sequence_number must be an integer'}, room=sid)
         return
         
-    events = event_bus.get_replay_buffer()
+    events = get_event_bus().get_replay_buffer()
     filtered_events = [
         event.to_dict() for event in events
         if event.sequence_number is not None and event.sequence_number > last_seq
