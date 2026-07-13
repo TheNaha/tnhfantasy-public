@@ -57,25 +57,25 @@ def get_event_bus() -> EventBus:
     return event_bus
 
 
-def get_job_service(session: Session):
+def get_job_service(session: Session = Depends(get_session)):
     """Get job service instance."""
     from services.job_service import JobService
     return JobService(session)
 
 
-def get_provider_service(session: Session):
+def get_provider_service(session: Session = Depends(get_session)):
     """Get provider service instance."""
     from services.provider_service import ProviderService
     return ProviderService(session)
 
 
-def get_model_repo_v2(session: Session):
+def get_model_repo_v2(session: Session = Depends(get_session)):
     """Get model repo V2 instance."""
     from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
     return ModelRepositoryV2(session)
 
 
-def get_model_service_v2(session: Session):
+def get_model_service_v2(session: Session = Depends(get_session)):
     """Get model service V2 instance."""
     from services.model_service import ModelServiceV2
     return ModelServiceV2(session)
@@ -102,7 +102,7 @@ def get_container_manager():
         logger.warning("container_manager_init_failed", error=str(e))
         return None
 
-def get_job_submission_service(session: Session):
+def get_job_submission_service(session: Session = Depends(get_session)):
     from services.job_submission_service import JobSubmissionService
     return JobSubmissionService(session)
 
@@ -117,12 +117,12 @@ def get_provider_lifecycle_service(session: Session = Depends(get_session)):
     )
 
 
-def get_provider_status_service(session: Session):
+def get_provider_status_service(session: Session = Depends(get_session)):
     from services.provider_status_service import ProviderStatusService
     return ProviderStatusService(session)
 
 
-def get_model_civitai_sync_service(session: Session):
+def get_model_civitai_sync_service(session: Session = Depends(get_session)):
     from services.model_civitai_sync import ModelCivitaiSyncService
     return ModelCivitaiSyncService(session)
 
@@ -132,11 +132,11 @@ def get_provider_worker_url(provider_id: str) -> str:
     return get_provider_worker_base_url(provider_id)
 
 
-def get_collection_repo(session: Session):
+def get_collection_repo(session: Session = Depends(get_session)):
     from infrastructure.repositories.collection_repo import CollectionRepository
     return CollectionRepository(session)
 
 
-def get_prompt_repo(session: Session):
+def get_prompt_repo(session: Session = Depends(get_session)):
     from infrastructure.repositories.prompt_repo import PromptRepository
     return PromptRepository(session)

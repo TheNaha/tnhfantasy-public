@@ -371,9 +371,9 @@ class ModelRepositoryV2:
             file_ids = [f.id for f in files]
             
             # Delete provider statuses FIRST (they reference files)
-            for file_id in file_ids:
+            if file_ids:
                 stmt = select(ProviderVersionStatus).where(
-                    ProviderVersionStatus.file_id == file_id
+                    ProviderVersionStatus.file_id.in_(file_ids)
                 )
                 for status in self.session.exec(stmt).all():
                     self.session.delete(status)

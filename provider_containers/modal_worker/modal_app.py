@@ -618,6 +618,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
                     "message": message,
                     "updated_at": time.time()
                 }, f)
+            vol.commit()
         except Exception as e:
             logger.info(f"[Download] Failed to write progress: {e}")
 
@@ -688,6 +689,7 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
         if os.path.exists(progress_file):
             try:
                 os.remove(progress_file)
+                vol.commit()
             except Exception:
                 pass
 

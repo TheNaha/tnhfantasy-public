@@ -19,26 +19,20 @@ fi
 # Activate the virtual environment
 source venv/bin/activate
 
-# Load environment variables from root .env if it exists
-if [ -f "../.env" ]; then
-    echo "Loading environment variables from root .env..."
-    while IFS='=' read -r key value; do
-        # skip comments and empty lines
-        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-        # trim whitespace
-        key=$(echo "$key" | xargs)
-        value=$(echo "$value" | xargs)
-        export "$key=$value"
-    done < ../.env
-fi
-
 # Install the necessary pip requirements
 pip install -r requirements.txt
 
-# Start the backend server in the background
-# It will run on port 8002 as configured in backend_v2/Dockerfile
+# Start the backend server in the background inside a subshell to isolate environment variables
 echo "Starting Backend server..."
-uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload &
+(
+    if [ -f "../.env" ]; then
+        echo "Loading environment variables from root .env..."
+        set -a
+        source ../.env
+        set +a
+    fi
+    uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+) &
 BACKEND_PID=$!
 
 cd ..
