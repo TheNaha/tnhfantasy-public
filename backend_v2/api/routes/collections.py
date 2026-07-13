@@ -20,9 +20,10 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
-from api.deps import get_session
+from api.deps import get_session, get_collection_repo
 from core.entities import Collection, CollectionImage
 from core.exceptions import NotFoundError
+from infrastructure.repositories.collection_repo import CollectionRepository
 
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
@@ -53,18 +54,14 @@ class CollectionBulkImport(BaseModel):
 # CRUD endpoints
 
 @router.get("")
-def list_collections(session: Session = Depends(get_session)):
+def list_collections(repo: CollectionRepository = Depends(get_collection_repo)):
     """List all collections with image counts."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     return {"collections": repo.list_collections_with_counts()}
 
 
 @router.post("/import")
-def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session)):
+def import_collections(data: CollectionBulkImport, session: Session = Depends(get_session), repo: CollectionRepository = Depends(get_collection_repo)):
     """Bulk import collections (for migration from localStorage)."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     imported = []
     
     for col_data in data.collections:
@@ -109,11 +106,9 @@ def import_collections(data: CollectionBulkImport, session: Session = Depends(ge
 def get_collection(
     collection_id: int, 
     include_images: bool = Query(True),
-    session: Session = Depends(get_session)
+    repo: CollectionRepository = Depends(get_collection_repo)
 ):
     """Get a single collection with its images."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
@@ -137,10 +132,8 @@ def get_collection(
 
 
 @router.post("")
-def create_collection(data: CollectionCreate, session: Session = Depends(get_session)):
+def create_collection(data: CollectionCreate, session: Session = Depends(get_session), repo: CollectionRepository = Depends(get_collection_repo)):
     """Create a new collection."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = Collection(
         name=data.name,
         color=data.color,
@@ -157,11 +150,10 @@ def create_collection(data: CollectionCreate, session: Session = Depends(get_ses
 def update_collection(
     collection_id: int, 
     data: CollectionUpdate, 
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    repo: CollectionRepository = Depends(get_collection_repo)
 ):
     """Update a collection's name, color, or description."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
@@ -179,10 +171,8 @@ def update_collection(
 
 
 @router.delete("/{collection_id}")
-def delete_collection(collection_id: int, session: Session = Depends(get_session)):
+def delete_collection(collection_id: int, session: Session = Depends(get_session), repo: CollectionRepository = Depends(get_collection_repo)):
     """Delete a collection (images are NOT deleted, only the association)."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
@@ -197,11 +187,10 @@ def delete_collection(collection_id: int, session: Session = Depends(get_session
 def add_images_to_collection(
     collection_id: int, 
     data: AddImages, 
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    repo: CollectionRepository = Depends(get_collection_repo)
 ):
     """Add images to a collection."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
@@ -236,11 +225,10 @@ def add_images_to_collection(
 def remove_images_from_collection(
     collection_id: int, 
     data: AddImages, 
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    repo: CollectionRepository = Depends(get_collection_repo)
 ):
     """Remove images from a collection."""
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
     collection = repo.get_collection(collection_id)
     if not collection:
         raise NotFoundError("Collection", str(collection_id))
@@ -259,11 +247,9 @@ def remove_images_from_collection(
 
 
 @router.get("/export")
-def export_collections(session: Session = Depends(get_session)):
+def export_collections(repo: CollectionRepository = Depends(get_collection_repo)):
     """Export all collections (for backup)."""
     from collections import defaultdict
-    from api.deps import get_collection_repo
-    repo = get_collection_repo(session)
 
     collections = repo.get_all_collections()
     if not collections:

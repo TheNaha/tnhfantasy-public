@@ -358,50 +358,34 @@ class ModelRepositoryV2:
     
     def delete_model(self, model_id: int) -> bool:
         """Delete a model and all related data (cascades)."""
+        from sqlmodel import delete
         model = self.get_model(model_id)
         if not model:
             return False
         
         # Manual cascade since SQLite doesn't always respect FK cascades
-        # Get versions
         versions = self.get_versions_for_model(model_id)
-        for version in versions:
-            # First, get all file IDs for this version
-            files = self.get_files_for_version(version.id)
-            file_ids = [f.id for f in files]
+        version_ids = [v.id for v in versions]
+        
+        if version_ids:
+            # Get all file IDs across all versions
+            stmt = select(ModelFile.id).where(ModelFile.version_id.in_(version_ids))
+            file_ids = list(self.session.exec(stmt).all())
             
-            # Delete provider statuses FIRST (they reference files)
             if file_ids:
-                stmt = select(ProviderVersionStatus).where(
-                    ProviderVersionStatus.file_id.in_(file_ids)
-                )
-                for status in self.session.exec(stmt).all():
-                    self.session.delete(status)
+                # Bulk delete provider statuses
+                self.session.exec(delete(ProviderVersionStatus).where(ProviderVersionStatus.file_id.in_(file_ids)))
+                # Bulk delete files
+                self.session.exec(delete(ModelFile).where(ModelFile.id.in_(file_ids)))
             
-            # Flush to ensure provider statuses are deleted before files
-            self.session.flush()
+            # Bulk delete images
+            self.session.exec(delete(ModelImage).where(ModelImage.version_id.in_(version_ids)))
             
-            # Now delete the files
-            for file in files:
-                self.session.delete(file)
-            
-            # Flush to ensure files are deleted before querying images
-            self.session.flush()
-            
-            # Delete images
-            stmt = select(ModelImage).where(ModelImage.version_id == version.id)
-            for image in self.session.exec(stmt).all():
-                self.session.delete(image)
-            
-            self.session.delete(version)
+            # Bulk delete versions
+            self.session.exec(delete(ModelVersion).where(ModelVersion.id.in_(version_ids)))
         
-        # Flush before querying tags
-        self.session.flush()
-        
-        # Delete tags
-        stmt = select(ModelTag).where(ModelTag.model_id == model_id)
-        for tag in self.session.exec(stmt).all():
-            self.session.delete(tag)
+        # Bulk delete tags
+        self.session.exec(delete(ModelTag).where(ModelTag.model_id == model_id))
         
         self.session.delete(model)
         self.session.commit()

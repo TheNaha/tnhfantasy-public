@@ -26,6 +26,7 @@ from core.exceptions import ValidationError
 from api.deps import deduplicated, make_key
 from api.deps import api_logger
 from api.deps import get_job_submission_service
+from services.job_submission_service import JobSubmissionService
 
 logger = api_logger()
 
@@ -104,7 +105,7 @@ async def generate(
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",
     ),
-    session: Session = Depends(get_session)
+    submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
     """Create a new generation job.
     
@@ -119,8 +120,6 @@ async def generate(
     try:
         if not request.workflow:
             raise ValidationError("workflow is required", field="workflow")
-        
-        submission_service = get_job_submission_service(session)
 
         async def _create_generation_job():
             job = await submission_service.create_and_enqueue_job(
@@ -148,7 +147,7 @@ async def generate_batch(
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same batch response for a short deduplication window.",
     ),
-    session: Session = Depends(get_session)
+    submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
     """Create multiple generation jobs at once.
     
@@ -165,8 +164,6 @@ async def generate_batch(
     try:
         if not request.workflows:
             raise ValidationError("workflows array is required", field="workflows")
-        
-        submission_service = get_job_submission_service(session)
 
         async def _create_batch_jobs():
             created_jobs = []

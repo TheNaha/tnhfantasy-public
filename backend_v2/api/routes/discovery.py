@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from api.deps import get_session, get_provider_service
-from api.deps import get_logger
+from api.deps import get_session, get_provider_service, get_logger
+from services.provider_service import ProviderService
 
 logger = get_logger("discovery_router")
 
@@ -20,7 +20,7 @@ class DiscoveryPayload(BaseModel):
 async def handle_provider_discovery(
     payload: DiscoveryPayload,
     request: Request,
-    session: Session = Depends(get_session),
+    service: ProviderService = Depends(get_provider_service)
 ):
     """
     Receive heartbeat/registration from self-discovering providers.
@@ -34,7 +34,6 @@ async def handle_provider_discovery(
                 provider_type=payload.provider_type,
                 url=payload.internal_url)
 
-    service = get_provider_service(session)
     await service.upsert_provider_from_discovery(
         provider_id=payload.provider_id,
         provider_type=payload.provider_type,

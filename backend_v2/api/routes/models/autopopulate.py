@@ -2,8 +2,9 @@ import asyncio
 from fastapi import APIRouter, Depends
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from sqlmodel import Session, select
-from api.deps import get_session
-from api.deps import get_model_civitai_sync_service
+from api.deps import get_session, get_model_repo_v2, get_model_civitai_sync_service
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+from services.model_civitai_sync import ModelCivitaiSyncService
 from core.entities import ModelV2
 from api.deps import get_session_context
 from api.deps import get_logger
@@ -20,15 +21,13 @@ class AutopopulateRequest(BaseModel):
     civitai_id: Optional[int] = None
 
 
-def _get_models_needing_population(session: Session) -> list:
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
+def _get_models_needing_population(repo: ModelRepositoryV2) -> list:
     return repo.get_models_needing_population()
 
 @router.get("/autopopulate-pending")
-async def get_autopopulate_pending(session: Session = Depends(get_session)):
+async def get_autopopulate_pending(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
     """Return a list of models that need autopopulation."""
-    models = _get_models_needing_population(session)
+    models = _get_models_needing_population(repo)
     return {
         "pending": [
             {
@@ -45,12 +44,11 @@ async def get_autopopulate_pending(session: Session = Depends(get_session)):
 @router.get("/{model_id}/autopopulate-candidates")
 async def get_autopopulate_candidates(
     model_id: int,
-    session: Session = Depends(get_session)
+    service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):
     """Return scored CivitAI search candidates for an auto-discovered model.
     Used by the frontend AutopopulateSelector so users can pick the right match.
     """
-    service = get_model_civitai_sync_service(session)
     try:
         return await service.search_civitai_candidates(str(model_id))
     except ValueError as e:
@@ -64,14 +62,12 @@ async def search_autopopulate_candidates(
     model_id: int,
     query: str,
     types: Optional[str] = None,
-    session: Session = Depends(get_session)
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     """Manual CivitAI search for autopopulate. Formats results like candidates."""
     from api.deps import get_external_model_service
     
     # Verify model exists
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
     model = repo.get_model(model_id)
     if not model:
         raise NotFoundError("Model", model_id)
@@ -108,9 +104,8 @@ async def search_autopopulate_candidates(
 async def autopopulate_model_details(
     model_id: int, 
     request: Optional[AutopopulateRequest] = None,
-    session: Session = Depends(get_session)
+    service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):
-    service = get_model_civitai_sync_service(session)
     target_id = request.civitai_id if request else None
     try:
         return await service.autopopulate_model(model_id, target_civitai_id=target_id)
@@ -122,9 +117,10 @@ async def autopopulate_model_details(
 
 @router.post("/autopopulate-all")
 async def autopopulate_all_models(
-    session: Session = Depends(get_session),
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2),
+    session: Session = Depends(get_session)
 ):
-    models_to_process = _get_models_needing_population(session)
+    models_to_process = _get_models_needing_population(repo)
 
     if not models_to_process:
         return {
@@ -203,11 +199,9 @@ async def autopopulate_all_models(
 
 @router.get("/autopopulate-status")
 async def get_autopopulate_status(
-    session: Session = Depends(get_session)
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
-    needs_population = _get_models_needing_population(session)
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
+    needs_population = _get_models_needing_population(repo)
     total = repo.get_auto_discovered_models()
 
     return {

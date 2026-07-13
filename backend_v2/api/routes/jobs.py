@@ -26,6 +26,8 @@ from api.deps import deduplicated, make_key
 from api.deps import api_logger
 from api.deps import get_job_submission_service
 from services.job_queue import job_queue
+from services.job_service import JobService
+from services.job_submission_service import JobSubmissionService
 from core.entities import JobStatus
 
 logger = api_logger()
@@ -57,7 +59,7 @@ class ValidateWorkflowResponse(BaseModel):
 @router.post("/validate")
 async def validate_workflow(
     request: ValidateWorkflowRequest,
-    session: Session = Depends(get_session)
+    submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
     """
     Pre-flight validation to check if required models are available.
@@ -71,7 +73,6 @@ async def validate_workflow(
     Returns detailed breakdown to allow UI to show missing models
     and offer download triggers.
     """
-    submission_service = get_job_submission_service(session)
     response = submission_service.build_validation_response(
         request.workflow,
         preferred_provider_id=request.preferred_provider_id,
@@ -88,7 +89,7 @@ async def create_job(
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",
     ),
-    session: Session = Depends(get_session)
+    submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
     """
     Create a new job.
@@ -101,7 +102,6 @@ async def create_job(
       return the same response during a short deduplication window.
     - If omitted, each request creates a new job.
     """
-    submission_service = get_job_submission_service(session)
 
     async def _create_and_enqueue():
         job = await submission_service.create_and_enqueue_job(
@@ -125,10 +125,9 @@ async def create_job(
 async def list_jobs(
     limit: int = 20,
     offset: int = 0,
-    session: Session = Depends(get_session)
+    service: JobService = Depends(get_job_service)
 ):
     """List jobs with pagination. Uses deduplication to prevent duplicate work."""
-    service = get_job_service(session)
     
     # Deduplicate concurrent identical requests
     return await deduplicated(
@@ -139,9 +138,8 @@ async def list_jobs(
 
 
 @router.get("/active")
-def get_active_jobs(session: Session = Depends(get_session)):
+def get_active_jobs(service: JobService = Depends(get_job_service)):
     """Get all active (pending/running) jobs to rehydrate frontend state."""
-    service = get_job_service(session)
     pending = service.get_pending_jobs()
     running = service.get_running_jobs()
     
@@ -165,12 +163,11 @@ def get_active_jobs(session: Session = Depends(get_session)):
 
 
 @router.get("/queue")
-def get_queue_status(session: Session = Depends(get_session)):
+def get_queue_status(service: JobService = Depends(get_job_service)):
     """
     Get queue status with ETA estimates.
     Returns pending and running jobs with estimated completion times.
     """
-    service = get_job_service(session)
     
     pending = service.get_pending_queue_items()
     running = service.get_running_queue_items()
@@ -216,9 +213,8 @@ def get_queue_status(session: Session = Depends(get_session)):
 
 
 @router.get("/stats/summary")
-def get_job_stats(session: Session = Depends(get_session)):
+def get_job_stats(service: JobService = Depends(get_job_service)):
     """Get job statistics."""
-    service = get_job_service(session)
     return service.get_job_stats()
 
 
@@ -228,10 +224,9 @@ def get_job_stats(session: Session = Depends(get_session)):
 @router.get("/{job_id}")
 async def get_job(
     job_id: str,
-    session: Session = Depends(get_session)
+    service: JobService = Depends(get_job_service)
 ):
     """Get a specific job."""
-    service = get_job_service(session)
     job = await service.get_job(job_id)
     return service._job_to_dict(job)
 
@@ -239,16 +234,15 @@ async def get_job(
 @router.post("/{job_id}/retry")
 async def retry_job(
     job_id: str,
-    session: Session = Depends(get_session)
+    service: JobService = Depends(get_job_service),
+    submission_service: JobSubmissionService = Depends(get_job_submission_service)
 ):
     """Retry a failed job by creating a new job with the same workflow."""
-    service = get_job_service(session)
     original_job = await service.get_job(job_id)
     
     if original_job.status != JobStatus.FAILED:
         raise ValidationError("Only failed jobs can be retried")
     
-    submission_service = get_job_submission_service(session)
     new_job = await submission_service.create_and_enqueue_job(
         original_job.workflow,
         original_job.metadata_,
@@ -266,17 +260,15 @@ async def retry_job(
 @router.delete("/{job_id}")
 async def delete_job(
     job_id: str,
-    session: Session = Depends(get_session)
+    service: JobService = Depends(get_job_service)
 ):
     """Delete a job."""
-    service = get_job_service(session)
     await service.delete_job(job_id)
     return {"status": "success"}
 
 
 @router.delete("")
-async def delete_all_jobs(session: Session = Depends(get_session)):
+async def delete_all_jobs(service: JobService = Depends(get_job_service)):
     """Delete all jobs."""
-    service = get_job_service(session)
     count = await service.clear_all_jobs()
     return {"status": "success", "deleted": count}

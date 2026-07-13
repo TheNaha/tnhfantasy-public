@@ -27,6 +27,7 @@ import tempfile
 import asyncio
 
 from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
+from services.provider_service import ProviderService
 from api.deps import get_logger
 from config import settings
 
@@ -1011,12 +1012,11 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
 async def proxy_file(
     provider_id: str,
     path: str,
-    session: Session = Depends(get_session)
+    service: ProviderService = Depends(get_provider_service)
 ):
     """Proxy file from provider storage."""
     from api.deps import create_provider_client
     
-    service = get_provider_service(session)
     provider_data = await service.get_provider(provider_id)
     
     provider = create_provider_client(provider_id, {

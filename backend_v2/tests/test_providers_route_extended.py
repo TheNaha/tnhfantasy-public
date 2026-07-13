@@ -296,18 +296,21 @@ class TestProvidersRouteReconcile:
         assert response.status_code in (404, 500, 200)
 
     def test_deploy_returns_conflict_when_already_running(self, client):
-        mock_service = MagicMock()
+        from api.deps import get_provider_service
+        mock_service = AsyncMock()
         mock_service.deploy_provider_app = AsyncMock(
             return_value={
                 "status": "already_running",
                 "message": "Deployment already in progress for this provider",
             }
         )
+        
+        client.app.dependency_overrides[get_provider_service] = lambda: mock_service
 
-        with patch("api.routes.providers.lifecycle.get_provider_service", return_value=mock_service):
-            response = client.post("/api/providers/test-provider/deploy")
+        response = client.post("/api/providers/test-provider/deploy")
 
         assert response.status_code == 400
+        del client.app.dependency_overrides[get_provider_service]
 
     def test_get_provider_deploy_status_route(self, client):
         payload = {

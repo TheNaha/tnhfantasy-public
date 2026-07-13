@@ -242,8 +242,8 @@ class TestFilesRoute:
             assert response.status_code == 200
             assert response.json()["results"]["output/test.png"]["success"] is True
 
-    @patch("api.routes.files.get_provider_service")
-    def test_proxy_file(self, mock_get_provider_service, client):
+    def test_proxy_file(self, client):
+        from api.deps import get_provider_service
         mock_service = AsyncMock()
         mock_provider = MagicMock()
         mock_provider.type = "modal"
@@ -251,7 +251,8 @@ class TestFilesRoute:
         mock_provider.config = {}
         mock_provider.container_config = {}
         mock_service.get_provider.return_value = mock_provider
-        mock_get_provider_service.return_value = mock_service
+
+        client.app.dependency_overrides[get_provider_service] = lambda: mock_service
 
         with patch("api.deps.create_provider_client") as mock_create_provider:
             mock_instance = MagicMock()
@@ -263,3 +264,6 @@ class TestFilesRoute:
             response = client.get("/api/files/proxy/123/path/to/image.png")
             assert response.status_code == 200
             assert response.content == b"content"
+        
+        # Cleanup override
+        del client.app.dependency_overrides[get_provider_service]

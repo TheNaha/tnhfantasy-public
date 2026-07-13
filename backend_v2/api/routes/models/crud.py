@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_session_sync, get_model_service_v2
+from api.deps import get_session, get_session_sync, get_model_service_v2, get_model_repo_v2
+from services.model_service import ModelServiceV2
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from core.exceptions import NotFoundError, ValidationError, ComfyError
 from api.deps import model_logger
 
@@ -19,28 +21,24 @@ router = APIRouter()
 # ============================================================================
 
 @router.get("/")
-async def list_models(session: Session = Depends(get_session)):
+async def list_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
     """List all models grouped by directory."""
-    service = get_model_service_v2(session)
     return {"models": await service.get_models_grouped()}
 
 
 @router.get("/all")
-async def list_all_models(session: Session = Depends(get_session)):
+async def list_all_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
     """List all models as flat list."""
-    service = get_model_service_v2(session)
     return await service.list_models()
 
 
 @router.get("/all-storage-paths")
-def get_all_storage_paths(session: Session = Depends(get_session)):
+def get_all_storage_paths(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
     """
     Get all expected storage paths from the V2 database.
     Used by worker to determine what files should exist vs what to delete.
     Returns paths like: models/checkpoints/model_v1_12345.safetensors
     """
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
     paths = repo.get_all_storage_paths()
     
     return {"paths": paths, "count": len(paths)}
@@ -49,7 +47,7 @@ def get_all_storage_paths(session: Session = Depends(get_session)):
 @router.get("/check-installed/{civitai_model_id}")
 def check_installed_versions(
     civitai_model_id: int,
-    session: Session = Depends(get_session)
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     """
     Check if a CivitAI model and its versions are already installed.
@@ -61,9 +59,6 @@ def check_installed_versions(
     
     Use this before showing the import dialog to mark installed versions.
     """
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
-    
     # Check if model exists
     model = repo.get_model_by_civitai_id(civitai_model_id)
     
@@ -90,7 +85,7 @@ def check_installed_versions(
 @router.post("/check-installed/batch")
 def check_installed_versions_batch(
     request: CheckInstalledBatchRequest,
-    session: Session = Depends(get_session),
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2),
 ):
     """
     Batch variant of check-installed to avoid one request per model card.
@@ -107,9 +102,6 @@ def check_installed_versions_batch(
       }
     }
     """
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
-
     requested_ids = [mid for mid in request.civitai_model_ids if isinstance(mid, int)]
     if not requested_ids:
         return {"models": {}}
@@ -173,7 +165,8 @@ def check_installed_versions_batch(
 @router.post("/")
 async def add_model(
     request: AddModelRequest,
-    session: Session = Depends(get_session)
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2),
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """
     Add a model with selected versions.
@@ -185,11 +178,6 @@ async def add_model(
     - If model+version already exists, that version is skipped
     - New versions of existing models CAN be added
     """
-    from api.deps import get_model_repo_v2
-    repo = get_model_repo_v2(session)
-    
-    service = get_model_service_v2(session)
-    
     # Extract version IDs from request
     selected_version_ids = [v["version_id"] for v in request.selected_versions]
     
@@ -231,10 +219,9 @@ async def add_model(
 @router.get("/directory/{directory}")
 async def list_models_by_directory(
     directory: str,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """List models in a specific directory."""
-    service = get_model_service_v2(session)
     return await service.list_models_by_directory(directory)
 
 
@@ -243,40 +230,36 @@ async def search_models(
     q: str = "",
     type: Optional[str] = None,
     base_model: Optional[str] = None,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Search models by name, type, or base model."""
-    service = get_model_service_v2(session)
     return await service.search_models(query=q, model_type=type, base_model=base_model)
 
 
 @router.get("/search/tag/{tag}")
 async def search_by_tag(
     tag: str,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Search models by tag."""
-    service = get_model_service_v2(session)
     return await service.search_by_tag(tag)
 
 
 @router.get("/{model_id}")
 async def get_model(
     model_id: int,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Get model with versions, files, and images."""
-    service = get_model_service_v2(session)
     return await service.get_model(model_id)
 
 
 @router.delete("/{model_id}")
 async def delete_model(
     model_id: int,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Delete a model and all related data."""
-    service = get_model_service_v2(session)
     await service.delete_model(model_id)
     return {"status": "success"}
 
@@ -288,10 +271,9 @@ async def delete_model(
 @router.get("/{model_id}/versions")
 async def get_versions(
     model_id: int,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Get all versions for a model."""
-    service = get_model_service_v2(session)
     return await service.get_versions(model_id)
 
 
@@ -299,10 +281,9 @@ async def get_versions(
 async def set_default_version_modern(
     model_id: int,
     request: SetDefaultVersionRequest,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Set the default version for a model."""
-    service = get_model_service_v2(session)
     success = await service.set_default_version(model_id, request.version_id)
     if success:
         return {"status": "success"}
@@ -312,10 +293,9 @@ async def set_default_version_modern(
 @router.put("/versions/{version_id}/toggle")
 async def toggle_version_enabled(
     version_id: int,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Toggle whether a version is enabled."""
-    service = get_model_service_v2(session)
     result = await service.toggle_version_enabled(version_id)
     if result:
         return result
@@ -326,13 +306,12 @@ async def toggle_version_enabled(
 async def get_generation_info(
     model_id: int,
     version_id: Optional[int] = None,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """
     Get model/version info needed for generation.
     Returns storage path and other generation params.
     """
-    service = get_model_service_v2(session)
     return await service.get_version_for_generation(model_id, version_id)
 
 

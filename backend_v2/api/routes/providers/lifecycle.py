@@ -20,13 +20,15 @@ from pydantic import BaseModel
 
 from .crud import AddCustomProviderModelRequest
 
-from api.deps import get_session, get_provider_service, get_container_manager
+from api.deps import get_session, get_provider_service, get_container_manager, get_model_repo_v2
 from core.events import Event, EventType, emit_provider_stats, event_bus
 from services.provider_service import ProviderService
 from api.deps import get_provider_lifecycle_service, get_provider_status_service, get_model_service_v2
+from services.provider_status_service import ProviderStatusService
 from services.provider_status_service import invalidate_provider_status_caches
 from services.provider_lifecycle_service import ProviderLifecycleService
 from services.model_service import ModelServiceV2
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
 from api.deps import start_background_task
 from api.deps import get_http_client
@@ -78,7 +80,7 @@ def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> No
 
 @router.get("/containers/status")
 async def get_all_container_statuses(
-    session: Session = Depends(get_session),
+    service: ProviderService = Depends(get_provider_service),
     container_manager = Depends(get_container_manager)
 ):
     """
@@ -97,7 +99,6 @@ async def get_all_container_statuses(
         }
     
     # Get all providers
-    service = get_provider_service(session)
     providers = await service.list_providers()
     
     statuses = {}
@@ -142,11 +143,12 @@ async def get_all_container_statuses(
 
 
 @router.get("/status-cards")
-async def get_provider_status_cards(session: Session = Depends(get_session)):
+async def get_provider_status_cards(
+    service: ProviderService = Depends(get_provider_service),
+    status_service: ProviderStatusService = Depends(get_provider_status_service)
+):
     """Return canonical provider status payloads for all configured providers."""
-    service = get_provider_service(session)
     providers = await service.list_providers()
-    status_service = get_provider_status_service(session)
     cards = await status_service.build_provider_status_cards(providers)
 
     return {
@@ -156,21 +158,24 @@ async def get_provider_status_cards(session: Session = Depends(get_session)):
 
 
 @router.get("/{provider_id}/status-card")
-async def get_provider_status_card(provider_id: str, session: Session = Depends(get_session)):
+async def get_provider_status_card(
+    provider_id: str,
+    status_service: ProviderStatusService = Depends(get_provider_status_service)
+):
     """Return canonical provider status payload for a single provider."""
-    service = get_provider_service(session)
-    status_service = get_provider_status_service(session)
     return await status_service.build_provider_status_card(provider_id)
 
 
 @router.get("/{provider_id}/live-metrics")
-async def get_provider_live_metrics(provider_id: str, session: Session = Depends(get_session)):
+async def get_provider_live_metrics(
+    provider_id: str,
+    service: ProviderService = Depends(get_provider_service)
+):
     """Fetch live metrics directly from the remote provider container."""
     from services.provider_runtime import resolve_provider_runtime
     from api.deps import get_http_client
     import time
     
-    service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
     runtime = resolve_provider_runtime(provider)
     
@@ -202,10 +207,9 @@ async def get_provider_live_metrics(provider_id: str, session: Session = Depends
 async def get_provider_logs(
     provider_id: str,
     tail: int = 500,
-    session: Session = Depends(get_session)
+    lifecycle: ProviderLifecycleService = Depends(get_provider_lifecycle_service)
 ):
     """Fetch recent container logs for a provider."""
-    lifecycle = get_provider_lifecycle_service(session)
     result = lifecycle.get_container_logs(provider_id, tail=tail)
     if "error" in result:
         return {"logs": [], "error": result["error"]}
@@ -215,30 +219,38 @@ async def get_provider_logs(
 
 
 @router.get("/{provider_id}/modal-stats")
-async def get_provider_modal_stats(provider_id: str, session: Session = Depends(get_session)):
+async def get_provider_modal_stats(
+    provider_id: str,
+    service: ProviderService = Depends(get_provider_service),
+    status_service: ProviderStatusService = Depends(get_provider_status_service)
+):
     """
     Get model counts directly from provider storage via worker container.
     Cached for 30 seconds to reduce load.
     Works with both Modal and Beam providers.
     """
     # Get provider to verify it exists
-    service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
-    status_service = get_provider_status_service(session)
     return await status_service.get_provider_storage_stats(provider_id, provider)
 
 
 @router.get("/{provider_id}/sync-status")
-async def get_provider_sync_status(provider_id: str, session: Session = Depends(get_session)):
+async def get_provider_sync_status(
+    provider_id: str,
+    status_service: ProviderStatusService = Depends(get_provider_status_service)
+):
     """Return V2-backed sync counts for a provider."""
-    status_service = get_provider_status_service(session)
     return await status_service.get_provider_sync_status(provider_id)
 
 
 @router.get("/{provider_id}/models")
-async def get_provider_models(provider_id: str, status: Optional[str] = None, session: Session = Depends(get_session)):
+async def get_provider_models(
+    provider_id: str, 
+    status: Optional[str] = None,
+    status_service: ProviderStatusService = Depends(get_provider_status_service)
+):
     """Return provider models grouped by directory using the V2 schema."""
-    sync_status = await get_provider_sync_status(provider_id, session)
+    sync_status = await get_provider_sync_status(provider_id, status_service)
     grouped: Dict[str, List[Dict[str, Any]]] = {}
 
     for model in sync_status["models"]:
@@ -258,10 +270,10 @@ async def remove_model_from_provider(
     provider_id: str,
     directory: str,
     filename: str,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2),
+    provider_service: ProviderService = Depends(get_provider_service)
 ):
     """Delete a model file from one provider and mark it pending again in V2."""
-    service = get_model_service_v2(session)
     from api.deps import create_provider_client
 
     normalized_directory = directory.replace("models/", "", 1)
@@ -269,7 +281,6 @@ async def remove_model_from_provider(
     if not file:
         raise NotFoundError("Resource", "Model file not found")
 
-    provider_service = get_provider_service(session)
     provider = await provider_service.get_provider(provider_id)
     provider_client = create_provider_client(provider_id, {
         "type": provider.type,
@@ -304,10 +315,9 @@ async def remove_model_from_provider(
 @router.post("/models/custom")
 async def add_custom_model_to_providers(
     request: AddCustomProviderModelRequest,
-    session: Session = Depends(get_session)
+    service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Create a V2 custom model entry and trigger downloads for the selected providers."""
-    service = get_model_service_v2(session)
     model_name = request.model_data.get("name", "").strip()
     model_url = request.model_data.get("url", "").strip()
     model_type = request.model_data.get("type")
@@ -338,20 +348,18 @@ async def add_custom_model_to_providers(
 @router.post("/{provider_id}/models/sync")
 async def trigger_provider_sync(
     provider_id: str,
-    session: Session = Depends(get_session)
+    lifecycle: ProviderLifecycleService = Depends(get_provider_lifecycle_service)
 ):
     """Trigger a reconciliation sync for a provider."""
-    lifecycle = get_provider_lifecycle_service(session)
     return await lifecycle.sync_provider_models(provider_id)
 
 
 @router.post("/{provider_id}/setup")
 async def setup_provider(
     provider_id: str,
-    session: Session = Depends(get_session)
+    lifecycle: ProviderLifecycleService = Depends(get_provider_lifecycle_service)
 ):
     """Run Modal's setup_models function to initialize directories."""
-    lifecycle = get_provider_lifecycle_service(session)
     try:
         return await lifecycle.setup_provider(provider_id)
     except ProviderError as exc:
@@ -371,10 +379,9 @@ async def setup_provider(
 @router.get("/{provider_id}/deploy-status")
 async def get_provider_deploy_status(
     provider_id: str,
-    session: Session = Depends(get_session)
+    service: ProviderService = Depends(get_provider_service)
 ):
     """Get persisted backend deploy state for a provider or proxy from worker."""
-    service = get_provider_service(session)
     provider = await service.get_provider(provider_id)
     from services.provider_runtime import resolve_provider_runtime
     runtime = resolve_provider_runtime(provider)
@@ -393,7 +400,7 @@ async def get_provider_deploy_status(
 @router.post("/{provider_id}/deploy")
 async def deploy_provider_app(
     provider_id: str,
-    session: Session = Depends(get_session),
+    service: ProviderService = Depends(get_provider_service),
     container_manager = Depends(get_container_manager)
 ):
     """
@@ -406,7 +413,6 @@ async def deploy_provider_app(
     - Provider credentials set as environment variables
     - Backend files mounted at /backend/ (via HOST_BACKEND_PATH volume)
     """
-    service = get_provider_service(session)
     result = await service.deploy_provider_app(provider_id, container_manager)
     if result.get("status") == "already_running":
         raise ValidationError(result.get("message", "Deployment already running"))
@@ -423,7 +429,10 @@ async def deploy_provider_app(
 
 
 @router.post("/cleanup-orphaned-statuses")
-async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_session)):
+async def cleanup_orphaned_provider_statuses(
+    service: ProviderService = Depends(get_provider_service),
+    model_repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
+):
     """
     Clean up ProviderVersionStatus records for providers that no longer exist.
     This fixes the desync between model status indicators and actual provider list.
@@ -431,15 +440,11 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
     Should be run once after deleting providers to clean up orphaned status entries
     from before the cascade delete feature was added.
     """
-    from api.deps import get_model_repo_v2
-    
     # Get list of active provider IDs
-    service = get_provider_service(session)
     providers = await service.list_providers()
     active_provider_ids = [p["id"] for p in providers]
     
     # Clean up orphaned statuses
-    model_repo = get_model_repo_v2(session)
     result = model_repo.cleanup_orphaned_provider_statuses(active_provider_ids)
     stale_reset_count = model_repo.reset_stale_downloading_statuses(
         stale_before=datetime.now(timezone.utc) - timedelta(minutes=120),
@@ -460,6 +465,9 @@ async def cleanup_orphaned_provider_statuses(session: Session = Depends(get_sess
 
 
 @router.post("/state/cleanup")
-async def cleanup_provider_state(session: Session = Depends(get_session)):
+async def cleanup_provider_state(
+    service: ProviderService = Depends(get_provider_service),
+    model_repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
+):
     """Explicit maintenance action for provider state hygiene."""
-    return await cleanup_orphaned_provider_statuses(session)
+    return await cleanup_orphaned_provider_statuses(service, model_repo)
