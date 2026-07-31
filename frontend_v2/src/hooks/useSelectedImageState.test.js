@@ -1,5 +1,7 @@
+import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const { mockGet } = vi.hoisted(() => ({
     mockGet: vi.fn(),
@@ -33,10 +35,18 @@ describe('useSelectedImageState', () => {
         document.body.style.overflow = 'unset';
     });
 
+
+    const createWrapper = () => {
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+        });
+        return ({ children }) => React.createElement(QueryClientProvider, { client: queryClient }, children);
+    };
+
     it('uses embedded metadata immediately and refreshes from sidecar metadata', async () => {
         mockGet.mockResolvedValueOnce({ prompt: 'sidecar', width: 768 });
 
-        const { result } = renderHook(() => useSelectedImageState());
+        const { result } = renderHook(() => useSelectedImageState(), { wrapper: createWrapper() });
 
         act(() => {
             result.current.selectImage({
@@ -65,7 +75,7 @@ describe('useSelectedImageState', () => {
     it('loads fallback metadata for legacy images', async () => {
         mockGet.mockResolvedValueOnce({ prompt: 'loaded from api' });
 
-        const { result } = renderHook(() => useSelectedImageState());
+        const { result } = renderHook(() => useSelectedImageState(), { wrapper: createWrapper() });
 
         act(() => {
             result.current.selectImage({
@@ -96,7 +106,7 @@ describe('useSelectedImageState', () => {
         const { ApiError } = await import('../api');
         mockGet.mockRejectedValueOnce(new ApiError(404));
 
-        const { result } = renderHook(() => useSelectedImageState());
+        const { result } = renderHook(() => useSelectedImageState(), { wrapper: createWrapper() });
 
         act(() => {
             result.current.selectImage({

@@ -75,11 +75,10 @@ def get_model_cache_for_directory(
 async def reconcile_provider(
     provider_id: str,
     force: bool = False,
-    session: Session = Depends(get_session)
+    lifecycle = Depends(get_provider_lifecycle_service)
 ):
     """Trigger model reconciliation for a provider."""
     try:
-        lifecycle = get_provider_lifecycle_service(session)
         result = await lifecycle.trigger_reconciliation(provider_id, force=force)
     except ProviderError as exc:
         detail = str(exc)
@@ -100,11 +99,10 @@ async def reconcile_provider(
 @router.get("/{provider_id}/reconciliation-status")
 async def get_reconciliation_status(
     provider_id: str,
-    session: Session = Depends(get_session)
+    lifecycle = Depends(get_provider_lifecycle_service)
 ):
     """Get current reconciliation status for a provider."""
     try:
-        lifecycle = get_provider_lifecycle_service(session)
         return await lifecycle.get_reconciliation_status(provider_id)
     except httpx.HTTPStatusError as exc:
         raise ProviderError(provider_id, "Failed to get reconciliation status") from exc
@@ -125,7 +123,7 @@ class ReconciliationEventRequest(BaseModel):
 async def push_reconciliation_event(
     provider_id: str,
     request: ReconciliationEventRequest,
-    session: Session = Depends(get_session),
+    service: ProviderService = Depends(get_provider_service),
     event_bus = Depends(get_event_bus)
 ):
     """
@@ -169,7 +167,6 @@ async def push_reconciliation_event(
         "stats": request.stats or {},
     }
 
-    service = get_provider_service(session)
     persisted_state = await service.upsert_reconciliation_state(provider_id, persistence_updates)
     _invalidate_provider_runtime_caches(provider_id)
 

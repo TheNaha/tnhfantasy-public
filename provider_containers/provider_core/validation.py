@@ -44,8 +44,8 @@ def validate_downloaded_file(
     """Validate a downloaded file and return a normalized validation payload."""
     validation_errors = []
 
-    if not os.path.exists(path):
-        return {"valid": False, "error": "File not found"}
+    if not os.path.isfile(path):
+        return {"valid": False, "error": "File not found or is a directory"}
 
     actual_size = os.path.getsize(path)
     if total_size > 0 and actual_size != total_size:

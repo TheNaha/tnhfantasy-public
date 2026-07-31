@@ -1,24 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Loader2, Download, Check, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import { api } from '../../api';
+import { useCheckInstalledVersions } from '../../hooks/useCivitaiSearch';
 
 export default function ModelImportCard({ model, onCancel }) {
     const [selectedVersionId, setSelectedVersionId] = useState(model.modelVersions?.[0]?.id);
     const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [installing, setInstalling] = useState(false);
-    const [installedVersions, setInstalledVersions] = useState([]);
-
-    // Check which versions are already installed
-    useEffect(() => {
-        if (model.id) {
-            api.get(`/api/v2/models/check-installed/${model.id}`)
-                .then(data => setInstalledVersions(data.installed_versions || []))
-                .catch(() => setInstalledVersions([]));
-        }
-    }, [model.id]);
+    const { data: installedVersions = [] } = useCheckInstalledVersions(model.id);
 
     const selectedVersion = model.modelVersions?.find(v => v.id === parseInt(selectedVersionId)) || model.modelVersions?.[0];
     const primaryFile = selectedVersion?.files?.find(f => f.primary) || selectedVersion?.files?.[0];

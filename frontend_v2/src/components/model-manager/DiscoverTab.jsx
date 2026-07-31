@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Search, Loader2, Download, Globe, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
 
 import ModelCard from './ModelCard';
 import ModelImportCard from './ModelImportCard';
+import { useCivitaiEnums, useCivitaiTags, useCivitaiSearch } from '../../hooks/useCivitaiSearch';
+import useDebounce from '../../hooks/useDebounce';
 
 const SORT_OPTIONS = [['', 'Relevance'], ['Newest', 'Newest'], ['Most Downloaded', 'Downloads'], ['Most Liked', 'Likes']];
 const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], ['Week', 'Week'], ['Day', 'Day']];
@@ -63,8 +65,7 @@ export default function DiscoverTab() {
 
     const [query, setQuery] = useState(() => getSaved('query', ""));
     const [urlInput, setUrlInput] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [results, setResults] = useState([]);
+
     const [importing, setImporting] = useState(false);
     const [importedModel, setImportedModel] = useState(null);
     const [source, setSource] = useState(() => getSaved('source', "civitai"));
@@ -76,7 +77,7 @@ export default function DiscoverTab() {
     const [filterPeriod, setFilterPeriod] = useState(() => getSaved('period', ""));
     const [filterUsername, setFilterUsername] = useState(() => getSaved('username', ""));
     const [filterTag, setFilterTag] = useState(() => getSaved('tag', ""));
-    const [popularTags, setPopularTags] = useState([]);
+
 
     // Sync to localStorage
     useEffect(() => {
@@ -90,117 +91,49 @@ export default function DiscoverTab() {
         localStorage.setItem('civitai_discover_username', JSON.stringify(filterUsername));
         localStorage.setItem('civitai_discover_tag', JSON.stringify(filterTag));
     }, [query, source, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag]);
-    const [page, setPage] = useState(1);
-    const [nextCursor, setNextCursor] = useState(null);
-    const [hasMore, setHasMore] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
 
-    const [civitaiEnums, setCivitaiEnums] = useState({ ModelType: [], BaseModel: [] });
+    const debouncedQuery = useDebounce(query, 600);
+    const debouncedUsername = useDebounce(filterUsername, 600);
+    const debouncedTag = useDebounce(filterTag, 600);
 
-    // Fetch CivitAI Enums and Tags on mount
-    useEffect(() => {
-        const loadEnums = async () => {
-            try {
-                const data = await api.get('/api/v2/models/external/civitai/enums');
-                setCivitaiEnums({
-                    ModelType: data.ModelType || [],
-                    BaseModel: data.BaseModel || []
-                });
-            } catch (err) {
-                console.warn("Failed to fetch CivitAI enums:", err);
-                setCivitaiEnums({
-                    ModelType: ['Checkpoint', 'LORA', 'VAE', 'Controlnet', 'Upscaler', 'TextualInversion', 'Hypernetwork', 'MotionModule'],
-                    BaseModel: ['SD 1.5', 'SDXL 1.0', 'SD 3', 'SD 3.5', 'Flux.1 D', 'Pony', 'Illustrious']
-                });
-            }
-        };
-        const loadTags = async () => {
-            try {
-                const res = await fetch('https://civitai.com/api/v1/tags?limit=20');
-                const data = await res.json();
-                setPopularTags(data.items || []);
-            } catch (err) {
-                console.warn("Failed to fetch CivitAI tags:", err);
-            }
-        };
-        loadEnums();
-        loadTags();
-    }, []);
+    const { data: enumsData } = useCivitaiEnums();
+    const { data: tagsData } = useCivitaiTags();
+    
+    const civitaiEnums = enumsData || { ModelType: [], BaseModel: [] };
+    const popularTags = tagsData || [];
 
-    const buildSearchUrl = useCallback((targetPage = 1, targetCursor = null) => {
-        const endpoint = `/api/v2/models/external/${source}`;
-        const params = new URLSearchParams({ query, limit: '20' });
-        if (source === 'civitai') {
-            if (filterTypes.length > 0) params.append('types', filterTypes.join(','));
-            if (filterSort) params.append('sort', filterSort);
-            if (filterBaseModels.length > 0) params.append('baseModels', filterBaseModels.join(','));
-            if (filterNsfw) params.append('nsfw', filterNsfw);
-            if (filterPeriod) params.append('period', filterPeriod);
-            if (filterUsername) params.append('username', filterUsername);
-            if (filterTag) params.append('tag', filterTag);
-            if (targetCursor) {
-                params.append('cursor', targetCursor);
-            } else if (!query) {
-                params.append('page', targetPage);
-            }
-        } else {
-            params.append('page', targetPage);
-        }
-        return `${endpoint}?${params.toString()}`;
-    }, [query, source, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag]);
+    const filters = useMemo(() => ({
+        source,
+        query: debouncedQuery,
+        types: filterTypes,
+        sort: filterSort,
+        baseModels: filterBaseModels,
+        nsfw: filterNsfw,
+        period: filterPeriod,
+        username: debouncedUsername,
+        tag: debouncedTag
+    }), [source, debouncedQuery, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, debouncedUsername, debouncedTag]);
 
-    const fetchResults = useCallback(async () => {
-        // If query is empty, maybe don't search, or if sorting by Newest/Most Downloaded, allow empty query.
-        // But CivitAI allows empty queries.
-        setLoading(true);
-        setImportedModel(null);
-        setInstalledInfoByModelId({});
-        setPage(1);
-        setNextCursor(null);
-        try {
-            const url = buildSearchUrl(1, null);
-            const data = await api.get(url);
-            setResults(data.items || []);
-            setHasMore(!!data.metadata?.nextPage || !!data.metadata?.nextCursor);
-            setNextCursor(data.metadata?.nextCursor || null);
-        } catch (err) {
-            // Only toast if it's not a 502/500 from empty spam
-            if (!err.message.includes("502")) {
-                toast.error(err.message);
-            }
-            setResults([]);
-        } finally {
-            setLoading(false);
-        }
-    }, [buildSearchUrl]);
+    const {
+        data: searchData,
+        fetchNextPage,
+        hasNextPage,
+        isFetching,
+        isFetchingNextPage
+    } = useCivitaiSearch(filters);
 
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            fetchResults();
-        }, 600);
-        return () => clearTimeout(handler);
-    }, [query, filterTypes, filterSort, filterBaseModels, filterNsfw, filterPeriod, filterUsername, filterTag, source, fetchResults]);
+    const results = useMemo(() => {
+        return searchData ? searchData.pages.flatMap(page => page.items || []) : [];
+    }, [searchData]);
 
     const handleSearch = (e) => {
         e.preventDefault();
-        fetchResults();
+        // Since we debounce, forcing a search might not be immediately necessary.
     };
 
-    const handleLoadMore = async () => {
-        if (loadingMore || !hasMore) return;
-        setLoadingMore(true);
-        const nextPage = page + 1;
-        try {
-            const url = buildSearchUrl(nextPage, nextCursor);
-            const data = await api.get(url);
-            setResults(prev => [...prev, ...(data.items || [])]);
-            setHasMore(!!data.metadata?.nextPage || !!data.metadata?.nextCursor);
-            setNextCursor(data.metadata?.nextCursor || null);
-            setPage(nextPage);
-        } catch (err) {
-            toast.error(err.message);
-        } finally {
-            setLoadingMore(false);
+    const handleLoadMore = () => {
+        if (!isFetchingNextPage && hasNextPage) {
+            fetchNextPage();
         }
     };
 
@@ -435,7 +368,7 @@ export default function DiscoverTab() {
             )}
 
             {/* Content Area */}
-            {loading ? (
+            {isFetching && !isFetchingNextPage ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {Array.from({ length: 8 }).map((_, i) => (
                         <div key={i} className="aspect-[2/3] bg-white/5 rounded-2xl animate-pulse shadow-inner" />
@@ -455,14 +388,14 @@ export default function DiscoverTab() {
                         ))}
                     </div>
                     
-                    {hasMore && (
+                    {hasNextPage && (
                         <div className="flex justify-center pt-6 pb-10">
                             <button
                                 onClick={handleLoadMore}
-                                disabled={loadingMore}
+                                disabled={isFetchingNextPage}
                                 className="bg-[#0B0E14]/80 hover:bg-black/40 disabled:opacity-50 text-white px-8 py-3.5 rounded-2xl font-bold tracking-wide flex items-center gap-3 transition-all duration-300 border border-white/10 shadow-lg hover:shadow-[0_0_15px_rgba(255,255,255,0.1)] transform active:scale-95"
                             >
-                                {loadingMore ? (
+                                {isFetchingNextPage ? (
                                     <>
                                         <Loader2 className="animate-spin text-blue-400" size={20} />
                                         <span>Loading more...</span>

@@ -9,7 +9,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
  * - G: Navigate to Generate page
  * - M: Navigate to Models page
  * - A: Navigate to Advanced page
- * - ?: Show keyboard shortcuts help (console log for now)
+ * - ?: Show keyboard shortcuts help
  * - Escape: Close modals (via callback)
  */
 export const useKeyboardShortcuts = ({ onEscape, onShowHelp } = {}) => {

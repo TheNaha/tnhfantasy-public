@@ -1285,9 +1285,13 @@ class ModelRepositoryV2:
         deleted_count = 0
         from sqlmodel import delete
         for model, _ in orphans:
-            self.session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
-            self.session.delete(model)
             deleted_count += 1
+            
+        if orphans:
+            orphan_ids = [model.id for model, _ in orphans]
+            self.session.exec(delete(ModelTag).where(ModelTag.model_id.in_(orphan_ids)))
+            for model, _ in orphans:
+                self.session.delete(model)
             
         self.session.commit()
         return deleted_count

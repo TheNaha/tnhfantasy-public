@@ -151,6 +151,24 @@ class ModelCivitaiSyncService:
             civitai_versions = civitai_data["modelVersions"]
             matched_ids = set()
 
+            # Pre-fetch existing files and images to avoid N+1 queries
+            local_version_ids = [lv.id for lv in local_versions]
+            existing_files_by_version = {}
+            existing_images_by_version = {}
+            if local_version_ids:
+                all_existing_files = self.session.exec(
+                    select(ModelFile).where(ModelFile.version_id.in_(local_version_ids))
+                ).all()
+                for ef in all_existing_files:
+                    existing_files_by_version.setdefault(ef.version_id, []).append(ef)
+                    
+                all_existing_images = self.session.exec(
+                    select(ModelImage).where(ModelImage.version_id.in_(local_version_ids))
+                ).all()
+                for img in all_existing_images:
+                    existing_images_by_version.setdefault(img.version_id, []).append(img)
+
+
             for civitai_version in civitai_versions:
                 matched_version = None
 
@@ -202,9 +220,7 @@ class ModelCivitaiSyncService:
                     primary_civitai = next((f for f in civitai_files if f.get("primary")), civitai_files[0])
                     civitai_size_kb = primary_civitai.get("sizeKB")
                     civitai_download_url = primary_civitai.get("downloadUrl")
-                    existing_files = self.session.exec(
-                        select(ModelFile).where(ModelFile.version_id == matched_version.id)
-                    ).all()
+                    existing_files = existing_files_by_version.get(matched_version.id, [])
                     for ef in existing_files:
                         changed = False
                         if civitai_size_kb is not None and (not ef.size_kb or ef.size_kb == 0):
@@ -226,9 +242,7 @@ class ModelCivitaiSyncService:
                     matched_version.trained_words = json.dumps(trained)
 
                 images = civitai_version.get("images", [])
-                existing_images = self.session.exec(
-                    select(ModelImage).where(ModelImage.version_id == matched_version.id)
-                ).all()
+                existing_images = existing_images_by_version.get(matched_version.id, [])
 
                 if images and not existing_images:
                     image_data = images[0]

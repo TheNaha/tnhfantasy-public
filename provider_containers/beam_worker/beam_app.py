@@ -361,34 +361,34 @@ async def list_models(request: Request):
 
 @storage_app.post("/delete-model")
 async def delete_model(request: Request):
-    """Delete a model."""
+    import asyncio
+    import shutil
     data = await request.json()
     path = data.get("path")
     full_path = get_safe_path("/mnt/data", path)
-    
-    if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
-        return {"success": False, "message": f"Not found: {path}"}
-    
-    try:
-        if os.path.exists(full_path):
-            os.remove(full_path)
-            
-        if os.path.exists(full_path + ".downloading"):
-            os.remove(full_path + ".downloading")
-            
-        if not path.endswith((".json", ".preview.png", ".sha256")):
-            base_path, _ = os.path.splitext(full_path)
-            side_files = [
-                base_path + ".json",
-                base_path + ".preview.png",
-                full_path + ".sha256"
-            ]
-            for side_file in side_files:
-                if os.path.exists(side_file):
-                    os.remove(side_file)
-        return {"success": True, "message": f"Deleted {path}"}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+
+    def _do_delete():
+        if not os.path.exists(full_path) and not os.path.exists(full_path + ".downloading"):
+            return False, f"Not found: {path}"
+        try:
+            if os.path.exists(full_path):
+                if os.path.isdir(full_path):
+                    shutil.rmtree(full_path)
+                else:
+                    os.remove(full_path)
+            if os.path.exists(full_path + ".downloading"):
+                os.remove(full_path + ".downloading")
+            if not path.endswith((".json", ".preview.png", ".sha256")):
+                base_path, _ = os.path.splitext(full_path)
+                for side_file in [base_path + ".json", base_path + ".preview.png", full_path + ".sha256"]:
+                    if os.path.exists(side_file):
+                        os.remove(side_file)
+            return True, f"Deleted {path}"
+        except Exception as e:
+            return False, str(e)
+
+    success, message = await asyncio.to_thread(_do_delete)
+    return {"success": success, "message": message}
 
 
 @storage_app.post("/get-file")
@@ -409,16 +409,23 @@ async def get_file(request: Request):
 
 @storage_app.post("/delete-file")
 async def delete_file(request: Request):
-    """Delete file."""
+    import asyncio
+    import shutil
     data = await request.json()
     path = data.get("path")
     full_path = get_safe_path("/mnt/data", path)
-    
-    if not os.path.exists(full_path):
-        return {"success": False, "message": f"Not found: {path}"}
-    
-    os.remove(full_path)
-    return {"success": True, "message": f"Deleted {path}"}
+
+    def _do_delete():
+        if not os.path.exists(full_path):
+            return False, f"Not found: {path}"
+        if os.path.isdir(full_path):
+            shutil.rmtree(full_path)
+        else:
+            os.remove(full_path)
+        return True, f"Deleted {path}"
+        
+    success, message = await asyncio.to_thread(_do_delete)
+    return {"success": success, "message": message}
 
 
 @storage_app.post("/upload-file")
@@ -520,7 +527,10 @@ async def validate_models(request: Request):
 @storage_app.post("/validate-all-models")
 async def validate_all_models(request: Request):
     """Validate all model directories in one batch call to avoid O(N) HTTP requests."""
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     delete_invalid = data.get("delete_invalid", False)
     
     # We create a dummy request for the child function

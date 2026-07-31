@@ -50,8 +50,7 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
         
-    files = []
-    for name, file_size in file_entries:
+    async def _process_file(name: str, file_size: int) -> Dict[str, Any]:
         file_path = f"{directory}/{name}" if directory else name
         file_data = {
             "name": name,
@@ -99,6 +98,8 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
             else:
                 file_data["sha256"] = None
                 
-        files.append(file_data)
-        
+        return file_data
+
+    tasks = [_process_file(name, file_size) for name, file_size in file_entries]
+    files = await asyncio.gather(*tasks)
     return files

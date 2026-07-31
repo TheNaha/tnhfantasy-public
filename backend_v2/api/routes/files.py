@@ -146,8 +146,8 @@ async def batch_download(request: BatchDownloadRequest):
                         safe_path = get_safe_path(OUTPUT_DIR, filename)
                         if os.path.exists(safe_path):
                             zipf.write(safe_path, arcname=os.path.basename(filename))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("batch_download_file_error", filename=filename, error=str(e))
                         
         return FileResponse(
             temp_path,
@@ -238,8 +238,8 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
                     try:
                         with open(meta_path, 'r') as f:
                             metadata = json.load(f)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("model_metadata_read_error", path=meta_path, error=str(e))
 
                 valid_files.append({
                     "name": name,
@@ -275,7 +275,8 @@ async def list_files_endpoint(
     base_model: Optional[str] = None,
     model_type: Optional[str] = None,
     show_nsfw: bool = True,
-    tags: Optional[str] = None
+    tags: Optional[str] = None,
+    model_service = Depends(get_model_service_v2)
 ):
     """List files in a directory with pagination and search."""
     
@@ -296,11 +297,8 @@ async def list_files_endpoint(
         model_dir_type = directory.replace("models/", "")
         
         try:
-            async with get_session_context() as db_session:
-                model_service = get_model_service_v2(db_session)
-
-                # Get models for this directory from SQLite
-                models = await model_service.list_models_by_directory(model_dir_type)
+            # Get models for this directory from SQLite
+            models = await model_service.list_models_by_directory(model_dir_type)
             
             # Format V2 data for frontend compatibility
             valid_files = []

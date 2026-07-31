@@ -7,7 +7,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
+    UploadFileRequest, ValidateModelsRequest, CancelJobRequest, DeleteFileRequest,
     build_status_response, build_error_response
 )
 
@@ -153,7 +153,7 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
         return await client.get_file(path)
 
     @app.post("/delete-file")
-    async def delete_file(request: DeleteModelRequest):
+    async def delete_file(request: DeleteFileRequest):
         return await client.delete_file(request.path)
 
     @app.delete("/delete-file")

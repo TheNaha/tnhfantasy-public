@@ -22,6 +22,11 @@ from core.events import Event, EventType
 from api.deps import get_event_bus
 from config import settings
 
+from services.job_queue import job_queue
+from core.entities import JobStatus
+from api.deps import get_session_context, get_job_service, get_provider_service, get_http_client
+from services.provider_runtime import resolve_provider_runtime
+
 logger = logging.getLogger(__name__)
 
 # Determine CORS origins for WebSocket
@@ -185,13 +190,6 @@ async def cancel_job(sid, data):
         return
     
     logger.info(f"[WebSocket] Job cancellation requested: {job_id} by {sid}")
-    
-    # Import here to avoid circular imports
-    from services.job_queue import job_queue
-    from core.entities import JobStatus
-    from api.deps import get_session_context, get_job_service, get_provider_service
-    from api.deps import get_http_client
-    from services.provider_runtime import resolve_provider_runtime
     
     try:
         # Check if job is active in queue

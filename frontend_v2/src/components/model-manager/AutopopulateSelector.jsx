@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, Loader2, Search, Wand2, Star, Download, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { createPortal } from 'react-dom';
 import { api } from '../../api';
+import { useAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
 
 function matchTone(score) {
     if (score >= 100) return 'text-green-400 bg-green-500/20 border-green-500/30';
@@ -21,31 +22,14 @@ function ScoreBadge({ score, label }) {
 }
 
 export default function AutopopulateSelector({ modelId, modelName, modelType, onClose, onComplete }) {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const { data, isLoading: loading, error: queryError } = useAutopopulateCandidates(modelId);
+    const error = queryError?.message || null;
+
     const [selectedCivitaiId, setSelectedCivitaiId] = useState(null);
     const [applying, setApplying] = useState(false);
     const [manualQuery, setManualQuery] = useState('');
     const [manualResults, setManualResults] = useState(null);
     const [searchingManual, setSearchingManual] = useState(false);
-
-    useEffect(() => {
-        let cancelled = false;
-        setLoading(true);
-        setError(null);
-        api.get(`/api/v2/models/${modelId}/autopopulate-candidates`)
-            .then(res => {
-                if (!cancelled) setData(res);
-            })
-            .catch(err => {
-                if (!cancelled) setError(err.message);
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
-        return () => { cancelled = true; };
-    }, [modelId]);
 
     const candidates = data?.candidates || [];
 

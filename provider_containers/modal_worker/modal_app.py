@@ -932,7 +932,11 @@ class FileStorage:
         
         try:
             if os.path.exists(full_path):
-                await asyncio.to_thread(os.remove, full_path)
+                if os.path.isdir(full_path):
+                    import shutil
+                    await asyncio.to_thread(shutil.rmtree, full_path)
+                else:
+                    await asyncio.to_thread(os.remove, full_path)
                 
             if os.path.exists(full_path + ".downloading"):
                 await asyncio.to_thread(os.remove, full_path + ".downloading")

@@ -1,67 +1,38 @@
 import { useCallback, useEffect, useState } from 'react';
-
-import { api, ApiError } from '../api';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../api';
 
 export function useSelectedImageState() {
     const [selectedImage, setSelectedImage] = useState(null);
-    const [metadata, setMetadata] = useState(null);
-    const [loadingMeta, setLoadingMeta] = useState(false);
+
+    const { data: serverMetadata, isFetching } = useQuery({
+        queryKey: ['metadata', selectedImage?.name],
+        queryFn: async () => {
+            const data = await api.get(`/api/view/output/${encodeURIComponent(selectedImage.name)}.json`);
+            return data;
+        },
+        enabled: !!selectedImage,
+        staleTime: Infinity,
+        retry: false,
+    });
+
+    const embeddedMetadata = selectedImage?.metadata && Object.keys(selectedImage.metadata).length > 0
+        ? selectedImage.metadata
+        : null;
+
+    const metadata = (serverMetadata && typeof serverMetadata === 'object')
+        ? { ...(embeddedMetadata || {}), ...serverMetadata }
+        : embeddedMetadata;
+
+    const loadingMeta = !!selectedImage && isFetching;
 
     const selectImage = useCallback((image) => {
         setSelectedImage(image);
-
-        const embeddedMetadata = image?.metadata && Object.keys(image.metadata).length > 0
-            ? image.metadata
-            : null;
-
-        setMetadata(embeddedMetadata);
-        setLoadingMeta(Boolean(image));
     }, []);
 
     const closeSelectedImage = useCallback(() => {
         setSelectedImage(null);
-        setMetadata(null);
-        setLoadingMeta(false);
     }, []);
-
-    useEffect(() => {
-        if (!selectedImage) {
-            return;
-        }
-
-        const embeddedMetadata = selectedImage.metadata && Object.keys(selectedImage.metadata).length > 0
-            ? selectedImage.metadata
-            : null;
-
-        let isCancelled = false;
-
-        api.get(`/api/view/output/${encodeURIComponent(selectedImage.name)}.json`)
-            .then((data) => {
-                if (isCancelled) {
-                    return;
-                }
-
-                const mergedMetadata = (data && typeof data === 'object')
-                    ? { ...(embeddedMetadata || {}), ...data }
-                    : embeddedMetadata;
-
-                setMetadata(mergedMetadata);
-                setLoadingMeta(false);
-            })
-            .catch(() => {
-                if (isCancelled) {
-                    return;
-                }
-
-                setMetadata(embeddedMetadata);
-
-                setLoadingMeta(false);
-            });
-
-        return () => {
-            isCancelled = true;
-        };
-    }, [selectedImage]);
 
     useEffect(() => {
         document.body.style.overflow = selectedImage ? 'hidden' : 'unset';

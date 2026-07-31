@@ -116,6 +116,11 @@ class BeamProviderClient(BaseProviderClient):
                                     yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
                                     return
                                 continue
+                            except websockets.exceptions.ConnectionClosedOK:
+                                break
+                            except websockets.exceptions.ConnectionClosedError as e:
+                                yield json.dumps(build_error_response(f"Websocket connection closed with error: {str(e)}", retryable=True)) + "\n"
+                                break
                             except websockets.exceptions.ConnectionClosed:
                                 yield json.dumps(build_error_response("Websocket connection closed unexpectedly", retryable=True)) + "\n"
                                 break

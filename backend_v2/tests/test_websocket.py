@@ -141,6 +141,7 @@ async def test_cancel_job_active(mock_get_session, mock_get_http, mock_provider_
     mock_provider_service_cls.return_value = mock_provider_service
     mock_provider = MagicMock()
     mock_provider.id = "p1"
+    mock_provider.type = "modal"
     mock_provider.container_config = {"container_name": "c1"}
     mock_provider_service.get_provider.return_value = mock_provider
 

@@ -41,6 +41,11 @@ class DeleteModelRequest(BaseModel):
     path: str
 
 
+class DeleteFileRequest(BaseModel):
+    """Request for deleting a file."""
+    path: str
+
+
 class UploadFileRequest(BaseModel):
     """Request for uploading a file to provider storage."""
     filename: str

@@ -86,10 +86,12 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
     
     # Delete orphans
     deleted = []
-    for model, _ in orphans:
-        session.exec(delete(ModelTag).where(ModelTag.model_id == model.id))
-        session.delete(model)
-        deleted.append(model.name)
+    if orphans:
+        orphan_ids = [model.id for model, _ in orphans]
+        session.exec(delete(ModelTag).where(ModelTag.model_id.in_(orphan_ids)))
+        for model, _ in orphans:
+            session.delete(model)
+            deleted.append(model.name)
     
     session.commit()
     

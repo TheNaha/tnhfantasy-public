@@ -14,6 +14,7 @@ import {
   Paintbrush,
   MoreHorizontal,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
 import { api, ApiError, createIdempotencyKey } from "../../api";
@@ -48,29 +49,28 @@ const FeedCard = memo(function FeedCard({
   const imageEndpoint = `/api/view/output/${encodedName}`;
   const detailsId = useId();
 
-  // Use item.metadata from the gallery indexer (already fetched with the file list)
-  // Lazy-load full metadata only when user expands details, reuses, or remixes
-  const [fetchedMetadata, setFetchedMetadata] = useState(null);
+  // Lazy-load full metadata using React Query when user expands details, reuses, or remixes
+  const queryClient = useQueryClient();
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const fetchInProgressRef = useRef(false);
 
-  const metadata = fetchedMetadata || item.metadata;
+  // If we already have it in the react-query cache, we can use it immediately.
+  const cachedMeta = queryClient.getQueryData(['metadata', item.name]);
+  const metadata = cachedMeta || item.metadata;
 
   const ensureMetadata = useCallback(async () => {
     if (metadata) return metadata;
-    if (fetchInProgressRef.current) return null;
-    fetchInProgressRef.current = true;
     try {
-      const data = await api.get(metadataEndpoint);
-      setFetchedMetadata(data);
+      const data = await queryClient.fetchQuery({
+        queryKey: ['metadata', item.name],
+        queryFn: () => api.get(metadataEndpoint),
+        staleTime: Infinity, // metadata doesn't change
+      });
       return data;
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) return null;
       throw error;
-    } finally {
-      fetchInProgressRef.current = false;
     }
-  }, [metadata, metadataEndpoint]);
+  }, [metadata, item.name, metadataEndpoint, queryClient]);
 
   const loadImageBlob = useCallback(async () => {
     const response = await fetch(imageEndpoint);

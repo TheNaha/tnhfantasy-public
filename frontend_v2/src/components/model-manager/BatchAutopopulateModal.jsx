@@ -1,47 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Loader2, Check, ExternalLink, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { createPortal } from 'react-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api';
 import * as ws from '../../api/websocket';
+import { useAutopopulatePending, useBatchAutopopulateCandidates } from '../../hooks/useCivitaiSearch';
 
-function CandidateSelector({ model, isAllowedToFetch, onFetchComplete, onDecision }) {
-    const [candidates, setCandidates] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [selectedId, setSelectedId] = useState(null);
-    const hasFetched = useRef(false);
+function CandidateSelector({ model, candidatesData, onDecision }) {
+    const candidates = candidatesData?.data?.candidates || [];
+    const error = candidatesData?.error || null;
+    
+    const [manualSelectedId, setManualSelectedId] = useState(null);
+    const selectedId = manualSelectedId || (candidates.length > 0 ? candidates[0].civitai_model.id : null);
 
-    useEffect(() => {
-        if (!isAllowedToFetch || hasFetched.current) return;
-        hasFetched.current = true;
-        
-        api.get(`/api/v2/models/${model.id}/autopopulate-candidates`)
-            .then(res => {
-                setCandidates(res.candidates || []);
-                if (res.candidates?.length > 0) {
-                    setSelectedId(res.candidates[0].civitai_model.id);
-                }
-                setLoading(false);
-                onFetchComplete();
-            })
-            .catch(err => {
-                setError(err.message);
-                setLoading(false);
-                onFetchComplete();
-            });
-    }, [model.id, isAllowedToFetch, onFetchComplete]);
-
-    if (loading) {
-        return (
-            <div className="flex items-center gap-3 text-gray-400 py-2">
-                <Loader2 className="animate-spin" size={16} />
-                <span className="text-sm">Fetching candidates for {model.name}...</span>
-            </div>
-        );
-    }
-
-    if (error) {
+    if (!candidatesData) {
         return (
             <div className="flex items-center justify-between bg-red-900/20 border border-red-700/30 rounded p-3">
                 <div>
@@ -108,7 +81,7 @@ function CandidateSelector({ model, isAllowedToFetch, onFetchComplete, onDecisio
                     return (
                         <div
                             key={cm.id}
-                            onClick={() => setSelectedId(cm.id)}
+                            onClick={() => setManualSelectedId(cm.id)}
                             className={`shrink-0 w-48 p-2 rounded cursor-pointer border flex flex-col gap-2 ${isSelected ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 bg-gray-800 hover:border-gray-500'}`}
                         >
                             {imageUrl && (
@@ -134,12 +107,23 @@ function CandidateSelector({ model, isAllowedToFetch, onFetchComplete, onDecisio
 }
 
 export default function BatchAutopopulateModal({ onClose }) {
-    const [pendingModels, setPendingModels] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
     const [processingId, setProcessingId] = useState(null);
-    const [allowedToFetchCount, setAllowedToFetchCount] = useState(1);
     const [autoProgress, setAutoProgress] = useState(null);
     const [isAutoPopulatingAll, setIsAutoPopulatingAll] = useState(false);
+    
+    const { data: pendingModels = [], isLoading: isPendingLoading } = useAutopopulatePending();
+    
+    // Once pending models load, fetch batch candidates
+    const modelIds = pendingModels.map(m => m.id);
+    const { data: batchCandidates = [], isLoading: isBatchLoading } = useBatchAutopopulateCandidates(modelIds);
+    
+    const candidatesByModelId = {};
+    for (const res of batchCandidates) {
+        candidatesByModelId[res.model_id] = res;
+    }
+
+    const loading = isPendingLoading || isBatchLoading;
 
     useEffect(() => {
         const handleProgress = (payload) => {
@@ -152,22 +136,10 @@ export default function BatchAutopopulateModal({ onClose }) {
                 }, 1500);
             }
         };
-
         ws.on('AUTOPOPULATE_PROGRESS', handleProgress);
         return () => ws.off('AUTOPOPULATE_PROGRESS', handleProgress);
     }, [onClose]);
 
-    useEffect(() => {
-        api.get('/api/v2/models/autopopulate-pending')
-            .then(res => {
-                setPendingModels(res.pending || []);
-                setLoading(false);
-            })
-            .catch(err => {
-                toast.error("Failed to load pending models: " + err.message);
-                setLoading(false);
-            });
-    }, []);
 
     const handleDecision = async (modelId, civitaiId, action) => {
         if (action === 'approve') {
@@ -182,14 +154,11 @@ export default function BatchAutopopulateModal({ onClose }) {
             }
         }
         
-        // Remove from list regardless of approve/skip
-        setPendingModels(prev => prev.filter(m => m.id !== modelId));
-        setAllowedToFetchCount(prev => Math.max(1, prev - 1));
+        // Remove from list via optimistic update
+        queryClient.setQueryData(['autopopulate', 'pending'], (oldData) => {
+            return oldData ? oldData.filter(m => m.id !== modelId) : [];
+        });
     };
-
-    const handleFetchComplete = useCallback(() => {
-        setAllowedToFetchCount(prev => prev + 1);
-    }, []);
 
     const handleAutoPopulateAll = async () => {
         setIsAutoPopulatingAll(true);
@@ -282,7 +251,7 @@ export default function BatchAutopopulateModal({ onClose }) {
                     ) : (
                         <div className="space-y-4">
                             <p className="text-sm text-gray-400 font-medium">{pendingModels.length} models remaining</p>
-                            {pendingModels.map((model, index) => (
+                            {pendingModels.map((model) => (
                                 <div key={model.id} className="relative">
                                     {processingId === model.id && (
                                         <div className="absolute inset-0 z-10 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center rounded">
@@ -291,9 +260,8 @@ export default function BatchAutopopulateModal({ onClose }) {
                                     )}
                                     <CandidateSelector 
                                         model={model} 
-                                        isAllowedToFetch={index < allowedToFetchCount}
-                                        onFetchComplete={handleFetchComplete}
-                                        onDecision={handleDecision} 
+                                        candidatesData={candidatesByModelId[model.id]}
+                                        onDecision={handleDecision}
                                     />
                                 </div>
                             ))}

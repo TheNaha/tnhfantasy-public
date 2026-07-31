@@ -20,6 +20,9 @@ router = APIRouter(prefix="", tags=["Models"])
 class AutopopulateRequest(BaseModel):
     civitai_id: Optional[int] = None
 
+class BatchAutopopulateCandidatesRequest(BaseModel):
+    model_ids: list[int]
+
 
 def _get_models_needing_population(repo: ModelRepositoryV2) -> list:
     return repo.get_models_needing_population()
@@ -55,6 +58,29 @@ async def get_autopopulate_candidates(
         raise NotFoundError("Model", model_id)
     except Exception as e:
         raise ValidationError(str(e))
+
+
+@router.post("/autopopulate-candidates/batch")
+async def batch_get_autopopulate_candidates(
+    request: BatchAutopopulateCandidatesRequest,
+    service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
+):
+    """Batch fetch CivitAI search candidates for multiple models."""
+    import asyncio
+    semaphore = asyncio.Semaphore(3)
+    
+    async def fetch_one(model_id: int):
+        async with semaphore:
+            try:
+                res = await service.search_civitai_candidates(str(model_id))
+                return {"model_id": model_id, "data": res}
+            except Exception as e:
+                return {"model_id": model_id, "error": str(e)}
+
+    tasks = [fetch_one(mid) for mid in request.model_ids]
+    results = await asyncio.gather(*tasks)
+    
+    return {"results": results}
 
 
 @router.get("/{model_id}/autopopulate-search")
