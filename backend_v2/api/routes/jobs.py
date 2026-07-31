@@ -143,20 +143,14 @@ def get_active_jobs(service: JobService = Depends(get_job_service)):
     pending = service.get_pending_jobs()
     running = service.get_running_jobs()
     
-    # Needs to be dictified and have queue position
     jobs_data = []
     
-    pending_job_ids = [job.id for job in pending]
-    queue_positions = {}
-    if pending_job_ids:
-        queue_positions = service.repo.get_queue_positions(pending_job_ids)
-
     for job in running:
         jobs_data.append(service._job_to_dict(job))
         
-    for job in pending:
+    for i, job in enumerate(pending):
         job_dict = service._job_to_dict(job)
-        job_dict["queue_position"] = queue_positions.get(job.id, 0)
+        job_dict["queue_position"] = i + 1
         jobs_data.append(job_dict)
         
     return {"jobs": jobs_data}

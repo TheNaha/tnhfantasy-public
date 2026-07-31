@@ -11,7 +11,7 @@ def test_container_provider_defaults_to_unknown_until_probe_succeeds():
         container_config={"port": 8000},
     )
 
-    with patch("services.container_manager.get_container_manager", return_value=None):
+    with patch("api.deps.get_container_manager", return_value=None):
         runtime = resolve_provider_runtime(provider)
 
     assert runtime.mode == "unavailable"
@@ -37,7 +37,7 @@ def test_container_provider_reports_connected_when_container_probe_succeeds():
         container_config={"port": 8000},
     )
 
-    with patch("services.container_manager.get_container_manager", return_value=container_manager):
+    with patch("api.deps.get_container_manager", return_value=container_manager):
         runtime = resolve_provider_runtime(provider)
 
     assert runtime.connected is True

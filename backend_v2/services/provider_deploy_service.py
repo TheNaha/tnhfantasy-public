@@ -212,7 +212,7 @@ class ProviderDeployService:
             else:
                 container_manager = None
                 try:
-                    from services.container_manager import get_container_manager
+                    from api.deps import get_container_manager
                     container_manager = get_container_manager()
                 except Exception:
                     container_manager = None

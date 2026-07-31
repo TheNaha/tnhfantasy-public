@@ -35,8 +35,7 @@ class JobService:
         Returns:
             Created job
         """
-        import asyncio
-        job = await asyncio.to_thread(self.repo.create, workflow=workflow, metadata=metadata)
+        job = self.repo.create(workflow=workflow, metadata=metadata)
         
         logger.info("job_created", job_id=job.id)
         
@@ -47,13 +46,12 @@ class JobService:
     
     async def get_job(self, job_id: str) -> Job:
         """Get a job by ID."""
-        import asyncio
-        job = await asyncio.to_thread(self.repo.get, job_id)
+        job = self.repo.get(job_id)
         if not job:
             logger.warning("job_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
         try:
-            await asyncio.to_thread(self.session.refresh, job)
+            self.session.refresh(job)
         except Exception as e:
             logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
         return job
@@ -65,24 +63,13 @@ class JobService:
         Returns:
             Dict with 'jobs' list and 'total' count
         """
-        import asyncio
-        jobs, total = await asyncio.to_thread(self.repo.get_all, limit=limit, offset=offset)
+        results, total = self.repo.get_all(limit=limit, offset=offset)
         
         jobs_data = []
-
-        # Gather all pending jobs on the current page
-        pending_job_ids = [job.id for job in jobs if job.status == JobStatus.PENDING]
-
-        # Fetch queue positions for all pending jobs in a single query
-        queue_positions = {}
-        if pending_job_ids:
-            queue_positions = await asyncio.to_thread(self.repo.get_queue_positions, pending_job_ids)
-
-        for job in jobs:
+        for job, pos in results:
             job_dict = self._job_to_dict(job)
-            if job.status == JobStatus.PENDING:
-                # Assign pre-calculated queue position
-                job_dict["queue_position"] = queue_positions.get(job.id, 0)
+            if job.status == JobStatus.PENDING and pos is not None:
+                job_dict["queue_position"] = pos
             jobs_data.append(job_dict)
         
         return {"jobs": jobs_data, "total": total}
@@ -99,8 +86,7 @@ class JobService:
             Updated job
         """
         # Track timing based on status changes
-        import asyncio
-        job = await asyncio.to_thread(self.repo.get, job_id)
+        job = self.repo.get(job_id)
         if not job:
             logger.warning("job_update_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
@@ -113,7 +99,7 @@ class JobService:
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
             updates["completed_at"] = datetime.now(timezone.utc)
         
-        job = await asyncio.to_thread(self.repo.update, job_id, **updates)
+        job = self.repo.update(job_id, **updates)
         
         if status:
             logger.info("job_status_changed", job_id=job_id, status=status.value if hasattr(status, 'value') else status)
@@ -138,8 +124,7 @@ class JobService:
     
     async def delete_job(self, job_id: str) -> bool:
         """Delete a job."""
-        import asyncio
-        success = await asyncio.to_thread(self.repo.delete, job_id)
+        success = self.repo.delete(job_id)
         if not success:
             logger.warning("job_delete_not_found", job_id=job_id)
             raise NotFoundError("Job", job_id)
@@ -148,8 +133,7 @@ class JobService:
     
     async def clear_all_jobs(self) -> int:
         """Clear all jobs. Returns count of deleted jobs."""
-        import asyncio
-        count = await asyncio.to_thread(self.repo.delete_all)
+        count = self.repo.delete_all()
         logger.info("jobs_cleared", count=count)
         return count
     

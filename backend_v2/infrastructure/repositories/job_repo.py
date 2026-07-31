@@ -31,77 +31,41 @@ class JobRepository:
         """Get a job by ID."""
         return self.session.get(Job, job_id)
     
-    def get_all(self, limit: int = 20, offset: int = 0) -> tuple[List[Job], int]:
+    def get_all(self, limit: int = 20, offset: int = 0) -> tuple[List[tuple[Job, Optional[int]]], int]:
         """
-        Get jobs with pagination.
+        Get jobs with pagination and queue positions.
         
         Returns:
-            Tuple of (jobs list, total count)
+            Tuple of (results list of (Job, queue_position), total count)
         """
-        # Get total count efficiently using COUNT()
         total = self.session.exec(select(func.count()).select_from(Job)).one()
         
-        # Get paginated results, sorted by created_at descending
-        stmt = select(Job).order_by(col(Job.created_at).desc()).offset(offset).limit(limit)
-        jobs = list(self.session.exec(stmt).all())
+        pending_subq = (
+            select(
+                Job.id,
+                func.row_number().over(order_by=[Job.created_at, Job.id]).label("queue_position")
+            )
+            .where(Job.status == JobStatus.PENDING)
+            .subquery()
+        )
         
-        return jobs, total
+        stmt = (
+            select(Job, pending_subq.c.queue_position)
+            .outerjoin(pending_subq, Job.id == pending_subq.c.id)
+            .order_by(col(Job.created_at).desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        
+        results = list(self.session.exec(stmt).all())
+        return results, total
     
     def get_pending(self) -> List[Job]:
         """Get all pending jobs, ordered by creation time (FIFO)."""
         stmt = select(Job).where(Job.status == JobStatus.PENDING).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
 
-    def get_queue_position(self, job: Job) -> int:
-        """
-        Get the queue position for a pending job.
-        Returns the number of pending jobs created before this one + 1.
-        Returns 0 if job is not pending or not found.
-        """
-        if not job or job.status != JobStatus.PENDING:
-            return 0
 
-        # Count pending jobs created before this one
-        stmt = select(func.count()).select_from(Job).where(
-            Job.status == JobStatus.PENDING,
-            or_(
-                Job.created_at < job.created_at,
-                and_(Job.created_at == job.created_at, Job.id < job.id)
-            )
-        )
-        count = self.session.exec(stmt).one()
-        return count + 1
-    
-    def get_queue_positions(self, job_ids: List[str]) -> Dict[str, int]:
-        """
-        Get queue positions for multiple pending jobs efficiently.
-        Returns a dictionary mapping job ID to queue position.
-        """
-        if not job_ids:
-            return {}
-
-        JobAlias = aliased(Job)
-
-        # Subquery to count jobs created before the current job
-        subq = (
-            select(func.count())
-            .select_from(JobAlias)
-            .where(
-                JobAlias.status == JobStatus.PENDING,
-                or_(
-                    JobAlias.created_at < Job.created_at,
-                    and_(JobAlias.created_at == Job.created_at, JobAlias.id < Job.id)
-                )
-            )
-            .correlate(Job)
-            .scalar_subquery()
-        )
-
-        # Main query to get job ID and its position (count + 1)
-        stmt = select(Job.id, subq + 1).where(Job.id.in_(job_ids))
-        results = self.session.exec(stmt).all()
-
-        return {row[0]: row[1] for row in results}
 
     def get_by_status(self, status: JobStatus) -> List[Job]:
         """Get all jobs with a specific status."""

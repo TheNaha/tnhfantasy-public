@@ -175,7 +175,7 @@ async def test_load_balancer_health_checks(session: Session, monkeypatch):
     # Mock lifecycle start_container
     mock_start_container = AsyncMock(return_value={"status": "success"})
     
-    with patch("services.container_manager.get_container_manager", return_value=mock_cm), \
+    with patch("api.deps.get_container_manager", return_value=mock_cm), \
          patch("services.provider_lifecycle_service.ProviderLifecycleService.start_container", mock_start_container), \
          patch("httpx.AsyncClient.get", AsyncMock(return_value=mock_httpx_response)):
          

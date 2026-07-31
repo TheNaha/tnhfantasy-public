@@ -24,6 +24,9 @@ _model_cache = TTLCache(maxsize=100, ttl=600)
 # Search results cache - 2 minute TTL, max 50 entries
 _search_cache = TTLCache(maxsize=50, ttl=120)
 
+# Provider stats cache - 30 second TTL, max 10 entries
+_provider_stats_cache = TTLCache(maxsize=10, ttl=30)
+
 # Generic LRU cache for computed values (no TTL)
 _lru_cache = LRUCache(maxsize=200)
 
@@ -55,6 +58,7 @@ def cached(cache_name: str = "stats", ttl: Optional[int] = None):
             "model": _model_cache,
             "search": _search_cache,
             "lru": _lru_cache,
+            "provider_stats": _provider_stats_cache,
         }
         target_cache = cache_map.get(cache_name, _stats_cache)
     
@@ -131,6 +135,7 @@ def invalidate_cache(cache_name: str = "stats", key: Optional[str] = None):
         "model": _model_cache,
         "search": _search_cache,
         "lru": _lru_cache,
+        "provider_stats": _provider_stats_cache,
     }
     
     if cache_name == "all":
@@ -176,8 +181,17 @@ def get_cache_stats() -> dict:
         "lru": {
             "size": len(_lru_cache),
             "maxsize": _lru_cache.maxsize,
+        },
+        "provider_stats": {
+            "size": len(_provider_stats_cache),
+            "maxsize": _provider_stats_cache.maxsize,
+            "ttl": _provider_stats_cache.ttl,
         }
     }
+
+def get_provider_stats_cache() -> TTLCache:
+    """Get direct access to provider stats cache for manual TTL management."""
+    return _provider_stats_cache
 
 
 # ============================================================================

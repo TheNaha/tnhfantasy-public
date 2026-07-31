@@ -140,19 +140,25 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
             request = ListModelsRequest(directory="")
         return await client.list_models(request)
 
-    @app.delete("/delete-model")
     @app.post("/delete-model")
     async def delete_model(request: DeleteModelRequest):
         return await client.delete_model(request)
+
+    @app.delete("/delete-model")
+    async def delete_model_query(path: str):
+        return await client.delete_model(DeleteModelRequest(path=path))
 
     @app.get("/get-file/{path:path}")
     async def get_file(path: str):
         return await client.get_file(path)
 
-    @app.delete("/delete-file")
     @app.post("/delete-file")
     async def delete_file(request: DeleteModelRequest):
         return await client.delete_file(request.path)
+
+    @app.delete("/delete-file")
+    async def delete_file_query(path: str):
+        return await client.delete_file(path)
 
     @app.post("/upload-file")
     async def upload_file(request: UploadFileRequest):

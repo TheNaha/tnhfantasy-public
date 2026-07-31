@@ -11,21 +11,20 @@ from config import get_worker_backend_url
 from core.entities import ModelFile, ModelVersion, ModelV2
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
-from services.container_manager import get_container_manager
+from api.deps import get_container_manager
 from services.model_service import ModelServiceV2
 from services.provider_service import ProviderService
 
 logger = get_logger("provider_status_service")
 
-_modal_stats_cache = TTLCache(maxsize=10, ttl=30)
-
+from infrastructure.cache import get_provider_stats_cache, invalidate_cache
 
 def invalidate_provider_status_caches(provider_id: Optional[str] = None) -> None:
     """Clear cached provider status snapshots after lifecycle changes."""
     if provider_id:
-        _modal_stats_cache.pop(f"modal_stats_{provider_id}", None)
-        return
-    _modal_stats_cache.clear()
+        invalidate_cache("provider_stats", f"modal_stats_{provider_id}")
+    else:
+        invalidate_cache("provider_stats")
 
 
 class ProviderStatusService:
@@ -215,6 +214,8 @@ class ProviderStatusService:
                 reconciliation_state = None
 
         state_payload = self._storage_payload_from_reconciliation_state(provider_id, reconciliation_state)
+        _modal_stats_cache = get_provider_stats_cache()
+        
         if state_payload:
             _modal_stats_cache[cache_key] = state_payload
             return state_payload
@@ -240,6 +241,7 @@ class ProviderStatusService:
                 "total": count,
                 "by_directory": {},
             }
+            _modal_stats_cache = get_provider_stats_cache()
             _modal_stats_cache[cache_key] = result
             return result
         except Exception as exc:

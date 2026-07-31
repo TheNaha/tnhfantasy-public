@@ -790,8 +790,12 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
             
             if delete_invalid and should_delete:
                 os.remove(full_path)
-                for ext in [".json", ".preview.png", ".sha256"]:
-                    side_file = os.path.splitext(full_path)[0] + ext
+                side_files = [
+                    os.path.splitext(full_path)[0] + ".json",
+                    os.path.splitext(full_path)[0] + ".preview.png",
+                    full_path + ".sha256"
+                ]
+                for side_file in side_files:
                     if os.path.exists(side_file):
                         os.remove(side_file)
                 logger.info(f"[Validate] Deleted invalid: {name}")

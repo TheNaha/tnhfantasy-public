@@ -41,7 +41,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         status = "unknown"
         docker_available = False
         try:
-            from services.container_manager import get_container_manager
+            from api.deps import get_container_manager
 
             container_manager = get_container_manager()
             if container_manager and getattr(container_manager, "client", None) is not None:

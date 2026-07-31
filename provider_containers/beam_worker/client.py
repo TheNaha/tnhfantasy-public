@@ -229,70 +229,14 @@ class BeamProviderClient(BaseProviderClient):
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from provider_core.deploy import start_deploy_task
         from provider_core.base_client import _DEPLOY_STATE
-        import subprocess
-        import asyncio
-        from datetime import datetime, timezone
-
-        _DEPLOY_STATE.clear()
-        _DEPLOY_STATE.update({
-            "status": "deploying",
-            "message": "Deployment started",
-            "started_at": datetime.now(timezone.utc).isoformat()
-        })
-
-        async def _run():
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "beam", "deploy", "/app/beam_app.py:comfy_gpu",
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT
-                )
-                
-                out_str = ""
-                _DEPLOY_STATE["logs"] = out_str
-                
-                while True:
-                    chunk = await proc.stdout.read(1024)
-                    if not chunk:
-                        break
-                    decoded_chunk = chunk.decode('utf-8', errors='replace')
-                    out_str += decoded_chunk
-                    _DEPLOY_STATE["logs"] = out_str
-                
-                await proc.wait()
-                
-                out_str += "\n\n--- Deploying Storage App ---\n\n"
-                _DEPLOY_STATE["logs"] = out_str
-                
-                proc2 = await asyncio.create_subprocess_exec(
-                    "beam", "deploy", "/app/beam_app.py:comfy_storage",
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT
-                )
-                
-                while True:
-                    chunk = await proc2.stdout.read(1024)
-                    if not chunk:
-                        break
-                    decoded_chunk = chunk.decode('utf-8', errors='replace')
-                    out_str += decoded_chunk
-                    _DEPLOY_STATE["logs"] = out_str
-                    
-                await proc2.wait()
-
-                if proc.returncode == 0 and proc2.returncode == 0:
-                    _DEPLOY_STATE.update({"status": "completed", "message": "Deployment successful"})
-                    logger.info("Beam deployment completed successfully")
-                else:
-                    _DEPLOY_STATE.update({"status": "failed", "message": f"Deployment failed with codes {proc.returncode}, {proc2.returncode}"})
-                    logger.error(f"Beam deployment failed with codes {proc.returncode}, {proc2.returncode}: {out_str[-500:]}")
-            except Exception as e:
-                _DEPLOY_STATE.update({"status": "failed", "message": str(e)})
-                logger.error(f"Beam deployment error: {e}", exc_info=True)
-
-        self._deploy_task = asyncio.create_task(_run())
-        self._deploy_task.add_done_callback(_log_deploy_done)
+        
+        commands = [
+            ["beam", "deploy", "/app/beam_app.py:comfy_gpu"],
+            ["beam", "deploy", "/app/beam_app.py:comfy_storage"]
+        ]
+        self._deploy_task = start_deploy_task("Beam", commands)
         return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:

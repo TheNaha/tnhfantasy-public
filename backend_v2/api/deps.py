@@ -15,7 +15,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Generator
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlmodel import Session
 
 from infrastructure.database import (
@@ -93,26 +93,33 @@ def get_image_service():
     return _get_image_service()
 
 
-def get_container_manager():
-    """Get container manager singleton (lazy initialization)."""
-    try:
-        from services.container_manager import get_container_manager as get_shared_container_manager
-        return get_shared_container_manager()
-    except Exception as e:
-        logger.warning("container_manager_init_failed", error=str(e))
-        return None
+_global_container_manager = None
+
+def set_global_container_manager(cm):
+    """Set the global fallback container manager instance for background tasks."""
+    global _global_container_manager
+    _global_container_manager = cm
+
+def get_container_manager(request: Request = None):
+    """Get container manager from app state if in request context, else fallback to global."""
+    if request is not None and hasattr(request, "app"):
+        return getattr(request.app.state, "container_manager", None)
+    return _global_container_manager
 
 def get_job_submission_service(session: Session = Depends(get_session)):
     from services.job_submission_service import JobSubmissionService
     return JobSubmissionService(session)
 
 
-def get_provider_lifecycle_service(session: Session = Depends(get_session)):
+def get_provider_lifecycle_service(
+    request: Request,
+    session: Session = Depends(get_session)
+):
     from services.provider_lifecycle_service import ProviderLifecycleService
     from services.provider_status_service import invalidate_provider_status_caches
     return ProviderLifecycleService(
         session,
-        container_manager=get_container_manager(),
+        container_manager=get_container_manager(request),
         invalidate_caches=invalidate_provider_status_caches,
     )
 

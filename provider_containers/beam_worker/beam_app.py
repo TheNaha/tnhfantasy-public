@@ -15,7 +15,7 @@ Deploy:
     beta9 deploy beam_app.py:comfy_download
 """
 # beam is the CLI alias for the beta9 Python package
-from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler
+from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler, rest_api
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 import os
@@ -636,9 +636,10 @@ async def download_health():
 @download_app.post("/download-model")
 async def download_model_endpoint(request: Request):
     """Download a model - delegated from main storage app for separate scaling."""
-    res = await shared_download_model(await request.json())
+    data = await request.json()
+    res = await shared_download_model(data)
     if res.get("status") == "success":
-        return {"status": "success", "path": request.json().get("path") if hasattr(request.json, "get") else (await request.json()).get("path"), "size": res.get("size", 0)}
+        return {"status": "success", "path": data.get("path"), "size": res.get("size", 0)}
     return {"status": "error", "message": res.get("message", "Download failed")}
 
 

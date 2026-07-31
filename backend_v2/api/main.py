@@ -95,6 +95,18 @@ async def lifespan(app: FastAPI):
     Application lifespan handler.
     Runs on startup and shutdown.
     """
+    from services.container_manager import ContainerManager
+    from api.deps import set_global_container_manager
+    
+    try:
+        container_manager = ContainerManager()
+    except Exception as e:
+        logger.warning("container_manager_init_failed", error=str(e))
+        container_manager = None
+        
+    app.state.container_manager = container_manager
+    set_global_container_manager(container_manager)
+
     lifecycle_tasks = await startup_application(process_job, ws_manager)
     
     yield

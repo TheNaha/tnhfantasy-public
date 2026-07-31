@@ -270,7 +270,7 @@ class LoadBalancer:
         # 1. First try container_manager container status (if containerized)
         if provider.container_config:
             try:
-                from services.container_manager import get_container_manager
+                from api.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
                     container_name = f"comfy-provider-{provider.id}"
@@ -300,7 +300,7 @@ class LoadBalancer:
         except Exception:
             # Try localhost fallback via Docker host port mapping
             try:
-                from services.container_manager import get_container_manager
+                from api.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
                     container_name = f"comfy-provider-{provider.id}"
@@ -421,7 +421,7 @@ class LoadBalancer:
             if selected_provider:
                 try:
                     from services.provider_lifecycle_service import ProviderLifecycleService
-                    from services.container_manager import get_container_manager
+                    from api.deps import get_container_manager
                     
                     lifecycle_service = ProviderLifecycleService(
                         self.session,
@@ -451,7 +451,7 @@ class LoadBalancer:
                     except Exception:
                         try:
                             # Local fallback
-                            from services.container_manager import get_container_manager
+                            from api.deps import get_container_manager
                             cm = get_container_manager()
                             if cm and cm.client:
                                 container_name = f"comfy-provider-{selected_provider.id}"
