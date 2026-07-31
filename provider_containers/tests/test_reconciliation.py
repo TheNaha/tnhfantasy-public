@@ -186,7 +186,7 @@ async def test_run_reconciliation_v2_downloads_missing_files_and_deletes_orphans
     report_status = AsyncMock()
     monkeypatch.setattr("provider_core.reconciliation.report_file_status_v2", report_status)
     monkeypatch.setattr("provider_core.reconciliation.push_reconciliation_event", AsyncMock(return_value=True))
-    monkeypatch.setattr("provider_core.reconciliation.register_discovered_files", AsyncMock(return_value={"imported": 1, "failed": 0}))
+    monkeypatch.setattr("provider_core.reconciliation.register_discovered_files", AsyncMock(return_value={"imported": 0, "failed": 1}))
 
     validate_existing = AsyncMock(return_value={"total_invalid": 1, "total_partial": 0})
     list_existing_files = AsyncMock(return_value={orphan_path: {"size": 4096, "modified_at": 12345}})

@@ -1,8 +1,9 @@
+import React from 'react';
 import { Download, Image as ImageIcon, Check, Heart } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 
-export default function ModelCard({ model, onSelect, source, installedInfo = null }) {
+function ModelCard({ model, onSelect, source, installedInfo = null }) {
     // ALWAYS use backend proxy for Civitai models so the backend caches and resizes them!
     const proxyUrl = (source === 'civitai' && model.id) ? `/api/v2/models/preview/${model.id}?image_index=0` : null;
     const directPreviewImage = model.modelVersions?.[0]?.images?.[0]?.url || null;
@@ -93,3 +94,5 @@ export default function ModelCard({ model, onSelect, source, installedInfo = nul
         </div>
     );
 }
+
+export default React.memo(ModelCard);

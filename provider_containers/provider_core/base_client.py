@@ -28,9 +28,15 @@ class BaseProviderClient(abc.ABC):
         try:
             from provider_core.models import ListModelsRequest, MODEL_DIRECTORIES
             all_files = []
-            for directory in MODEL_DIRECTORIES:
-                result = await self.list_models(ListModelsRequest(directory=directory))
-                all_files.extend(result.get("files", []))
+            async def _fetch(directory):
+                return await self.list_models(ListModelsRequest(directory=directory))
+                
+            results = await asyncio.gather(*[_fetch(d) for d in MODEL_DIRECTORIES], return_exceptions=True)
+            for res in results:
+                if isinstance(res, dict):
+                    all_files.extend(res.get("files", []))
+                else:
+                    logger.warning(f"[{self.provider_id}] Error listing models for stats: {res}")
                 
             by_directory = {}
             for file in all_files:

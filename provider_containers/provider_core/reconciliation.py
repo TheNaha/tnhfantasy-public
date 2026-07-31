@@ -588,14 +588,12 @@ async def run_reconciliation_v2(
                 registered_count = registration_result.get("imported", 0)
 
                 # Only consider deletion for files that weren't successfully registered
-                if registered_count < len(orphaned_files):
-                    # SAFETY FIX: Since the registration API only returns a count and not specific 
-                    # failed paths, it's unsafe to delete any of them without risking valid data loss.
-                    logger.warning("[V2 Reconciliation] Registration partially failed. Skipping deletion to prevent data loss.")
+                if registered_count > 0:
+                    logger.info(f"[V2 Reconciliation] {registered_count} orphaned files successfully registered and will be kept on disk.")
                     deletion_candidates = []
                 else:
-                    logger.info(f"[V2 Reconciliation] All {registered_count} orphaned files successfully registered and will be kept on disk.")
-                    deletion_candidates = []
+                    logger.info(f"[V2 Reconciliation] No orphaned files were registered. They are safe to delete.")
+                    deletion_candidates = orphaned_file_infos
 
                 if deletion_candidates:
                     delete_enabled = os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")

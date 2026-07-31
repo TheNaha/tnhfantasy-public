@@ -227,14 +227,21 @@ class ModalProviderClient(BaseProviderClient):
             paths = {}
             list_models_func = get_modal_function("list_models_with_metadata")
             list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 3600.0)))
-            for directory in MODEL_DIRECTORIES:
+            
+            async def _fetch_dir(directory: str):
                 try:
                     files = await asyncio.wait_for(list_models_func.remote.aio(directory), timeout=list_timeout_seconds)
-                    for file_info in files: paths[f"{directory}/{file_info['name']}"] = file_info
+                    return directory, files
                 except asyncio.TimeoutError:
                     raise RuntimeError(f"Timeout listing {directory} on Modal after {list_timeout_seconds}s")
                 except Exception as e:
                     raise RuntimeError(f"Failed to list {directory} on Modal: {e}")
+
+            results = await asyncio.gather(*[_fetch_dir(d) for d in MODEL_DIRECTORIES])
+            for directory, files in results:
+                for file_info in files:
+                    paths[f"{directory}/{file_info['name']}"] = file_info
+                    
             return paths
 
         async def download_file(download_url: str, storage_path: str, token: str = None):

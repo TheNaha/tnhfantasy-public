@@ -188,6 +188,18 @@ class ExternalModelService:
         except Exception as exc:
             raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
 
+    async def get_civitai_tags(self, limit: int = 20) -> Dict[str, Any]:
+        """Fetch popular tags from CivitAI."""
+        url = f"https://civitai.com/api/v1/tags?limit={limit}"
+        client = get_http_client()
+        try:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPError as exc:
+            logger.error(f"Error fetching CivitAI tags: {exc}")
+            raise ExternalModelServiceError(status_code=502, detail="Failed to fetch tags from CivitAI")
+
     async def _parse_civitai_url(self, url: str) -> Dict[str, Any]:
         match = re.search(r"models/(\d+)", url)
         if not match:

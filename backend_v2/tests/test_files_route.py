@@ -74,11 +74,9 @@ class TestFilesRoute:
         assert data["files"][0]["name"] == "test.png"
         assert data["total"] == 1
 
-    @patch("api.routes.files.get_model_service_v2")
-    def test_list_files_models(self, mock_get_service, client):
-        # Setup mock service
-        mock_service = AsyncMock()
-        mock_service.list_models_by_directory.return_value = [
+    @patch("services.model_service.ModelServiceV2.list_models_by_directory")
+    def test_list_files_models(self, mock_list_models_by_directory, client):
+        mock_list_models_by_directory.return_value = [
             {
                 "name": "model1",
                 "versions": [{"is_default": True, "file": {"filename": "model1.safetensors"}}],
@@ -86,44 +84,14 @@ class TestFilesRoute:
                 "tags": []
             }
         ]
-        mock_get_service.return_value = mock_service
 
-        mock_session = MagicMock()
-        
-        @asynccontextmanager
-        async def fake_session_context():
-            yield mock_session
+        response = client.get("/api/files?directory=models/checkpoints")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["files"]) == 1
+        assert data["files"][0]["name"] == "model1.safetensors"
 
-        with patch("api.routes.files.get_session_context", fake_session_context):
-            response = client.get("/api/files?directory=models/checkpoints")
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data["files"]) == 1
-            assert data["files"][0]["name"] == "model1.safetensors"
 
-    @patch("api.routes.files.get_model_service_v2")
-    def test_list_files_models_closes_session_generator(self, mock_get_service, client):
-        class DummySessionContext:
-            def __init__(self, session):
-                self._session = session
-                self.closed = False
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                self.closed = True
-
-        mock_service = AsyncMock()
-        mock_service.list_models_by_directory.return_value = []
-        mock_get_service.return_value = mock_service
-
-        session_context = DummySessionContext(MagicMock())
-
-        with patch("api.routes.files.get_session_context", return_value=session_context):
-            response = client.get("/api/files?directory=models/checkpoints")
-            assert response.status_code == 200
-            assert session_context.closed is True
 
     @patch("os.path.exists")
     @patch("os.path.isfile")

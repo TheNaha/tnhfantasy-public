@@ -36,6 +36,17 @@ async def get_civitai_enums(
     except ExternalModelServiceError as exc:
         raise ProviderError("ExternalModelService", exc.detail) from exc
 
+@router.get("/civitai/tags")
+async def get_civitai_tags(
+    limit: int = 20,
+    service: ExternalModelService = Depends(get_external_model_service),
+) -> Dict[str, Any]:
+    """Get valid tags for CivitAI filters."""
+    try:
+        return await service.get_civitai_tags(limit=limit)
+    except ExternalModelServiceError as exc:
+        raise ProviderError("ExternalModelService", exc.detail) from exc
+
 @router.get("/civitai")
 async def search_civitai(
     query: str = "",

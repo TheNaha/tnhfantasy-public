@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
     Circle,
     Edit2,
@@ -53,7 +53,7 @@ function SparkLine({ data, color, dataKey = 'value', domain = [0, 100] }) {
     );
 }
 
-export default function ProviderListItem({
+function ProviderListItem({
     provider,
     loading,
     actionLabel = null,
@@ -307,3 +307,5 @@ export default function ProviderListItem({
         </div>
     );
 }
+
+export default React.memo(ProviderListItem);

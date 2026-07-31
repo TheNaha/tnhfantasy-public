@@ -27,9 +27,7 @@ export function useCivitaiTags() {
     return useQuery({
         queryKey: ['civitai', 'tags'],
         queryFn: async () => {
-            const res = await fetch('https://civitai.com/api/v1/tags?limit=20');
-            if (!res.ok) throw new Error('Failed to fetch tags');
-            const data = await res.json();
+            const data = await api.get('/api/v2/models/external/civitai/tags?limit=20');
             return data.items || [];
         },
         staleTime: 1000 * 60 * 60,

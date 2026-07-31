@@ -283,10 +283,12 @@ class JobQueue:
             await self.enqueue(job.id, job.provider_id)
             recovered_count += 1
 
-        # Don't re-enqueue non-stale running jobs — they may still be processing
-        # on the provider. Stale jobs are handled above (marked as failed).
-        # Non-stale running jobs will either complete normally or time out,
-        # and the timeout handler will retry them if needed.
+        # Re-enqueue non-stale running jobs. Since the backend restarted, internal
+        # async tasks waiting for these provider jobs were destroyed. We must re-enqueue
+        # them so they are tracked again and don't become zombies.
+        for job in recoverable_running:
+            await self.enqueue(job.id, job.provider_id)
+            recovered_count += 1
         
         if recovered_count > 0 or failed_count > 0:
             logger.info("job_recovery_complete", recovered=recovered_count, failed=failed_count)
