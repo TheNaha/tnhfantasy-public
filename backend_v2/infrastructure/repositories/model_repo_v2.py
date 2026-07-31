@@ -441,6 +441,13 @@ class ModelRepositoryV2:
         stmt = select(ModelFile).where(ModelFile.version_id == version_id)
         return list(self.session.exec(stmt).all())
     
+    def get_files_for_model(self, model_id: int) -> List[ModelFile]:
+        """Get all files for all versions of a model in a single query."""
+        stmt = select(ModelFile).join(
+            ModelVersion, ModelFile.version_id == ModelVersion.id
+        ).where(ModelVersion.model_id == model_id)
+        return list(self.session.exec(stmt).all())
+    
     def get_primary_file_for_version(self, version_id: int) -> Optional[ModelFile]:
         """Get the primary file for a version."""
         stmt = select(ModelFile).where(

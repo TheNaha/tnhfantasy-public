@@ -91,6 +91,20 @@ def create_db_and_tables() -> None:
     run_migrations(engine)
 
 
+async def vacuum_database() -> None:
+    """Run SQLite VACUUM to reclaim disk space and optimize performance."""
+    from sqlalchemy import text
+
+    logger.info("vacuum_start")
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("VACUUM"))
+            conn.commit()
+        logger.info("vacuum_complete")
+    except Exception as exc:
+        logger.error("vacuum_failed", error=str(exc))
+
+
 def get_session() -> Generator[Session, None, None]:
     """
     Get a database session.

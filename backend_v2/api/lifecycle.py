@@ -9,7 +9,7 @@ from api.startup_helpers import (
 )
 from core.entities import JobStatus
 from infrastructure.background_tasks import cancel_background_tasks, start_background_task
-from infrastructure.database import create_db_and_tables
+from infrastructure.database import create_db_and_tables, vacuum_database
 from infrastructure.http_client import close_http_client
 from infrastructure.logging import get_logger
 from infrastructure.scheduler import (
@@ -80,19 +80,6 @@ def requeue_inflight_jobs_for_shutdown() -> int:
         session.close()
 
 
-async def vacuum_database() -> None:
-    """Run SQLite VACUUM to reclaim disk space and optimize performance."""
-    from sqlalchemy import text
-    from infrastructure.database import engine
-
-    logger.info("vacuum_start")
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("VACUUM"))
-            conn.commit()
-        logger.info("vacuum_complete")
-    except Exception as exc:
-        logger.error("vacuum_failed", error=str(exc))
 
 
 async def run_data_cleanup() -> None:
