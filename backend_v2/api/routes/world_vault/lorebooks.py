@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from typing import List, Optional, Any
 from datetime import datetime, timezone
@@ -8,6 +9,16 @@ from core.entities import Lorebook, LorebookEntry
 from services.embedding_service import EmbeddingService
 
 router = APIRouter()
+
+
+class LorebookUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class EntryUpdate(BaseModel):
+    keys: Optional[List[str]] = None
+    content: Optional[str] = None
 
 @router.get("/", response_model=List[Lorebook])
 def list_lorebooks(session: Session = Depends(get_session)):
@@ -30,15 +41,16 @@ def get_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
     return lorebook
 
 @router.put("/{lorebook_id}", response_model=Lorebook)
-def update_lorebook(lorebook_id: str, update_data: dict, session: Session = Depends(get_session)):
+def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Session = Depends(get_session)):
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
         raise HTTPException(status_code=404, detail="Lorebook not found")
     
-    if "name" in update_data:
-        lorebook.name = update_data["name"]
-    if "description" in update_data:
-        lorebook.description = update_data["description"]
+    update_dict = update_data.model_dump(exclude_unset=True)
+    if "name" in update_dict:
+        lorebook.name = update_dict["name"]
+    if "description" in update_dict:
+        lorebook.description = update_dict["description"]
         
     lorebook.updated_at = datetime.now(timezone.utc)
     session.add(lorebook)
@@ -149,7 +161,7 @@ def create_entry(
 def update_entry(
     lorebook_id: str, 
     entry_id: str, 
-    update_data: dict, 
+    update_data: EntryUpdate, 
     session: Session = Depends(get_session),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
@@ -158,12 +170,13 @@ def update_entry(
         raise HTTPException(status_code=404, detail="Entry not found")
         
     needs_embedding_update = False
+    update_dict = update_data.model_dump(exclude_unset=True)
     
-    if "keys" in update_data:
-        entry.keys = update_data["keys"]
+    if "keys" in update_dict:
+        entry.keys = update_dict["keys"]
         needs_embedding_update = True
-    if "content" in update_data:
-        entry.content = update_data["content"]
+    if "content" in update_dict:
+        entry.content = update_dict["content"]
         needs_embedding_update = True
         
     if needs_embedding_update:

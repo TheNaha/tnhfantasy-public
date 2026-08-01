@@ -406,32 +406,56 @@ async def finalize_successful_job(
     else:
         outputs = []
 
-    if job.task_type == 'text' and final_result.get('type') == 'chat_reply' or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply"):
+    is_chat_reply = job.task_type == 'text' and (
+        final_result.get('type') == 'chat_reply'
+        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply")
+    )
+    is_story_continue = job.task_type == 'text' and (
+        final_result.get('type') == 'story_continue'
+        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "story_continue")
+    )
+    
+    if is_chat_reply or is_story_continue:
         assistant_content = ""
         if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
             assistant_content = final_result.get("outputs")[0].get("content", "")
         if not assistant_content and final_result.get("text"):
              assistant_content = final_result.get("text")
              
-        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
-        if not chat_id:
-            chat_id = final_result.get("chat_id")
+        entity_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not entity_id:
+            entity_id = final_result.get("chat_id")
             
-        if chat_id and assistant_content:
-            from api.deps import get_db_engine
+        if entity_id and assistant_content:
+            from infrastructure.database import engine
             from sqlmodel import Session
             from core.entities import Message, MessageRole
             
-            engine = get_db_engine()
             with Session(engine) as session:
-                msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=chat_id)
-                session.add(msg)
-                session.commit()
-                
+                if is_chat_reply:
+                    msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=entity_id)
+                    session.add(msg)
+                    session.commit()
+                else:
+                    chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
+                    if chapter_id:
+                        from core.entities import StoryChapter, StoryBeatRole
+                        chapter = session.get(StoryChapter, chapter_id)
+                        if chapter:
+                            chapter.beats.append({"role": StoryBeatRole.NARRATOR, "content": assistant_content})
+                            chapter.content += f"\n\n{assistant_content}\n\n"
+                            session.add(chapter)
+                            session.commit()
+                    msg = Message(role=MessageRole.STORY, content=assistant_content, chat_id=entity_id)
+                    session.add(msg)
+                    session.commit()
+                    
+            event_type_str = "chat_reply" if is_chat_reply else "story_continue"
             await emit_job_event(EventType.JOB_COMPLETED, {
                 "id": job.id, 
                 "task_type": "text", 
-                "chat_id": chat_id, 
+                "type": event_type_str,
+                "chat_id": entity_id, 
                 "content": assistant_content
             })
 

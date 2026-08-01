@@ -1,16 +1,214 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks } from '../hooks/useWorldVault';
+import { useWorldVaultStore } from '../store/worldVaultStore';
+import { useWebSocket, EventTypes } from '../api/websocket';
+import { useQueryClient } from '@tanstack/react-query';
+import EmptyState from '../components/EmptyState';
+import ConfirmationModal from '../components/ConfirmationModal';
+
+function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, isLoading }) {
+    const [creating, setCreating] = useState(false);
+    const [newTitle, setNewTitle] = useState('');
+
+    const handleCreate = async () => {
+        if (!newTitle.trim()) return;
+        setCreating(true);
+        try {
+            await onCreateStory({ title: newTitle.trim() });
+            setNewTitle('');
+            toast.success('Story created');
+        } catch {
+            toast.error('Failed to create story');
+        }
+        setCreating(false);
+    };
+
+    return (
+        <div className="w-64 border-r border-white/5 bg-gray-900/60 hidden md:flex flex-col shrink-0">
+            <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
+                <h3 className="font-semibold text-gray-200">Stories</h3>
+            </div>
+            <div className="p-2 border-b border-white/5">
+                <div className="flex gap-1">
+                    <input
+                        type="text"
+                        value={newTitle}
+                        onChange={e => setNewTitle(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+                        placeholder="New story title..."
+                        className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                        disabled={creating}
+                    />
+                    <button onClick={handleCreate} disabled={creating || !newTitle.trim()} className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors disabled:opacity-30">
+                        <Plus size={18} />
+                    </button>
+                </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {isLoading ? (
+                    <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" /></div>
+                ) : stories?.length === 0 ? (
+                    <p className="text-xs text-gray-500 text-center p-4">No stories yet. Create one above.</p>
+                ) : (
+                    stories?.map(story => (
+                        <div key={story.id} className="group relative">
+                            <button
+                                onClick={() => onSelectStory(story.id)}
+                                className={clsx(
+                                    "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between",
+                                    activeStoryId === story.id ? "bg-indigo-500/20 text-indigo-300" : "text-gray-400 hover:bg-white/5"
+                                )}
+                            >
+                                <span className="truncate flex-1">{story.title}</span>
+                                {story.genre && <span className="text-[10px] text-gray-500 ml-2 shrink-0">{story.genre}</span>}
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onDeleteStory(story); }}
+                                className="absolute right-1 top-1 p-1 opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-500 rounded transition-all"
+                                title="Delete story"
+                            >
+                                <Trash2 size={12} />
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+}
+
+function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, isLoading }) {
+    const [creating, setCreating] = useState(false);
+
+    const handleCreate = async () => {
+        setCreating(true);
+        try {
+            await onCreateChapter({ title: `Chapter ${(chapters?.length || 0) + 1}` });
+            toast.success('Chapter created');
+        } catch {
+            toast.error('Failed to create chapter');
+        }
+        setCreating(false);
+    };
+
+    return (
+        <div className="w-56 border-r border-white/5 bg-gray-900/40 hidden lg:flex flex-col shrink-0">
+            <div className="h-12 flex items-center justify-between px-3 border-b border-white/5 shrink-0">
+                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chapters</h4>
+                <button onClick={handleCreate} disabled={creating} className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors disabled:opacity-30" title="New chapter">
+                    <Plus size={14} />
+                </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {isLoading ? (
+                    <div className="flex justify-center p-3"><Loader2 className="animate-spin text-gray-500" size={14} /></div>
+                ) : chapters?.length === 0 ? (
+                    <p className="text-[11px] text-gray-500 text-center p-3">No chapters yet</p>
+                ) : (
+                    chapters?.map(ch => (
+                        <button
+                            key={ch.id}
+                            onClick={() => onSelectChapter(ch.id)}
+                            className={clsx(
+                                "w-full text-left px-2 py-1.5 rounded text-xs transition-colors flex items-center gap-1.5",
+                                activeChapterId === ch.id ? "bg-indigo-500/20 text-indigo-300" : "text-gray-400 hover:bg-white/5"
+                            )}
+                        >
+                            <span className="font-mono text-[10px] text-gray-500">{ch.chapter_number}</span>
+                            <span className="truncate">{ch.title || `Chapter ${ch.chapter_number}`}</span>
+                        </button>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+}
 
 export default function StorySandbox() {
-    const [story, setStory] = useState("The ancient gates of Aethelgard stood before you, their iron surface cold in the twilight.");
-    const [isGenerating, setIsGenerating] = useState(false);
     const [isPanelOpen, setIsPanelOpen] = useState(true);
-    const [images, setImages] = useState([]);
-    
+    const [editorContent, setEditorContent] = useState('');
+    const [beatInput, setBeatInput] = useState('');
     const textareaRef = useRef(null);
+    const streamingRef = useRef('');
+
+    const queryClient = useQueryClient();
+    const activeStoryId = useWorldVaultStore(state => state.activeStoryId);
+    const setActiveStory = useWorldVaultStore(state => state.setActiveStory);
+
+    const { data: stories = [], isLoading: storiesLoading } = useStories();
+    const { data: activeStory } = useStory(activeStoryId);
+    const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
+    const { data: lorebooks = [] } = useLorebooks();
+
+    const createStory = useCreateStory();
+    const createChapter = useCreateChapter();
+    const continueChapter = useContinueChapter();
+    const addStoryBeat = useAddStoryBeat();
+
+    const [activeChapterId, setActiveChapterId] = useState(null);
+    const [isStreaming, setIsStreaming] = useState(false);
+
+    const { subscribe } = useWebSocket();
+
+    const activeChapter = chapters?.find(ch => ch.id === activeChapterId);
+
+    // Auto-select first story
+    useEffect(() => {
+        if (stories?.length > 0 && !activeStoryId) {
+            setActiveStory(stories[0].id);
+        }
+    }, [stories, activeStoryId, setActiveStory]);
+
+    // Auto-select first chapter
+    useEffect(() => {
+        if (chapters?.length > 0 && !activeChapterId) {
+            setActiveChapterId(chapters[0].id);
+        }
+    }, [chapters, activeChapterId]);
+
+    // Load chapter content into editor
+    useEffect(() => {
+        if (activeChapter) {
+            setEditorContent(activeChapter.content || '');
+            streamingRef.current = '';
+        }
+    }, [activeChapterId, activeChapter]);
+
+    // WebSocket for streaming story continuation
+    useEffect(() => {
+        const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
+            const job = event.data?.job || event;
+            if (job.metadata_?.story_id === activeStoryId && job.metadata_?.chapter_id === activeChapterId) {
+                const streamText = job.metadata_?.text || job.output?.text || job.progress_text;
+                if (streamText) {
+                    setIsStreaming(true);
+                    streamingRef.current = streamText;
+                    setEditorContent((activeChapter?.content || '') + '\n\n' + streamText);
+                }
+            }
+        });
+
+        const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
+            const job = event.data?.job || event;
+            if (job.metadata_?.story_id === activeStoryId && job.metadata_?.chapter_id === activeChapterId) {
+                setIsStreaming(false);
+                streamingRef.current = '';
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                if (job.id) {
+                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                }
+            }
+        });
+
+        return () => {
+            unsubProgress();
+            unsubCompleted();
+        };
+    }, [subscribe, activeStoryId, activeChapterId, activeChapter?.content, queryClient]);
 
     // Auto-resize textarea
     useEffect(() => {
@@ -18,27 +216,69 @@ export default function StorySandbox() {
             textareaRef.current.style.height = 'auto';
             textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
         }
-    }, [story]);
+    }, [editorContent]);
 
-    const handleContinue = () => {
-        setIsGenerating(true);
-        // Simulate backend generation
-        setTimeout(() => {
-            setStory(prev => prev + " As you step forward, a low rumble echoes from deep within the city, followed by a faint, haunting melody that seems to beckon you inside.");
-            setIsGenerating(false);
-        }, 1500);
+    const handleContinue = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        setIsStreaming(true);
+        try {
+            await continueChapter.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId });
+            toast('AI is continuing the story...', { icon: '📖' });
+        } catch {
+            toast.error('Failed to start story continuation');
+            setIsStreaming(false);
+        }
+    }, [activeStoryId, activeChapterId, isStreaming, continueChapter]);
+
+    const handleAddBeat = useCallback(async () => {
+        if (!beatInput.trim() || !activeStoryId || !activeChapterId) return;
+        try {
+            await addStoryBeat.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                content: beatInput.trim()
+            });
+            setBeatInput('');
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            toast.success('Beat added');
+        } catch {
+            toast.error('Failed to add beat');
+        }
+    }, [beatInput, activeStoryId, activeChapterId, addStoryBeat, queryClient]);
+
+    const handleCreateStory = async (data) => {
+        return createStory.mutateAsync(data);
     };
 
-    const handleGenerateIllustration = () => {
-        toast('Generating scene illustration...', { icon: '🎨' });
-        setTimeout(() => {
-            setImages(prev => [...prev, {
-                id: Date.now(),
-                url: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=1200&auto=format&fit=crop',
-                caption: 'The ancient gates of Aethelgard'
-            }]);
-            toast.success('Illustration complete!');
-        }, 2000);
+    const handleCreateChapter = async (data) => {
+        return createChapter.mutateAsync({ storyId: activeStoryId, data });
+    };
+
+    const handleDeleteStory = async (story) => {
+        if (!confirm(`Delete "${story.title}"?`)) return;
+        try {
+            const { api } = await import('../api');
+            await api.delete(`/api/v2/stories/${story.id}`);
+            if (activeStoryId === story.id) {
+                const remaining = stories.filter(s => s.id !== story.id);
+                setActiveStory(remaining[0]?.id || null);
+                setActiveChapterId(null);
+            }
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+            toast.success('Story deleted');
+        } catch {
+            toast.error('Failed to delete story');
+        }
+    };
+
+    const handleStoryTitleUpdate = async (e) => {
+        const newTitle = e.target.value;
+        if (!activeStoryId || !newTitle.trim()) return;
+        try {
+            const { api } = await import('../api');
+            await api.put(`/api/v2/stories/${activeStoryId}`, { title: newTitle });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+        } catch { /* silent */ }
     };
 
     return (
@@ -48,156 +288,224 @@ export default function StorySandbox() {
             exit={{ opacity: 0, y: -20 }}
             className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 bg-[#0B0E14]"
         >
-            {/* Main Story Editor */}
+            {/* Stories Sidebar */}
+            <StorySidebar
+                stories={stories}
+                activeStoryId={activeStoryId}
+                onSelectStory={(id) => { setActiveStory(id); setActiveChapterId(null); }}
+                onCreateStory={handleCreateStory}
+                onDeleteStory={handleDeleteStory}
+                isLoading={storiesLoading}
+            />
+
+            {/* Main Editor */}
             <div className="flex-1 flex flex-col min-w-0 relative">
-                {/* Header */}
-                <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center">
-                            <BookOpen className="text-indigo-400" size={20} />
-                        </div>
-                        <div>
-                            <input 
-                                type="text"
-                                defaultValue="The Gates of Aethelgard"
-                                className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all"
-                            />
-                            <p className="text-xs text-gray-500 px-1">Story Sandbox</p>
-                        </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                        <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors border border-white/5">
-                            <Save size={16} /> Save
-                        </button>
-                        <button 
-                            onClick={() => setIsPanelOpen(!isPanelOpen)}
-                            className={clsx(
-                                "p-2 rounded-lg transition-colors border",
-                                isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
-                            )}
-                        >
-                            <ImageIcon size={20} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* Editor Content */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar flex justify-center p-6 lg:p-12">
-                    <div className="w-full max-w-3xl relative">
-                        <textarea
-                            ref={textareaRef}
-                            value={story}
-                            onChange={(e) => setStory(e.target.value)}
-                            className="w-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
-                            placeholder="Begin your story here..."
+                {!activeStoryId ? (
+                    <div className="flex-1 flex items-center justify-center">
+                        <EmptyState
+                            title="No Story Selected"
+                            description="Select a story from the sidebar or create a new one to start writing."
+                            primaryLabel="Create Story"
+                            primaryAction={() => {
+                                const title = prompt('Story title:');
+                                if (title) handleCreateStory({ title });
+                            }}
                         />
-                        
-                        {isGenerating && (
-                            <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 animate-pulse">
-                                <Sparkles size={16} />
-                                <span>The AI is weaving the next thread...</span>
-                            </div>
-                        )}
                     </div>
-                </div>
+                ) : (
+                    <>
+                        {/* Chapters Sidebar + Editor in a row */}
+                        <div className="flex-1 flex min-h-0">
+                            <ChapterSidebar
+                                chapters={chapters}
+                                activeChapterId={activeChapterId}
+                                onSelectChapter={setActiveChapterId}
+                                onCreateChapter={handleCreateChapter}
+                                isLoading={chaptersLoading}
+                            />
 
-                {/* Floating Action Bar */}
-                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-2xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-indigo-500/10">
-                    <button 
-                        className="p-3 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all"
-                        title="Undo"
-                    >
-                        <Undo2 size={20} />
-                    </button>
-                    
-                    <div className="w-px h-8 bg-white/10 mx-2" />
-                    
-                    <button 
-                        onClick={handleContinue}
-                        disabled={isGenerating}
-                        className={clsx(
-                            "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all",
-                            isGenerating 
-                                ? "bg-indigo-500/50 text-white/50 cursor-not-allowed" 
-                                : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.6)]"
-                        )}
-                    >
-                        {isGenerating ? (
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                Generating
+                            {/* Editor Area */}
+                            <div className="flex-1 flex flex-col min-w-0">
+                                {/* Header */}
+                                <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center">
+                                            <BookOpen className="text-indigo-400" size={20} />
+                                        </div>
+                                        <div>
+                                            <input
+                                                type="text"
+                                                defaultValue={activeStory?.title || ''}
+                                                onBlur={handleStoryTitleUpdate}
+                                                className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all"
+                                            />
+                                            <p className="text-xs text-gray-500 px-1">
+                                                {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
+                                                {activeStory?.genre && ` · ${activeStory.genre}`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setIsPanelOpen(!isPanelOpen)}
+                                            className={clsx(
+                                                "p-2 rounded-lg transition-colors border",
+                                                isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
+                                            )}
+                                        >
+                                            <ImageIcon size={20} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Editor Content */}
+                                <div className="flex-1 overflow-y-auto custom-scrollbar flex justify-center p-6 lg:p-12">
+                                    {!activeChapterId ? (
+                                        <div className="flex items-center justify-center text-gray-500">
+                                            <p className="text-sm">Select or create a chapter to start writing</p>
+                                        </div>
+                                    ) : (
+                                        <div className="w-full max-w-3xl relative">
+                                            <textarea
+                                                ref={textareaRef}
+                                                value={editorContent}
+                                                onChange={(e) => setEditorContent(e.target.value)}
+                                                className="w-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
+                                                placeholder="Begin your story here..."
+                                                disabled={isStreaming}
+                                            />
+                                            
+                                            {isStreaming && (
+                                                <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 animate-pulse">
+                                                    <Sparkles size={16} />
+                                                    <span>The AI is weaving the next thread...</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Beat Input */}
+                                {activeChapterId && (
+                                    <div className="px-6 pb-2">
+                                        <div className="max-w-3xl mx-auto flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={beatInput}
+                                                onChange={e => setBeatInput(e.target.value)}
+                                                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddBeat(); } }}
+                                                placeholder="Add a story beat (narrator direction, user action, system event)..."
+                                                className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 transition-all"
+                                                disabled={addStoryBeat.isPending}
+                                            />
+                                            <button
+                                                onClick={handleAddBeat}
+                                                disabled={!beatInput.trim() || addStoryBeat.isPending}
+                                                className="px-4 py-2 text-sm bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors disabled:opacity-30"
+                                            >
+                                                {addStoryBeat.isPending ? <Loader2 size={14} className="animate-spin" /> : 'Add Beat'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Floating Action Bar */}
+                                {activeChapterId && (
+                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-2xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-indigo-500/10">
+                                        <div className="w-px h-8 bg-white/10 mx-1" />
+                                        <button
+                                            onClick={handleContinue}
+                                            disabled={isStreaming || continueChapter.isPending}
+                                            className={clsx(
+                                                "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all",
+                                                isStreaming || continueChapter.isPending
+                                                    ? "bg-indigo-500/50 text-white/50 cursor-not-allowed"
+                                                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.6)]"
+                                            )}
+                                        >
+                                            {isStreaming || continueChapter.isPending ? (
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                    Generating
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <Play size={18} fill="currentColor" className="opacity-80" />
+                                                    Continue
+                                                </>
+                                            )}
+                                        </button>
+                                        <div className="w-px h-8 bg-white/10 mx-1" />
+                                    </div>
+                                )}
                             </div>
-                        ) : (
-                            <>
-                                <Play size={18} fill="currentColor" className="opacity-80" />
-                                Continue
-                            </>
-                        )}
-                    </button>
-                    
-                    <div className="w-px h-8 bg-white/10 mx-2" />
-                    
-                    <button 
-                        className="p-3 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all"
-                        title="Style Settings"
-                    >
-                        <Type size={20} />
-                    </button>
-                </div>
+                        </div>
+                    </>
+                )}
             </div>
 
-            {/* Right Panel: Story Illustrations */}
+            {/* Right Panel: Illustrations & Settings */}
             <AnimatePresence initial={false}>
-                {isPanelOpen && (
+                {isPanelOpen && activeStoryId && (
                     <motion.div
                         initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 380, opacity: 1 }}
+                        animate={{ width: 360, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className="hidden lg:flex flex-col border-l border-white/5 bg-gray-900/40 overflow-hidden shrink-0 relative"
                     >
-                        <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
+                        <div className="h-16 border-b border-white/5 flex items-center px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                             <h3 className="font-semibold text-gray-200 flex items-center gap-2">
                                 <ImageIcon size={16} className="text-indigo-400" />
-                                Story Illustrations
+                                Story Context
                             </h3>
-                            <button className="text-gray-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors">
-                                <Settings size={16} />
-                            </button>
                         </div>
                         
                         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
-                            {images.map(img => (
-                                <motion.div 
-                                    initial={{ opacity: 0, scale: 0.95 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    key={img.id} 
-                                    className="group relative rounded-xl overflow-hidden border border-white/10 shadow-lg"
-                                >
-                                    <img src={img.url} alt={img.caption} className="w-full h-auto object-cover" />
-                                    <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <p className="text-sm text-gray-200 line-clamp-2">{img.caption}</p>
-                                    </div>
-                                </motion.div>
-                            ))}
-                            
-                            {images.length === 0 && (
-                                <div className="h-40 border border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center text-gray-500 gap-2">
-                                    <ImageIcon size={32} className="opacity-50" />
-                                    <p className="text-sm">No illustrations yet</p>
-                                </div>
-                            )}
-                        </div>
+                            {/* Active Lorebooks */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <Layers size={14} /> Lorebooks
+                                </h4>
+                                {lorebooks.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No lorebooks</p>
+                                ) : (
+                                    <p className="text-xs text-gray-500">Lorebooks will provide world context to the AI during story generation.</p>
+                                )}
+                            </div>
 
-                        <div className="p-4 border-t border-white/5 bg-gray-900/80 backdrop-blur-md">
-                            <button 
-                                onClick={handleGenerateIllustration}
-                                className="w-full flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-indigo-500/20 text-gray-300 hover:text-indigo-300 rounded-xl border border-white/10 hover:border-indigo-500/50 transition-all font-medium"
-                            >
-                                <Sparkles size={18} />
-                                Illustrate Current Scene
-                            </button>
+                            {/* Chapter Images */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <ImageIcon size={14} /> Chapter Images
+                                </h4>
+                                {activeChapter?.image_paths?.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {activeChapter.image_paths.map((path, idx) => (
+                                            <div key={idx} className="rounded-lg overflow-hidden border border-white/10">
+                                                <img src={`/api/files/${path}`} alt={`Scene ${idx + 1}`} className="w-full h-auto" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="h-32 border border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center text-gray-500 gap-2">
+                                        <ImageIcon size={24} className="opacity-50" />
+                                        <p className="text-xs">No illustrations yet</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Story Info */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Story Info</h4>
+                                <div className="space-y-2 text-xs text-gray-500">
+                                    <p>Chapters: {chapters?.length || 0}</p>
+                                    <p>Genre: {activeStory?.genre || 'Not set'}</p>
+                                    <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
+                                    {activeStory?.description && <p className="italic mt-2">{activeStory.description}</p>}
+                                </div>
+                            </div>
                         </div>
                     </motion.div>
                 )}

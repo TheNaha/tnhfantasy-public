@@ -1,33 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2 } from 'lucide-react';
+import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check } from 'lucide-react';
 import clsx from 'clsx';
-import { useMessages, useChats, useSendMessage, useChat, useCreateChat } from '../hooks/useWorldVault';
+import toast from 'react-hot-toast';
+import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters } from '../hooks/useWorldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
+import { useQueryClient } from '@tanstack/react-query';
+import ConfirmationModal from '../components/ConfirmationModal';
 
 export default function ChatWorkspace() {
     const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
     const [message, setMessage] = useState('');
+    const [renamingChatId, setRenamingChatId] = useState(null);
+    const [renameValue, setRenameValue] = useState('');
+    const [deleteTarget, setDeleteTarget] = useState(null);
     const messagesEndRef = useRef(null);
 
+    const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
     const setActiveChatId = useWorldVaultStore(state => state.setActiveChat);
     const updateStreamingJob = useWorldVaultStore(state => state.updateStreamingJob);
+    const clearStreamingJob = useWorldVaultStore(state => state.clearStreamingJob);
     const streamingJobs = useWorldVaultStore(state => state.streamingJobs);
+    const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
+    const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
 
     const { data: chats, isLoading: isChatsLoading } = useChats();
     const { data: activeChat } = useChat(activeChatId);
-    const { data: messages = [], isLoading: isMessagesLoading } = useMessages(activeChatId);
-    
+    const { data: messages = [] } = useMessages(activeChatId);
+    const { data: lorebooks = [] } = useLorebooks();
+    const { data: characters = [] } = useCharacters();
+
     const sendMessageMutation = useSendMessage();
     const createChatMutation = useCreateChat();
+    const deleteChatMutation = useDeleteChat();
 
-    // WebSocket for streaming updates
     const { subscribe } = useWebSocket();
 
     useEffect(() => {
-        // If we have chats but no active chat, select the first one
         if (chats?.length > 0 && !activeChatId) {
             setActiveChatId(chats[0].id);
         }
@@ -38,22 +49,32 @@ export default function ChatWorkspace() {
             const job = event.data?.job || event;
             const streamText = job.metadata_?.text || job.output?.text || job.progress_text;
             if (streamText && job.metadata_?.chat_id === activeChatId) {
-                updateStreamingJob(job.id, { text: streamText, status: job.status });
+                updateStreamingJob(job.id, { text: streamText, status: job.status, chatId: activeChatId });
             }
         });
         
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-             const job = event.data?.job || event;
-             if (job.metadata_?.chat_id === activeChatId) {
-                 // The message should be refetched by react-query via some event, but we'll let real-time handle it
-             }
+            const job = event.data?.job || event;
+            if (job.metadata_?.chat_id === activeChatId) {
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
+                if (job.id) clearStreamingJob(job.id);
+            }
+        });
+
+        const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
+            const job = event.data?.job || event;
+            if (job.metadata_?.chat_id === activeChatId) {
+                toast.error('AI response failed. Please try again.');
+                if (job.id) clearStreamingJob(job.id);
+            }
         });
 
         return () => {
             unsubProgress();
             unsubCompleted();
+            unsubError();
         };
-    }, [subscribe, activeChatId, updateStreamingJob]);
+    }, [subscribe, activeChatId, updateStreamingJob, clearStreamingJob, queryClient]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,9 +85,14 @@ export default function ChatWorkspace() {
         
         let chatIdToUse = activeChatId;
         if (!chatIdToUse) {
-            const newChat = await createChatMutation.mutateAsync({ name: 'New Chat' });
-            chatIdToUse = newChat.id;
-            setActiveChatId(newChat.id);
+            try {
+                const newChat = await createChatMutation.mutateAsync({ name: 'New Chat' });
+                chatIdToUse = newChat.id;
+                setActiveChatId(newChat.id);
+            } catch {
+                toast.error('Failed to create chat');
+                return;
+            }
         }
 
         const msgContent = message.trim();
@@ -78,9 +104,11 @@ export default function ChatWorkspace() {
                 message: { role: 'user', content: msgContent }
             });
             if (res.job_id) {
-                updateStreamingJob(res.job_id, { text: '', status: 'running' });
+                updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
             }
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
         } catch (error) {
+            toast.error('Failed to send message');
             console.error('Failed to send message:', error);
         }
     };
@@ -91,6 +119,52 @@ export default function ChatWorkspace() {
             handleSendMessage();
         }
     };
+
+    const handleCreateChat = () => {
+        createChatMutation.mutate({ name: 'New Chat' }, {
+            onSuccess: (chat) => {
+                setActiveChatId(chat.id);
+                toast.success('New chat created');
+            },
+            onError: () => toast.error('Failed to create chat')
+        });
+    };
+
+    const handleDeleteChat = async () => {
+        if (!deleteTarget) return;
+        try {
+            await deleteChatMutation.mutateAsync(deleteTarget.id);
+            if (activeChatId === deleteTarget.id) {
+                const remaining = chats?.filter(c => c.id !== deleteTarget.id);
+                setActiveChatId(remaining?.[0]?.id || null);
+            }
+            toast.success('Chat deleted');
+        } catch {
+            toast.error('Failed to delete chat');
+        }
+        setDeleteTarget(null);
+    };
+
+    const startRename = (chat) => {
+        setRenamingChatId(chat.id);
+        setRenameValue(chat.name || '');
+    };
+
+    const finishRename = async () => {
+        if (renamingChatId && renameValue.trim()) {
+            try {
+                const { api } = await import('../api');
+                await api.put(`/api/v2/chats/${renamingChatId}`, { name: renameValue.trim() });
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+                toast.success('Chat renamed');
+            } catch {
+                toast.error('Failed to rename chat');
+            }
+        }
+        setRenamingChatId(null);
+    };
+
+    const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
     return (
         <motion.div
@@ -103,14 +177,7 @@ export default function ChatWorkspace() {
             <div className="w-64 border-r border-white/5 bg-gray-900/60 hidden md:flex flex-col shrink-0">
                 <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                     <h3 className="font-semibold text-gray-200">Chats</h3>
-                    <button 
-                        onClick={() => {
-                            createChatMutation.mutate({ name: 'New Chat' }, {
-                                onSuccess: (chat) => setActiveChatId(chat.id)
-                            });
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                    >
+                    <button onClick={handleCreateChat} className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
                         <Plus size={18} />
                     </button>
                 </div>
@@ -119,16 +186,34 @@ export default function ChatWorkspace() {
                         <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" /></div>
                     ) : (
                         chats?.map(chat => (
-                            <button
-                                key={chat.id}
-                                onClick={() => setActiveChatId(chat.id)}
-                                className={clsx(
-                                    "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors",
-                                    activeChatId === chat.id ? "bg-blue-500/20 text-blue-300" : "text-gray-400 hover:bg-white/5"
+                            <div key={chat.id} className="relative group">
+                                {renamingChatId === chat.id ? (
+                                    <div className="flex items-center gap-1 px-1">
+                                        <input
+                                            autoFocus
+                                            value={renameValue}
+                                            onChange={e => setRenameValue(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') finishRename(); if (e.key === 'Escape') setRenamingChatId(null); }}
+                                            onBlur={finishRename}
+                                            className="flex-1 bg-gray-800 border border-blue-500/50 rounded px-2 py-1 text-sm text-gray-200 focus:outline-none"
+                                        />
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => setActiveChatId(chat.id)}
+                                        className={clsx(
+                                            "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between",
+                                            activeChatId === chat.id ? "bg-blue-500/20 text-blue-300" : "text-gray-400 hover:bg-white/5"
+                                        )}
+                                    >
+                                        <span className="truncate">{chat.name || 'Unnamed Chat'}</span>
+                                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
+                                            <button onClick={(e) => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={12} /></button>
+                                        </div>
+                                    </button>
                                 )}
-                            >
-                                {chat.name || 'Unnamed Chat'}
-                            </button>
+                            </div>
                         ))
                     )}
                 </div>
@@ -140,7 +225,11 @@ export default function ChatWorkspace() {
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center overflow-hidden">
-                            <MessageSquare className="text-blue-400" size={20} />
+                            {linkedCharacter?.avatar_path ? (
+                                <img src={linkedCharacter.avatar_path} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                                <MessageSquare className="text-blue-400" size={20} />
+                            )}
                         </div>
                         <div>
                             <h2 className="font-semibold text-gray-100 flex items-center gap-2">
@@ -150,19 +239,16 @@ export default function ChatWorkspace() {
                                 </span>
                             </h2>
                             <p className="text-xs text-gray-500">
-                                {activeChatId ? `Chat ID: ${activeChatId.slice(0, 8)}...` : 'No chat selected'}
+                                {linkedCharacter ? `Playing as ${linkedCharacter.name}` : (activeChatId ? `Chat ID: ${activeChatId.slice(0, 8)}...` : 'No chat selected')}
                             </p>
                         </div>
                     </div>
                     
                     <div className="flex items-center gap-2">
-                        <button className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors">
-                            <MoreVertical size={20} />
-                        </button>
                         <button 
                             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
                             className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
-                            title="Toggle Generator Panel"
+                            title="Toggle Context Panel"
                         >
                             {isRightPanelOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
                         </button>
@@ -174,7 +260,7 @@ export default function ChatWorkspace() {
                     {!activeChatId && messages.length === 0 ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50">
                             <Sparkles className="w-12 h-12 text-blue-500 mb-4 opacity-50" />
-                            <h3 className="text-lg font-medium text-gray-300">Welcome to the Story Sandbox</h3>
+                            <h3 className="text-lg font-medium text-gray-300">Welcome to the Chat Workspace</h3>
                             <p className="text-sm text-gray-500 max-w-md mt-2">
                                 Select or create a chat to begin. The AI can automatically generate images, audio, and tools during the conversation.
                             </p>
@@ -186,11 +272,15 @@ export default function ChatWorkspace() {
                                     "flex flex-col max-w-[85%]",
                                     msg.role === 'user' ? "self-end items-end" : "self-start items-start"
                                 )}>
-                                    <div className="text-xs text-gray-500 mb-1 ml-1">{msg.role === 'user' ? 'You' : 'AI'}</div>
+                                    <div className="text-xs text-gray-500 mb-1 ml-1">
+                                        {msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : 'AI'}
+                                    </div>
                                     <div className={clsx(
                                         "p-4 rounded-2xl whitespace-pre-wrap text-sm",
                                         msg.role === 'user' 
                                             ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm" 
+                                            : msg.role === 'system'
+                                            ? "bg-yellow-500/10 text-yellow-200 border border-yellow-500/20 rounded-tl-sm italic"
                                             : "bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm"
                                     )}>
                                         {msg.content}
@@ -198,7 +288,6 @@ export default function ChatWorkspace() {
                                 </div>
                             ))}
                             
-                            {/* Render active streaming jobs */}
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
                                 jobData.status === 'running' && (
                                     <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start">
@@ -247,19 +336,16 @@ export default function ChatWorkspace() {
                     </div>
                     <div className="max-w-4xl mx-auto mt-2 flex items-center justify-between px-2 text-[10px] text-gray-500">
                         <span>Press <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700">Enter</kbd> to send</span>
-                        <div className="flex gap-4">
-                            <span className="flex items-center gap-1"><Sparkles size={12} /> Auto-Gen: On</span>
-                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Right Panel: Generator / Context Parameters */}
+            {/* Right Panel: Context */}
             <AnimatePresence initial={false}>
                 {isRightPanelOpen && (
                     <motion.div
                         initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 400, opacity: 1 }}
+                        animate={{ width: 360, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className="hidden lg:flex flex-col border-l border-white/5 bg-gray-900/30 overflow-hidden shrink-0"
@@ -271,39 +357,85 @@ export default function ChatWorkspace() {
                             </h3>
                         </div>
                         
-                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                            <div className="space-y-6">
-                                {/* Section 1 */}
-                                <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                        <ImageIcon size={14} /> Image Generation
-                                    </h4>
-                                    <p className="text-sm text-gray-500 mb-4">
-                                        The AI will automatically generate images when describing scenes or actions.
+                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+                            {/* Character Assignment */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Character</h4>
+                                {linkedCharacter ? (
+                                    <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0">
+                                            {linkedCharacter.avatar_path ? (
+                                                <img src={linkedCharacter.avatar_path} alt="" className="w-full h-full rounded-full object-cover" />
+                                            ) : (
+                                                <MessageSquare size={14} className="text-blue-400" />
+                                            )}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="text-sm text-gray-200 truncate">{linkedCharacter.name}</p>
+                                            <p className="text-[10px] text-gray-500">Linked to this chat</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-gray-500 text-center py-2 border border-dashed border-gray-700/50 rounded-lg">
+                                        No character assigned
                                     </p>
-                                    <div className="space-y-3">
-                                        <label className="flex items-center justify-between cursor-pointer">
-                                            <span className="text-sm text-gray-300">Auto-Generate</span>
-                                            <div className="relative inline-block w-10 mr-2 align-middle select-none">
-                                                <input type="checkbox" className="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out" defaultChecked />
-                                                <label className="toggle-label block overflow-hidden h-5 rounded-full bg-blue-500 cursor-pointer"></label>
-                                            </div>
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                {/* Section 2 */}
-                                <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-4">Lorebooks</h4>
-                                    <div className="text-sm text-gray-500 text-center py-4 border border-dashed border-gray-700/50 rounded-lg">
-                                        No active lorebooks
-                                    </div>
-                                </div>
+                                )}
                             </div>
+
+                            {/* Lorebooks */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <BookOpen size={14} /> Lorebooks
+                                </h4>
+                                {lorebooks.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-4 border border-dashed border-gray-700/50 rounded-lg">
+                                        No lorebooks available
+                                    </p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {lorebooks.map(lb => {
+                                            const isActive = selectedLorebooks.includes(lb.id);
+                                            return (
+                                                <button
+                                                    key={lb.id}
+                                                    onClick={() => toggleLorebook(lb.id)}
+                                                    className={clsx(
+                                                        "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+                                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                                    )}
+                                                >
+                                                    {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <p className="truncate font-medium">{lb.name}</p>
+                                                        {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Active context info */}
+                            {selectedLorebooks.length > 0 && (
+                                <div className="text-[11px] text-gray-500 px-1">
+                                    {selectedLorebooks.length} lorebook{selectedLorebooks.length !== 1 ? 's' : ''} active. Lorebook context is injected into the AI's system prompt.
+                                </div>
+                            )}
                         </div>
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <ConfirmationModal
+                isOpen={!!deleteTarget}
+                onClose={() => setDeleteTarget(null)}
+                onConfirm={handleDeleteChat}
+                title="Delete Chat"
+                message={`Are you sure you want to delete "${deleteTarget?.name || 'this chat'}"? All messages will be lost.`}
+                confirmText="Delete"
+                isDangerous
+            />
         </motion.div>
     );
 }

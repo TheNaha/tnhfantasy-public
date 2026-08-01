@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from sqlmodel import Session, select
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
 from api.deps import get_session
 from core.entities import Story, StoryChapter, StoryBeatRole
@@ -8,6 +9,15 @@ from services.job_queue import job_queue
 from services.job_service import JobService
 
 router = APIRouter()
+
+
+class StoryContinueRequest(BaseModel):
+    prompt: str = ""
+
+
+class StoryBeatRequest(BaseModel):
+    content: str
+    role: str = "user"
 
 @router.get("/", response_model=List[Story])
 def list_stories(session: Session = Depends(get_session)):
@@ -35,7 +45,7 @@ def update_story(story_id: str, story_update: Story, session: Session = Depends(
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
     
-    update_data = story_update.dict(exclude_unset=True)
+    update_data = story_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids']:
             setattr(story, key, value)
@@ -116,12 +126,12 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
     return {"message": "Chapter deleted"}
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
-async def continue_story(story_id: str, chapter_id: str, data: dict, session: Session = Depends(get_session)):
+async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
         
-    prompt = data.get("prompt", "")
+    prompt = data.prompt
     if prompt:
         chapter.beats.append({"role": StoryBeatRole.USER, "content": prompt})
         chapter.content += f"\n\n> {prompt}\n\n"
@@ -140,22 +150,23 @@ async def continue_story(story_id: str, chapter_id: str, data: dict, session: Se
         workflow={
             "messages": messages,
             "chat_id": story_id,
+            "chapter_id": chapter_id,
             "type": "story_continue"
         },
-        metadata={"chat_id": story_id}
+        metadata={"chat_id": story_id, "chapter_id": chapter_id}
     )
     
     await job_queue.enqueue(job)
     return {"job_id": job.id}
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")
-def add_beat(story_id: str, chapter_id: str, data: dict, session: Session = Depends(get_session)):
+def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
         
-    content = data.get("content", "")
-    role = data.get("role", StoryBeatRole.USER)
+    content = data.content
+    role = data.role
     
     chapter.beats.append({"role": role, "content": content})
     if role == StoryBeatRole.USER:
