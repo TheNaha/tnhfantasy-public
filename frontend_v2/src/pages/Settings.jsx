@@ -647,8 +647,10 @@ function AISettings({ settings, onUpdate, onReset }) {
 
     useEffect(() => {
         if (defaultProvider) {
-            setProviderId(defaultProvider.provider_id || '');
-            setModelId(defaultProvider.model_id || '');
+            setTimeout(() => {
+                setProviderId(defaultProvider.provider_id || '');
+                setModelId(defaultProvider.model_id || '');
+            }, 0);
         }
     }, [defaultProvider]);
 

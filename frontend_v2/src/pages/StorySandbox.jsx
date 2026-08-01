@@ -183,15 +183,19 @@ export default function StorySandbox() {
     // Auto-select first chapter
     useEffect(() => {
         if (chapters?.length > 0 && !activeChapterId) {
-            setActiveChapterId(chapters[0].id);
+            // Wait for next tick to avoid synchronous cascading renders
+            setTimeout(() => setActiveChapterId(chapters[0].id), 0);
         }
     }, [chapters, activeChapterId]);
 
     // Load chapter content into editor
     useEffect(() => {
         if (activeChapter) {
-            setEditorContent(activeChapter.content || '');
-            streamingRef.current = '';
+            // Wait for next tick to avoid synchronous cascading renders
+            setTimeout(() => {
+                setEditorContent(activeChapter.content || '');
+                streamingRef.current = '';
+            }, 0);
         }
     }, [activeChapterId, activeChapter]);
 
