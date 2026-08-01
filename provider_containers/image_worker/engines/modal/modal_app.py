@@ -52,7 +52,8 @@ def _resolve_provider_core_local_path() -> Path:
 def _resolve_image_worker_local_path() -> Path:
     """Resolve image_worker source path for Modal image packaging."""
     candidates = [
-        Path(__file__).parent.parent.parent,
+        Path(__file__).parent / "image_worker",  # When running on Modal (mounted to /root/image_worker)
+        Path(__file__).parent.parent.parent,     # When running locally (from engines/modal/modal_app.py)
         Path(__file__).parent.parent.parent.parent / "image_worker",
     ]
 
@@ -117,17 +118,6 @@ image_base = (
     modal.Image.debian_slim(python_version="3.13")
     .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0", gpu="L4")
     .uv_pip_install("comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", "httpx", "aiofiles", gpu="L4")
-    # Ensure shared provider_core utilities are present in cloud runtime.
-    .add_local_dir(
-        local_path=PROVIDER_CORE_LOCAL_PATH,
-        remote_path="/root/provider_core",
-        copy=True,
-    )
-    .add_local_dir(
-        local_path=IMAGE_WORKER_LOCAL_PATH,
-        remote_path="/root/image_worker",
-        copy=True,
-    )
     # Install ComfyUI using comfy-cli
     .run_commands("comfy --skip-prompt install --fast-deps --nvidia --cuda-version 12.8",gpu="L4")
     # Ensure torch sees the complete CUDA user-space library set expected by modern nodes.
@@ -169,6 +159,18 @@ image_base = (
         "ln -s /mnt/data/models /root/comfy/ComfyUI/models",
         "ln -s /mnt/data/output /root/comfy/ComfyUI/output",
         "ln -s /mnt/data/input /root/comfy/ComfyUI/input"
+    )
+    # Ensure shared provider_core utilities and image_worker are present in cloud runtime.
+    # Added at the very end to prevent invalidating huge pip cache when code changes.
+    .add_local_dir(
+        local_path=PROVIDER_CORE_LOCAL_PATH,
+        remote_path="/root/provider_core",
+        copy=True,
+    )
+    .add_local_dir(
+        local_path=IMAGE_WORKER_LOCAL_PATH,
+        remote_path="/root/image_worker",
+        copy=True,
     )
 )
 
