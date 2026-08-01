@@ -15,6 +15,12 @@ function defaultDeployConfig(type) {
             gpu_type: 'RTX4090',
         };
     }
+    
+    if (type === 'llm-local') {
+        return {
+            deploy_mode: 'manual',
+        };
+    }
 
     return {
         deploy_mode: 'managed',
@@ -56,6 +62,13 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
     const accountLabel = credentialSummary.account_label || null;
 
     const credentialFields = useMemo(() => {
+        if (formData.type === 'llm-local') {
+            return [
+                { key: 'endpoint_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434' },
+                { key: 'api_key', label: 'API Key (Optional)', type: 'password', placeholder: 'sk-...' },
+            ];
+        }
+
         if (formData.type === 'beam') {
             return [
                 { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'beam_...' },
@@ -192,9 +205,10 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                     onChange={(event) => handleTypeChange(event.target.value)}
                                     className={INPUT_CLASS}
                                 >
-                                    <option value="modal">Modal</option>
-                                    <option value="beam">Beam.cloud</option>
-                                    <option value="kaggle">Kaggle</option>
+                                    <option value="modal">Modal (ComfyUI)</option>
+                                    <option value="beam">Beam.cloud (ComfyUI)</option>
+                                    <option value="kaggle">Kaggle (ComfyUI)</option>
+                                    <option value="llm-local">Local LLM Worker</option>
                                 </select>
                             </Field>
 
@@ -323,7 +337,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         placeholder="comfy-modal-stack"
                                     />
                                 </Field>
-                            ) : (
+                            ) : formData.type !== 'llm-local' ? (
                                 <Field label="GPU Type">
                                     <input
                                         type="text"
@@ -333,7 +347,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         placeholder="RTX4090"
                                     />
                                 </Field>
-                            )}
+                            ) : null}
 
                             {formData.type === 'modal' ? (
                                 <Field label="Memory Snapshot">
@@ -346,7 +360,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         Enable experimental fast cold starts
                                     </label>
                                 </Field>
-                            ) : (
+                            ) : formData.type !== 'llm-local' ? (
                                 <>
                                     <Field label="GPU Endpoint URL">
                                         <input
@@ -376,7 +390,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         />
                                     </Field>
                                 </>
-                            )}
+                            ) : null}
                         </div>
 
                         {formData.deploy_config?.deploy_mode === 'manual' && (

@@ -3,13 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useSetLLMDefaultProvider } from '../hooks/useWorldVault';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
 import ConfirmationModal from '../components/ConfirmationModal';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, isLoading }) {
     const [creating, setCreating] = useState(false);
@@ -172,6 +174,13 @@ export default function StorySandbox() {
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
     const [isIllustrating, setIsIllustrating] = useState(false);
+    const [isPreviewMode, setIsPreviewMode] = useState(false);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+
+    const { data: llmModels = [] } = useLLMAvailableModels();
+    const { data: defaultLlmConfig } = useLLMDefaultProvider();
+    const setLlmConfig = useSetLLMDefaultProvider();
 
     const { subscribe } = useWebSocket();
 
@@ -260,6 +269,49 @@ export default function StorySandbox() {
             setIsStreaming(false);
         }
     }, [activeStoryId, activeChapterId, isStreaming, continueChapter]);
+
+    const handleAutoGenerateTitle = async () => {
+        if (!activeStoryId || !activeChapterId) return;
+        setIsGeneratingTitle(true);
+        toast('Generating title...', { icon: '🤖' });
+        try {
+            const resJob = await api.post('/api/jobs', {
+                task_type: "text",
+                workflow: {
+                    messages: [
+                        { role: "system", content: "You are an expert author. Analyze the following story chapter and generate a short, catchy title (max 5 words). Output ONLY the title, no quotes or prefix." },
+                        { role: "user", content: editorContent.substring(0, 2000) || "A new beginning." }
+                    ]
+                }
+            });
+            toast.success('Title generation started...');
+            const pollJob = async (jobId) => {
+                for (let i = 0; i < 30; i++) {
+                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
+                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
+                        const newTitle = jobStatus.outputs[0].content.replace(/["']/g, '');
+                        await api.put(`/api/v2/stories/${activeStoryId}/chapters/${activeChapterId}`, { title: newTitle });
+                        queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                        toast.success('Title generated!');
+                        setIsGeneratingTitle(false);
+                        return;
+                    }
+                    if (jobStatus.status === 'failed') break;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                toast.error('Title generation failed');
+                setIsGeneratingTitle(false);
+            };
+            if (resJob.id) {
+                pollJob(resJob.id);
+            } else {
+                setIsGeneratingTitle(false);
+            }
+        } catch (err) {
+            toast.error('Failed to generate title');
+            setIsGeneratingTitle(false);
+        }
+    };
 
     const handleAddBeat = useCallback(async () => {
         if (!beatInput.trim() || !activeStoryId || !activeChapterId) return;
@@ -372,17 +424,32 @@ export default function StorySandbox() {
             exit={{ opacity: 0, y: -20 }}
             className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 bg-[#0B0E14]"
         >
-            {/* Stories Sidebar */}
-            <StorySidebar
-                stories={stories}
-                activeStoryId={activeStoryId}
-                onSelectStory={(id) => { setActiveStory(id); setActiveChapterId(null); }}
-                onCreateStory={handleCreateStory}
-                onDeleteStory={handleDeleteStory}
-                isLoading={storiesLoading}
-            />
+            <AnimatePresence>
+                {isSidebarOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-40 bg-black/50 md:hidden"
+                        onClick={() => setIsSidebarOpen(false)}
+                    />
+                )}
+            </AnimatePresence>
 
-            {/* Main Editor */}
+            <div className={clsx(
+                "absolute md:static inset-y-0 left-0 z-50 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",
+                isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+            )}>
+                <StorySidebar
+                    stories={stories}
+                    activeStoryId={activeStoryId}
+                    onSelectStory={(id) => { setActiveStory(id); setActiveChapterId(null); setIsSidebarOpen(false); }}
+                    onCreateStory={handleCreateStory}
+                    onDeleteStory={handleDeleteStory}
+                    isLoading={storiesLoading}
+                />
+            </div>
+
             <div className="flex-1 flex flex-col min-w-0 relative">
                 {!activeStoryId ? (
                     <div className="flex-1 flex items-center justify-center">
@@ -398,7 +465,6 @@ export default function StorySandbox() {
                     </div>
                 ) : (
                     <>
-                        {/* Chapters Sidebar + Editor in a row */}
                         <div className="flex-1 flex min-h-0">
                             <ChapterSidebar
                                 chapters={chapters}
@@ -409,25 +475,43 @@ export default function StorySandbox() {
                                 isLoading={chaptersLoading}
                             />
 
-                            {/* Editor Area */}
                             <div className="flex-1 flex flex-col min-w-0">
-                                {/* Header */}
                                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center">
+                                        <div className="md:hidden mr-2">
+                                            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-400 hover:text-white transition-colors">
+                                                <BookOpen size={20} />
+                                            </button>
+                                        </div>
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0">
                                             <BookOpen className="text-indigo-400" size={20} />
                                         </div>
-                                        <div>
-                                            <input
-                                                type="text"
-                                                defaultValue={activeStory?.title || ''}
-                                                onBlur={handleStoryTitleUpdate}
-                                                className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all"
-                                            />
-                                            <p className="text-xs text-gray-500 px-1">
-                                                {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
-                                                {activeStory?.genre && ` · ${activeStory.genre}`}
-                                            </p>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="text"
+                                                    defaultValue={activeStory?.title || ''}
+                                                    onBlur={handleStoryTitleUpdate}
+                                                    className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all w-full md:w-auto min-w-[100px]"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-2 px-1">
+                                                <p className="text-xs text-gray-500 truncate">
+                                                    {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
+                                                    {activeStory?.genre && ` · ${activeStory.genre}`}
+                                                </p>
+                                                {activeChapter && (
+                                                    <button 
+                                                        onClick={handleAutoGenerateTitle} 
+                                                        disabled={isGeneratingTitle}
+                                                        className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded hover:bg-indigo-500/20 transition-colors flex items-center gap-1 disabled:opacity-50"
+                                                        title="Auto-generate chapter title using AI"
+                                                    >
+                                                        {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                                                        Auto Title
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                     
@@ -444,9 +528,19 @@ export default function StorySandbox() {
                                             </button>
                                         )}
                                         <button
-                                            onClick={() => setIsPanelOpen(!isPanelOpen)}
+                                            onClick={() => setIsPreviewMode(!isPreviewMode)}
                                             className={clsx(
                                                 "p-2 rounded-lg transition-colors border",
+                                                isPreviewMode ? "bg-purple-500/20 text-purple-400 border-purple-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
+                                            )}
+                                            title={isPreviewMode ? "Edit Mode" : "Preview Mode"}
+                                        >
+                                            {isPreviewMode ? <Edit3 size={16} /> : <Book size={16} />}
+                                        </button>
+                                        <button
+                                            onClick={() => setIsPanelOpen(!isPanelOpen)}
+                                            className={clsx(
+                                                "p-2 rounded-lg transition-colors border hidden md:flex",
                                                 isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
                                             )}
                                         >
@@ -455,22 +549,29 @@ export default function StorySandbox() {
                                     </div>
                                 </div>
 
-                                {/* Editor Content */}
                                 <div className="flex-1 overflow-y-auto custom-scrollbar flex justify-center p-6 lg:p-12">
                                     {!activeChapterId ? (
                                         <div className="flex items-center justify-center text-gray-500">
                                             <p className="text-sm">Select or create a chapter to start writing</p>
                                         </div>
                                     ) : (
-                                        <div className="w-full max-w-3xl relative">
-                                            <textarea
-                                                ref={textareaRef}
-                                                value={editorContent}
-                                                onChange={(e) => setEditorContent(e.target.value)}
-                                                className="w-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
-                                                placeholder="Begin your story here..."
-                                                disabled={isStreaming}
-                                            />
+                                        <div className="w-full max-w-3xl relative h-full min-h-[300px]">
+                                            {isPreviewMode ? (
+                                                <div className="w-full text-gray-300 text-lg md:text-xl leading-relaxed font-serif prose prose-invert max-w-none">
+                                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                        {editorContent || '*No content yet.*'}
+                                                    </ReactMarkdown>
+                                                </div>
+                                            ) : (
+                                                <textarea
+                                                    ref={textareaRef}
+                                                    value={editorContent}
+                                                    onChange={(e) => setEditorContent(e.target.value)}
+                                                    className="w-full h-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
+                                                    placeholder="Begin your story here (Markdown supported)..."
+                                                    disabled={isStreaming}
+                                                />
+                                            )}
                                             
                                             {isStreaming && (
                                                 <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 animate-pulse">
@@ -482,98 +583,64 @@ export default function StorySandbox() {
                                     )}
                                 </div>
 
-                                {/* Beat Input */}
                                 {activeChapterId && (
-                                    <div className="px-6 pb-2">
-                                        <div className="max-w-3xl mx-auto flex gap-2">
-                                            <input
-                                                type="text"
-                                                value={beatInput}
-                                                onChange={e => setBeatInput(e.target.value)}
-                                                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddBeat(); } }}
-                                                placeholder="Add a story beat (narrator direction, user action, system event)..."
-                                                className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 transition-all"
-                                                disabled={addStoryBeat.isPending}
-                                            />
-                                            <button
-                                                onClick={handleAddBeat}
-                                                disabled={!beatInput.trim() || addStoryBeat.isPending}
-                                                className="px-4 py-2 text-sm bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors disabled:opacity-30"
-                                            >
-                                                {addStoryBeat.isPending ? <Loader2 size={14} className="animate-spin" /> : 'Add Beat'}
-                                            </button>
+                                    <div className="px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
+                                        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-3">
+                                            <div className="flex gap-2 shrink-0">
+                                                <button
+                                                    onClick={handleContinue}
+                                                    disabled={isStreaming || continueChapter.isPending}
+                                                    className={clsx(
+                                                        "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
+                                                        isStreaming || continueChapter.isPending
+                                                            ? "bg-indigo-500/50 text-white/50 cursor-not-allowed"
+                                                            : "bg-indigo-600 text-white hover:bg-indigo-500"
+                                                    )}
+                                                >
+                                                    {isStreaming || continueChapter.isPending ? (
+                                                        <><Loader2 size={14} className="animate-spin" /> Gen...</>
+                                                    ) : (
+                                                        <><Play size={14} fill="currentColor" /> Continue</>
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={handleIllustrate}
+                                                    disabled={isIllustrating}
+                                                    className={clsx(
+                                                        "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
+                                                        isIllustrating
+                                                            ? "bg-amber-500/50 text-white/50 cursor-not-allowed"
+                                                            : "bg-amber-600 text-white hover:bg-amber-500"
+                                                    )}
+                                                >
+                                                    {isIllustrating ? (
+                                                        <><Loader2 size={14} className="animate-spin" /> Illus...</>
+                                                    ) : (
+                                                        <><ImageIcon size={14} /> Illustrate</>
+                                                    )}
+                                                </button>
+                                            </div>
+
+                                            <div className="flex-1 flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={beatInput}
+                                                    onChange={e => setBeatInput(e.target.value)}
+                                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddBeat(); } }}
+                                                    placeholder="Add a story beat..."
+                                                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 transition-all min-w-0"
+                                                    disabled={addStoryBeat.isPending}
+                                                />
+                                                <button
+                                                    onClick={handleAddBeat}
+                                                    disabled={!beatInput.trim() || addStoryBeat.isPending}
+                                                    className="px-4 py-2 text-sm bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors disabled:opacity-30 shrink-0"
+                                                >
+                                                    {addStoryBeat.isPending ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
-                                )}
-
-                                {/* Floating Action Bar */}
-                                {activeChapterId && (
-                                    <motion.div 
-                                        initial={{ y: 50, opacity: 0, x: '-50%' }}
-                                        animate={{ y: 0, opacity: 1, x: '-50%' }}
-                                        className="absolute bottom-6 left-1/2 flex items-center gap-2 p-2 rounded-2xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-indigo-500/10"
-                                    >
-                                        <div className="w-px h-8 bg-white/10 mx-1" />
-                                        <motion.button
-                                            onClick={handleContinue}
-                                            disabled={isStreaming || continueChapter.isPending}
-                                            whileHover={{ scale: (isStreaming || continueChapter.isPending) ? 1 : 1.05 }}
-                                            whileTap={{ scale: (isStreaming || continueChapter.isPending) ? 1 : 0.95 }}
-                                            className={clsx(
-                                                "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all relative overflow-hidden",
-                                                isStreaming || continueChapter.isPending
-                                                    ? "bg-indigo-500/50 text-white/50 cursor-not-allowed"
-                                                    : "bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_30px_rgba(79,70,229,0.8)]"
-                                            )}
-                                        >
-                                            {!(isStreaming || continueChapter.isPending) && (
-                                                <motion.div 
-                                                    className="absolute inset-0 bg-white/20"
-                                                    initial={{ x: '-100%', opacity: 0 }}
-                                                    animate={{ x: '100%', opacity: 0 }}
-                                                    transition={{ repeat: Infinity, duration: 2, ease: 'linear', repeatDelay: 1 }}
-                                                    whileHover={{ opacity: 1 }}
-                                                />
-                                            )}
-                                            {isStreaming || continueChapter.isPending ? (
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    Generating
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <Play size={18} fill="currentColor" className="opacity-80" />
-                                                    Continue
-                                                </>
-                                            )}
-                                        </motion.button>
-                                        <motion.button
-                                            onClick={handleIllustrate}
-                                            disabled={isIllustrating}
-                                            whileHover={{ scale: isIllustrating ? 1 : 1.05 }}
-                                            whileTap={{ scale: isIllustrating ? 1 : 0.95 }}
-                                            className={clsx(
-                                                "flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all",
-                                                isIllustrating
-                                                    ? "bg-amber-500/50 text-white/50 cursor-not-allowed"
-                                                    : "bg-amber-600 text-white shadow-[0_0_15px_rgba(245,158,11,0.3)] hover:shadow-[0_0_25px_rgba(245,158,11,0.6)]"
-                                            )}
-                                            title="Generate illustration for this chapter"
-                                        >
-                                            {isIllustrating ? (
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    Illustrating
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <ImageIcon size={18} />
-                                                    Illustrate
-                                                </>
-                                            )}
-                                        </motion.button>
-                                        <div className="w-px h-8 bg-white/10 mx-1" />
-                                    </motion.div>
                                 )}
                             </div>
                         </div>
@@ -581,7 +648,6 @@ export default function StorySandbox() {
                 )}
             </div>
 
-            {/* Right Panel: Illustrations & Settings */}
             <AnimatePresence initial={false}>
                 {isPanelOpen && activeStoryId && (
                     <motion.div
@@ -599,7 +665,6 @@ export default function StorySandbox() {
                         </div>
                         
                         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
-                            {/* Active Lorebooks */}
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                                     <Layers size={14} /> Lorebooks
@@ -631,7 +696,6 @@ export default function StorySandbox() {
                                 )}
                             </div>
 
-                            {/* Chapter Images */}
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                                     <ImageIcon size={14} /> Chapter Images
@@ -651,8 +715,30 @@ export default function StorySandbox() {
                                     </div>
                                 )}
                             </div>
-
-                            {/* Story Info */}
+                            <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 space-y-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Settings size={16} className="text-gray-400" />
+                                    <h3 className="font-semibold text-gray-200">AI Model Settings</h3>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Text Model</label>
+                                    <select
+                                        className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50"
+                                        value={defaultLlmConfig?.model_id || 'default'}
+                                        onChange={(e) => {
+                                            if (defaultLlmConfig?.provider_id) {
+                                                setLlmConfig.mutate({ provider_id: defaultLlmConfig.provider_id, model_id: e.target.value });
+                                            }
+                                        }}
+                                    >
+                                        <option value="default">Provider Default</option>
+                                        {llmModels.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-gray-500 mt-1">Changes the active model for continuation and titles.</p>
+                                </div>
+                            </div>
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Story Info</h4>
                                 <div className="space-y-2 text-xs text-gray-500">

@@ -4,6 +4,7 @@ import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, Pan
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
+import api from '../api/client';
 import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters, useRenameChat, getAvatarUrl } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -21,6 +22,8 @@ export default function ChatWorkspace() {
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const location = useLocation();
@@ -178,6 +181,51 @@ export default function ChatWorkspace() {
         }
     };
 
+
+    const triggerAutoTitle = async () => {
+        if (!activeChatId) return;
+        setIsGeneratingTitle(true);
+        toast('Generating title...', { icon: '🤖' });
+        
+        try {
+            const chatHistory = messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+            const resJob = await api.post('/api/jobs', {
+                task_type: "text",
+                workflow: {
+                    messages: [
+                        { role: "system", content: "You are a helpful assistant. Generate a short, catchy title (max 5 words) for the following chat history. Output ONLY the title." },
+                        { role: "user", content: chatHistory || "A new conversation." }
+                    ]
+                }
+            });
+            
+            const pollJob = async (jobId) => {
+                for (let i = 0; i < 30; i++) {
+                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
+                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
+                        const newTitle = jobStatus.outputs[0].content.replace(/["']/g, '');
+                        await renameChatMutation.mutateAsync({ chatId: activeChatId, name: newTitle });
+                        toast.success('Title generated!');
+                        setIsGeneratingTitle(false);
+                        return;
+                    }
+                    if (jobStatus.status === 'failed') break;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                toast.error('Title generation failed');
+                setIsGeneratingTitle(false);
+            };
+            if (resJob.id) {
+                pollJob(resJob.id);
+            } else {
+                setIsGeneratingTitle(false);
+            }
+        } catch {
+            toast.error('Failed to generate title');
+            setIsGeneratingTitle(false);
+        }
+    };
+
     const handleCreateChat = () => {
         createChatMutation.mutate({ name: 'New Chat' }, {
             onSuccess: (chat) => {
@@ -261,8 +309,24 @@ export default function ChatWorkspace() {
             exit={{ opacity: 0 }}
             className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8"
         >
+            {/* Chats Sidebar Overlay for Mobile */}
+            <AnimatePresence>
+                {isSidebarOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-40 bg-black/50 md:hidden"
+                        onClick={() => setIsSidebarOpen(false)}
+                    />
+                )}
+            </AnimatePresence>
+
             {/* Sidebar for Chats */}
-            <div className="w-64 border-r border-white/5 bg-gray-900/60 hidden md:flex flex-col shrink-0">
+            <div className={clsx(
+                "absolute md:static inset-y-0 left-0 z-50 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0 w-64 border-r border-white/5 bg-gray-900/60",
+                isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+            )}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                     <h3 className="font-semibold text-gray-200">Chats</h3>
                     <button onClick={handleCreateChat} className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
@@ -288,7 +352,7 @@ export default function ChatWorkspace() {
                                     </div>
                                 ) : (
                                     <button
-                                        onClick={() => setActiveChatId(chat.id)}
+                                        onClick={() => { setActiveChatId(chat.id); setIsSidebarOpen(false); }}
                                         className={clsx(
                                             "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between",
                                             activeChatId === chat.id ? "bg-blue-500/20 text-blue-300" : "text-gray-400 hover:bg-white/5"
@@ -312,7 +376,12 @@ export default function ChatWorkspace() {
                 {/* Chat Header */}
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center overflow-hidden">
+                        <div className="md:hidden">
+                            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-400 hover:text-white transition-colors">
+                                <MessageSquare size={20} />
+                            </button>
+                        </div>
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 hidden sm:flex">
                             {linkedCharacter?.has_avatar ? (
                                 <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                             ) : (
@@ -320,13 +389,19 @@ export default function ChatWorkspace() {
                             )}
                         </div>
                         <div>
-                            <h2 className="font-semibold text-gray-100 flex items-center gap-2">
+                            <h2 className="font-semibold text-gray-100 flex items-center gap-2 truncate">
                                 {activeChat?.name || 'Roleplay Session'}
-                                <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold uppercase tracking-wider border border-blue-500/20">
-                                    Active
-                                </span>
+                                <button 
+                                    onClick={triggerAutoTitle} 
+                                    disabled={isGeneratingTitle}
+                                    className="ml-2 text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
+                                    title="Auto-generate chat title using AI"
+                                >
+                                    {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                                    Auto Title
+                                </button>
                             </h2>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs text-gray-500 truncate">
                                 {linkedCharacter ? `Playing as ${linkedCharacter.name}` : (activeChatId ? `Chat ID: ${activeChatId.slice(0, 8)}...` : 'No chat selected')}
                             </p>
                         </div>

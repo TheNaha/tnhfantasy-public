@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images } from 'lucide-react';
+import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import EmptyState from '../components/EmptyState';
 import ConfirmationModal from '../components/ConfirmationModal';
+import api from '../api/client';
 
 const CHARACTER_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Character name' },
@@ -62,7 +63,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         const objectUrl = URL.createObjectURL(file);
         setPreviewUrl(objectUrl);
 
-        if (isEditing) {
+        if (isEditing && character?.id) {
             try {
                 await uploadAvatarMutation.mutateAsync({ characterId: character.id, file });
                 toast.success('Avatar uploaded successfully');
@@ -74,6 +75,58 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             // We'll store it in the form state temporarily
             setForm(f => ({ ...f, _avatarFile: file }));
         }
+    };
+
+    const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+    const [recentImages, setRecentImages] = useState([]);
+    const [loadingGallery, setLoadingGallery] = useState(false);
+
+    const openGalleryPicker = async () => {
+        setShowGalleryPicker(true);
+        setLoadingGallery(true);
+        try {
+            const res = await api.get('/api/files?directory=output&limit=12');
+            setRecentImages(res.files || []);
+        } catch {
+            toast.error('Failed to load recent images');
+        }
+        setLoadingGallery(false);
+    };
+
+    const handleSelectGalleryImage = async (filename) => {
+        try {
+            // Fetch metadata to populate fields
+            const metaRes = await api.post('/api/files/metadata/batch', { files: [filename] });
+            const metadata = metaRes.metadata?.[filename] || {};
+            
+            if (metadata.prompt) {
+                // simple heuristic
+                const tags = metadata.prompt.split(',').map(s => s.trim()).filter(Boolean);
+                setForm(f => ({
+                    ...f,
+                    visual_tags: [...new Set([...f.visual_tags, ...tags])]
+                }));
+                toast.success('Extracted tags from image!');
+            }
+
+            // Convert image to file for avatar upload
+            const imgRes = await fetch(`/api/files/${filename}`);
+            const blob = await imgRes.blob();
+            const file = new File([blob], filename, { type: blob.type });
+            
+            const objectUrl = URL.createObjectURL(file);
+            setPreviewUrl(objectUrl);
+            
+            if (isEditing && character?.id) {
+                await uploadAvatarMutation.mutateAsync({ characterId: character.id, file });
+                toast.success('Avatar updated from gallery');
+            } else {
+                setForm(f => ({ ...f, _avatarFile: file }));
+            }
+        } catch {
+            toast.error('Failed to process gallery image');
+        }
+        setShowGalleryPicker(false);
     };
 
     const handleSave = async () => {
@@ -90,8 +143,8 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             if (!isEditing && form._avatarFile && savedCharId) {
                 try {
                     await uploadAvatarMutation.mutateAsync({ characterId: savedCharId, file: form._avatarFile });
-                } catch (e) {
-                    console.error("Avatar upload failed after creation", e);
+                } catch {
+                    console.error("Avatar upload failed after creation");
                 }
             }
             
@@ -117,6 +170,63 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         setForm(f => ({ ...f, [field]: f[field].filter((_, i) => i !== idx) }));
     };
 
+    const handleMagicGenerate = async () => {
+        if (!form.name.trim() && !form.description.trim()) {
+            toast.error('Provide at least a name or short description first!');
+            return;
+        }
+        
+        toast('Generating character profile...', { icon: '🤖' });
+        try {
+            const prompt = `Name: ${form.name}\nDescription: ${form.description}\n\nExpand this character into a full JSON profile. The JSON must contain: "description" (detailed background), "personality" (traits), "scenario" (setting), "first_mes" (opening line), "visual_tags" (array of danbooru style tags). Return ONLY valid JSON, nothing else.`;
+            
+            const resJob = await api.post('/api/jobs', {
+                task_type: "text",
+                workflow: {
+                    messages: [
+                        { role: "system", content: "You are an expert character creator. You output ONLY valid JSON without markdown blocks." },
+                        { role: "user", content: prompt }
+                    ]
+                }
+            });
+            
+            const pollJob = async (jobId) => {
+                for (let i = 0; i < 30; i++) {
+                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
+                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
+                        try {
+                            const raw = jobStatus.outputs[0].content;
+                            // Clean up potential markdown formatting from LLM
+                            const cleanJson = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+                            const profile = JSON.parse(cleanJson);
+                            
+                            setForm(f => ({
+                                ...f,
+                                description: profile.description || f.description,
+                                personality: profile.personality || f.personality,
+                                scenario: profile.scenario || f.scenario,
+                                first_mes: profile.first_mes || f.first_mes,
+                                visual_tags: profile.visual_tags ? [...new Set([...f.visual_tags, ...profile.visual_tags])] : f.visual_tags,
+                            }));
+                            toast.success('Character profile generated!');
+                        } catch {
+                            toast.error('Failed to parse AI output');
+                        }
+                        return;
+                    }
+                    if (jobStatus.status === 'failed') break;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                toast.error('Profile generation failed');
+            };
+            if (resJob.id) {
+                pollJob(resJob.id);
+            }
+        } catch {
+            toast.error('Failed to generate profile');
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -130,7 +240,16 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     onClick={e => e.stopPropagation()}
                 >
                     <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/50 shrink-0">
-                        <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
+                            <button
+                                onClick={handleMagicGenerate}
+                                className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
+                                title="Auto-generate empty fields based on Name and Description"
+                            >
+                                <Sparkles size={12} /> Auto-Fill
+                            </button>
+                        </div>
                         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
                     </div>
 
@@ -153,15 +272,25 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                             </div>
                             <input type="file" ref={avatarInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
                             
-                            <div className="flex-1">
-                                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Name *</label>
-                                <input
-                                    type="text"
-                                    value={form.name}
-                                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                                    className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all"
-                                    placeholder="Character name"
-                                />
+                            <div className="flex-1 space-y-3">
+                                <div>
+                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Name *</label>
+                                    <input
+                                        type="text"
+                                        value={form.name}
+                                        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                                        className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all"
+                                        placeholder="Character name"
+                                    />
+                                </div>
+                                <div>
+                                    <button 
+                                        onClick={openGalleryPicker}
+                                        className="w-full text-xs font-semibold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 py-2 rounded-lg border border-blue-500/20 flex items-center justify-center gap-2 transition-colors"
+                                    >
+                                        <Images size={14} /> Import from Gallery
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -248,6 +377,42 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                             {isEditing ? 'Update' : 'Create'}
                         </button>
                     </div>
+
+                    {/* Gallery Picker Modal Overlay */}
+                    <AnimatePresence>
+                        {showGalleryPicker && (
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="absolute inset-0 bg-gray-900/95 z-50 flex flex-col rounded-xl overflow-hidden"
+                            >
+                                <div className="flex items-center justify-between p-4 border-b border-gray-700/50">
+                                    <h3 className="font-semibold text-gray-200">Select Recent Image</h3>
+                                    <button onClick={() => setShowGalleryPicker(false)} className="text-gray-500 hover:text-white"><X size={20} /></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4">
+                                    {loadingGallery ? (
+                                        <div className="flex items-center justify-center h-full"><Loader2 className="animate-spin text-gray-500" size={32} /></div>
+                                    ) : recentImages.length === 0 ? (
+                                        <div className="text-center text-gray-500 py-10">No recent images found in output folder.</div>
+                                    ) : (
+                                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                                            {recentImages.map(img => (
+                                                <button
+                                                    key={img.filename}
+                                                    onClick={() => handleSelectGalleryImage(img.filename)}
+                                                    className="aspect-square rounded-lg border border-gray-700 overflow-hidden hover:border-blue-500 transition-colors"
+                                                >
+                                                    <img src={`/api/files/${img.filename}`} alt="" className="w-full h-full object-cover" />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </motion.div>
             </div>
         </AnimatePresence>

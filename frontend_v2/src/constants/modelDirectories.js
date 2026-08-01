@@ -13,6 +13,7 @@ export const PROVIDER_MODEL_DIRECTORIES = [
     'models/wildcards',
     'models/ultralytics/bbox',
     'models/motion_modules',
+    'models/llm',
 ];
 
 export const GENERATOR_MODEL_REQUESTS = [
@@ -45,4 +46,5 @@ export const MODEL_MANAGER_CATEGORIES = [
     { id: 'wildcards', label: 'Wildcards', path: 'models/wildcards' },
     { id: 'adetailer', label: 'ADetailer', path: 'models/ultralytics/bbox' },
     { id: 'motion_modules', label: 'Motion', path: 'models/motion_modules' },
+    { id: 'llm', label: 'LLM', path: 'models/llm' },
 ];

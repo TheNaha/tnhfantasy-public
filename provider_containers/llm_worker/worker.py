@@ -41,7 +41,22 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup
+    from provider_core.background import auto_discovery_loop
+    import asyncio
+
     logger.info(f"Starting LLM Worker (engine={ENGINE}, provider={PROVIDER_ID})")
+
+    # Start auto-discovery for this provider
+    if PROVIDER_ID:
+        asyncio.create_task(
+            auto_discovery_loop(
+                provider_id=PROVIDER_ID,
+                provider_type="llm",
+                backend_url=BACKEND_URL,
+                interval_seconds=60,
+            )
+        )
+
     yield
     # Teardown
     logger.info("Shutting down LLM Worker")

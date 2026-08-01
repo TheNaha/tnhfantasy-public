@@ -22,6 +22,12 @@ export default function AddModelToProviderModal({ providers, onClose }) {
         );
     };
 
+    const isLlmDir = directory.startsWith('models/llm');
+    const filteredProviders = providers.filter(p => {
+        const isLlmProvider = p.type === 'llm-local';
+        return isLlmDir ? isLlmProvider : !isLlmProvider;
+    });
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -115,7 +121,10 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                             Select Providers
                         </label>
                         <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar p-3 bg-gray-900 rounded-lg border border-gray-700">
-                            {providers.map(provider => (
+                            {filteredProviders.length === 0 && (
+                                <p className="text-sm text-gray-500 text-center py-4">No eligible providers found for this model type.</p>
+                            )}
+                            {filteredProviders.map(provider => (
                                 <label
                                     key={provider.id}
                                     className="flex items-center gap-3 p-2 hover:bg-gray-800 rounded cursor-pointer transition-colors"

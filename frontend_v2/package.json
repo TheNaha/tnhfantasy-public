@@ -29,8 +29,10 @@
     "react-dom": "^19.2.0",
     "react-dropzone": "^14.3.8",
     "react-hot-toast": "^2.6.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.6",
     "recharts": "^3.5.1",
+    "remark-gfm": "^4.0.1",
     "socket.io-client": "^4.7.0",
     "zustand": "^5.0.8"
   },
