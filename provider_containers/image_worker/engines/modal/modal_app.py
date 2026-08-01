@@ -8,7 +8,7 @@ import logging
 import os
 import json
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator, List
 from pathlib import Path
 
 # IMPORTANT: provider_core is a sibling package. Modal cloud functions can fail
@@ -20,10 +20,222 @@ from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
 )
-from image_worker.comfy.workflow_executor import (
-    IMAGE_FETCH_FILESYSTEM,
-    execute_comfy_workflow,
-)
+# =============================================================================
+# Inlined image_worker logic
+# =============================================================================
+IMAGE_FETCH_FILESYSTEM = "filesystem"
+IMAGE_FETCH_VIEW_API = "view_api"
+
+def _get_websockets_module():
+    import websockets
+    return websockets
+
+def _log(logger_obj: logging.Logger | None, level: int, message: str) -> None:
+    if logger_obj is not None:
+        logger_obj.log(level, message)
+
+async def _connect_with_retry(ws_url: str, *, max_retries: int, initial_retry_delay_seconds: float, logger_obj: logging.Logger | None):
+    websockets = _get_websockets_module()
+    retry_delay = initial_retry_delay_seconds
+    for attempt in range(max_retries):
+        try:
+            return await websockets.connect(ws_url), websockets
+        except Exception as error:
+            if attempt >= max_retries - 1:
+                raise
+            _log(logger_obj, logging.WARNING, f"Workflow websocket connect failed: {error}")
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
+    raise RuntimeError("Workflow websocket connection retries exhausted")
+
+async def _queue_prompt(server_address: str, workflow_json: Dict[str, Any], client_id: str) -> tuple[str | None, Dict[str, Any] | None]:
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
+    endpoint = f"{server_address}/prompt"
+    payload = {"prompt": workflow_json, "client_id": client_id}
+    from provider_core.http_client import get_http_client
+    import httpx
+    try:
+        client = get_http_client()
+        response = await client.post(endpoint, json=payload, timeout=10.0)
+        response.raise_for_status()
+        response_data = response.json()
+    except httpx.HTTPStatusError as error:
+        return None, {"status": "error", "message": f"ComfyUI rejected workflow: {error.response.text or str(error)}"}
+    except Exception as error:
+        return None, {"status": "error", "message": f"ComfyUI rejected workflow: {error}"}
+    prompt_id = response_data.get("prompt_id")
+    if not prompt_id: return None, {"status": "error", "message": "No prompt_id"}
+    if "error" in response_data: return None, {"status": "error", "message": response_data["error"]}
+    if response_data.get("node_errors"): return None, {"status": "error", "message": str(response_data.get("node_errors"))}
+    return prompt_id, None
+
+async def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
+    endpoint = f"{server_address}/history/{prompt_id}"
+    from provider_core.http_client import get_http_client
+    try:
+        client = get_http_client()
+        response = await client.get(endpoint, timeout=10.0)
+        response.raise_for_status()
+        history = response.json()
+    except Exception as error:
+        return None, f"Failed to fetch history: {error}"
+    if prompt_id not in history: return None, "Prompt not found in history"
+    return history[prompt_id], None
+
+def _collect_images_from_filesystem(history_data: Dict[str, Any], *, output_dir: str, temp_dir: str, logger_obj: logging.Logger | None) -> list[Dict[str, Any]]:
+    import base64
+    images_output = []
+    for node_output in history_data.get("outputs", {}).values():
+        for image in node_output.get("images", []):
+            filename = image.get("filename")
+            if not filename: continue
+            subfolder = image.get("subfolder") or ""
+            folder_type = image.get("type", "output")
+            base_dir = output_dir if folder_type == "output" else temp_dir
+            try:
+                filepath = get_safe_path(base_dir, os.path.join(subfolder, filename) if subfolder else filename)
+                with open(filepath, "rb") as file_obj:
+                    images_output.append({"filename": filename, "data": base64.b64encode(file_obj.read()).decode('utf-8'), "_base64_encoded": True, "type": folder_type, "subfolder": subfolder})
+            except Exception as error:
+                _log(logger_obj, logging.ERROR, f"Failed to read image {filename}: {error}")
+    return images_output
+
+async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188, *, image_fetch_mode: str = IMAGE_FETCH_FILESYSTEM, output_dir: str = "/root/comfy/ComfyUI/output", temp_dir: str = "/root/comfy/ComfyUI/temp", stall_timeout_seconds: float = 300.0, logger: logging.Logger | None = None) -> AsyncGenerator[Dict[str, Any], None]:
+    import uuid
+    client_id = str(uuid.uuid4())
+    server_address = f"http://127.0.0.1:{port}"
+    ws_url = f"ws://127.0.0.1:{port}/ws?clientId={client_id}"
+    websocket, websockets_mod = await _connect_with_retry(ws_url, max_retries=5, initial_retry_delay_seconds=1.0, logger_obj=logger)
+    
+    prompt_id, queue_error = await _queue_prompt(server_address, workflow_json, client_id)
+    if queue_error:
+        yield queue_error; return
+    
+    yield {"status": "queued", "prompt_id": prompt_id}
+    effective_stall_timeout = max(float(stall_timeout_seconds), 1.0)
+    last_prompt_node = None
+    
+    try:
+        while True:
+            try: message = await asyncio.wait_for(websocket.recv(), timeout=effective_stall_timeout)
+            except asyncio.TimeoutError:
+                history_probe, _ = await _get_history(server_address, prompt_id)
+                if history_probe is not None: break
+                yield {"status": "error", "message": "Workflow stalled", "code": 408, "retryable": True, "details": {"reason": "workflow_stalled", "prompt_id": prompt_id, "last_node": last_prompt_node}}
+                return
+            except websockets_mod.exceptions.ConnectionClosed as error:
+                from provider_core.http_client import get_http_client
+                try: await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
+                except: pass
+                yield {"status": "error", "message": f"WebSocket closed: {error}", "code": 1006, "retryable": True, "details": {"reason": "websocket_closed", "prompt_id": prompt_id}}
+                return
+            except Exception as error:
+                yield {"status": "error", "message": f"WebSocket error: {error}", "code": 500, "retryable": False, "details": {"reason": "websocket_error", "prompt_id": prompt_id}}
+                return
+                
+            if not isinstance(message, str): continue
+            try: payload = json.loads(message)
+            except: continue
+            
+            msg_type = payload.get("type")
+            msg_data = payload.get("data", {})
+            msg_prompt_id = msg_data.get("prompt_id")
+            
+            if msg_type == "executing":
+                node = msg_data.get("node")
+                if node is None and msg_prompt_id == prompt_id: break
+                if msg_prompt_id == prompt_id:
+                    last_prompt_node = str(node) if node is not None else None
+                    yield {"status": "executing", "node": node, "prompt_id": prompt_id}
+            elif msg_type == "execution_cached" and msg_prompt_id == prompt_id:
+                yield {"status": "execution_cached", "nodes": msg_data.get("nodes", []), "prompt_id": prompt_id}
+            elif msg_type == "progress" and (msg_prompt_id is None or msg_prompt_id == prompt_id):
+                yield {"status": "progress", "value": msg_data.get("value", 0), "max": msg_data.get("max", 0), "prompt_id": prompt_id}
+            elif msg_type == "execution_error":
+                yield {"status": "error", "message": str(msg_data)}; return
+    except asyncio.CancelledError:
+        from provider_core.http_client import get_http_client
+        try: await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
+        except: pass
+        raise
+    finally:
+        await websocket.close()
+        
+    history_data, history_error = await _get_history(server_address, prompt_id)
+    if history_error:
+        yield {"status": "error", "message": history_error}; return
+        
+    yield {"status": "success", "images": _collect_images_from_filesystem(history_data, output_dir=output_dir, temp_dir=temp_dir, logger_obj=logger)}
+
+def _start_comfy_server(port: int, extra_args: list[str] = None):
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port)]
+    if extra_args: cmd.extend(extra_args)
+    subprocess.Popen(cmd)
+
+def _wait_for_comfy_ready(port: int, timeout_seconds: float, label: str):
+    import requests
+    deadline = time.time() + max(timeout_seconds, 1.0)
+    while time.time() < deadline:
+        try:
+            if requests.get(f"http://127.0.0.1:{port}", timeout=2).status_code == 200:
+                logger.info(f"[{label}] ComfyUI is ready")
+                return True
+        except requests.exceptions.RequestException: pass
+        time.sleep(1)
+    return False
+
+def _restart_comfy_server(port: int, label: str, timeout_seconds: float = 180.0):
+    try:
+        subprocess.run(["pkill", "-f", "ComfyUI/main.py"], check=False)
+        subprocess.run(["pkill", "-f", "comfy launch"], check=False)
+    except: pass
+    time.sleep(1)
+    _start_comfy_server(port)
+    _wait_for_comfy_ready(port, timeout_seconds, label)
+
+def capture_stall_diagnostics(port: int, label: str, details: Optional[Dict[str, Any]] = None, enabled: bool = True, diagnostics_timeout: float = 8.0, max_chars: int = 12000, volume_commit_fn = None) -> Optional[str]:
+    if not enabled: return None
+    diagnostics_path = Path("/mnt/data/diagnostics/comfyui_stalls") / f"{label.lower()}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(diagnostics_path, "w", encoding="utf-8") as f: json.dump({"label": label, "port": port, "stall_details": details or {}}, f)
+        if volume_commit_fn: volume_commit_fn()
+    except Exception as exc: logger.error(f"Failed diagnostics: {exc}")
+    return str(diagnostics_path)
+
+async def list_models_with_metadata_internal(base_path: str, directory: str, compute_hashes: bool = False) -> list[Dict[str, Any]]:
+    import aiofiles
+    try: target_dir = get_safe_path(base_path, directory)
+    except: return []
+    if not os.path.exists(target_dir): return []
+    
+    def _scan():
+        entries, entry_set = [], set()
+        try:
+            for e in os.scandir(target_dir):
+                if e.is_file():
+                    entry_set.add(e.name)
+                    if not e.name.endswith(('.json', '.preview.png', '.sha256')): entries.append((e.name, e.stat().st_size))
+        except: pass
+        return entries, entry_set
+        
+    entries, entry_set = await asyncio.to_thread(_scan)
+    async def _proc(name: str, size: int):
+        fpath = f"{directory}/{name}" if directory else name
+        res = {"name": name, "path": fpath, "type": "file", "size": size, "sha256": None}
+        if f"{os.path.splitext(name)[0]}.preview.png" in entry_set: res["preview"] = f"/api/view/{directory}/{os.path.splitext(name)[0]}.preview.png"
+        meta_name = f"{os.path.splitext(name)[0]}.json"
+        if meta_name in entry_set:
+            res["metadata_url"] = f"/api/view/{directory}/{meta_name}"
+            try:
+                async with aiofiles.open(os.path.join(target_dir, meta_name), 'r') as f: res["metadata"] = json.loads(await f.read())
+            except: pass
+        return res
+    return await asyncio.gather(*[_proc(n, s) for n, s in entries])
+
 
 # Configure logging for Modal functions
 logging.basicConfig(
@@ -49,22 +261,7 @@ def _resolve_provider_core_local_path() -> Path:
     raise RuntimeError("provider_core source directory not found for modal image build")
 
 
-def _resolve_image_worker_local_path() -> Path:
-    """Resolve image_worker source path for Modal image packaging."""
-    candidates = [
-        Path(__file__).parent / "image_worker",  # When running on Modal (mounted to /root/image_worker)
-        Path(__file__).parent.parent.parent,     # When running locally (from engines/modal/modal_app.py)
-        Path(__file__).parent.parent.parent.parent / "image_worker",
-    ]
-
-    for candidate in candidates:
-        if candidate.exists() and (candidate / "comfy").exists():
-            return candidate
-
-    raise RuntimeError("image_worker source directory not found for modal image build")
-
 PROVIDER_CORE_LOCAL_PATH = _resolve_provider_core_local_path()
-IMAGE_WORKER_LOCAL_PATH = _resolve_image_worker_local_path()
 
 # =============================================================================
 # Per-Function Configuration from Environment (set during modal deploy)
@@ -160,16 +357,11 @@ image_base = (
         "ln -s /mnt/data/output /root/comfy/ComfyUI/output",
         "ln -s /mnt/data/input /root/comfy/ComfyUI/input"
     )
-    # Ensure shared provider_core utilities and image_worker are present in cloud runtime.
-    # Added at the very end to prevent invalidating huge pip cache when code changes.
+    # Ensure shared provider_core utilities are present in cloud runtime.
+    # Note: image_worker logic is now inlined into this file.
     .add_local_dir(
         local_path=PROVIDER_CORE_LOCAL_PATH,
         remote_path="/root/provider_core",
-        copy=True,
-    )
-    .add_local_dir(
-        local_path=IMAGE_WORKER_LOCAL_PATH,
-        remote_path="/root/image_worker",
         copy=True,
     )
 )
@@ -190,12 +382,7 @@ image_snapshot = image_base.add_local_dir(
 # =============================================================================
 
 
-from image_worker.comfy.comfy_server import (
-    _start_comfy_server,
-    _wait_for_comfy_ready,
-    _restart_comfy_server,
-    capture_stall_diagnostics,
-)
+
 
 def _capture_stall_diagnostics(port: int, label: str, details: Optional[Dict[str, Any]] = None) -> Optional[str]:
     return capture_stall_diagnostics(
@@ -574,7 +761,6 @@ _reload_lock = asyncio.Lock()
 async def list_models_with_metadata(directory: str):
     async with _reload_lock:
         await vol.reload.aio()
-    from image_worker.comfy.models_utils import list_models_with_metadata_internal
     return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
 
