@@ -708,8 +708,8 @@ class ModelRepositoryV2:
         """
         Get all provider statuses for a model's files.
         Returns dict keyed by provider_id.
+        Provider-level status is aggregated from all file statuses.
         """
-        # Get all files for this model's versions
         stmt = select(ProviderVersionStatus, ModelFile, ModelVersion).join(
             ModelFile, ProviderVersionStatus.file_id == ModelFile.id
         ).join(
@@ -726,7 +726,8 @@ class ModelRepositoryV2:
                 result[provider_key] = {
                     "status": status.status,
                     "files": [],
-                    "total_size": 0
+                    "total_size": 0,
+                    "_file_statuses": [],
                 }
             result[provider_key]["files"].append({
                 "file_id": file.id,
@@ -734,10 +735,27 @@ class ModelRepositoryV2:
                 "status": status.status,
                 "size_bytes": status.size_bytes
             })
+            result[provider_key]["_file_statuses"].append(status.status)
             if status.size_bytes:
                 result[provider_key]["total_size"] += status.size_bytes
         
+        for provider_data in result.values():
+            provider_data["status"] = self._aggregate_provider_status(provider_data.pop("_file_statuses"))
+        
         return result
+    
+    @staticmethod
+    def _aggregate_provider_status(file_statuses: list[str]) -> str:
+        """Aggregate per-file statuses into a single provider-level status."""
+        if not file_statuses:
+            return "pending"
+        ready_count = sum(1 for s in file_statuses if s == "ready")
+        if ready_count == len(file_statuses):
+            return "ready"
+        if ready_count == 0:
+            first = file_statuses[0]
+            return first if first in ("downloading", "failed") else "pending"
+        return "partial"
     
     def delete_all_statuses_for_provider(self, provider_id: str) -> int:
         """
@@ -945,6 +963,7 @@ class ModelRepositoryV2:
                     "status": status.status,
                     "files": [],
                     "total_size": 0,
+                    "_file_statuses": [],
                 }
             result[model_id][provider_key]["files"].append({
                 "file_id": file.id,
@@ -952,8 +971,14 @@ class ModelRepositoryV2:
                 "status": status.status,
                 "size_bytes": status.size_bytes,
             })
+            result[model_id][provider_key]["_file_statuses"].append(status.status)
             if status.size_bytes:
                 result[model_id][provider_key]["total_size"] += status.size_bytes
+
+        for model_data in result.values():
+            for provider_data in model_data.values():
+                provider_data["status"] = self._aggregate_provider_status(provider_data.pop("_file_statuses"))
+        
         return result
 
     def model_to_dict(

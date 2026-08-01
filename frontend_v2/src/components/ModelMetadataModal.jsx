@@ -22,6 +22,9 @@ function modelStatusTone(status) {
     if (AVAILABLE_MODEL_STATES.has(status)) {
         return 'text-green-300 bg-green-500/15 border-green-500/30';
     }
+    if (status === 'partial') {
+        return 'text-amber-300 bg-amber-500/15 border-amber-500/30';
+    }
     if (status === 'downloading') {
         return 'text-yellow-300 bg-yellow-500/15 border-yellow-500/30';
     }

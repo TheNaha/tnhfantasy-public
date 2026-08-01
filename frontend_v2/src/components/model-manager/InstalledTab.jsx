@@ -446,6 +446,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                                 const colorClass = {
                                                     installed: 'text-green-400',
                                                     ready: 'text-green-400',
+                                                    partial: 'text-amber-400',
                                                     downloading: 'text-yellow-400',
                                                     pending: 'text-gray-400',
                                                     failed: 'text-red-400'

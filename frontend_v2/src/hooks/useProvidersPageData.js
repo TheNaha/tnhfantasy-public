@@ -187,6 +187,7 @@ async function ensureProvidersRealtime(queryClient) {
             const payload = unwrapEventData(event);
             const providerId = extractProviderId(payload);
             const hasExpectedSchema = Boolean(providerId && payload.status);
+            const isBatchUpdate = payload.status === 'batch_updated';
 
             let providersPatched = false;
             queryClient.setQueryData(
@@ -198,7 +199,10 @@ async function ensureProvidersRealtime(queryClient) {
                 },
             );
 
-
+            if (isBatchUpdate) {
+                queryClient.invalidateQueries({ queryKey: ['installed-models'] });
+                queryClient.invalidateQueries({ queryKey: ['v2-models'] });
+            }
 
             if (!hasExpectedSchema || !providersPatched) {
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
@@ -353,6 +357,8 @@ export function useProviderMutations() {
         await Promise.all([
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers }),
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer }),
+            queryClient.invalidateQueries({ queryKey: ['installed-models'] }),
+            queryClient.invalidateQueries({ queryKey: ['v2-models'] }),
         ]);
     };
 

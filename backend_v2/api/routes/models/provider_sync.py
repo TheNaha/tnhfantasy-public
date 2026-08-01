@@ -133,8 +133,10 @@ async def batch_update_status(
     """
     Batch update provider statuses.
     More efficient than individual calls during reconciliation.
+    Emits a single aggregate WebSocket event after all updates.
     """
     from api.deps import get_model_repo_v2
+    from core.events import emit_model_status_update
     repo = get_model_repo_v2(session)
     service = get_model_service_v2(session)
     provider_key = request.provider_id or request.provider_name
@@ -149,6 +151,7 @@ async def batch_update_status(
     
     updated = 0
     failed = 0
+    status_counts: dict[str, int] = {}
     for update in request.updates:
         try:
             # Resolve file_id from storage_path if needed
@@ -167,10 +170,19 @@ async def batch_update_status(
                 storage_path=update.storage_path,
                 size_bytes=update.size_bytes
             )
+            status_counts[update.status] = status_counts.get(update.status, 0) + 1
             updated += 1
         except Exception as e:
             failed += 1
             logger.error(f"Batch status update failed for file_id {file_id}: {e}")
+    
+    if updated > 0:
+        await emit_model_status_update(
+            provider_id=provider_key,
+            file_id=0,
+            status="batch_updated",
+            extra={"updated": updated, "failed": failed, "status_counts": status_counts}
+        )
     
     return {"updated": updated, "failed": failed}
 

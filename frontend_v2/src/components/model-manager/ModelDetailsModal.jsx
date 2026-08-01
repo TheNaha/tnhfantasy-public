@@ -329,7 +329,8 @@ export default function ModelDetailsModal({ file, onClose }) {
                                             const colorClass = {
                                                 ready: 'text-green-400 bg-green-500/20 border-green-500/30',
                                                 installed: 'text-green-400 bg-green-500/20 border-green-500/30',
-                                                downloading: 'text-yellow-400 bg-yellow-500/20 border-yellow-500/30',
+                                                partial: 'text-amber-400 bg-amber-500/20 border-amber-500/30',
+                                                downloading: 'text-yellow-400 bg-yellow-500/20 border-yellow-500/20',
                                                 pending: 'text-gray-400 bg-gray-500/20 border-gray-500/30',
                                                 failed: 'text-red-400 bg-red-500/20 border-red-500/30'
                                             }[status] || 'text-gray-400 bg-gray-500/20 border-gray-500/30';
