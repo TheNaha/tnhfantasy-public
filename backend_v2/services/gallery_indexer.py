@@ -86,7 +86,7 @@ class GalleryIndexer:
         if self._initialized:
             return
             
-        self.output_dir = output_dir or os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
+        self.output_dir = output_dir or os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../data/output"))
         self.files: dict[str, dict[str, Any]] = {}
         self.relative_path_index: dict[str, str] = {}
         self.filename_index: dict[str, set[str]] = defaultdict(set)

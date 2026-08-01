@@ -215,7 +215,7 @@ class ContainerManager:
             environment.update(env_vars)
         
         # Container configuration
-        container_name = f"comfy-provider-{provider_id}"
+        container_name = f"tnhcomfy-{provider_id}"
         
         # Check if container already exists
         try:
@@ -353,7 +353,7 @@ class ContainerManager:
         """Stop a provider worker container."""
         container = self.running_containers.get(provider_id)
         if not container:
-            container_name = f"comfy-provider-{provider_id}"
+            container_name = f"tnhcomfy-{provider_id}"
             try:
                 container = self.client.containers.get(container_name)
             except docker.errors.NotFound:
@@ -374,7 +374,7 @@ class ContainerManager:
         """Get logs from a provider container."""
         container = self.running_containers.get(provider_id)
         if not container:
-            container_name = f"comfy-provider-{provider_id}"
+            container_name = f"tnhcomfy-{provider_id}"
             try:
                 container = self.client.containers.get(container_name)
             except docker.errors.NotFound:

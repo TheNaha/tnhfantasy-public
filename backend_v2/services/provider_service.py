@@ -303,7 +303,7 @@ class ProviderService:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
 
-        container_name = f"comfy-provider-{provider_id}"
+        container_name = f"tnhcomfy-{provider_id}"
         container_config = {"container_name": container_name}
 
         existing = self.repo.get(provider_id)

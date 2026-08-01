@@ -1,12 +1,28 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session
-from core.entities import Chat, Message
+from core.entities import Chat, Message, MessageRole
+from core.events import wait_for_job_completion
 
 router = APIRouter()
+
+
+class UpdateChatRequest(BaseModel):
+    name: str | None = None
+    character_id: str | None = None
+
+
+class SendMessageRequest(BaseModel):
+    role: MessageRole
+    content: str
+    image_path: str | None = None
+    lorebook_ids: list[str] | None = None
+    agentic: bool = False
+
 
 @router.get("/", response_model=list[Chat])
 def list_chats(session: Session = Depends(get_session)):
@@ -34,7 +50,6 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     
-    # Delete associated messages first
     messages = session.exec(select(Message).where(Message.chat_id == chat_id)).all()
     for msg in messages:
         session.delete(msg)
@@ -43,33 +58,19 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
     session.commit()
     return {"message": "Chat deleted"}
 
-# Message endpoints
 @router.get("/{chat_id}/messages", response_model=list[Message])
 def list_messages(chat_id: str, session: Session = Depends(get_session)):
     return session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
 
 
-from pydantic import BaseModel
-
-from core.entities import MessageRole
-
-
-class SendMessageRequest(BaseModel):
-    role: MessageRole
-    content: str
-    image_path: str | None = None
-    lorebook_ids: list[str] | None = None
-    agentic: bool = False
-
 @router.patch("/{chat_id}", response_model=Chat)
-def update_chat(chat_id: str, data: dict, session: Session = Depends(get_session)):
+def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depends(get_session)):
     chat = session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    allowed = {"name", "character_id"}
-    for key, value in data.items():
-        if key in allowed:
-            setattr(chat, key, value)
+    update_fields = data.model_dump(exclude_unset=True)
+    for key, value in update_fields.items():
+        setattr(chat, key, value)
     chat.updated_at = datetime.now(timezone.utc)
     session.add(chat)
     session.commit()
@@ -77,8 +78,7 @@ def update_chat(chat_id: str, data: dict, session: Session = Depends(get_session
     return chat
 
 @router.post("/{chat_id}/messages")
-async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)):
-    from core.entities import MessageRole
+async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
     from services.context_builder import build_chat_context
     from services.job_queue import job_queue
     
@@ -164,11 +164,8 @@ async def generate_scene(
     chat_id: str, 
     session: Session = Depends(get_session),
 ):
-    import asyncio
-
-    from api.deps import get_job_submission_service
-    from core.entities import JobStatus
     from services.job_service import JobService
+    from services.job_submission_service import JobSubmissionService
     
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -198,24 +195,14 @@ async def generate_scene(
         },
         metadata={"source": "scene_prompt"}
     )
+    await job_queue.enqueue(prompt_job.id)
     
-    # Wait for LLM
     enriched_prompt = "beautiful scenery, masterpiece, high quality, 1girl, highly detailed"
-    for _ in range(30):
-        status = await job_service.get_job(prompt_job.id)
-        if status.status == JobStatus.COMPLETED:
-            if status.outputs and len(status.outputs) > 0:
-                enriched_prompt = status.outputs[0].get("content", enriched_prompt)
-            break
-        elif status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-            break
-        await asyncio.sleep(1.0)
+    status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)
+    if status_str == "completed" and output:
+        enriched_prompt = output.get("content", enriched_prompt)
         
-    # Submit image job
-    submission_service = get_job_submission_service(session)
-    # Build a simple SDXL/SD1.5 workflow block - we will assume default workflow for now.
-    # Actually, we can use the default workflow logic from generator store, but backend needs it.
-    # To keep it simple, we use the fallback text2img workflow:
+    submission_service = JobSubmissionService(session)
     
     image_workflow = {
         "3": {

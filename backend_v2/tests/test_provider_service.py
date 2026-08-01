@@ -362,7 +362,7 @@ class _DummyContainerManager:
         self.running_containers = {provider_id: container}
         self.client = MagicMock()
         self.client.containers = containers_client or _DummyContainersClient(container)
-        self.build_worker_image = MagicMock(return_value=f"comfy-provider-{provider_id}:latest")
+        self.build_worker_image = MagicMock(return_value=f"tnhcomfy-{provider_id}:latest")
 
 
 class TestProviderServiceDeploy:

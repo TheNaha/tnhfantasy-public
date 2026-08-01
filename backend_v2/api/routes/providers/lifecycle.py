@@ -108,7 +108,7 @@ async def get_all_container_statuses(
     statuses = {}
     for provider in providers:
         provider_id = provider["id"]
-        container_name = f"comfy-provider-{provider_id}"
+        container_name = f"tnhcomfy-{provider_id}"
         
         try:
             container = container_manager.client.containers.get(container_name)

@@ -24,7 +24,7 @@ class DirectUrlProvider(ServerlessProvider):
         
         # Container mode settings
         self.container_port = 8000
-        self.container_name = f"comfy-provider-{provider_id}"
+        self.container_name = f"tnhcomfy-{provider_id}"
         
         # Worker URL (inside podman network)
         self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)

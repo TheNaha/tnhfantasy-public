@@ -100,7 +100,7 @@ class ProviderLifecycleService:
 
     async def get_container_status(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
-        container_name = f"comfy-provider-{provider_id}"
+        container_name = f"tnhcomfy-{provider_id}"
 
         try:
             container = container_manager.client.containers.get(container_name)

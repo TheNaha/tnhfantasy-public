@@ -123,7 +123,7 @@ class ProviderDeployService:
         if containers_client is None:
             return True
 
-        expected_name = f"comfy-provider-deploy-{provider_id}-{str(attempt_id)[:8]}"
+        expected_name = f"tnhcomfy-deploy-{provider_id}-{str(attempt_id)[:8]}"
 
         try:
             container = containers_client.get(expected_name)
@@ -141,7 +141,7 @@ class ProviderDeployService:
                 all=True,
                 filters={
                     "label": [
-                        "comfy-provider-deploy=true",
+                        "tnhcomfy-deploy=true",
                         f"provider-id={provider_id}",
                         f"deploy-attempt-id={attempt_id}",
                     ]

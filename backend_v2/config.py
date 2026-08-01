@@ -137,8 +137,8 @@ class Settings(BaseSettings):
 
     # Directories
     # Introduce /{user_id}/ root partitions for multi-tenancy (hardcoded default_user for now)
-    output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../output/default_user"))
-    input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../input/default_user"))
+    output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/output"))
+    input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/input"))
 
     @model_validator(mode="before")
     @classmethod

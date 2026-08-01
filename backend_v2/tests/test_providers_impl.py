@@ -136,15 +136,15 @@ class TestFileProxyProviderBase:
 
 class TestHttpFileProxy:
     def get_proxy(self):
-        return HttpFileProxy("beam-1", {}, "http://comfy-provider-beam-1:8000")
+        return HttpFileProxy("beam-1", {}, "http://tnhcomfy-beam-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = HttpFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
-        assert proxy.base_url == "http://comfy-provider-p1:8000"
+        proxy = HttpFileProxy("p1", {}, "http://tnhcomfy-p1:8000/")
+        assert proxy.base_url == "http://tnhcomfy-p1:8000"
 
     def test_get_proxy_url(self):
         proxy = self.get_proxy()
-        assert proxy.get_proxy_url() == "http://comfy-provider-beam-1:8000"
+        assert proxy.get_proxy_url() == "http://tnhcomfy-beam-1:8000"
 
     async def test_get_file_success(self):
         proxy = self.get_proxy()
@@ -224,7 +224,7 @@ class TestBeamProvider:
 
     def test_init_sets_worker_url(self):
         provider = self.get_provider()
-        assert provider.worker_url == "http://comfy-provider-beam-primary:8000"
+        assert provider.worker_url == "http://tnhcomfy-beam-primary:8000"
 
     def test_init_credentials(self):
         provider = self.get_provider()
@@ -236,7 +236,7 @@ class TestBeamProvider:
 
     def test_init_default_port(self):
         provider = BeamProvider("beam-primary", {"type": "beam"})
-        assert provider.worker_url == "http://comfy-provider-beam-primary:8000"
+        assert provider.worker_url == "http://tnhcomfy-beam-primary:8000"
 
     def test_get_file_proxy(self):
         provider = self.get_provider()
@@ -273,7 +273,7 @@ class TestBeamProvider:
         _ = [update async for update in provider.run_inference({"nodes": {}})]
 
         assert recorder["args"][0] == "POST"
-        assert recorder["args"][1] == "http://comfy-provider-beam-primary:8000/inference"
+        assert recorder["args"][1] == "http://tnhcomfy-beam-primary:8000/inference"
 
     async def test_delete_model_uses_delete_first(self):
         provider = self.get_provider()
@@ -291,7 +291,7 @@ class TestBeamProvider:
         assert result is True
         mock_client.request.assert_awaited_once_with(
             "DELETE",
-            "http://comfy-provider-beam-primary:8000/delete-model",
+            "http://tnhcomfy-beam-primary:8000/delete-model",
             json={"path": "models/checkpoints/model.safetensors"},
         )
         mock_client.post.assert_not_awaited()
@@ -314,11 +314,11 @@ class TestBeamProvider:
         assert result is True
         mock_client.request.assert_awaited_once_with(
             "DELETE",
-            "http://comfy-provider-beam-primary:8000/delete-model",
+            "http://tnhcomfy-beam-primary:8000/delete-model",
             json={"path": "models/loras/model.safetensors"},
         )
         mock_client.post.assert_awaited_once_with(
-            "http://comfy-provider-beam-primary:8000/delete-model",
+            "http://tnhcomfy-beam-primary:8000/delete-model",
             json={"path": "models/loras/model.safetensors"},
         )
 
@@ -327,15 +327,15 @@ class TestBeamProvider:
 
 class TestHttpFileProxy:
     def get_proxy(self):
-        return HttpFileProxy("modal-1", {}, "http://comfy-provider-modal-1:8000")
+        return HttpFileProxy("modal-1", {}, "http://tnhcomfy-modal-1:8000")
 
     def test_init_strips_trailing_slash(self):
-        proxy = HttpFileProxy("p1", {}, "http://comfy-provider-p1:8000/")
-        assert proxy.base_url == "http://comfy-provider-p1:8000"
+        proxy = HttpFileProxy("p1", {}, "http://tnhcomfy-p1:8000/")
+        assert proxy.base_url == "http://tnhcomfy-p1:8000"
 
     def test_get_proxy_url(self):
         proxy = self.get_proxy()
-        assert proxy.get_proxy_url() == "http://comfy-provider-modal-1:8000"
+        assert proxy.get_proxy_url() == "http://tnhcomfy-modal-1:8000"
 
     async def test_get_file_success(self):
         proxy = self.get_proxy()
@@ -416,7 +416,7 @@ class TestModalProvider:
 
     def test_init_sets_worker_url(self):
         provider = self.get_provider()
-        assert provider.worker_url == "http://comfy-provider-modal-primary:8000"
+        assert provider.worker_url == "http://tnhcomfy-modal-primary:8000"
 
     def test_init_credentials(self):
         provider = self.get_provider()
@@ -424,7 +424,7 @@ class TestModalProvider:
 
     def test_init_default_port(self):
         provider = ModalProvider("modal-1", {"type": "modal"})
-        assert provider.worker_url == "http://comfy-provider-modal-1:8000"
+        assert provider.worker_url == "http://tnhcomfy-modal-1:8000"
 
     def test_get_file_proxy(self):
         provider = self.get_provider()
@@ -466,4 +466,4 @@ class TestModalProvider:
         _ = [update async for update in provider.run_inference({"nodes": {}})]
 
         assert recorder["args"][0] == "POST"
-        assert recorder["args"][1] == "http://comfy-provider-modal-primary:8000/inference"
+        assert recorder["args"][1] == "http://tnhcomfy-modal-primary:8000/inference"

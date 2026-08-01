@@ -19,7 +19,7 @@ class OpenAICompatProvider(ServerlessProvider):
         super().__init__(provider_id, config)
         
         self.container_port = 8000
-        self.container_name = f"comfy-provider-{provider_id}"
+        self.container_name = f"tnhcomfy-{provider_id}"
         self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)
         
         self.api_base = self.config.get("api_base", "http://localhost:11434/v1")

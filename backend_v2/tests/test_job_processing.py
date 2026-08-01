@@ -87,7 +87,7 @@ def _stub_container_runtime(monkeypatch):
             provider_id=provider.id,
             mode="container_http",
             connected=True,
-            worker_url=f"http://comfy-provider-{provider.id}:8000",
+            worker_url=f"http://tnhcomfy-{provider.id}:8000",
             status="running",
             healthy=True,
         )
@@ -105,7 +105,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
     async def fake_call_provider(**kwargs):
-        assert kwargs["worker_url"] == "http://comfy-provider-provider-2:8000"
+        assert kwargs["worker_url"] == "http://tnhcomfy-provider-2:8000"
         return {"images": []}
 
     def fake_resolve_provider_runtime(provider):
@@ -120,7 +120,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
             provider_id=provider.id,
             mode="container_http",
             connected=True,
-            worker_url="http://comfy-provider-provider-2:8000",
+            worker_url="http://tnhcomfy-provider-2:8000",
         )
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
@@ -153,7 +153,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
 
     async def fake_call_provider(**kwargs):
         worker_url = kwargs["worker_url"]
-        if worker_url == "http://comfy-provider-provider-1:8000":
+        if worker_url == "http://tnhcomfy-provider-1:8000":
             raise ProviderCallError("bad workflow", provider_id="provider-1", is_retryable=False)
         return {"images": []}
 

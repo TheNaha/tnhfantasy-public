@@ -4,7 +4,7 @@ import logging
 import hashlib
 from typing import List, Dict, Any
 
-from .utils import get_safe_path
+from provider_core.utils import get_safe_path
 
 import asyncio
 import aiofiles

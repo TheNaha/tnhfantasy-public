@@ -24,12 +24,12 @@ import logging
 import subprocess
 import time
 # IMPORTANT: provider_core is a sibling package and must be present in the deploy
-# source context. Deploying beam_app.py from only beam_worker/ (without the
+# source context. Deploying beam_app.py from only image_worker/engines/beam/ (without the
 # provider_containers root) can fail with ModuleNotFoundError: provider_core.
 from provider_core.utils import get_safe_path
 from provider_core.logging import get_logger
 
-logger = get_logger("beam_worker.beam_app")
+logger = get_logger("image_worker.beam.beam_app")
 from provider_core.downloads import download_model_to_path
 from provider_core.validation import (
     MIN_MODEL_SIZE,

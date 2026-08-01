@@ -171,9 +171,9 @@ class TestProviderRegistry:
     
     def test_get_worker_image(self):
         """Test getting worker image name."""
-        assert ProviderRegistry.get_worker_image("modal") == "comfy-provider-image-worker:latest"
-        assert ProviderRegistry.get_worker_image("beam") == "comfy-provider-image-worker:latest"
-        assert ProviderRegistry.get_worker_image("unknown-provider") == "comfy-provider-unknown-provider:latest"
+        assert ProviderRegistry.get_worker_image("modal") == "tnhcomfy-image-worker:latest"
+        assert ProviderRegistry.get_worker_image("beam") == "tnhcomfy-image-worker:latest"
+        assert ProviderRegistry.get_worker_image("unknown-provider") == "tnhcomfy-unknown-provider:latest"
     
     def test_get_default_port(self):
         """Test getting default port."""
@@ -260,7 +260,7 @@ class TestProviderRegistry:
         assert "gpu_url" in result["config"]
         assert "storage_url" in result["config"]
     
-    def test_get_beam_worker_image(self):
+    def test_get_beam_image_worker(self):
         """Test getting worker image name for Beam."""
         image = ProviderRegistry.get_worker_image("beam")
         

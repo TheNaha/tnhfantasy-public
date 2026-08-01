@@ -107,6 +107,72 @@ Behavior:
 
 - `POST /api/v2/providers/discovery`: Self-discovery endpoint for provider containers to register themselves.
 
+### Characters (`/api/v2/characters`)
+
+- `GET /api/v2/characters`: List all characters.
+- `POST /api/v2/characters`: Create a character.
+- `POST /api/v2/characters/import`: Import a SillyTavern PNG character card (V2/V3).
+- `GET /api/v2/characters/{id}`: Get a character.
+- `PUT /api/v2/characters/{id}`: Update a character.
+- `DELETE /api/v2/characters/{id}`: Delete a character.
+- `POST /api/v2/characters/{id}/avatar`: Upload character avatar.
+- `GET /api/v2/characters/{id}/avatar`: Get character avatar.
+
+### Chats (`/api/v2/chats`)
+
+- `GET /api/v2/chats`: List all chats.
+- `POST /api/v2/chats`: Create a chat session.
+- `GET /api/v2/chats/{id}`: Get a chat.
+- `PATCH /api/v2/chats/{id}`: Update a chat.
+- `DELETE /api/v2/chats/{id}`: Delete a chat (cascades messages).
+- `GET /api/v2/chats/{id}/messages`: List messages for a chat.
+- `POST /api/v2/chats/{id}/messages`: Send a message (triggers LLM reply if role=user).
+- `DELETE /api/v2/chats/{id}/messages/{msg_id}`: Delete a message.
+- `POST /api/v2/chats/{id}/scene`: Generate a scene image from chat context.
+
+### Lorebooks (`/api/v2/lorebooks`)
+
+- `GET /api/v2/lorebooks`: List all lorebooks.
+- `POST /api/v2/lorebooks`: Create a lorebook.
+- `GET /api/v2/lorebooks/{id}`: Get a lorebook.
+- `PUT /api/v2/lorebooks/{id}`: Update a lorebook.
+- `DELETE /api/v2/lorebooks/{id}`: Delete a lorebook (cascades entries).
+- `GET /api/v2/lorebooks/{id}/search?q=`: Semantic search lorebook entries.
+- `GET /api/v2/lorebooks/{id}/entries`: List entries.
+- `POST /api/v2/lorebooks/{id}/entries`: Create an entry (auto-embeds).
+- `PUT /api/v2/lorebooks/{id}/entries/{eid}`: Update an entry.
+- `DELETE /api/v2/lorebooks/{id}/entries/{eid}`: Delete an entry.
+
+### Scenarios (`/api/v2/scenarios`)
+
+- `GET /api/v2/scenarios`: List all scenarios.
+- `POST /api/v2/scenarios`: Create a scenario.
+- `GET /api/v2/scenarios/{id}`: Get a scenario.
+- `PUT /api/v2/scenarios/{id}`: Update a scenario.
+- `DELETE /api/v2/scenarios/{id}`: Delete a scenario.
+
+### Stories (`/api/v2/stories`)
+
+- `GET /api/v2/stories`: List all stories.
+- `POST /api/v2/stories`: Create a story.
+- `GET /api/v2/stories/{id}`: Get a story.
+- `PUT /api/v2/stories/{id}`: Update a story.
+- `DELETE /api/v2/stories/{id}`: Delete a story (cascades chapters).
+- `GET /api/v2/stories/{id}/chapters`: List chapters.
+- `POST /api/v2/stories/{id}/chapters`: Create a chapter.
+- `GET /api/v2/stories/{id}/chapters/{cid}`: Get a chapter.
+- `PUT /api/v2/stories/{id}/chapters/{cid}`: Update a chapter.
+- `DELETE /api/v2/stories/{id}/chapters/{cid}`: Delete a chapter.
+- `POST /api/v2/stories/{id}/chapters/{cid}/continue`: AI continues the story.
+- `POST /api/v2/stories/{id}/chapters/{cid}/beats`: Add a story beat.
+- `POST /api/v2/stories/{id}/chapters/{cid}/illustrate`: Generate chapter illustration.
+
+### LLM Config (`/api/v2/llm`)
+
+- `GET /api/v2/llm/default-provider`: Get the default LLM provider.
+- `PUT /api/v2/llm/default-provider`: Set the default LLM provider.
+- `GET /api/v2/llm/available-models`: List available LLM models.
+
 ### Collections (`/api/collections`)
 
 - `GET /api/collections`: List all collections.

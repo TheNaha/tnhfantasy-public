@@ -89,8 +89,8 @@ class TestSettings:
         monkeypatch.delenv("COMFY_INPUT_DIR", raising=False)
         monkeypatch.delenv("INPUT_DIR", raising=False)
         s1 = Settings()
-        assert s1.output_dir.endswith("output/default_user")
-        assert s1.input_dir.endswith("input/default_user")
+        assert s1.output_dir.endswith("data/output")
+        assert s1.input_dir.endswith("data/input")
 
         # 2. Test fallback to OUTPUT_DIR / INPUT_DIR (non-prefixed)
         monkeypatch.setenv("OUTPUT_DIR", "/tmp/non_prefixed_out")

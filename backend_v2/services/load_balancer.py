@@ -273,7 +273,7 @@ class LoadBalancer:
                 from api.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
-                    container_name = f"comfy-provider-{provider.id}"
+                    container_name = f"tnhcomfy-{provider.id}"
                     try:
                         container = cm.client.containers.get(container_name)
                         if container.status != "running":
@@ -303,7 +303,7 @@ class LoadBalancer:
                 from api.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
-                    container_name = f"comfy-provider-{provider.id}"
+                    container_name = f"tnhcomfy-{provider.id}"
                     container = cm.client.containers.get(container_name)
                     ports = container.ports
                     tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
@@ -460,7 +460,7 @@ class LoadBalancer:
                             from api.deps import get_container_manager
                             cm = get_container_manager()
                             if cm and cm.client:
-                                container_name = f"comfy-provider-{selected_provider.id}"
+                                container_name = f"tnhcomfy-{selected_provider.id}"
                                 container = cm.client.containers.get(container_name)
                                 ports = container.ports
                                 tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")

@@ -7,6 +7,7 @@ from sqlmodel.pool import StaticPool
 
 from api.deps import get_session
 from api.main import app
+import infrastructure.database as _infra_db
 
 # Need to import all models so SQLModel metadata is complete
 
@@ -37,9 +38,11 @@ def client_fixture(session: Session):
         return session
 
     app.dependency_overrides[get_session] = get_session_override
+    _infra_db.get_session = get_session_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+    _infra_db.get_session = None
 
 
 @pytest.fixture

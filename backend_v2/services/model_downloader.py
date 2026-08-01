@@ -71,7 +71,7 @@ class ModelDownloader:
         
         http_client = get_http_client()
         for provider in providers:
-            container_name = f"comfy-provider-{provider.id}"
+            container_name = f"tnhcomfy-{provider.id}"
             worker_url = f"http://{container_name}:8000"
             
             try:

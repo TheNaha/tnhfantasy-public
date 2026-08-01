@@ -25,7 +25,7 @@ class CustomJSONEncoder(json.JSONEncoder):
                 return base64.b64encode(obj).decode('utf-8')
         return super().default(obj)
 
-logger = get_logger("modal_worker.client")
+logger = get_logger("image_worker.modal.client")
 from provider_core.models import MODEL_DIRECTORIES
 
 

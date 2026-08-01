@@ -398,3 +398,85 @@ async def emit_model_status_update(provider_id: str, file_id: int, status: str, 
         **(extra or {})
     }
     await event_bus.publish(Event(type=EventType.MODEL_STATUS_UPDATE, data=data))
+
+
+async def wait_for_job_completion(
+    job_id: str,
+    timeout: float = 120.0,
+    poll_interval: float = 2.0,
+) -> tuple[str, dict | None]:
+    """
+    Wait for a job to reach a terminal state via the EventBus.
+
+    Returns:
+        (status_str, output_dict_or_None)
+
+    Subscribes to the "job" topic and listens for JOB_COMPLETED / JOB_FAILED /
+    JOB_CANCELLED events matching *job_id*.  Falls back to DB polling every
+    *poll_interval* seconds for race-condition safety (event may fire before
+    we subscribe).
+    """
+    import asyncio
+
+    from core.entities import JobStatus
+
+    terminal = {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}
+    result: dict | None = None
+    final_status: str = "failed"
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    async with event_bus._lock:
+        event_bus._subscribers.setdefault("job", []).append(queue)
+
+    try:
+        # Race-condition guard: check if the job already finished
+        try:
+            from infrastructure.database import get_session as _db_gs
+            with _db_gs() as session:
+                from services.job_service import JobService
+                svc = JobService(session)
+                job = await svc.get_job(job_id)
+                if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                    final_status = job.status.value
+                    result = job.outputs[0] if job.outputs else None
+                    return final_status, result
+        except Exception:
+            pass
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=min(remaining, poll_interval))
+            except asyncio.TimeoutError:
+                # No event — re-check DB
+                try:
+                    from infrastructure.database import get_session as _gs2
+                    with _gs2() as session:
+                        from services.job_service import JobService as _JS
+                        svc2 = _JS(session)
+                        job2 = await svc2.get_job(job_id)
+                        if job2.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                            final_status = job2.status.value
+                            result = job2.outputs[0] if job2.outputs else None
+                            return final_status, result
+                except Exception:
+                    pass
+                continue
+
+            job_data = event.data.get("job", {})
+            if job_data.get("id") != job_id:
+                continue
+
+            if event.type in terminal:
+                final_status = event.type.value.replace("job.", "")
+                result = job_data.get("outputs", [None])[0] if job_data.get("outputs") else None
+                return final_status, result
+    finally:
+        async with event_bus._lock:
+            if queue in event_bus._subscribers.get("job", []):
+                event_bus._subscribers["job"].remove(queue)
+
+    return final_status, result

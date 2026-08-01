@@ -1,12 +1,12 @@
-import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_job_submission_service, get_session
-from core.entities import Story, StoryBeatRole, StoryChapter
+from api.deps import get_session
+from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
+from core.events import wait_for_job_completion
 from services.job_queue import job_queue
 
 router = APIRouter()
@@ -132,13 +132,14 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
 async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session)):
+    from services.job_service import JobService
+
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
         
     prompt = data.prompt
     if prompt:
-        # If user explicitly provided a prompt/action via the "Add Beat" style input
         chapter.beats.append({"role": StoryBeatRole.USER, "content": prompt})
         chapter.content += f"\n\n> {prompt}\n\n"
         session.add(chapter)
@@ -146,7 +147,6 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         session.refresh(chapter)
         
     messages = []
-    # Base instructions for the AI
     system_prompt = (
         "You are a collaborative AI storyteller. Your task is to continue the story naturally "
         "from the provided text. Maintain the tone and style. Do not include conversational filler "
@@ -158,8 +158,6 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         system_prompt += f"\nThe genre is {story.genre}."
         
     if story and story.lorebook_ids:
-        from core.entities import Lorebook, LorebookEntry
-        from sqlmodel import select
         lorebooks_content = []
         for lorebook_id in story.lorebook_ids:
             lb = session.get(Lorebook, lorebook_id)
@@ -177,13 +175,12 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         
     messages.append({"role": "system", "content": system_prompt})
     
-    # Use the actual full edited content as context
     user_context = "Here is the story so far. Please write the next few paragraphs to continue it:\n\n"
     user_context += chapter.content.strip()
     
     messages.append({"role": "user", "content": user_context})
         
-    job_service = get_job_service(session)
+    job_service = JobService(session)
     job = await job_service.create_job(
         task_type="text",
         workflow={
@@ -208,7 +205,7 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     role = data.role
     
     chapter.beats.append({"role": role, "content": content})
-    if role == StoryBeatRole.USER:
+    if role == StoryBeatRole.USER.value:
         chapter.content += f"\n\n> {content}\n\n"
     else:
         chapter.content += f"\n\n{content}\n\n"
@@ -226,6 +223,9 @@ async def illustrate_chapter(
     data: StoryIllustrateRequest,
     session: Session = Depends(get_session),
 ):
+    from services.job_service import JobService
+    from services.job_submission_service import JobSubmissionService
+
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -235,9 +235,6 @@ async def illustrate_chapter(
     if data.image_prompt:
         enriched_prompt = data.image_prompt
     else:
-        from core.entities import JobStatus, Lorebook, LorebookEntry
-        from services.job_service import JobService
-
         system_prompt = (
             "You are an AI art director for a story. Given the story chapter text, "
             "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
@@ -279,17 +276,11 @@ async def illustrate_chapter(
         await job_queue.enqueue(prompt_job.id)
 
         enriched_prompt = "beautiful scenery, masterpiece, high quality, highly detailed"
-        for _ in range(30):
-            status = await job_service.get_job(prompt_job.id)
-            if status.status == JobStatus.COMPLETED:
-                if status.outputs and len(status.outputs) > 0:
-                    enriched_prompt = status.outputs[0].get("content", enriched_prompt)
-                break
-            elif status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-                break
-            await asyncio.sleep(1.0)
+        status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)
+        if status_str == "completed" and output:
+            enriched_prompt = output.get("content", enriched_prompt)
 
-    submission_service = get_job_submission_service(session)
+    submission_service = JobSubmissionService(session)
 
     image_workflow = {
         "3": {

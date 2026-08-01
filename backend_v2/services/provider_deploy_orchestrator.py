@@ -65,7 +65,7 @@ class ProviderDeployOrchestrator:
         image_tag = ProviderRegistry.get_worker_image(provider_type)
         self._ensure_image(provider_type)
 
-        container_name = f"comfy-provider-deploy-{provider_id}-{attempt_id[:8]}"
+        container_name = f"tnhcomfy-deploy-{provider_id}-{attempt_id[:8]}"
         volumes = self._build_volumes()
 
         logger.info(
@@ -85,7 +85,7 @@ class ProviderDeployOrchestrator:
             detach=True,
             remove=False,
             labels={
-                "comfy-provider-deploy": "true",
+                "tnhcomfy-deploy": "true",
                 "provider-id": provider_id,
                 "provider-type": provider_type,
                 "deploy-attempt-id": attempt_id,
