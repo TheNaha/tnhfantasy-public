@@ -699,6 +699,7 @@ export default function Characters() {
 
             {/* Character Modal */}
             <CharacterModal
+                key={editingCharacter?.id || 'new'}
                 isOpen={modalOpen}
                 onClose={() => { setModalOpen(false); setEditingCharacter(null); }}
                 character={editingCharacter}
