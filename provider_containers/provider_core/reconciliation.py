@@ -341,11 +341,14 @@ async def run_reconciliation_v2(
     list_existing_files: Callable[[], Awaitable[Dict[str, Dict[str, Any]]]],
     download_file: Callable[[str, str, Optional[str]], Awaitable[Any]],
     delete_file: Callable[[str], Awaitable[Any]],
+    quick_sync: bool = False,
 ) -> None:
     """Run the shared V2 reconciliation flow with provider-specific callbacks."""
     reconciliation_state.start_reconciliation()
     shared_http_client = get_http_client()
-    logger.info(f"[V2 Reconciliation] Starting version-aware reconciliation for {provider_id}")
+    
+    sync_mode = "Quick Sync" if quick_sync else "Full Reconciliation"
+    logger.info(f"[V2 Reconciliation] Starting version-aware {sync_mode} for {provider_id}")
 
     async def push_state(phase: str, message: str = None, active_downloads: list = None):
         reconciliation_state.set_phase(phase)
@@ -364,21 +367,24 @@ async def run_reconciliation_v2(
             http_client=shared_http_client,
         )
 
-    logger.info("[V2 Reconciliation] Step 0: Validating existing models...")
-    await push_state("validating", "Checking for invalid or partial downloads...")
+    if not quick_sync:
+        logger.info("[V2 Reconciliation] Step 0: Validating existing models...")
+        await push_state("validating", "Checking for invalid or partial downloads...")
 
-    try:
-        validation_result = await validate_existing(True)
-        invalid_count = validation_result.get("total_invalid", 0)
-        partial_count = validation_result.get("total_partial", 0)
-        reconciliation_state.set_invalid_cleaned(invalid_count + partial_count)
+        try:
+            validation_result = await validate_existing(True)
+            invalid_count = validation_result.get("total_invalid", 0)
+            partial_count = validation_result.get("total_partial", 0)
+            reconciliation_state.set_invalid_cleaned(invalid_count + partial_count)
 
-        if invalid_count > 0 or partial_count > 0:
-            logger.info(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
-        else:
-            logger.info("[V2 Reconciliation] ✓ All existing models are valid")
-    except Exception as exc:
-        logger.warning(f"[V2 Reconciliation] ⚠ Validation step failed: {exc}")
+            if invalid_count > 0 or partial_count > 0:
+                logger.info(f"[V2 Reconciliation] ✓ Cleaned up {invalid_count} invalid + {partial_count} partial files")
+            else:
+                logger.info("[V2 Reconciliation] ✓ All existing models are valid")
+        except Exception as exc:
+            logger.warning(f"[V2 Reconciliation] ⚠ Validation step failed: {exc}")
+    else:
+        logger.info("[V2 Reconciliation] Step 0: Skipping validation (quick sync)")
 
     try:
         logger.info("[V2 Reconciliation] Step 1: Querying pending downloads...")
@@ -424,12 +430,13 @@ async def run_reconciliation_v2(
                 missing_updates,
                 http_client=shared_http_client,
             )
-            pending_downloads = await get_pending_downloads(
-                backend_url,
-                provider_id,
-                http_client=shared_http_client,
-            )
-            logger.info(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
+            if not quick_sync:
+                pending_downloads = await get_pending_downloads(
+                    backend_url,
+                    provider_id,
+                    http_client=shared_http_client,
+                )
+                logger.info(f"[V2 Reconciliation] Found {len(pending_downloads)} files now pending")
 
         downloads_needed = []
         already_ready = []
@@ -473,6 +480,13 @@ async def run_reconciliation_v2(
                 statusless_expected,
                 http_client=shared_http_client,
             )
+
+        if quick_sync:
+            reconciliation_state.complete_reconciliation(success=True)
+            stats = reconciliation_state.get_stats()
+            logger.info(f"[V2 Reconciliation] Quick sync complete! Updated statuses for {len(already_ready) + len(statusless_expected)} files.")
+            await push_state("completed", "Quick sync complete!")
+            return
 
         reconciliation_state.set_download_queue(downloads_needed)
         reconciliation_state.set_missing_reported(len(missing_files) if missing_files else 0)

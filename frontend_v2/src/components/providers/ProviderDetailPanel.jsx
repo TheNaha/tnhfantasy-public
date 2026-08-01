@@ -32,8 +32,7 @@ export default function ProviderDetailPanel({
     provider,
     onClose,
     loading,
-    onDeploy, onReconcile,
-    onResetStatus, onSetup,
+    onDeploy, onReconcile, onQuickSync, onResetStatus, onSetup,
     providerFailures = 0,
     jobsAssigned = 0,
 }) {
@@ -239,6 +238,7 @@ export default function ProviderDetailPanel({
                             capabilities={capabilities}
                             loading={loading}
                             onReconcile={onReconcile}
+                            onQuickSync={onQuickSync}
                             onResetStatus={onResetStatus}
                             providerId={provider.id}
                         />

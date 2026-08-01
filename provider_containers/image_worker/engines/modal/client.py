@@ -217,7 +217,7 @@ class ModalProviderClient(BaseProviderClient):
         extractor = ComfyUINodeExtractor()
         return await extractor.get_object_info.remote.aio()
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         async def validate_existing(delete_invalid: bool):
             validate_fn = get_modal_function("validate_models")
             timeout_seconds = max(1.0, float(self.runtime_config.get("validation_timeout_seconds", 300.0)))
@@ -264,5 +264,6 @@ class ModalProviderClient(BaseProviderClient):
             validate_existing_fn=validate_existing,
             list_existing_files_fn=list_existing_files,
             download_file_fn=download_file,
-            delete_file_fn=delete_file
+            delete_file_fn=delete_file,
+            quick_sync=quick_sync,
         )

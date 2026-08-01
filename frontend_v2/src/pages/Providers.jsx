@@ -40,6 +40,7 @@ export default function Providers() {
         actionLoading,
         deployProvider,
         reconcileProvider,
+        quickSyncProvider,
         setupProvider,
         resetProviderModelStatus,
         toggleProviderEnabled,
@@ -108,6 +109,12 @@ export default function Providers() {
         try {
             await reconcileProvider(providerId);
         } catch (error) { toast.error(`Reconciliation failed: ${error.message}`); }
+    };
+
+    const handleQuickSync = async (providerId) => {
+        try {
+            await quickSyncProvider(providerId);
+        } catch (error) { toast.error(`Quick sync failed: ${error.message}`); }
     };
     const handleSetup = async (providerId) => {
         try {
@@ -290,6 +297,7 @@ export default function Providers() {
                         loading={actionLoading[selectedProvider.id]}
                         onDeploy={() => handleDeploy(selectedProvider.id)}
                         onReconcile={() => handleReconcile(selectedProvider.id)}
+                        onQuickSync={() => handleQuickSync(selectedProvider.id)}
                         onResetStatus={async () => {
                             const accepted = await confirm({
                                 title: 'Reset Provider Status',

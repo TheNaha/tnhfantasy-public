@@ -1,5 +1,5 @@
 import abc
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Awaitable
 import asyncio
 from datetime import datetime
 
@@ -88,10 +88,11 @@ class BaseProviderClient(abc.ABC):
         hf_token: str,
         civitai_token: str,
         storage_label: str,
-        validate_existing_fn,
-        list_existing_files_fn,
-        download_file_fn,
-        delete_file_fn,
+        validate_existing_fn: Callable[[bool], Awaitable[Dict[str, Any]]],
+        list_existing_files_fn: Callable[[], Awaitable[Dict[str, Dict[str, Any]]]],
+        download_file_fn: Callable[[str, str, Optional[str]], Awaitable[Any]],
+        delete_file_fn: Callable[[str], Awaitable[Any]],
+        quick_sync: bool = False,
     ) -> Dict[str, Any]:
         from provider_core.reconciliation import run_reconciliation_v2
         import asyncio
@@ -111,7 +112,8 @@ class BaseProviderClient(abc.ABC):
                     validate_existing=validate_existing_fn,
                     list_existing_files=list_existing_files_fn,
                     download_file=download_file_fn,
-                    delete_file=delete_file_fn
+                    delete_file=delete_file_fn,
+                    quick_sync=quick_sync
                 )
             except Exception as e:
                 logger.exception(f"[{self.provider_id}] Fatal error in reconciliation task: {e}")
@@ -129,7 +131,8 @@ class BaseProviderClient(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
+        """Trigger reconciliation."""
         pass
 
     @abc.abstractmethod

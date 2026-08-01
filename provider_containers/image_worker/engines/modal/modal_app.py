@@ -38,6 +38,8 @@ def _resolve_provider_core_local_path() -> Path:
     candidates = [
         Path(__file__).parent / "provider_core",
         Path(__file__).parent.parent / "provider_core",
+        Path(__file__).parent.parent.parent / "provider_core",
+        Path(__file__).parent.parent.parent.parent / "provider_core",
     ]
 
     for candidate in candidates:

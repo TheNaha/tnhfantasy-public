@@ -277,7 +277,7 @@ class BeamProviderClient(BaseProviderClient):
         response.raise_for_status()
         return response.json()
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         async def validate_existing(delete_invalid: bool):
             client = get_http_client()
             response = await client.post(f"{BEAM_STORAGE_URL}/validate-all-models", json={"delete_invalid": delete_invalid}, headers=get_beam_headers(), timeout=120.0)
@@ -330,5 +330,6 @@ class BeamProviderClient(BaseProviderClient):
             validate_existing_fn=validate_existing,
             list_existing_files_fn=list_existing_files,
             download_file_fn=download_file,
-            delete_file_fn=delete_file
+            delete_file_fn=delete_file,
+            quick_sync=quick_sync,
         )

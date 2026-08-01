@@ -186,7 +186,7 @@ class ProviderLifecycleService:
             "result": result,
         }
 
-    async def trigger_reconciliation(self, provider_id: str, force: bool = False) -> dict[str, Any]:
+    async def trigger_reconciliation(self, provider_id: str, force: bool = False, quick_sync: bool = False) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
         if not runtime.supports_reconciliation or runtime.mode not in ("container_http", "discovery"):
@@ -208,6 +208,7 @@ class ProviderLifecycleService:
         try:
             response = await http_client.post(
                 f"{runtime.worker_url}/reconcile",
+                json={"quick_sync": quick_sync},
                 timeout=5.0,
             )
         except httpx.HTTPError as exc:

@@ -55,8 +55,13 @@ class UploadFileRequest(BaseModel):
 
 class ValidateModelsRequest(BaseModel):
     """Request for validating models in a directory."""
-    directory: str
+    directory: List[str]
     delete_invalid: bool = False
+
+
+class ReconcileRequest(BaseModel):
+    """Request for reconciling models."""
+    quick_sync: bool = False
 
 
 class ErrorResponse(BaseModel):

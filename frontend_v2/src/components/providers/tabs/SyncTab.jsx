@@ -6,7 +6,7 @@ import { STATUS_TONE, statusDotClass, humanize, capitalize } from './utils';
 
 export default function SyncTab({
     modelSync, storage, storageLoaded, reconciliation, capabilities, loading,
-    onReconcile, onResetStatus, providerId,
+    onReconcile, onQuickSync, onResetStatus, providerId,
 }) {
     const dbModels = modelSync.total_models || 0;
     const storageModels = storage.total || 0;
@@ -112,7 +112,10 @@ export default function SyncTab({
 
             <div className="flex flex-wrap gap-2 mb-4 mt-4">
                 {capabilities.reconcile && (
-                    <ActionBtn onClick={onReconcile} disabled={Boolean(loading) || isReconciling} tone="orange" icon={RefreshCw} label={isReconciling ? "Reconciling..." : "Reconcile"} />
+                    <>
+                        <ActionBtn onClick={onReconcile} disabled={Boolean(loading) || isReconciling} tone="orange" icon={RefreshCw} label={isReconciling ? "Reconciling..." : "Reconcile"} />
+                        <ActionBtn onClick={onQuickSync} disabled={Boolean(loading) || isReconciling} tone="blue" icon={RefreshCw} label="Quick Sync" />
+                    </>
                 )}
                 {capabilities.reset_status && (
                     <ActionBtn onClick={onResetStatus} disabled={Boolean(loading) || isReconciling} tone="red" icon={RotateCcw} label="Reset DB Sync" />

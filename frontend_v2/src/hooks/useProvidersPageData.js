@@ -388,6 +388,13 @@ export function useProviderMutations() {
                 callback: () => providersApi.reconcile(providerId),
             });
         },
+        async quickSyncProvider(providerId) {
+            return mutate.mutateAsync({
+                providerId,
+                action: 'quick syncing',
+                callback: () => providersApi.quickSync(providerId),
+            });
+        },
         async setupProvider(providerId) {
             return mutate.mutateAsync({
                 providerId,

@@ -8,7 +8,7 @@ from .logging import get_logger
 from .models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest, CancelJobRequest, DeleteFileRequest,
-    build_status_response, build_error_response
+    ReconcileRequest, build_status_response, build_error_response
 )
 
 logger = get_logger("provider_core.router")
@@ -181,8 +181,9 @@ def attach_provider_routes(app: FastAPI, client: ProviderClient):
         return await client.validate_all_models()
 
     @app.post("/reconcile")
-    async def reconcile():
-        return await client.run_reconciliation()
+    async def reconcile(request: Optional[ReconcileRequest] = None):
+        quick_sync = request.quick_sync if request else False
+        return await client.run_reconciliation(quick_sync=quick_sync)
 
     @app.get("/reconciliation-status")
     async def reconciliation_status():

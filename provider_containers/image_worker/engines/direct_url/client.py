@@ -197,7 +197,7 @@ class DirectUrlProviderClient(BaseProviderClient):
         except Exception as e:
             return {"status": "error", "message": f"Failed to query ComfyUI: {e}"}
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         return build_status_response(
             "success",
             "Reconciliation is not applicable for direct_url providers. "

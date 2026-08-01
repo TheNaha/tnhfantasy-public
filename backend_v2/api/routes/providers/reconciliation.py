@@ -75,11 +75,12 @@ def get_model_cache_for_directory(
 async def reconcile_provider(
     provider_id: str,
     force: bool = False,
+    quick_sync: bool = False,
     lifecycle = Depends(get_provider_lifecycle_service)
 ):
     """Trigger model reconciliation for a provider."""
     try:
-        result = await lifecycle.trigger_reconciliation(provider_id, force=force)
+        result = await lifecycle.trigger_reconciliation(provider_id, force=force, quick_sync=quick_sync)
     except ProviderError as exc:
         detail = str(exc)
         status_code = 400 if "Reconciliation is only available" in detail else 500

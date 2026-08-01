@@ -140,5 +140,5 @@ class RunpodProviderClient(BaseProviderClient):
     async def get_object_info(self) -> Dict[str, Any]:
         return {"status": "error", "message": "Not implemented for RunPod"}
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         return build_status_response("success", "Reconciliation stub", provider=PROVIDER_ID)
