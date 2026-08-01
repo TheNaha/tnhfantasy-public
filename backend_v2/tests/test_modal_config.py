@@ -98,5 +98,5 @@ def test_modal_provider_config_structure():
     assert MODAL_PROVIDER_CONFIG.env_builder is build_modal_env_vars
 
     # Check other properties
-    assert MODAL_PROVIDER_CONFIG.worker_image == "comfy-provider-modal"
+    assert MODAL_PROVIDER_CONFIG.worker_image == "comfy-provider-image-worker"
     assert MODAL_PROVIDER_CONFIG.default_port == 8000

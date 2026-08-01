@@ -85,12 +85,13 @@ class TestProcessFile:
         assert "name" in result
         assert "relative_path" in result
 
-    def test_skips_json_files(self, fresh_indexer, tmp_dir):
+    def test_processes_json_files(self, fresh_indexer, tmp_dir):
         path = os.path.join(tmp_dir, "metadata.json")
         with open(path, "w") as f:
             f.write("{}")
         result = fresh_indexer._process_file(path)
-        assert result is None
+        assert result is not None
+        assert result["type"] == "json"
 
     def test_skips_thumbnail_files(self, fresh_indexer, tmp_dir):
         path = make_png(tmp_dir, "image.thumb.png")
