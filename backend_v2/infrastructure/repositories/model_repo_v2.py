@@ -657,8 +657,9 @@ class ModelRepositoryV2:
         status: str,
         storage_path: str | None = None,
         size_bytes: int | None = None,
-        error_message: str | None = None
-    ) -> ProviderVersionStatus:
+        error_message: str | None = None,
+        force_create: bool = False,
+    ) -> ProviderVersionStatus | None:
         """Update or create provider status for a file."""
         existing = self.get_provider_status(file_id, provider_id)
         
@@ -685,6 +686,11 @@ class ModelRepositoryV2:
             self.session.refresh(existing)
             return existing
         else:
+            # If the status is pending and we didn't explicitly force_create it, 
+            # do NOT create a new record. This prevents workers from marking ALL missing files as pending.
+            if status == "pending" and not force_create:
+                return None
+            
             new_status = ProviderVersionStatus(
                 file_id=file_id,
                 provider_id=provider_id,

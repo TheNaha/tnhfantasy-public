@@ -136,7 +136,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 metadata["original_messages"] = context
 
             job = await job_service.create_job(
-                task_type="text",
+                task_type="llm",
                 workflow=workflow,
                 metadata=metadata,
             )
@@ -186,7 +186,7 @@ async def generate_scene(
     
     job_service = JobService(session)
     prompt_job = await job_service.create_job(
-        task_type="text",
+        task_type="llm",
         workflow={
             "messages": [
                 {"role": "system", "content": system_prompt},

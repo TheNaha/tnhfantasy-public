@@ -74,7 +74,7 @@ export function summarizeProviderStatus(
     );
     let downloadsCompleted = asCount(reconciliationStats.downloads_completed);
 
-    if (safeProvider.type === 'llm') {
+    if (safeProvider.worker_type === 'llm') {
         downloadsActive = 0;
         downloadsQueued = 0;
         downloadsCompleted = 0;

@@ -42,6 +42,7 @@ router = APIRouter()
 class ProviderRequest(BaseModel):
     id: str
     type: str = "modal"
+    worker_type: str | None = None
     enabled: bool = True
     priority: int = 1
     credentials: dict[str, Any] = {}
@@ -54,6 +55,7 @@ class ProviderRequest(BaseModel):
 
 class ProviderUpdateRequest(BaseModel):
     type: str | None = None
+    worker_type: str | None = None
     enabled: bool | None = None
     priority: int | None = None
     credentials: dict[str, Any] | None = None

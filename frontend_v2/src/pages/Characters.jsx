@@ -199,7 +199,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         toast(`Generating ${fieldKey}...`, { icon: '🤖' });
         try {
             const resJob = await api.post('/api/jobs', {
-                task_type: "text",
+                task_type: "llm",
                 workflow: {
                     messages: [
                         { role: "system", content: sysPrompt },

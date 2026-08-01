@@ -182,7 +182,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         
     job_service = JobService(session)
     job = await job_service.create_job(
-        task_type="text",
+        task_type="llm",
         workflow={
             "messages": messages,
             "chat_id": story_id,
@@ -264,7 +264,7 @@ async def illustrate_chapter(
 
         job_service = JobService(session)
         prompt_job = await job_service.create_job(
-            task_type="text",
+            task_type="llm",
             workflow={
                 "messages": [
                     {"role": "system", "content": system_prompt},

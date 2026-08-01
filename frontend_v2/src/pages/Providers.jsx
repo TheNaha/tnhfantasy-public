@@ -250,7 +250,7 @@ export default function Providers() {
                         <div>
                             <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Image Workers</h2>
                             <div className="space-y-4">
-                                {filteredProviders.filter(p => p.type !== 'llm').map((provider) => (
+                                {filteredProviders.filter(p => p.worker_type !== 'llm').map((provider) => (
                                     <ProviderListItem
                                         key={provider.id}
                                         provider={provider}
@@ -267,11 +267,11 @@ export default function Providers() {
                             </div>
                         </div>
                     )}
-                    {filteredProviders.some(p => p.type === 'llm') && (
+                    {filteredProviders.some(p => p.worker_type === 'llm') && (
                         <div>
                             <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">LLM Workers</h2>
                             <div className="space-y-4">
-                                {filteredProviders.filter(p => p.type === 'llm').map((provider) => (
+                                {filteredProviders.filter(p => p.worker_type === 'llm').map((provider) => (
                                     <ProviderListItem
                                         key={provider.id}
                                         provider={provider}

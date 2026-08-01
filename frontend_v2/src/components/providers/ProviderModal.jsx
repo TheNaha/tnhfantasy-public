@@ -133,6 +133,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
         const payload = {
             id: formData.id.trim(),
             type: formData.type,
+            worker_type: formData.type.startsWith('llm') ? 'llm' : 'image',
             enabled: formData.enabled,
             priority: Number(formData.priority) || 1,
             runtime_config: enableRuntime

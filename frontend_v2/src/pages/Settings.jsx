@@ -6,6 +6,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMDefaultProvider, useSetLLMDefaultProvider, useLLMAvailableModels } from '../hooks/useWorldVault';
+import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useEffect } from 'react';
 
 
@@ -640,7 +641,10 @@ function SettingGroup({ title, description, children, action }) {
 function AISettings({ settings, onUpdate, onReset }) {
     const { data: defaultProvider } = useLLMDefaultProvider();
     const { data: availableModels } = useLLMAvailableModels();
+    const { providers = [] } = useProvidersPageData();
     const setProviderMutation = useSetLLMDefaultProvider();
+    
+    const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.id.startsWith('llm'));
 
     const [providerId, setProviderId] = useState('');
     const [modelId, setModelId] = useState('');
@@ -692,20 +696,23 @@ function AISettings({ settings, onUpdate, onReset }) {
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
                             >
                                 <option value="">Auto-detect</option>
-                                {availableModels && availableModels.map(m => (
-                                    <option key={m.id || m} value={m.id || m}>{m.name || m.id || m}</option>
+                                {llmProviders.map(p => (
+                                    <option key={p.id} value={p.id}>{p.id}</option>
                                 ))}
                             </select>
                         </div>
                         <div>
                             <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Model ID (Optional)</label>
-                            <input
-                                type="text"
+                            <select
                                 value={modelId}
                                 onChange={(e) => setModelId(e.target.value)}
-                                placeholder="Auto-detect"
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                            />
+                            >
+                                <option value="">Default Model</option>
+                                {availableModels && availableModels.map(m => (
+                                    <option key={m.id || m} value={m.id || m}>{m.name || m.id || m}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
                 </div>

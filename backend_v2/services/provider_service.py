@@ -45,6 +45,8 @@ class ProviderService:
     def _normalize_provider_for_storage(self, provider_data: dict[str, Any], existing: Provider | None = None) -> dict[str, Any]:
         payload = deepcopy(provider_data)
         provider_type = payload.get("type") or getattr(existing, "type", "modal")
+        worker_type = payload.get("worker_type", getattr(existing, "worker_type", "llm" if provider_type and provider_type.startswith("llm") else "image"))
+        payload["worker_type"] = worker_type
         existing_config = clean_dict(getattr(existing, "config", None))
         merged_config = clean_dict(existing_config)
         merged_config.update(clean_dict(payload.get("config")))
@@ -241,6 +243,7 @@ class ProviderService:
             provider_id,
             {
                 "type": normalized["type"],
+                "worker_type": normalized["worker_type"],
                 "enabled": normalized["enabled"],
                 "priority": normalized["priority"],
                 "credentials": normalized["credentials"],

@@ -31,7 +31,7 @@ function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, on
     };
 
     return (
-        <div className="w-64 border-r border-white/5 bg-gray-900/60 hidden md:flex flex-col shrink-0">
+        <div className="w-64 border-r border-white/5 bg-gray-900/60 flex flex-col shrink-0">
             <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                 <h3 className="font-semibold text-gray-200">Stories</h3>
             </div>
@@ -99,7 +99,7 @@ function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateCh
     };
 
     return (
-        <div className="w-56 border-r border-white/5 bg-gray-900/40 hidden lg:flex flex-col shrink-0">
+        <div className="w-56 border-r border-white/5 bg-gray-900/40 flex flex-col shrink-0">
             <div className="h-12 flex items-center justify-between px-3 border-b border-white/5 shrink-0">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chapters</h4>
                 <button onClick={handleCreate} disabled={creating} className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors disabled:opacity-30" title="New chapter">
@@ -176,6 +176,7 @@ export default function StorySandbox() {
     const [isIllustrating, setIsIllustrating] = useState(false);
     const [isPreviewMode, setIsPreviewMode] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+    const [isChapterSidebarOpen, setIsChapterSidebarOpen] = useState(false);
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
 
     const { data: llmModels = [] } = useLLMAvailableModels();
@@ -276,7 +277,7 @@ export default function StorySandbox() {
         toast('Generating title...', { icon: '🤖' });
         try {
             const resJob = await api.post('/api/jobs', {
-                task_type: "text",
+                task_type: "llm",
                 workflow: {
                     messages: [
                         { role: "system", content: "You are an expert author. Analyze the following story chapter and generate a short, catchy title (max 5 words). Output ONLY the title, no quotes or prefix." },
@@ -307,7 +308,7 @@ export default function StorySandbox() {
             } else {
                 setIsGeneratingTitle(false);
             }
-        } catch (err) {
+        } catch {
             toast.error('Failed to generate title');
             setIsGeneratingTitle(false);
         }
@@ -465,57 +466,78 @@ export default function StorySandbox() {
                     </div>
                 ) : (
                     <>
-                        <div className="flex-1 flex min-h-0">
-                            <ChapterSidebar
-                                chapters={chapters}
-                                activeChapterId={activeChapterId}
-                                onSelectChapter={setActiveChapterId}
-                                onCreateChapter={handleCreateChapter}
-                                onDeleteChapter={handleDeleteChapter}
-                                isLoading={chaptersLoading}
-                            />
+                        <div className="flex-1 flex min-h-0 relative">
+                            {/* Chapter Sidebar Overlay for Mobile */}
+                            <AnimatePresence>
+                                {isChapterSidebarOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        exit={{ opacity: 0 }}
+                                        className="absolute inset-0 z-20 bg-black/50 lg:hidden"
+                                        onClick={() => setIsChapterSidebarOpen(false)}
+                                    />
+                                )}
+                            </AnimatePresence>
+
+                            <div className={clsx(
+                                "absolute lg:static inset-y-0 left-0 z-30 transform lg:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",
+                                isChapterSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+                            )}>
+                                <ChapterSidebar
+                                    chapters={chapters}
+                                    activeChapterId={activeChapterId}
+                                    onSelectChapter={(id) => { setActiveChapterId(id); setIsChapterSidebarOpen(false); }}
+                                    onCreateChapter={handleCreateChapter}
+                                    onDeleteChapter={handleDeleteChapter}
+                                    isLoading={chaptersLoading}
+                                />
+                            </div>
 
                             <div className="flex-1 flex flex-col min-w-0">
-                                <div className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0">
-                                    <div className="flex items-center gap-3">
-                                        <div className="md:hidden mr-2">
-                                            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-400 hover:text-white transition-colors">
+                                <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0 gap-2">
+                                    <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-1">
+                                        <div className="md:hidden">
+                                            <button onClick={() => setIsSidebarOpen(true)} className="p-1.5 sm:p-2 text-gray-400 hover:text-white transition-colors">
                                                 <BookOpen size={20} />
                                             </button>
                                         </div>
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0">
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-white/10 hidden sm:flex items-center justify-center shrink-0">
                                             <BookOpen className="text-indigo-400" size={20} />
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-2 min-w-0">
                                                 <input
                                                     type="text"
                                                     defaultValue={activeStory?.title || ''}
                                                     onBlur={handleStoryTitleUpdate}
-                                                    className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all w-full md:w-auto min-w-[100px]"
+                                                    className="bg-transparent font-semibold text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 rounded px-1 transition-all w-full truncate text-sm sm:text-base"
                                                 />
                                             </div>
-                                            <div className="flex items-center gap-2 px-1">
-                                                <p className="text-xs text-gray-500 truncate">
-                                                    {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
-                                                    {activeStory?.genre && ` · ${activeStory.genre}`}
-                                                </p>
+                                            <div className="flex items-center gap-1 sm:gap-2 px-1 min-w-0">
+                                                <div className="flex flex-col min-w-0" onClick={() => setIsChapterSidebarOpen(!isChapterSidebarOpen)}>
+                                                    <p className="font-bold text-sm sm:text-base text-gray-200 truncate flex items-center gap-2 cursor-pointer">
+                                                        {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
+                                                        <span className="lg:hidden text-gray-500">▼</span>
+                                                        {activeStory?.genre && <span className="hidden sm:inline font-normal text-xs text-gray-500">· {activeStory.genre}</span>}
+                                                    </p>
+                                                </div>
                                                 {activeChapter && (
                                                     <button 
                                                         onClick={handleAutoGenerateTitle} 
                                                         disabled={isGeneratingTitle}
-                                                        className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded hover:bg-indigo-500/20 transition-colors flex items-center gap-1 disabled:opacity-50"
+                                                        className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded hover:bg-indigo-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
                                                         title="Auto-generate chapter title using AI"
                                                     >
                                                         {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                                                        Auto Title
+                                                        <span className="hidden sm:inline">Auto Title</span>
                                                     </button>
                                                 )}
                                             </div>
                                         </div>
                                     </div>
                                     
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                                         {activeChapterId && (
                                             <button
                                                 onClick={handleSaveChapter}
@@ -527,20 +549,20 @@ export default function StorySandbox() {
                                                 Save
                                             </button>
                                         )}
-                                        <button
-                                            onClick={() => setIsPreviewMode(!isPreviewMode)}
-                                            className={clsx(
-                                                "p-2 rounded-lg transition-colors border",
-                                                isPreviewMode ? "bg-purple-500/20 text-purple-400 border-purple-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
-                                            )}
-                                            title={isPreviewMode ? "Edit Mode" : "Preview Mode"}
-                                        >
-                                            {isPreviewMode ? <Edit3 size={16} /> : <Book size={16} />}
-                                        </button>
+                                                <button
+                                                    onClick={() => setIsPreviewMode(!isPreviewMode)}
+                                                    className={clsx(
+                                                        "p-1.5 sm:p-2 rounded-lg transition-colors border",
+                                                        isPreviewMode ? "bg-purple-500/20 text-purple-400 border-purple-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
+                                                    )}
+                                                    title={isPreviewMode ? "Edit Mode" : "Preview Mode"}
+                                                >
+                                                    {isPreviewMode ? <Edit3 size={16} /> : <Book size={16} />}
+                                                </button>
                                         <button
                                             onClick={() => setIsPanelOpen(!isPanelOpen)}
                                             className={clsx(
-                                                "p-2 rounded-lg transition-colors border hidden md:flex",
+                                                "p-2 rounded-lg transition-colors border flex",
                                                 isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
                                             )}
                                         >
@@ -584,9 +606,9 @@ export default function StorySandbox() {
                                 </div>
 
                                 {activeChapterId && (
-                                    <div className="px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
-                                        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-3">
-                                            <div className="flex gap-2 shrink-0">
+                                    <div className="px-2 sm:px-4 lg:px-6 pb-2 sm:pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
+                                        <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
+                                            <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
                                                 <button
                                                     onClick={handleContinue}
                                                     disabled={isStreaming || continueChapter.isPending}
@@ -621,22 +643,21 @@ export default function StorySandbox() {
                                                 </button>
                                             </div>
 
-                                            <div className="flex-1 flex gap-2">
+                                            <div className="flex-1 flex gap-2 w-full">
                                                 <input
                                                     type="text"
                                                     value={beatInput}
-                                                    onChange={e => setBeatInput(e.target.value)}
-                                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddBeat(); } }}
+                                                    onChange={(e) => setBeatInput(e.target.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleAddBeat()}
                                                     placeholder="Add a story beat..."
-                                                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 transition-all min-w-0"
-                                                    disabled={addStoryBeat.isPending}
+                                                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 sm:px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 min-w-0"
                                                 />
                                                 <button
                                                     onClick={handleAddBeat}
-                                                    disabled={!beatInput.trim() || addStoryBeat.isPending}
-                                                    className="px-4 py-2 text-sm bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 transition-colors disabled:opacity-30 shrink-0"
+                                                    disabled={!beatInput.trim()}
+                                                    className="px-3 sm:px-4 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors shrink-0"
                                                 >
-                                                    {addStoryBeat.isPending ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+                                                    Add
                                                 </button>
                                             </div>
                                         </div>
@@ -655,8 +676,16 @@ export default function StorySandbox() {
                         animate={{ width: 360, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="hidden lg:flex flex-col border-l border-white/5 bg-gray-900/40 overflow-hidden shrink-0 relative"
+                        className={clsx(
+                            "flex flex-col border-l border-white/5 bg-gray-900/95 overflow-hidden shrink-0 relative",
+                            "absolute md:static inset-y-0 right-0 z-40 h-full max-w-full w-[360px] md:w-auto md:bg-gray-900/40"
+                        )}
                     >
+                        <div className="md:hidden absolute top-3 right-4 z-50">
+                            <button onClick={() => setIsPanelOpen(false)} className="p-2 bg-gray-800 rounded-full text-white">
+                                <ImageIcon size={16} />
+                            </button>
+                        </div>
                         <div className="h-16 border-b border-white/5 flex items-center px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                             <h3 className="font-semibold text-gray-200 flex items-center gap-2">
                                 <ImageIcon size={16} className="text-indigo-400" />

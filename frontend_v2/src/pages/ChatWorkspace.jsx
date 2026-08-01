@@ -190,7 +190,7 @@ export default function ChatWorkspace() {
         try {
             const chatHistory = messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             const resJob = await api.post('/api/jobs', {
-                task_type: "text",
+                task_type: "llm",
                 workflow: {
                     messages: [
                         { role: "system", content: "You are a helpful assistant. Generate a short, catchy title (max 5 words) for the following chat history. Output ONLY the title." },
@@ -374,10 +374,10 @@ export default function ChatWorkspace() {
             {/* Left Panel: Chat Interface */}
             <div className="flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative">
                 {/* Chat Header */}
-                <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10">
-                    <div className="flex items-center gap-3">
+                <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                         <div className="md:hidden">
-                            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-400 hover:text-white transition-colors">
+                            <button onClick={() => setIsSidebarOpen(true)} className="p-1.5 sm:p-2 text-gray-400 hover:text-white transition-colors">
                                 <MessageSquare size={20} />
                             </button>
                         </div>
@@ -388,26 +388,26 @@ export default function ChatWorkspace() {
                                 <MessageSquare className="text-blue-400" size={20} />
                             )}
                         </div>
-                        <div>
-                            <h2 className="font-semibold text-gray-100 flex items-center gap-2 truncate">
-                                {activeChat?.name || 'Roleplay Session'}
+                        <div className="min-w-0 flex-1">
+                            <h2 className="font-semibold text-gray-100 flex items-center gap-2">
+                                <span className="truncate">{activeChat?.name || 'Roleplay Session'}</span>
                                 <button 
                                     onClick={triggerAutoTitle} 
                                     disabled={isGeneratingTitle}
-                                    className="ml-2 text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
+                                    className="ml-1 sm:ml-2 text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
                                     title="Auto-generate chat title using AI"
                                 >
                                     {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                                    Auto Title
+                                    <span className="hidden sm:inline">Auto Title</span>
                                 </button>
                             </h2>
-                            <p className="text-xs text-gray-500 truncate">
+                            <p className="text-[10px] sm:text-xs text-gray-500 truncate min-w-0">
                                 {linkedCharacter ? `Playing as ${linkedCharacter.name}` : (activeChatId ? `Chat ID: ${activeChatId.slice(0, 8)}...` : 'No chat selected')}
                             </p>
                         </div>
                     </div>
                     
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                         <button 
                             onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
                             className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
@@ -502,8 +502,8 @@ export default function ChatWorkspace() {
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
                                 onKeyDown={handleKeyDown}
-                                placeholder="Type a message or use / to trigger commands..."
-                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-12 pr-14 py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all resize-none shadow-inner"
+                                placeholder="Type a message..."
+                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-12 pr-32 sm:pr-40 py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all resize-none shadow-inner text-sm sm:text-base"
                                 rows={1}
                                 style={{ minHeight: '60px', maxHeight: '200px' }}
                                 disabled={sendMessageMutation.isPending}
@@ -552,7 +552,7 @@ export default function ChatWorkspace() {
                             </button>
                         </div>
                     </div>
-                    <div className="max-w-4xl mx-auto mt-2 flex items-center justify-between px-2 text-[10px] text-gray-500">
+                    <div className="max-w-4xl mx-auto mt-2 hidden sm:flex items-center justify-between px-2 text-[10px] text-gray-500">
                         <span>Press <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700">Enter</kbd> to send</span>
                     </div>
                 </div>
@@ -566,8 +566,17 @@ export default function ChatWorkspace() {
                         animate={{ width: 360, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="hidden lg:flex flex-col border-l border-white/5 bg-gray-900/30 overflow-hidden shrink-0"
+                        className={clsx(
+                            "flex flex-col border-l border-white/5 bg-gray-900/95 overflow-hidden shrink-0",
+                            "absolute md:static inset-y-0 right-0 z-40 h-full max-w-full w-[360px] md:w-auto md:bg-gray-900/30"
+                        )}
                     >
+                        {/* Mobile close button for right panel */}
+                        <div className="md:hidden absolute top-3 right-4 z-50">
+                            <button onClick={() => setIsRightPanelOpen(false)} className="p-2 bg-gray-800 rounded-full text-white">
+                                <PanelRightClose size={16} />
+                            </button>
+                        </div>
                         <div className="h-16 border-b border-white/5 flex items-center px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                             <h3 className="font-semibold text-gray-200 flex items-center gap-2">
                                 <Settings size={16} className="text-gray-400" />

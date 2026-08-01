@@ -64,7 +64,8 @@ class ModelDownloader:
                     self.repo.update_provider_status(
                         file_id=file.id,
                         provider_id=provider.id,
-                        status="pending"
+                        status="pending",
+                        force_create=True
                     )
         
         results = {"triggered": 0, "providers": []}

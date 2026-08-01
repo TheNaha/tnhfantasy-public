@@ -149,12 +149,12 @@ export default function ProviderDetailPanel({
                         <span className="metric-chip">
                             {deployBadge}
                         </span>
-                        {statusSummary.downloadsActive > 0 && (
+                        {provider.worker_type !== 'llm' && statusSummary.downloadsActive > 0 && (
                             <span className="metric-chip text-cyan-300 border-cyan-500/20">
                                 {statusSummary.downloadsActive} downloading
                             </span>
                         )}
-                        {statusSummary.downloadsQueued > 0 && (
+                        {provider.worker_type !== 'llm' && statusSummary.downloadsQueued > 0 && (
                             <span className="metric-chip text-blue-300 border-blue-500/20">
                                 {statusSummary.downloadsQueued} queued
                             </span>
@@ -177,7 +177,7 @@ export default function ProviderDetailPanel({
                     {/* Tab bar */}
                     <div className="tab-bar -mx-6 px-6">
                         {TABS.filter(tab => {
-                            if (provider.type === 'llm' && (tab.id === 'deploy' || tab.id === 'sync')) {
+                            if (provider.worker_type === 'llm' && (tab.id === 'deploy' || tab.id === 'sync')) {
                                 return false;
                             }
                             return true;
