@@ -44,7 +44,8 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
         return { ...DEFAULT_FORM };
     });
-    const [tagInput, setTagInput] = useState('');
+    const [visualTagInput, setVisualTagInput] = useState('');
+    const [loraTagInput, setLoraTagInput] = useState('');
     const [saving, setSaving] = useState(false);
 
     const isEditing = !!character;
@@ -66,11 +67,11 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
     };
 
-    const addTag = (field) => {
-        const val = tagInput.trim();
+    const addTag = (field, value, setValue) => {
+        const val = value.trim();
         if (val && !form[field].includes(val)) {
             setForm(f => ({ ...f, [field]: [...f[field], val] }));
-            setTagInput('');
+            setValue('');
         }
     };
 
@@ -140,13 +141,13 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                             <div className="flex gap-2">
                                 <input
                                     type="text"
-                                    value={tagInput}
-                                    onChange={e => setTagInput(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag('visual_tags'); } }}
+                                    value={visualTagInput}
+                                    onChange={e => setVisualTagInput(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag('visual_tags', visualTagInput, setVisualTagInput); } }}
                                     className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                                     placeholder="Add tag..."
                                 />
-                                <button onClick={() => addTag('visual_tags')} className="px-3 py-1.5 text-sm bg-purple-500/20 text-purple-300 rounded-lg hover:bg-purple-500/30 transition-colors">Add</button>
+                                <button onClick={() => addTag('visual_tags', visualTagInput, setVisualTagInput)} className="px-3 py-1.5 text-sm bg-purple-500/20 text-purple-300 rounded-lg hover:bg-purple-500/30 transition-colors">Add</button>
                             </div>
                         </div>
 
@@ -165,13 +166,13 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                             <div className="flex gap-2">
                                 <input
                                     type="text"
-                                    value={tagInput}
-                                    onChange={e => setTagInput(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag('lora_triggers'); } }}
+                                    value={loraTagInput}
+                                    onChange={e => setLoraTagInput(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag('lora_triggers', loraTagInput, setLoraTagInput); } }}
                                     className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
                                     placeholder="Add LoRA trigger..."
                                 />
-                                <button onClick={() => addTag('lora_triggers')} className="px-3 py-1.5 text-sm bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors">Add</button>
+                                <button onClick={() => addTag('lora_triggers', loraTagInput, setLoraTagInput)} className="px-3 py-1.5 text-sm bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors">Add</button>
                             </div>
                         </div>
 
@@ -301,7 +302,7 @@ export default function Characters() {
 
     const handleStartChat = async (character) => {
         setActiveChat(null);
-        navigate('/chat');
+        navigate('/chat', { state: { characterId: character.id } });
         toast(`Starting chat with ${character.name}...`, { icon: '💬' });
     };
 

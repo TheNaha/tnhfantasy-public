@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter } from '../hooks/useWorldVault';
+import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -81,7 +82,7 @@ function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, on
     );
 }
 
-function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, isLoading }) {
+function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, onDeleteChapter, isLoading }) {
     const [creating, setCreating] = useState(false);
 
     const handleCreate = async () => {
@@ -110,17 +111,27 @@ function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateCh
                     <p className="text-[11px] text-gray-500 text-center p-3">No chapters yet</p>
                 ) : (
                     chapters?.map(ch => (
-                        <button
-                            key={ch.id}
-                            onClick={() => onSelectChapter(ch.id)}
-                            className={clsx(
-                                "w-full text-left px-2 py-1.5 rounded text-xs transition-colors flex items-center gap-1.5",
-                                activeChapterId === ch.id ? "bg-indigo-500/20 text-indigo-300" : "text-gray-400 hover:bg-white/5"
+                        <div key={ch.id} className="group relative">
+                            <button
+                                onClick={() => onSelectChapter(ch.id)}
+                                className={clsx(
+                                    "w-full text-left px-2 py-1.5 rounded text-xs transition-colors flex items-center gap-1.5",
+                                    activeChapterId === ch.id ? "bg-indigo-500/20 text-indigo-300" : "text-gray-400 hover:bg-white/5"
+                                )}
+                            >
+                                <span className="font-mono text-[10px] text-gray-500">{ch.chapter_number}</span>
+                                <span className="truncate">{ch.title || `Chapter ${ch.chapter_number}`}</span>
+                            </button>
+                            {onDeleteChapter && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onDeleteChapter(ch.id); }}
+                                    className="absolute right-1 top-1 p-1 opacity-0 group-hover:opacity-100 hover:text-red-400 text-gray-500 rounded transition-all"
+                                    title="Delete chapter"
+                                >
+                                    <Trash2 size={10} />
+                                </button>
                             )}
-                        >
-                            <span className="font-mono text-[10px] text-gray-500">{ch.chapter_number}</span>
-                            <span className="truncate">{ch.title || `Chapter ${ch.chapter_number}`}</span>
-                        </button>
+                        </div>
                     ))
                 )}
             </div>
@@ -138,6 +149,8 @@ export default function StorySandbox() {
     const queryClient = useQueryClient();
     const activeStoryId = useWorldVaultStore(state => state.activeStoryId);
     const setActiveStory = useWorldVaultStore(state => state.setActiveStory);
+    const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
+    const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
 
     const { data: stories = [], isLoading: storiesLoading } = useStories();
     const { data: activeStory } = useStory(activeStoryId);
@@ -148,9 +161,13 @@ export default function StorySandbox() {
     const createChapter = useCreateChapter();
     const continueChapter = useContinueChapter();
     const addStoryBeat = useAddStoryBeat();
+    const deleteStory = useDeleteStory();
+    const deleteChapter = useDeleteChapter();
+    const updateChapter = useUpdateChapter();
 
     const [activeChapterId, setActiveChapterId] = useState(null);
     const [isStreaming, setIsStreaming] = useState(false);
+    const [deleteConfirm, setDeleteConfirm] = useState(null);
 
     const { subscribe } = useWebSocket();
 
@@ -255,27 +272,57 @@ export default function StorySandbox() {
     };
 
     const handleDeleteStory = async (story) => {
-        if (!confirm(`Delete "${story.title}"?`)) return;
+        setDeleteConfirm(story);
+    };
+
+    const confirmDeleteStory = async () => {
+        if (!deleteConfirm) return;
         try {
-            const { api } = await import('../api');
-            await api.delete(`/api/v2/stories/${story.id}`);
-            if (activeStoryId === story.id) {
-                const remaining = stories.filter(s => s.id !== story.id);
+            await deleteStory.mutateAsync(deleteConfirm.id);
+            if (activeStoryId === deleteConfirm.id) {
+                const remaining = stories.filter(s => s.id !== deleteConfirm.id);
                 setActiveStory(remaining[0]?.id || null);
                 setActiveChapterId(null);
             }
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
             toast.success('Story deleted');
         } catch {
             toast.error('Failed to delete story');
         }
+        setDeleteConfirm(null);
     };
+
+    const handleDeleteChapter = async (chapterId) => {
+        if (!activeStoryId) return;
+        try {
+            await deleteChapter.mutateAsync({ storyId: activeStoryId, chapterId });
+            if (activeChapterId === chapterId) {
+                const remaining = chapters.filter(ch => ch.id !== chapterId);
+                setActiveChapterId(remaining[0]?.id || null);
+            }
+            toast.success('Chapter deleted');
+        } catch {
+            toast.error('Failed to delete chapter');
+        }
+    };
+
+    const handleSaveChapter = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        try {
+            await updateChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                content: editorContent
+            });
+            toast.success('Chapter saved');
+        } catch {
+            toast.error('Failed to save chapter');
+        }
+    }, [activeStoryId, activeChapterId, editorContent, isStreaming, updateChapter]);
 
     const handleStoryTitleUpdate = async (e) => {
         const newTitle = e.target.value;
         if (!activeStoryId || !newTitle.trim()) return;
         try {
-            const { api } = await import('../api');
             await api.put(`/api/v2/stories/${activeStoryId}`, { title: newTitle });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
         } catch { /* silent */ }
@@ -321,6 +368,7 @@ export default function StorySandbox() {
                                 activeChapterId={activeChapterId}
                                 onSelectChapter={setActiveChapterId}
                                 onCreateChapter={handleCreateChapter}
+                                onDeleteChapter={handleDeleteChapter}
                                 isLoading={chaptersLoading}
                             />
 
@@ -347,6 +395,17 @@ export default function StorySandbox() {
                                     </div>
                                     
                                     <div className="flex items-center gap-2">
+                                        {activeChapterId && (
+                                            <button
+                                                onClick={handleSaveChapter}
+                                                disabled={isStreaming || updateChapter.isPending}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-500/20 text-green-300 rounded-lg hover:bg-green-500/30 transition-colors disabled:opacity-30"
+                                                title="Save chapter content"
+                                            >
+                                                {updateChapter.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={14} />}
+                                                Save
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => setIsPanelOpen(!isPanelOpen)}
                                             className={clsx(
@@ -471,7 +530,27 @@ export default function StorySandbox() {
                                 {lorebooks.length === 0 ? (
                                     <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No lorebooks</p>
                                 ) : (
-                                    <p className="text-xs text-gray-500">Lorebooks will provide world context to the AI during story generation.</p>
+                                    <div className="space-y-2">
+                                        {lorebooks.map(lb => {
+                                            const isActive = selectedLorebooks.includes(lb.id);
+                                            return (
+                                                <button
+                                                    key={lb.id}
+                                                    onClick={() => toggleLorebook(lb.id)}
+                                                    className={clsx(
+                                                        "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+                                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                                    )}
+                                                >
+                                                    {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <p className="truncate font-medium">{lb.name}</p>
+                                                        {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 )}
                             </div>
 
@@ -510,6 +589,16 @@ export default function StorySandbox() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <ConfirmationModal
+                isOpen={!!deleteConfirm}
+                onClose={() => setDeleteConfirm(null)}
+                onConfirm={confirmDeleteStory}
+                title="Delete Story"
+                message={`Are you sure you want to delete "${deleteConfirm?.title}"? All chapters will be lost.`}
+                confirmText="Delete"
+                isDangerous
+            />
         </motion.div>
     );
 }

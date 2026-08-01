@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 from typing import List
 from datetime import datetime, timezone
 
-from api.deps import get_session
+from api.deps import get_session, get_job_service
 from core.entities import Chat, Message
 
 router = APIRouter()
@@ -52,7 +52,6 @@ def list_messages(chat_id: str, session: Session = Depends(get_session)):
 async def add_message(chat_id: str, message: Message, session: Session = Depends(get_session)):
     from core.entities import MessageRole
     from services.job_queue import job_queue
-    from services.job_service import JobService
     
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -98,7 +97,7 @@ async def add_message(chat_id: str, message: Message, session: Session = Depends
                 character_system_prompt = "\n".join(parts)
             
         try:
-            job_service = JobService(session)
+            job_service = get_job_service(session)
             job = await job_service.create_job(
                 task_type="text",
                 workflow={
@@ -110,7 +109,7 @@ async def add_message(chat_id: str, message: Message, session: Session = Depends
                 metadata={"chat_id": chat_id}
             )
             
-            await job_queue.enqueue(job)
+            await job_queue.enqueue(job.id)
             job_id = job.id
             
         except Exception as e:

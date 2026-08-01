@@ -114,7 +114,7 @@ export const useSendMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
-        onSuccess: (_, variables) => {
+        onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
         }
     });
@@ -183,14 +183,55 @@ export const useCreateChapter = () => {
 
 export const useContinueChapter = () => {
     return useMutation({
-        mutationFn: ({ storyId, chapterId }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`),
+        mutationFn: ({ storyId, chapterId, prompt }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, { prompt: prompt || '' }),
     });
 };
 
 export const useAddStoryBeat = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ storyId, chapterId, content }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats`, { content }),
+        mutationFn: ({ storyId, chapterId, content, role }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats`, { content, role: role || 'user' }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        }
+    });
+};
+
+export const useDeleteStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (storyId) => api.delete(`/api/v2/stories/${storyId}`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+        }
+    });
+};
+
+export const useUpdateStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, ...data }) => api.put(`/api/v2/stories/${id}`, data),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.id] });
+        }
+    });
+};
+
+export const useDeleteChapter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) => api.delete(`/api/v2/stories/${storyId}/chapters/${chapterId}`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        }
+    });
+};
+
+export const useUpdateChapter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, ...data }) => api.put(`/api/v2/stories/${storyId}/chapters/${chapterId}`, data),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
         }

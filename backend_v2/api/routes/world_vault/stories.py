@@ -3,10 +3,9 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from typing import List, Optional
 from datetime import datetime, timezone
-from api.deps import get_session
+from api.deps import get_session, get_job_service
 from core.entities import Story, StoryChapter, StoryBeatRole
 from services.job_queue import job_queue
-from services.job_service import JobService
 
 router = APIRouter()
 
@@ -144,7 +143,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         role = "user" if beat.get("role") == StoryBeatRole.USER else "assistant"
         messages.append({"role": role, "content": beat.get("content")})
         
-    job_service = JobService(session)
+    job_service = get_job_service(session)
     job = await job_service.create_job(
         task_type="text",
         workflow={
@@ -156,7 +155,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         metadata={"chat_id": story_id, "chapter_id": chapter_id}
     )
     
-    await job_queue.enqueue(job)
+    await job_queue.enqueue(job.id)
     return {"job_id": job.id}
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")

@@ -75,6 +75,20 @@ else:
     engine = create_engine(database_url, echo=False)
 
 
+def _enable_pgvector_extension() -> None:
+    """Enable pgvector extension for PostgreSQL databases."""
+    if not database_url.startswith("postgresql"):
+        return
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+        logger.info("pgvector_extension_enabled")
+    except Exception as exc:
+        logger.error("pgvector_extension_failed", error=str(exc))
+
+
 def create_db_and_tables() -> None:
     """Create all tables in the database."""
     # Import V1 entities to register them with SQLModel
@@ -86,6 +100,9 @@ def create_db_and_tables() -> None:
                                   ModelVersion, ProviderVersionStatus, DeletedFileTombstone)
     # Import World Vault entities
     from core.entities import (Character, Chat, Message, Lorebook, LorebookEntry, Scenario, Story, StoryChapter)
+
+    # Enable pgvector before creating tables (required for Vector columns)
+    _enable_pgvector_extension()
 
     SQLModel.metadata.create_all(engine)
 

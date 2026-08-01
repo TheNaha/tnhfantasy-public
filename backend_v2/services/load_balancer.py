@@ -660,12 +660,13 @@ class LoadBalancer:
 
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
-    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None) -> Optional[Provider]:
+    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None, task_type: Optional[str] = None) -> Optional[Provider]:
         """
         Get a fallback provider when one fails.
         
         Args:
             failed_provider_id: ID of provider that failed
+            task_type: Optional worker_type to filter by (e.g. "image", "llm")
             
         Returns:
             Alternative provider or None
@@ -676,6 +677,10 @@ class LoadBalancer:
         
         # Filter out the failed provider
         available = [p for p in providers if p.id not in excluded]
+        
+        # Filter by worker_type if specified
+        if task_type:
+            available = [p for p in available if p.worker_type == task_type]
         
         if not available:
             return None

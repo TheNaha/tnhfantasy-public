@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
+import { useLocation } from 'react-router-dom';
 import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters } from '../hooks/useWorldVault';
+import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -16,6 +18,7 @@ export default function ChatWorkspace() {
     const [renameValue, setRenameValue] = useState('');
     const [deleteTarget, setDeleteTarget] = useState(null);
     const messagesEndRef = useRef(null);
+    const location = useLocation();
 
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
@@ -37,6 +40,22 @@ export default function ChatWorkspace() {
     const deleteChatMutation = useDeleteChat();
 
     const { subscribe } = useWebSocket();
+
+    // Handle character_id from navigation state (e.g. from Characters page "Chat" button)
+    useEffect(() => {
+        const characterId = location.state?.characterId;
+        if (characterId && !activeChatId) {
+            createChatMutation.mutate(
+                { name: 'New Chat', character_id: characterId },
+                {
+                    onSuccess: (chat) => {
+                        setActiveChatId(chat.id);
+                        window.history.replaceState({}, document.title);
+                    }
+                }
+            );
+        }
+    }, [location.state?.characterId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (chats?.length > 0 && !activeChatId) {
@@ -153,7 +172,6 @@ export default function ChatWorkspace() {
     const finishRename = async () => {
         if (renamingChatId && renameValue.trim()) {
             try {
-                const { api } = await import('../api');
                 await api.put(`/api/v2/chats/${renamingChatId}`, { name: renameValue.trim() });
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
                 toast.success('Chat renamed');
@@ -289,7 +307,7 @@ export default function ChatWorkspace() {
                             ))}
                             
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
-                                jobData.status === 'running' && (
+                                jobData.status === 'running' && jobData.chatId === activeChatId && (
                                     <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start">
                                         <div className="text-xs text-blue-400 mb-1 ml-1 flex items-center gap-2">
                                             AI <Loader2 size={12} className="animate-spin" />
