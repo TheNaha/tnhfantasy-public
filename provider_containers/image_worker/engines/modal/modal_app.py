@@ -538,6 +538,8 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 
 LIGHTWEIGHT_SCALEDOWN = 15
 
+_reload_lock = asyncio.Lock()
+
 @app.function(
     image=image,
     volumes={"/mnt/data": vol}, 
@@ -547,7 +549,8 @@ LIGHTWEIGHT_SCALEDOWN = 15
 )
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
-    await vol.reload.aio()
+    async with _reload_lock:
+        await vol.reload.aio()
     from image_worker.comfy.models_utils import list_models_with_metadata_internal
     return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
@@ -600,16 +603,23 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
             
         # Check for partial downloads
         if name.endswith('.downloading'):
+            file_size = 0
+            if os.path.exists(full_path):
+                file_size = os.path.getsize(full_path)
+            
             if delete_invalid:
-                os.remove(full_path)
-                logger.info(f"[Validate] Deleted partial: {name}")
+                try:
+                    os.remove(full_path)
+                    logger.info(f"[Validate] Deleted partial: {name}")
+                except Exception as e:
+                    logger.warning(f"[Validate] Failed to delete partial {name}: {e}")
                 
             return {
                 "directory": directory,
                 "type": "partial",
                 "data": {
                     "name": name,
-                    "size": os.path.getsize(full_path),
+                    "size": file_size,
                     "issue": "Incomplete download (temp file)"
                 }
             }
@@ -715,7 +725,7 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
                     logger.error(f"File validation failed: {e}")
     
     if delete_invalid:
-        vol.commit()
+        await vol.commit.aio()
     
     summary = f"{validation_results['total_valid']} valid, {validation_results['total_invalid']} invalid"
     logger.info(f"[Validate] Batch complete: {summary}")
