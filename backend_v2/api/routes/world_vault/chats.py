@@ -48,8 +48,12 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 def list_messages(chat_id: str, session: Session = Depends(get_session)):
     return session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
 
-@router.post("/{chat_id}/messages", response_model=Message)
-def add_message(chat_id: str, message: Message, session: Session = Depends(get_session)):
+@router.post("/{chat_id}/messages")
+async def add_message(chat_id: str, message: Message, session: Session = Depends(get_session)):
+    from core.entities import MessageRole
+    from services.job_queue import job_queue
+    from services.job_service import JobService
+    
     chat = session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -59,13 +63,60 @@ def add_message(chat_id: str, message: Message, session: Session = Depends(get_s
     message.updated_at = message.created_at
     
     session.add(message)
-    
-    chat.updated_at = message.created_at
-    session.add(chat)
-    
     session.commit()
     session.refresh(message)
-    return message
+    
+    job_id = None
+    
+    if message.role == MessageRole.USER:
+        # Build context from previous messages (excluding the just-saved user message)
+        past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+        context = []
+        for msg in past_messages:
+            if msg.id == message.id:
+                continue
+            role = "user" if msg.role == MessageRole.USER else "assistant"
+            context.append({"role": role, "content": msg.content})
+            
+        # Append the new user message
+        context.append({"role": "user", "content": message.content})
+
+        # Load character system prompt if character is linked to this chat
+        character_system_prompt = None
+        if chat.character_id:
+            from core.entities import Character
+            character = session.get(Character, chat.character_id)
+            if character and character.system_prompt:
+                character_system_prompt = character.system_prompt
+            elif character:
+                # Build a basic system prompt from character fields if no explicit one
+                parts = [f"You are {character.name}."]
+                if character.personality:
+                    parts.append(f"Personality: {character.personality}")
+                if character.scenario:
+                    parts.append(f"Scenario: {character.scenario}")
+                character_system_prompt = "\n".join(parts)
+            
+        try:
+            job_service = JobService(session)
+            job = await job_service.create_job(
+                task_type="text",
+                workflow={
+                    "messages": context,
+                    "chat_id": chat_id,
+                    "character_system_prompt": character_system_prompt or None,
+                    "type": "chat_reply"
+                },
+                metadata={"chat_id": chat_id}
+            )
+            
+            await job_queue.enqueue(job)
+            job_id = job.id
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+            
+    return {"user_message_id": message.id, "job_id": job_id}
 
 @router.delete("/{chat_id}/messages/{message_id}")
 def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session)):

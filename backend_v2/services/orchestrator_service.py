@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from sqlmodel import Session
-from core.entities import Job, JobStatus, TaskType
+from core.entities import Job, JobStatus
 from infrastructure.database import get_session
 from services.job_service import JobService
 
@@ -34,8 +34,12 @@ class AgenticOrchestrator:
         provider_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Processes a raw response from the LLM, handling tool calls autonomously.
-        Returns the final user-facing response after all tool loops are resolved.
+        Processes an LLM assistant response (which may contain tool_calls), 
+        running any tool calls autonomously until a plain text response is returned.
+        
+        NOTE: This method expects `message_payload` to be an ASSISTANT message 
+        (potentially with tool_calls). To start a new turn from a user message, 
+        use `run_chat_turn()` instead.
         """
         current_context = list(context)
         current_context.append(message_payload)
@@ -49,7 +53,7 @@ class AgenticOrchestrator:
             tool_calls = latest_msg.get("tool_calls", [])
             
             if not tool_calls:
-                # No more tools to run, return the final message
+                # No more tools to run; return the final text response
                 return latest_msg
             
             logger.info(f"Agent requested {len(tool_calls)} tool calls. Loop: {loop_count}")
@@ -77,15 +81,45 @@ class AgenticOrchestrator:
             current_context.extend(tool_results)
             
             # 3. Request next step from LLM with tool results
-            # In a real implementation, we would call the LLM worker here
-            # via a provider/worker request.
-            # For now, we simulate the LLM's next response as a placeholder.
             next_llm_response = await self._request_llm_completion(current_context, provider_id)
             current_context.append(next_llm_response)
             
             loop_count += 1
             
         raise ToolExecutionLimitExceeded(f"Exceeded max tool calls ({self.max_tool_calls})")
+
+    async def run_chat_turn(
+        self,
+        user_message: str,
+        context: List[Dict[str, Any]],
+        provider_id: Optional[str] = None,
+        character_system_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Main entry point for a single chat turn.
+        1. Optionally prepends a character system prompt.
+        2. Adds the user message to context.
+        3. Gets an initial LLM completion.
+        4. Runs the agentic tool loop on the response.
+        Returns the final assistant message dict.
+        """
+        current_context = list(context)
+
+        # Inject character system prompt if provided and not already first
+        if character_system_prompt:
+            if not current_context or current_context[0].get("role") != "system":
+                current_context.insert(0, {"role": "system", "content": character_system_prompt})
+
+        # Append user message
+        current_context.append({"role": "user", "content": user_message})
+
+        # Get initial LLM completion
+        logger.info(f"Dispatching initial LLM completion for chat turn (provider={provider_id})")
+        llm_response = await self._request_llm_completion(current_context, provider_id)
+
+        # Run agentic tool loop on LLM response
+        # Pass context *without* the user message so process_llm_response can append llm_response cleanly
+        return await self.process_llm_response(llm_response, current_context[:-1], provider_id)
 
     async def _execute_tool(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -107,26 +141,73 @@ class AgenticOrchestrator:
         """
         Tool: Generates an image and returns the asset reference.
         """
+        import asyncio
         prompt = args.get("prompt", "a beautiful fantasy landscape")
         
-        # Simulate creating an image generation job
-        # In full implementation, we'd enqueue a Job to the image worker
-        # and wait for completion.
         logger.info(f"Executing generate_image tool with prompt: {prompt}")
         
-        return {
-            "status": "success",
-            "asset_url": f"/gallery/generated_{hash(prompt)}.png",
-            "prompt_used": prompt
-        }
+        # Spawn an image generation job and wait for it
+        job = await self.job_service.create_job(
+            task_type="image",
+            workflow={"prompt": prompt},
+            metadata={"source": "tool_call"}
+        )
+        
+        while True:
+            job_status = await self.job_service.get_job(job.id)
+            if job_status.status == JobStatus.COMPLETED:
+                outputs = job_status.outputs or []
+                asset_url = outputs[0].get("url", f"/gallery/generated_{hash(prompt)}.png") if outputs else f"/gallery/generated_{hash(prompt)}.png"
+                return {
+                    "status": "success",
+                    "asset_url": asset_url,
+                    "prompt_used": prompt
+                }
+            elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+                return {"status": "error", "error": job_status.error or "Job failed or cancelled"}
+            await asyncio.sleep(1.0)
         
     async def _request_llm_completion(self, context: List[Dict[str, Any]], provider_id: Optional[str]) -> Dict[str, Any]:
         """
-        Stub for actually dispatching the completion job to the LLM worker.
+        Dispatches the completion job to the LLM worker.
         """
-        # TODO: Implement actual LLM worker dispatch
-        return {
-            "role": "assistant",
-            "content": "I have processed your request.",
-            "tool_calls": []
+        import asyncio
+        workflow = {
+            "messages": context,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "generate_image",
+                        "description": "Generate an image based on a prompt.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "prompt": {
+                                    "type": "string",
+                                    "description": "The prompt to generate the image."
+                                }
+                            },
+                            "required": ["prompt"]
+                        }
+                    }
+                }
+            ]
         }
+        
+        job = await self.job_service.create_job(
+            task_type="text",
+            workflow=workflow,
+            metadata={"provider_id": provider_id} if provider_id else {}
+        )
+        
+        while True:
+            job_status = await self.job_service.get_job(job.id)
+            if job_status.status == JobStatus.COMPLETED:
+                outputs = job_status.outputs or []
+                if outputs:
+                    return outputs[0]
+                return {"role": "assistant", "content": ""}
+            elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+                raise OrchestratorError(f"LLM completion job failed: {job_status.error}")
+            await asyncio.sleep(1.0)

@@ -46,7 +46,7 @@ def migrate():
                 logger.info(f"Migrating {table_name}...")
                 
                 # Clear existing data in Postgres table
-                pg_conn.execute(pg_meta.tables[table_name].delete())
+                pg_conn.execute(text(f"TRUNCATE TABLE {table_name} CASCADE;"))
                 
                 sqlite_table = sqlite_meta.tables[table_name]
                 pg_table = pg_meta.tables[table_name]

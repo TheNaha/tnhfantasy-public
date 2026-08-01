@@ -406,6 +406,35 @@ async def finalize_successful_job(
     else:
         outputs = []
 
+    if job.task_type == 'text' and final_result.get('type') == 'chat_reply' or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply"):
+        assistant_content = ""
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            assistant_content = final_result.get("outputs")[0].get("content", "")
+        if not assistant_content and final_result.get("text"):
+             assistant_content = final_result.get("text")
+             
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not chat_id:
+            chat_id = final_result.get("chat_id")
+            
+        if chat_id and assistant_content:
+            from api.deps import get_db_engine
+            from sqlmodel import Session
+            from core.entities import Message, MessageRole
+            
+            engine = get_db_engine()
+            with Session(engine) as session:
+                msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=chat_id)
+                session.add(msg)
+                session.commit()
+                
+            await emit_job_event(EventType.JOB_COMPLETED, {
+                "id": job.id, 
+                "task_type": "text", 
+                "chat_id": chat_id, 
+                "content": assistant_content
+            })
+
     await finalize_persisted_job_outputs(
         job_service=job_service,
         job_id=job_id,

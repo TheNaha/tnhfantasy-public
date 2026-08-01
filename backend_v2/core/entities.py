@@ -727,3 +727,41 @@ class Scenario(SQLModel, table=True):
     prompt_template: str = Field(sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Story(SQLModel, table=True):
+    __tablename__ = "stories"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    title: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    genre: Optional[str] = Field(default=None)  # e.g., "fantasy", "sci-fi", "horror"
+    # World Vault associations
+    character_ids: List[str] = Field(default=[], sa_column=Column(JSON))  # protagonist characters
+    lorebook_ids: List[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
+    scenario_id: Optional[str] = Field(default=None)  # base scenario
+    # Story state
+    is_archived: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    chapters: List["StoryChapter"] = Relationship(back_populates="story")
+
+class StoryBeatRole(str, Enum):
+    NARRATOR = "narrator"  # AI-generated story prose
+    USER = "user"          # Player/user input
+    SYSTEM = "system"      # System injections (scene breaks, etc.)
+
+class StoryChapter(SQLModel, table=True):
+    __tablename__ = "story_chapters"
+    __table_args__ = (Index('idx_chapter_story_id', 'story_id'),)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    story_id: str = Field(foreign_key="stories.id", index=True)
+    chapter_number: int = Field(default=1)
+    title: Optional[str] = Field(default=None)
+    # Full chapter content as accumulated prose (snapshot)
+    content: str = Field(default="", sa_column=Column(Text))
+    # Individual beats/turns within the chapter
+    beats: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    # Images generated for this chapter
+    image_paths: List[str] = Field(default=[], sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    story: Optional["Story"] = Relationship(back_populates="chapters")
