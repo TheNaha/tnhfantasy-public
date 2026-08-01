@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from api.deps import get_session
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
 from core.events import wait_for_job_completion
-from services.job_queue import job_queue
+from services.job_queue import queue_manager
 
 router = APIRouter()
 
@@ -192,7 +192,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         metadata={"story_id": story_id, "chapter_id": chapter_id, "workspace": "story"}
     )
     
-    await job_queue.enqueue(job.id)
+    await queue_manager.enqueue(job.id, task_type="llm")
     return {"job_id": job.id}
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")
@@ -273,7 +273,7 @@ async def illustrate_chapter(
             },
             metadata={"source": "story_illustrate_prompt"}
         )
-        await job_queue.enqueue(prompt_job.id)
+        await queue_manager.enqueue(prompt_job.id, task_type="llm")
 
         enriched_prompt = "beautiful scenery, masterpiece, high quality, highly detailed"
         status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)

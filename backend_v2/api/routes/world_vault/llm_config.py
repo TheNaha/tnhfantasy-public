@@ -50,21 +50,57 @@ def set_default_provider(request: UpdateProviderRequest):
 
 @router.get("/available-models")
 async def get_available_models(session: Session = Depends(get_session)):
-    default = get_default_provider(session)
+    """Return models available from the default LLM provider.
+
+    Tries the OpenAI-compat `/v1/models` endpoint first (Ollama, LM Studio, etc.),
+    falls back to listing providers as model identities if the endpoint fails.
+    """
+    try:
+        default = get_default_provider(session)
+    except HTTPException:
+        return []
+
     provider = session.get(Provider, default.provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail="Default provider not found")
-        
+        return []
+
     runtime = resolve_provider_runtime(provider)
     if not runtime.worker_url:
         return []
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{runtime.worker_url}/models")
-            if resp.status_code == 200:
-                return resp.json()
-    except Exception:
-        pass
-        
-    return [{"id": "default", "name": "Default Model"}]
+    base_url = runtime.worker_url.rstrip("/")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # Try OpenAI-compat /v1/models (Ollama, LM Studio, etc.)
+        for path in ("/v1/models", "/api/tags", "/models"):
+            try:
+                resp = await client.get(f"{base_url}{path}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # OpenAI-compat: {"object": "list", "data": [...]}
+                    if isinstance(data, dict) and "data" in data:
+                        return [
+                            {"id": m.get("id", m.get("name", "unknown")),
+                             "name": m.get("id", m.get("name", "unknown"))}
+                            for m in data["data"]
+                        ]
+                    # Ollama /api/tags: {"models": [{"name": "llama3:latest", ...}]}
+                    if isinstance(data, dict) and "models" in data:
+                        return [
+                            {"id": m.get("name", m.get("model", "unknown")),
+                             "name": m.get("name", m.get("model", "unknown"))}
+                            for m in data["models"]
+                        ]
+                    # Bare list
+                    if isinstance(data, list):
+                        return [
+                            {"id": m.get("id", m.get("name", "unknown")),
+                             "name": m.get("id", m.get("name", "unknown"))}
+                            for m in data
+                        ]
+            except Exception:
+                continue
+
+    # Fallback: return provider record itself as a selectable "model"
+    return [{"id": "default", "name": f"{provider.id} (default)"}]
+

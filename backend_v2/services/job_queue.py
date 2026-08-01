@@ -334,5 +334,138 @@ class JobQueue:
         return failed_count
 
 
-# Global singleton
+# ---------------------------------------------------------------------------
+# QueueManager — typed queues for image and LLM jobs
+# ---------------------------------------------------------------------------
+
+class QueueManager:
+    """
+    Holds separate JobQueue instances for image and LLM task types.
+    
+    This prevents image generation workers and LLM inference workers from
+    competing for the same queue slots.  Each queue is sized independently
+    based on the number of enabled providers of that type.
+    """
+
+    def __init__(self) -> None:
+        self.image: JobQueue = JobQueue(max_workers=1)
+        self.llm: JobQueue = JobQueue(max_workers=1)
+        self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
+
+    def set_processor(self, processor: Callable[[str, str | None], Awaitable[None]]) -> None:
+        """Register the same processor on both queues."""
+        self._processor = processor
+        self.image.set_processor(processor)
+        self.llm.set_processor(processor)
+
+    def get_queue(self, task_type: str) -> "JobQueue":
+        """Return the appropriate queue for a task type."""
+        if task_type == "llm":
+            return self.llm
+        return self.image
+
+    async def enqueue(self, job_id: str, provider_id: str | None = None, task_type: str = "image") -> None:
+        """Enqueue a job into the correct typed queue."""
+        await self.get_queue(task_type).enqueue(job_id, provider_id)
+
+    async def start(self) -> None:
+        """Start both queues."""
+        await self.image.start()
+        await self.llm.start()
+        logger.info("queue_manager_started", image_workers=self.image.max_workers, llm_workers=self.llm.max_workers)
+
+    async def stop(self, timeout_seconds: float = 30.0) -> None:
+        """Stop both queues."""
+        await self.image.stop(timeout_seconds=timeout_seconds)
+        await self.llm.stop(timeout_seconds=timeout_seconds)
+        logger.info("queue_manager_stopped")
+
+    def resize(self, image_workers: int, llm_workers: int) -> None:
+        """Resize both queues synchronously (size is applied on next start)."""
+        self.image.max_workers = max(1, image_workers)
+        self.llm.max_workers = max(1, llm_workers)
+
+    async def recover_pending_jobs(self, job_service) -> tuple:
+        """Recover pending jobs, routing each to the correct queue by task_type."""
+        from core.entities import Job, JobStatus
+        from sqlmodel import select
+
+        session = getattr(job_service, "session", None)
+        total_recovered = 0
+        total_failed = 0
+
+        pending = list(job_service.get_pending_jobs())
+        running = list(job_service.get_running_jobs())
+
+        timeout_seconds = 300
+        now = datetime.now(timezone.utc)
+        stale_running = []
+        recoverable_running = []
+        for job in running:
+            if job.started_at:
+                elapsed = (now - job.started_at).total_seconds()
+                if elapsed > timeout_seconds:
+                    stale_running.append((job, elapsed))
+                    continue
+            recoverable_running.append(job)
+
+        # Mark stale jobs failed
+        if stale_running and session is not None:
+            error_message = "Server restart during processing - job timed out"
+            try:
+                for job, _elapsed in stale_running:
+                    job.status = JobStatus.FAILED
+                    job.error = error_message
+                    job.completed_at = now
+                    job.updated_at = now
+                    session.add(job)
+                session.commit()
+                for job, elapsed in stale_running:
+                    total_failed += 1
+                    logger.warning("job_recovery_timeout", job_id=job.id, elapsed=f"{elapsed:.0f}s")
+                    try:
+                        await emit_job_event(EventType.JOB_FAILED, job_service._job_to_dict(job))
+                    except Exception as exc:
+                        logger.warning("job_recovery_emit_failed", job_id=job.id, error=str(exc))
+            except Exception as exc:
+                if session:
+                    session.rollback()
+                logger.error("job_recovery_atomic_update_failed", error=str(exc))
+
+        for job in pending:
+            task_type = getattr(job, "task_type", "image") or "image"
+            await self.get_queue(task_type).enqueue(job.id, job.provider_id)
+            total_recovered += 1
+
+        for job in recoverable_running:
+            task_type = getattr(job, "task_type", "image") or "image"
+            await self.get_queue(task_type).enqueue(job.id, job.provider_id)
+            total_recovered += 1
+
+        if total_recovered > 0 or total_failed > 0:
+            logger.info("queue_manager_recovery_complete", recovered=total_recovered, failed=total_failed)
+
+        return total_recovered, total_failed
+
+    # ---- Delegate properties for backwards-compat callers ----
+
+    @property
+    def pending_count(self) -> int:
+        return self.image.pending_count + self.llm.pending_count
+
+    @property
+    def active_count(self) -> int:
+        return self.image.active_count + self.llm.active_count
+
+
+# ---------------------------------------------------------------------------
+# Global singletons
+# ---------------------------------------------------------------------------
+
+# Legacy singleton kept for backwards-compatibility with any code paths that
+# have not yet been migrated to queue_manager.  New code should prefer
+# queue_manager.enqueue(job_id, task_type=...).
 job_queue = JobQueue()
+
+# Typed queue manager — primary entry point for all new job submissions.
+queue_manager = QueueManager()

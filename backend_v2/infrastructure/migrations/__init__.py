@@ -19,10 +19,7 @@ def run_migrations(engine) -> None:
     """
     from sqlalchemy import inspect
     
-    # If this is a fresh postgres database, create_all already sets up the schema.
-    # We skip these legacy SQLite migrations because they use SQLite-specific syntax (DATETIME, FTS5).
-    if engine.dialect.name == "postgresql":
-        return
+    is_postgres = engine.dialect.name == "postgresql"
 
     with engine.connect() as conn:
         inspector = inspect(engine)
@@ -53,6 +50,10 @@ def run_migrations(engine) -> None:
 
         for step in _get_schema_migration_steps():
             if step.version in applied_versions:
+                continue
+                
+            # Skip SQLite-specific and legacy enum migrations on PostgreSQL
+            if is_postgres and step.version in ("002_prompts_fts", "004_normalize_legacy_job_statuses"):
                 continue
 
             trans = conn.begin()

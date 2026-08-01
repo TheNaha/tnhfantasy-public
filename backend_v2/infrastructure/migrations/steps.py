@@ -81,11 +81,11 @@ def _migration_add_job_timestamps(conn) -> bool:
     columns = {col["name"] for col in inspector.get_columns("jobs")}
 
     if "started_at" not in columns:
-        conn.execute(text("ALTER TABLE jobs ADD COLUMN started_at DATETIME"))
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN started_at TIMESTAMP"))
         logger.info("migration_column_added", table="jobs", column="started_at")
 
     if "completed_at" not in columns:
-        conn.execute(text("ALTER TABLE jobs ADD COLUMN completed_at DATETIME"))
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN completed_at TIMESTAMP"))
         logger.info("migration_column_added", table="jobs", column="completed_at")
 
     _verify_required_columns(conn, "jobs", {"started_at", "completed_at"})
@@ -523,7 +523,7 @@ def _migration_create_deleted_file_tombstones(conn) -> bool:
             storage_path TEXT PRIMARY KEY,
             original_model_id INTEGER,
             original_filename TEXT,
-            deleted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """))
     conn.execute(text("""

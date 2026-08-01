@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session
-from core.entities import Chat, Message, MessageRole
+from core.entities import Chat, Character, Message, MessageRole
 from core.events import wait_for_job_completion
 
 router = APIRouter()
@@ -29,12 +29,27 @@ def list_chats(session: Session = Depends(get_session)):
     return session.exec(select(Chat).order_by(Chat.updated_at.desc())).all()
 
 @router.post("/", response_model=Chat)
-def create_chat(chat: Chat, session: Session = Depends(get_session)):
+async def create_chat(chat: Chat, session: Session = Depends(get_session)):
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
     session.add(chat)
     session.commit()
     session.refresh(chat)
+
+    # If a character is assigned, inject their first_mes as the opening message
+    if chat.character_id:
+        character = session.get(Character, chat.character_id)
+        if character and character.first_mes:
+            opening = Message(
+                chat_id=chat.id,
+                role=MessageRole.CHAR,
+                content=character.first_mes,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            session.add(opening)
+            session.commit()
+
     return chat
 
 @router.get("/{chat_id}", response_model=Chat)
@@ -80,7 +95,7 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
 @router.post("/{chat_id}/messages")
 async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
     from services.context_builder import build_chat_context
-    from services.job_queue import job_queue
+    from services.job_queue import queue_manager
     
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -141,7 +156,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 metadata=metadata,
             )
             
-            await job_queue.enqueue(job.id)
+            await queue_manager.enqueue(job.id, task_type="llm")
             job_id = job.id
             
         except Exception as e:
@@ -195,7 +210,7 @@ async def generate_scene(
         },
         metadata={"source": "scene_prompt"}
     )
-    await job_queue.enqueue(prompt_job.id)
+    await queue_manager.enqueue(prompt_job.id, task_type="llm")
     
     enriched_prompt = "beautiful scenery, masterpiece, high quality, 1girl, highly detailed"
     status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)

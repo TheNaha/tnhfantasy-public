@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useSetLLMDefaultProvider } from '../hooks/useWorldVault';
@@ -606,7 +606,7 @@ export default function StorySandbox() {
                                 </div>
 
                                 {activeChapterId && (
-                                    <div className="px-2 sm:px-4 lg:px-6 pb-2 sm:pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
+                                    <div className="px-2 sm:px-4 lg:px-6 pb-16 md:pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
                                         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
                                             <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
                                                 <button
@@ -668,6 +668,9 @@ export default function StorySandbox() {
                     </>
                 )}
             </div>
+
+            {/* Mobile bottom padding for tab bar */}
+            <style>{`.story-editor-input { padding-bottom: 3.5rem !important; }`}</style>
 
             <AnimatePresence initial={false}>
                 {isPanelOpen && activeStoryId && (
@@ -791,6 +794,51 @@ export default function StorySandbox() {
                 confirmText="Delete"
                 isDangerous
             />
+
+            {/* Mobile Bottom Tab Bar */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-gray-900/95 backdrop-blur-md border-t border-white/10 flex items-center justify-around h-14">
+                <button
+                    onClick={() => { setIsSidebarOpen(true); setIsChapterSidebarOpen(false); setIsPanelOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        isSidebarOpen ? "text-indigo-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <BookOpen size={20} />
+                    <span>Stories</span>
+                </button>
+                <button
+                    onClick={() => { setIsSidebarOpen(false); setIsChapterSidebarOpen(true); setIsPanelOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        isChapterSidebarOpen ? "text-indigo-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <Columns size={20} />
+                    <span>Chapters</span>
+                </button>
+                <button
+                    onClick={() => { setIsSidebarOpen(false); setIsChapterSidebarOpen(false); setIsPanelOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        !isSidebarOpen && !isChapterSidebarOpen && !isPanelOpen ? "text-indigo-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <Edit3 size={20} />
+                    <span>Write</span>
+                </button>
+                <button
+                    onClick={() => { setIsPanelOpen(true); setIsSidebarOpen(false); setIsChapterSidebarOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        isPanelOpen ? "text-indigo-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <Layers size={20} />
+                    <span>Context</span>
+                </button>
+            </div>
+
 
             {/* Illustrate Prompt Modal */}
             <AnimatePresence>

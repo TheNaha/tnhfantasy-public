@@ -5,7 +5,7 @@ from sqlmodel import Session
 from core.exceptions import JobError, MissingModelsError
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
-from services.job_queue import job_queue
+from services.job_queue import queue_manager
 from services.job_service import JobService
 from services.model_availability_service import (
     AvailabilityResult,
@@ -83,7 +83,7 @@ class JobSubmissionService:
 
         job = await self.job_service.create_job(workflow, metadata, task_type=task_type)
         try:
-            await job_queue.enqueue(job.id)
+            await queue_manager.enqueue(job.id, task_type=task_type)
         except Exception as exc:
             logger.error("job_enqueue_failed", job_id=job.id, error=str(exc))
 

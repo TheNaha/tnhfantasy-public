@@ -9,34 +9,51 @@ logger = get_logger("startup_helpers")
 
 
 def configure_worker_pool() -> None:
-    """Set worker count based on enabled providers."""
+    """Set worker counts based on enabled providers split by worker_type."""
     try:
         from infrastructure.repositories import ProviderRepository
+        from services.job_queue import queue_manager
 
         session = get_session_sync()
         try:
             provider_repo = ProviderRepository(session)
             enabled_providers = provider_repo.get_enabled()
-            num_workers = max(1, len(enabled_providers))
-            job_queue.max_workers = num_workers
-            logger.info("worker_pool_configured", providers=len(enabled_providers), workers=num_workers)
+
+            image_providers = [p for p in enabled_providers if getattr(p, "worker_type", "image") != "llm"]
+            llm_providers = [p for p in enabled_providers if getattr(p, "worker_type", "image") == "llm"]
+
+            image_workers = max(1, len(image_providers))
+            llm_workers = max(1, len(llm_providers))
+
+            queue_manager.resize(image_workers=image_workers, llm_workers=llm_workers)
+            logger.info(
+                "worker_pool_configured",
+                image_providers=len(image_providers),
+                llm_providers=len(llm_providers),
+                image_workers=image_workers,
+                llm_workers=llm_workers,
+            )
         finally:
             session.close()
     except Exception as exc:
         logger.warning("worker_pool_error", error=str(exc))
 
 
+
 async def recover_pending_jobs() -> None:
-    """Recover pending and in-flight jobs after startup."""
+    """Recover pending and in-flight jobs after startup, routed by task_type."""
     try:
+        from services.job_queue import queue_manager
+
         recovery_session = get_session_sync()
         try:
             recovery_job_service = JobService(recovery_session)
-            await job_queue.recover_pending_jobs(recovery_job_service)
+            await queue_manager.recover_pending_jobs(recovery_job_service)
         finally:
             recovery_session.close()
     except Exception as exc:
         logger.warning("job_recovery_failed", error=str(exc))
+
 
 
 def cleanup_provider_state_artifacts(

@@ -23,7 +23,7 @@ from infrastructure.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
-from services.job_queue import job_queue
+from services.job_queue import job_queue, queue_manager
 from services.job_service import JobService
 from services.provider_runtime import monitor_provider_changes
 
@@ -165,7 +165,7 @@ async def startup_application(process_job, ws_manager):
     
 
     logger.info("startup_init", phase="job_processor")
-    job_queue.set_processor(process_job)
+    queue_manager.set_processor(process_job)
 
     logger.info("startup_init", phase="gallery_indexer")
     try:
@@ -179,7 +179,7 @@ async def startup_application(process_job, ws_manager):
     configure_worker_pool()
 
     logger.info("startup_init", phase="job_queue")
-    await job_queue.start()
+    await queue_manager.start()
 
     logger.info("startup_init", phase="provider_monitor")
     provider_monitor_task = start_background_task(
@@ -258,7 +258,7 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
     stop_scheduler()
 
     logger.info("shutdown", phase="job_queue")
-    await job_queue.stop()
+    await queue_manager.stop()
 
     logger.info("shutdown", phase="job_requeue")
     try:

@@ -162,6 +162,18 @@ export const useUpdateCharacter = () => {
     });
 };
 
+export const usePatchCharacter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, ...data }) => api.patch(`/api/v2/characters/${id}`, data),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.id] });
+        }
+    });
+};
+
+
 export const getAvatarUrl = (characterId) => 
     characterId ? `/api/v2/characters/${characterId}/avatar` : null;
 

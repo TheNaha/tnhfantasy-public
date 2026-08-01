@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2 } from 'lucide-react';
+import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2, User } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
@@ -430,28 +430,43 @@ export default function ChatWorkspace() {
                         </div>
                     ) : (
                         <>
-                            {messages.map((msg, idx) => (
+                        {messages.map((msg, idx) => (
                                 <div key={msg.id || idx} className={clsx(
-                                    "flex flex-col max-w-[85%]",
-                                    msg.role === 'user' ? "self-end items-end" : "self-start items-start"
+                                    "flex gap-3 max-w-[85%]",
+                                    msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
                                 )}>
-                                    <div className="text-xs text-gray-500 mb-1 ml-1">
-                                        {msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : 'AI'}
-                                    </div>
-                                    <div className={clsx(
-                                        "p-4 rounded-2xl whitespace-pre-wrap text-sm",
-                                        msg.role === 'user' 
-                                            ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm" 
-                                            : msg.role === 'system'
-                                            ? "bg-yellow-500/10 text-yellow-200 border border-yellow-500/20 rounded-tl-sm italic"
-                                            : "bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm"
-                                    )}>
-                                        {msg.content}
-                                        {msg.image_path && (
-                                            <div className="mt-3">
-                                                <img src={`/api/files/${msg.image_path}`} alt="Scene" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
-                                            </div>
-                                        )}
+                                    {/* Avatar bubble for char/ai messages */}
+                                    {msg.role !== 'user' && msg.role !== 'system' && (
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                                            {linkedCharacter?.has_avatar ? (
+                                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <MessageSquare className="text-blue-400" size={14} />
+                                            )}
+                                        </div>
+                                    )}
+                                    <div className="flex flex-col">
+                                        <div className={clsx(
+                                            "text-xs mb-1",
+                                            msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400"
+                                        )}>
+                                            {msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : (linkedCharacter?.name || 'AI')}
+                                        </div>
+                                        <div className={clsx(
+                                            "p-4 rounded-2xl whitespace-pre-wrap text-sm",
+                                            msg.role === 'user'
+                                                ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm"
+                                                : msg.role === 'system'
+                                                ? "bg-yellow-500/10 text-yellow-200 border border-yellow-500/20 rounded-tl-sm italic"
+                                                : "bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm"
+                                        )}>
+                                            {msg.content}
+                                            {msg.image_path && (
+                                                <div className="mt-3">
+                                                    <img src={`/api/files/${msg.image_path}`} alt="Scene" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -479,7 +494,7 @@ export default function ChatWorkspace() {
                 </div>
 
                 {/* Chat Input Area */}
-                <div className="p-4 lg:p-6 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
+                <div className="p-4 lg:p-6 pb-14 md:pb-6 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
                     <div className="max-w-4xl mx-auto">
                         {pendingAttachment && (
                             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-300">
@@ -663,6 +678,44 @@ export default function ChatWorkspace() {
                 confirmText="Delete"
                 isDangerous
             />
+
+            {/* Mobile Bottom Tab Bar */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-gray-900/95 backdrop-blur-md border-t border-white/10 flex items-center justify-around h-14">
+                <button
+                    onClick={() => { setIsSidebarOpen(true); setIsRightPanelOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        isSidebarOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <MessageSquare size={20} />
+                    <span>Chats</span>
+                </button>
+                <button
+                    onClick={() => { setIsSidebarOpen(false); setIsRightPanelOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        !isSidebarOpen && !isRightPanelOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    {linkedCharacter?.has_avatar ? (
+                        <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-5 h-5 rounded-full object-cover" />
+                    ) : (
+                        <User size={20} />
+                    )}
+                    <span>Chat</span>
+                </button>
+                <button
+                    onClick={() => { setIsRightPanelOpen(true); setIsSidebarOpen(false); }}
+                    className={clsx(
+                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
+                        isRightPanelOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <BookOpen size={20} />
+                    <span>Context</span>
+                </button>
+            </div>
         </motion.div>
     );
 }

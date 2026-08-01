@@ -8,12 +8,36 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Character
 
 router = APIRouter()
+
+
+class CharacterUpdateRequest(BaseModel):
+    """Strict optional-field update model for PUT and PATCH endpoints."""
+    name: str | None = None
+    description: str | None = None
+    personality: str | None = None
+    scenario: str | None = None
+    first_mes: str | None = None
+    mes_example: str | None = None
+    creator_notes: str | None = None
+    system_prompt: str | None = None
+    visual_tags: list[str] | None = None
+    lora_triggers: list[str] | None = None
+    voice_profile: str | None = None
+
+
+def _character_to_dict(character: Character) -> dict:
+    """Serialize a Character with the computed has_avatar field."""
+    d = character.model_dump()
+    d["has_avatar"] = character.avatar_path is not None and os.path.exists(character.avatar_path)
+    return d
+
 
 
 def _parse_png_chunks(data: bytes) -> dict[str, bytes]:
@@ -128,9 +152,10 @@ def parse_character_card(png_bytes: bytes) -> dict:
     return {"character": character, "avatar_bytes": png_bytes}
 
 
-@router.get("/", response_model=list[Character])
+@router.get("/")
 def list_characters(session: Session = Depends(get_session)):
-    return session.exec(select(Character).order_by(Character.name)).all()
+    characters = session.exec(select(Character).order_by(Character.name)).all()
+    return [_character_to_dict(c) for c in characters]
 
 @router.post("/", response_model=Character)
 def create_character(character: Character, session: Session = Depends(get_session)):
@@ -202,30 +227,49 @@ def import_character_card(
 
     return character
 
-@router.get("/{character_id}", response_model=Character)
+@router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
-    return character
+    return _character_to_dict(character)
 
-@router.put("/{character_id}", response_model=Character)
-def update_character(character_id: str, character_update: Character, session: Session = Depends(get_session)):
+@router.put("/{character_id}")
+def update_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session)):
+    """Full update — replaces all provided fields (omitted fields are left unchanged)."""
     character = session.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
-    
+
     update_data = character_update.model_dump(exclude_unset=True)
-    update_data.pop("id", None)
-    
     for key, value in update_data.items():
         setattr(character, key, value)
-        
+
     character.updated_at = datetime.now(timezone.utc)
     session.add(character)
     session.commit()
     session.refresh(character)
-    return character
+    return _character_to_dict(character)
+
+
+@router.patch("/{character_id}")
+def patch_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session)):
+    """Partial update — only updates fields explicitly provided (non-None values)."""
+    character = session.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    update_data = character_update.model_dump(exclude_unset=True)
+    # For PATCH, also skip None values so we never overwrite with null
+    update_data = {k: v for k, v in update_data.items() if v is not None}
+    for key, value in update_data.items():
+        setattr(character, key, value)
+
+    character.updated_at = datetime.now(timezone.utc)
+    session.add(character)
+    session.commit()
+    session.refresh(character)
+    return _character_to_dict(character)
 
 @router.delete("/{character_id}")
 def delete_character(character_id: str, session: Session = Depends(get_session)):
@@ -242,20 +286,20 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
     character = session.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
-        
+
     os.makedirs(f"/data/characters/{character_id}", exist_ok=True)
     avatar_path = f"/data/characters/{character_id}/avatar.png"
-    
+
     with open(avatar_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-        
+
     character.avatar_path = avatar_path
     character.updated_at = datetime.now(timezone.utc)
     session.add(character)
     session.commit()
     session.refresh(character)
-    
-    return {"message": "Avatar uploaded", "avatar_path": avatar_path}
+
+    return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
 @router.get("/{character_id}/avatar")
 def get_avatar(character_id: str, session: Session = Depends(get_session)):

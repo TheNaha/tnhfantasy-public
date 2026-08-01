@@ -459,8 +459,8 @@ function CharacterCard({ character, onEdit, onDelete, onChat }) {
         >
             <div className="flex items-start gap-3">
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
-                    {character.avatar_path ? (
-                        <img src={character.avatar_path} alt={character.name} className="w-full h-full object-cover" />
+                    {character.has_avatar ? (
+                        <img src={getAvatarUrl(character.id)} alt={character.name} className="w-full h-full object-cover" />
                     ) : (
                         <User size={22} className="text-gray-500" />
                     )}
