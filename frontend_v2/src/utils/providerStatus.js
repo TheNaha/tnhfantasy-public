@@ -63,16 +63,22 @@ export function summarizeProviderStatus(
     const deployStatus = deploy.status || 'idle';
     const reconciliationStatus = normalizeReconciliationStatus(reconciliation.status);
 
-    const downloadsActive = Math.max(
+    let downloadsActive = Math.max(
         asCount(modelSyncStats.downloading),
         asArray(reconciliation.active_downloads).length,
         asCount(reconciliationStats.downloads_in_progress),
     );
-    const downloadsQueued = Math.max(
+    let downloadsQueued = Math.max(
         asCount(modelSyncStats.pending),
         asCount(reconciliationStats.downloads_queued),
     );
-    const downloadsCompleted = asCount(reconciliationStats.downloads_completed);
+    let downloadsCompleted = asCount(reconciliationStats.downloads_completed);
+
+    if (safeProvider.type === 'llm') {
+        downloadsActive = 0;
+        downloadsQueued = 0;
+        downloadsCompleted = 0;
+    }
 
     const summary = {
         runtimeStatus,

@@ -176,7 +176,12 @@ export default function ProviderDetailPanel({
 
                     {/* Tab bar */}
                     <div className="tab-bar -mx-6 px-6">
-                        {TABS.map((tab) => (
+                        {TABS.filter(tab => {
+                            if (provider.type === 'llm' && (tab.id === 'deploy' || tab.id === 'sync')) {
+                                return false;
+                            }
+                            return true;
+                        }).map((tab) => (
                             <button
                                 key={tab.id}
                                 type="button"

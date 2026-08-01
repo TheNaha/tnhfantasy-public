@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
+import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
 import ConfirmationModal from '../components/ConfirmationModal';
 import api from '../api/client';
@@ -93,11 +94,11 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         setLoadingGallery(false);
     };
 
-    const handleSelectGalleryImage = async (filename) => {
+    const handleSelectGalleryImage = async (img) => {
         try {
             // Fetch metadata to populate fields
-            const metaRes = await api.post('/api/files/metadata/batch', { files: [filename] });
-            const metadata = metaRes.metadata?.[filename] || {};
+            const metaRes = await api.post('/api/files/metadata/batch', { paths: [img.relative_path] });
+            const metadata = metaRes.metadata?.[img.relative_path] || {};
             
             if (metadata.prompt) {
                 // simple heuristic
@@ -110,9 +111,9 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             }
 
             // Convert image to file for avatar upload
-            const imgRes = await fetch(`/api/files/${filename}`);
+            const imgRes = await fetch(img.preview);
             const blob = await imgRes.blob();
-            const file = new File([blob], filename, { type: blob.type });
+            const file = new File([blob], img.name, { type: blob.type });
             
             const objectUrl = URL.createObjectURL(file);
             setPreviewUrl(objectUrl);
@@ -170,22 +171,39 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         setForm(f => ({ ...f, [field]: f[field].filter((_, i) => i !== idx) }));
     };
 
-    const handleMagicGenerate = async () => {
+    const settings = useSettingsStore(s => s.settings);
+
+    const handleGenerateField = async (fieldKey) => {
         if (!form.name.trim() && !form.description.trim()) {
             toast.error('Provide at least a name or short description first!');
             return;
         }
         
-        toast('Generating character profile...', { icon: '🤖' });
+        let sysPrompt = '';
+        switch(fieldKey) {
+            case 'description': sysPrompt = settings.charGenDescriptionPrompt; break;
+            case 'personality': sysPrompt = settings.charGenPersonalityPrompt; break;
+            case 'scenario': sysPrompt = settings.charGenScenarioPrompt; break;
+            case 'first_mes': sysPrompt = settings.charGenFirstMesPrompt; break;
+            case 'mes_example': sysPrompt = settings.charGenMesExamplePrompt; break;
+            case 'system_prompt': sysPrompt = settings.charGenSystemPromptPrompt; break;
+            case 'visual_tags': sysPrompt = settings.charGenVisualTagsPrompt; break;
+            default: return;
+        }
+        
+        let context = `Name: ${form.name}\n`;
+        if (form.description && fieldKey !== 'description') context += `Description: ${form.description}\n`;
+        if (form.personality && fieldKey !== 'personality') context += `Personality: ${form.personality}\n`;
+        if (form.scenario && fieldKey !== 'scenario') context += `Scenario: ${form.scenario}\n`;
+        
+        toast(`Generating ${fieldKey}...`, { icon: '🤖' });
         try {
-            const prompt = `Name: ${form.name}\nDescription: ${form.description}\n\nExpand this character into a full JSON profile. The JSON must contain: "description" (detailed background), "personality" (traits), "scenario" (setting), "first_mes" (opening line), "visual_tags" (array of danbooru style tags). Return ONLY valid JSON, nothing else.`;
-            
             const resJob = await api.post('/api/jobs', {
                 task_type: "text",
                 workflow: {
                     messages: [
-                        { role: "system", content: "You are an expert character creator. You output ONLY valid JSON without markdown blocks." },
-                        { role: "user", content: prompt }
+                        { role: "system", content: sysPrompt },
+                        { role: "user", content: context }
                     ]
                 }
             });
@@ -195,20 +213,14 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     const jobStatus = await api.get(`/api/jobs/${jobId}`);
                     if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
                         try {
-                            const raw = jobStatus.outputs[0].content;
-                            // Clean up potential markdown formatting from LLM
-                            const cleanJson = raw.replace(/```json/g, '').replace(/```/g, '').trim();
-                            const profile = JSON.parse(cleanJson);
-                            
-                            setForm(f => ({
-                                ...f,
-                                description: profile.description || f.description,
-                                personality: profile.personality || f.personality,
-                                scenario: profile.scenario || f.scenario,
-                                first_mes: profile.first_mes || f.first_mes,
-                                visual_tags: profile.visual_tags ? [...new Set([...f.visual_tags, ...profile.visual_tags])] : f.visual_tags,
-                            }));
-                            toast.success('Character profile generated!');
+                            const raw = jobStatus.outputs[0].content.trim();
+                            if (fieldKey === 'visual_tags') {
+                                const tags = raw.split(',').map(s => s.trim()).filter(Boolean);
+                                setForm(f => ({ ...f, visual_tags: [...new Set([...f.visual_tags, ...tags])] }));
+                            } else {
+                                setForm(f => ({ ...f, [fieldKey]: raw }));
+                            }
+                            toast.success(`Generated field!`);
                         } catch {
                             toast.error('Failed to parse AI output');
                         }
@@ -217,7 +229,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     if (jobStatus.status === 'failed') break;
                     await new Promise(r => setTimeout(r, 1000));
                 }
-                toast.error('Profile generation failed');
+                toast.error('Generation failed');
             };
             if (resJob.id) {
                 pollJob(resJob.id);
@@ -242,13 +254,6 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/50 shrink-0">
                         <div className="flex items-center gap-3">
                             <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
-                            <button
-                                onClick={handleMagicGenerate}
-                                className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
-                                title="Auto-generate empty fields based on Name and Description"
-                            >
-                                <Sparkles size={12} /> Auto-Fill
-                            </button>
                         </div>
                         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
                     </div>
@@ -296,7 +301,18 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
 
                         {CHARACTER_FIELDS.filter(f => f.key !== 'name').map(field => (
                             <div key={field.key}>
-                                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</label>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</label>
+                                    {field.key !== 'creator_notes' && (
+                                        <button
+                                            onClick={() => handleGenerateField(field.key)}
+                                            className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
+                                            title={`Auto-generate ${field.label}`}
+                                        >
+                                            <Sparkles size={12} /> Auto-Fill
+                                        </button>
+                                    )}
+                                </div>
                                 <textarea
                                     value={form[field.key]}
                                     onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
@@ -309,9 +325,20 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
 
                         {/* Visual Tags */}
                         <div>
-                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Visual Tags</label>
-                            <p className="text-[11px] text-gray-500 mb-2">Tags for image generation (e.g., 1girl, blue hair, school uniform)</p>
-                            <div className="flex flex-wrap gap-2 mb-2">
+                            <div className="flex items-center justify-between mb-1">
+                                <div>
+                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Visual Tags</label>
+                                    <p className="text-[11px] text-gray-500">Tags for image generation (e.g., 1girl, blue hair, school uniform)</p>
+                                </div>
+                                <button
+                                    onClick={() => handleGenerateField('visual_tags')}
+                                    className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
+                                    title="Auto-generate Visual Tags"
+                                >
+                                    <Sparkles size={12} /> Auto-Fill
+                                </button>
+                            </div>
+                            <div className="flex flex-wrap gap-2 mb-2 mt-2">
                                 {form.visual_tags.map((tag, idx) => (
                                     <span key={idx} className="px-2 py-1 text-xs bg-purple-500/20 text-purple-300 rounded-full border border-purple-500/30 flex items-center gap-1">
                                         {tag}
@@ -400,11 +427,11 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                                             {recentImages.map(img => (
                                                 <button
-                                                    key={img.filename}
-                                                    onClick={() => handleSelectGalleryImage(img.filename)}
+                                                    key={img.relative_path || img.name}
+                                                    onClick={() => handleSelectGalleryImage(img)}
                                                     className="aspect-square rounded-lg border border-gray-700 overflow-hidden hover:border-blue-500 transition-colors"
                                                 >
-                                                    <img src={`/api/files/${img.filename}`} alt="" className="w-full h-full object-cover" />
+                                                    <img src={img.preview} alt="" className="w-full h-full object-cover" />
                                                 </button>
                                             ))}
                                         </div>

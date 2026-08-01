@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/v2/providers", tags=["providers_discovery"])
 class DiscoveryPayload(BaseModel):
     provider_id: str
     provider_type: str
+    worker_type: str = "image"
     status: str
     internal_url: str
     hostname: str
@@ -36,6 +37,7 @@ async def handle_provider_discovery(
     await service.upsert_provider_from_discovery(
         provider_id=payload.provider_id,
         provider_type=payload.provider_type,
+        worker_type=payload.worker_type,
         internal_url=payload.internal_url,
     )
 

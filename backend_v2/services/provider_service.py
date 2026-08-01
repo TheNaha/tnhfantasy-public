@@ -293,6 +293,7 @@ class ProviderService:
         provider_id: str,
         provider_type: str,
         internal_url: str,
+        worker_type: str = "image",
     ) -> Provider:
         """Create or update a provider record from a live discovery heartbeat.
         
@@ -309,6 +310,8 @@ class ProviderService:
         existing = self.repo.get(provider_id)
         if existing:
             updates: dict[str, Any] = {}
+            if existing.worker_type != worker_type:
+                updates["worker_type"] = worker_type
             config = dict(existing.config or {})
             config["last_seen_at"] = now
             config["discovery_url"] = internal_url
@@ -322,6 +325,7 @@ class ProviderService:
         provider = self.repo.create({
             "id": provider_id,
             "type": provider_type,
+            "worker_type": worker_type,
             "enabled": True,
             "priority": 1,
             "container_config": container_config,

@@ -51,6 +51,15 @@ const DEFAULT_SETTINGS = {
         lorebookInjectionMode: 'system_prompt',  // 'system_prompt' | 'messages'
         temperature: 0.8,
         maxContextTokens: 4096,
+        chatSystemPrompt: 'You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character\'s personality, background, and speech patterns. Do not act as an AI assistant.',
+        storySystemPrompt: 'You are a creative co-author helping write an engaging and detailed story. Follow the user\'s prompts, expand on the narrative naturally, and maintain consistent tone and pacing.',
+        charGenDescriptionPrompt: 'You are an expert character creator. Expand the provided character details into a rich, detailed background description. Return ONLY the text for the description, no markdown or extra chat.',
+        charGenPersonalityPrompt: 'You are an expert character creator. Expand the provided character details into a detailed personality profile covering traits, quirks, and mannerisms. Return ONLY the text, no markdown.',
+        charGenScenarioPrompt: 'You are an expert character creator. Create an engaging scenario/setting for this character based on their details. Return ONLY the text, no markdown.',
+        charGenFirstMesPrompt: 'You are an expert character creator. Write an engaging first message/greeting from this character in their unique voice. Return ONLY the text, no markdown.',
+        charGenMesExamplePrompt: 'You are an expert character creator. Write a few short dialogue examples showing how this character speaks. Use <START> to separate examples. Return ONLY the text, no markdown.',
+        charGenSystemPromptPrompt: 'You are an expert character creator. Write a custom system prompt that instructs an AI how to play this character. Return ONLY the text, no markdown.',
+        charGenVisualTagsPrompt: 'You are an expert character creator. Generate a comma-separated list of Danbooru-style visual tags that describe this character\'s appearance. Return ONLY the tags, no markdown.',
     }
 };
 

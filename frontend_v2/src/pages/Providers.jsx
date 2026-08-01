@@ -245,21 +245,49 @@ export default function Providers() {
                     </div>
                 </div>
             ) : filteredProviders.length > 0 ? (
-                <div className="space-y-4">
-                    {filteredProviders.map((provider) => (
-                        <ProviderListItem
-                            key={provider.id}
-                            provider={provider}
-                            actionLabel={actionLoading[provider.id] ?? null}
-                            isSelected={selectedProviderId === provider.id}
-                            onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
-                            onToggleEnabled={handleToggleEnabled}
-                            onEdit={() => setEditingProvider(provider)}
-                            onDelete={() => handleDelete(provider.id)}
-                            providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
-                            jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
-                        />
-                    ))}
+                <div className="space-y-8">
+                    {filteredProviders.some(p => p.type !== 'llm') && (
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Image Workers</h2>
+                            <div className="space-y-4">
+                                {filteredProviders.filter(p => p.type !== 'llm').map((provider) => (
+                                    <ProviderListItem
+                                        key={provider.id}
+                                        provider={provider}
+                                        actionLabel={actionLoading[provider.id] ?? null}
+                                        isSelected={selectedProviderId === provider.id}
+                                        onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
+                                        onToggleEnabled={handleToggleEnabled}
+                                        onEdit={() => setEditingProvider(provider)}
+                                        onDelete={() => handleDelete(provider.id)}
+                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {filteredProviders.some(p => p.type === 'llm') && (
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">LLM Workers</h2>
+                            <div className="space-y-4">
+                                {filteredProviders.filter(p => p.type === 'llm').map((provider) => (
+                                    <ProviderListItem
+                                        key={provider.id}
+                                        provider={provider}
+                                        actionLabel={actionLoading[provider.id] ?? null}
+                                        isSelected={selectedProviderId === provider.id}
+                                        onSelect={(id) => setSelectedProviderId(selectedProviderId === id ? null : id)}
+                                        onToggleEnabled={handleToggleEnabled}
+                                        onEdit={() => setEditingProvider(provider)}
+                                        onDelete={() => handleDelete(provider.id)}
+                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="glass-panel flex h-64 flex-col items-center justify-center rounded-3xl border border-white/5 shadow-2xl text-center relative overflow-hidden">

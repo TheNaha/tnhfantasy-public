@@ -740,6 +740,80 @@ function AISettings({ settings, onUpdate, onReset }) {
                     </div>
                 </SettingGroup>
 
+                <SettingGroup title="Chat System Prompt" description="Default system prompt used for the Roleplay Chatbot workspace">
+                    <textarea
+                        value={settings.chatSystemPrompt || ''}
+                        onChange={(e) => onUpdate('chatSystemPrompt', e.target.value)}
+                        placeholder="e.g. You are a highly descriptive AI character..."
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="Story System Prompt" description="Default system prompt used for the Story Sandbox workspace">
+                    <textarea
+                        value={settings.storySystemPrompt || ''}
+                        onChange={(e) => onUpdate('storySystemPrompt', e.target.value)}
+                        placeholder="e.g. You are a creative co-author helping write a story..."
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: Description Prompt" description="System prompt for generating character description">
+                    <textarea
+                        value={settings.charGenDescriptionPrompt || ''}
+                        onChange={(e) => onUpdate('charGenDescriptionPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: Personality Prompt" description="System prompt for generating character personality">
+                    <textarea
+                        value={settings.charGenPersonalityPrompt || ''}
+                        onChange={(e) => onUpdate('charGenPersonalityPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: Scenario Prompt" description="System prompt for generating character scenario">
+                    <textarea
+                        value={settings.charGenScenarioPrompt || ''}
+                        onChange={(e) => onUpdate('charGenScenarioPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: First Message Prompt" description="System prompt for generating character first message">
+                    <textarea
+                        value={settings.charGenFirstMesPrompt || ''}
+                        onChange={(e) => onUpdate('charGenFirstMesPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: Message Examples Prompt" description="System prompt for generating character message examples">
+                    <textarea
+                        value={settings.charGenMesExamplePrompt || ''}
+                        onChange={(e) => onUpdate('charGenMesExamplePrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: System Prompt Prompt" description="System prompt for generating character system prompt">
+                    <textarea
+                        value={settings.charGenSystemPromptPrompt || ''}
+                        onChange={(e) => onUpdate('charGenSystemPromptPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="CharGen: Visual Tags Prompt" description="System prompt for generating character visual tags">
+                    <textarea
+                        value={settings.charGenVisualTagsPrompt || ''}
+                        onChange={(e) => onUpdate('charGenVisualTagsPrompt', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
+                    />
+                </SettingGroup>
+
                 <SettingGroup title="Lorebook Injection Mode" description="How lorebook entries are injected into context">
                     <select
                         value={settings.lorebookInjectionMode}

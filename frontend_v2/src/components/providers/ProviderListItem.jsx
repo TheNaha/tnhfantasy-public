@@ -212,12 +212,12 @@ function ProviderListItem({
                             {runtime.connected ? 'Connected' : 'Offline'}
                         </span>
                     )}
-                    {statusSummary.downloadsActive > 0 && (
+                    {provider.type !== 'llm' && statusSummary.downloadsActive > 0 && (
                         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 shadow-inner text-xs font-bold text-cyan-300">
                             {statusSummary.downloadsActive} downloading
                         </span>
                     )}
-                    {statusSummary.downloadsQueued > 0 && (
+                    {provider.type !== 'llm' && statusSummary.downloadsQueued > 0 && (
                         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-blue-500/20 bg-blue-500/10 shadow-inner text-xs font-bold text-blue-300">
                             {statusSummary.downloadsQueued} queued
                         </span>

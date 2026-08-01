@@ -19,6 +19,7 @@ async def auto_discovery_loop(
     backend_url: str,
     interval_seconds: int = 60,
     http_client=None,
+    worker_type: str = "image",
 ):
     """
     Background task to register this provider with the backend.
@@ -43,6 +44,7 @@ async def auto_discovery_loop(
             payload = {
                 "provider_id": provider_id,
                 "provider_type": provider_type,
+                "worker_type": worker_type,
                 "status": "online",
                 "internal_url": internal_url,
                 "hostname": hostname
