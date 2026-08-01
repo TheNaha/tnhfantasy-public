@@ -59,6 +59,7 @@ class SendMessageRequest(BaseModel):
     content: str
     image_path: str | None = None
     lorebook_ids: list[str] | None = None
+    agentic: bool = False
 
 @router.patch("/{chat_id}", response_model=Chat)
 def update_chat(chat_id: str, data: dict, session: Session = Depends(get_session)):
@@ -114,15 +115,30 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             
         try:
             job_service = get_job_service(session)
+
+            workflow: dict = {
+                "messages": context,
+                "chat_id": chat_id,
+                "character_system_prompt": system_prompt or None,
+                "type": "chat_reply",
+            }
+            metadata: dict = {
+                "chat_id": chat_id,
+                "character_id": chat.character_id,
+                "workspace": "roleplay",
+            }
+
+            if request.agentic:
+                from services.orchestrator_service import AGENTIC_TOOLS
+                workflow["tools"] = AGENTIC_TOOLS
+                metadata["agentic"] = True
+                metadata["orchestrator_depth"] = 0
+                metadata["original_messages"] = context
+
             job = await job_service.create_job(
                 task_type="text",
-                workflow={
-                    "messages": context,
-                    "chat_id": chat_id,
-                    "character_system_prompt": system_prompt or None,
-                    "type": "chat_reply"
-                },
-                metadata={"chat_id": chat_id, "character_id": chat.character_id, "workspace": "roleplay"}
+                workflow=workflow,
+                metadata=metadata,
             )
             
             await job_queue.enqueue(job.id)
@@ -265,6 +281,7 @@ async def generate_scene(
         workflow=image_workflow,
         metadata={
             "chat_id": chat_id,
+            "character_id": chat.character_id,
             "image_context": "*A photo of the scene was taken*",
             "prompt": enriched_prompt
         }

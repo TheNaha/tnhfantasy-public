@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check } from 'lucide-react';
+import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
 import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters, useRenameChat, getAvatarUrl } from '../hooks/useWorldVault';
+import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,6 +18,10 @@ export default function ChatWorkspace() {
     const [renameValue, setRenameValue] = useState('');
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
+    const [pendingAttachment, setPendingAttachment] = useState(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [agenticMode, setAgenticMode] = useState(true);
+    const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const location = useLocation();
 
@@ -76,6 +81,12 @@ export default function ChatWorkspace() {
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
             const job = event.data?.job || event;
             if (job.metadata_?.chat_id === activeChatId) {
+                const eventType = job.type || job.metadata_?.type;
+                if (eventType === 'chat_image' || eventType === 'story_image') {
+                    toast.success('Image generated!', { icon: '🖼️' });
+                } else if (eventType === 'tool_execution') {
+                    toast.success('Tool executed: ' + (job.tool_name || 'unknown'), { icon: '🔧' });
+                }
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
                 if (job.id) clearStreamingJob(job.id);
             }
@@ -101,7 +112,7 @@ export default function ChatWorkspace() {
     }, [messages, streamingJobs]);
 
     const handleSendMessage = async () => {
-        if (!message.trim()) return;
+        if (!message.trim() && !pendingAttachment) return;
         
         let chatIdToUse = activeChatId;
         if (!chatIdToUse) {
@@ -117,11 +128,13 @@ export default function ChatWorkspace() {
 
         const msgContent = message.trim();
         setMessage('');
+        const attachmentFilename = pendingAttachment?.filename || null;
+        setPendingAttachment(null);
 
         try {
             const res = await sendMessageMutation.mutateAsync({
                 chatId: chatIdToUse,
-                message: { role: 'user', content: msgContent, lorebook_ids: selectedLorebooks }
+                message: { role: 'user', content: msgContent, lorebook_ids: selectedLorebooks, image_path: attachmentFilename, agentic: agenticMode }
             });
             if (res.job_id) {
                 updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
@@ -139,6 +152,8 @@ export default function ChatWorkspace() {
             handleSendMessage();
         }
     };
+
+    const canSend = (message.trim() || pendingAttachment) && !sendMessageMutation.isPending;
 
     const handleGenerateScene = async () => {
         if (!activeChatId) return;
@@ -171,6 +186,38 @@ export default function ChatWorkspace() {
             },
             onError: () => toast.error('Failed to create chat')
         });
+    };
+
+    const handleAttachmentClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleAttachmentChange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+
+        if (file.size > 20 * 1024 * 1024) {
+            toast.error('File too large (max 20MB)');
+            return;
+        }
+
+        setIsUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await worldVaultApi.upload.chatAttachment(formData);
+            setPendingAttachment({ filename: res.filename, name: file.name });
+            toast.success('Image attached');
+        } catch {
+            toast.error('Failed to upload image');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const removeAttachment = () => {
+        setPendingAttachment(null);
     };
 
     const handleDeleteChat = async () => {
@@ -338,10 +385,15 @@ export default function ChatWorkspace() {
                                 jobData.status === 'running' && jobData.chatId === activeChatId && (
                                     <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start">
                                         <div className="text-xs text-blue-400 mb-1 ml-1 flex items-center gap-2">
-                                            AI <Loader2 size={12} className="animate-spin" />
+                                            {jobData.text?.includes('[Tool:') ? '🔧 Tool' : 'AI'} <Loader2 size={12} className="animate-spin" />
                                         </div>
                                         <div className="p-4 rounded-2xl whitespace-pre-wrap text-sm bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm">
-                                            {jobData.text + "..."}
+                                            {jobData.text ? jobData.text + "..." : (
+                                                <span className="flex items-center gap-2 text-purple-400">
+                                                    <Wand2 size={14} className="animate-pulse" />
+                                                    Executing tools...
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 )
@@ -353,41 +405,77 @@ export default function ChatWorkspace() {
 
                 {/* Chat Input Area */}
                 <div className="p-4 lg:p-6 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
-                    <div className="max-w-4xl mx-auto relative group">
-                        <textarea
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Type a message or use / to trigger commands..."
-                            className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-12 pr-14 py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all resize-none shadow-inner"
-                            rows={1}
-                            style={{ minHeight: '60px', maxHeight: '200px' }}
-                            disabled={sendMessageMutation.isPending}
-                        />
-                        <button className="absolute left-3 bottom-3 p-2 text-gray-400 hover:text-blue-400 transition-colors rounded-xl hover:bg-blue-500/10">
-                            <Paperclip size={20} />
-                        </button>
-                        <button 
-                            onClick={handleGenerateScene}
-                            disabled={isGeneratingScene || !activeChatId}
-                            className="absolute right-12 bottom-3 p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
-                            title="Generate Scene Image"
-                            type="button"
-                        >
-                            {isGeneratingScene ? <Loader2 size={20} className="animate-spin" /> : <ImageIcon size={20} />}
-                        </button>
-                        <button 
-                            onClick={handleSendMessage}
-                            disabled={!message.trim() || sendMessageMutation.isPending}
-                            className={clsx(
-                                "absolute right-2 bottom-3 p-2 transition-all rounded-xl",
-                                message.trim() && !sendMessageMutation.isPending
-                                    ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105" 
-                                    : "bg-gray-800 text-gray-500 cursor-not-allowed"
-                            )}
-                        >
-                            {sendMessageMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className={message.trim() ? "translate-x-0.5 -translate-y-0.5" : ""} />}
-                        </button>
+                    <div className="max-w-4xl mx-auto">
+                        {pendingAttachment && (
+                            <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-300">
+                                <ImageIcon size={14} className="shrink-0" />
+                                <span className="truncate flex-1">{pendingAttachment.name}</span>
+                                <button onClick={removeAttachment} className="p-1 hover:text-red-400 transition-colors shrink-0">
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        )}
+                        <div className="relative group">
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleAttachmentChange}
+                                className="hidden"
+                            />
+                            <textarea
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Type a message or use / to trigger commands..."
+                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-12 pr-14 py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all resize-none shadow-inner"
+                                rows={1}
+                                style={{ minHeight: '60px', maxHeight: '200px' }}
+                                disabled={sendMessageMutation.isPending}
+                            />
+                            <button
+                                onClick={handleAttachmentClick}
+                                disabled={isUploading}
+                                className="absolute left-3 bottom-3 p-2 text-gray-400 hover:text-blue-400 transition-colors rounded-xl hover:bg-blue-500/10 disabled:opacity-50"
+                                title="Attach image"
+                            >
+                                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
+                            </button>
+                            <button 
+                                onClick={handleGenerateScene}
+                                disabled={isGeneratingScene || !activeChatId}
+                                className="absolute right-12 bottom-3 p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
+                                title="Generate Scene Image"
+                                type="button"
+                            >
+                                {isGeneratingScene ? <Loader2 size={20} className="animate-spin" /> : <ImageIcon size={20} />}
+                            </button>
+                            <button 
+                                onClick={() => setAgenticMode(!agenticMode)}
+                                className={clsx(
+                                    "absolute right-24 bottom-3 p-2 transition-colors rounded-xl",
+                                    agenticMode
+                                        ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+                                        : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
+                                )}
+                                title={agenticMode ? "Agentic mode ON (AI can generate images)" : "Agentic mode OFF"}
+                                type="button"
+                            >
+                                <Wand2 size={20} />
+                            </button>
+                            <button 
+                                onClick={handleSendMessage}
+                                disabled={!canSend}
+                                className={clsx(
+                                    "absolute right-2 bottom-3 p-2 transition-all rounded-xl",
+                                    canSend
+                                        ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105" 
+                                        : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                                )}
+                            >
+                                {sendMessageMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />}
+                            </button>
+                        </div>
                     </div>
                     <div className="max-w-4xl mx-auto mt-2 flex items-center justify-between px-2 text-[10px] text-gray-500">
                         <span>Press <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700">Enter</kbd> to send</span>

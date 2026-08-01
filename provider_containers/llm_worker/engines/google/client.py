@@ -135,8 +135,31 @@ class GoogleProviderClient(BaseProviderClient):
         return build_status_response("success", "Not applicable", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
-        models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
-        return {"files": [{"path": m, "name": m} for m in models]}
+        fallback = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        if not self.api_key:
+            return {"files": [{"path": m, "name": m} for m in fallback]}
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}",
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                models = []
+                for m in data.get("models", []):
+                    name = m.get("name", "")
+                    if name.startswith("models/"):
+                        name = name[7:]
+                    supported = m.get("supportedGenerationMethods", [])
+                    if "generateContent" in supported:
+                        models.append(name)
+                if not models:
+                    models = fallback
+                return {"files": [{"path": m, "name": m} for m in sorted(models)]}
+        except Exception:
+            return {"files": [{"path": m, "name": m} for m in fallback]}
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         return build_status_response("success", "Not applicable", provider=self.provider_id)

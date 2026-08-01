@@ -129,8 +129,34 @@ class AnthropicProviderClient(BaseProviderClient):
         return build_status_response("success", "Not applicable", provider=self.provider_id)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
-        models = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307", "claude-3-opus-20240229"]
-        return {"files": [{"path": m, "name": m} for m in models]}
+        fallback = [
+            "claude-sonnet-4-20250514",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
+            "claude-3-opus-20240229",
+        ]
+        if not self.api_key:
+            return {"files": [{"path": m, "name": m} for m in fallback]}
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                    },
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+                if not models:
+                    models = fallback
+                return {"files": [{"path": m, "name": m} for m in sorted(models)]}
+        except Exception:
+            return {"files": [{"path": m, "name": m} for m in fallback]}
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         return build_status_response("success", "Not applicable", provider=self.provider_id)

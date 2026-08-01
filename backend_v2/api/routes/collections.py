@@ -32,6 +32,7 @@ class CollectionCreate(BaseModel):
     name: str
     color: str = "#3B82F6"
     description: str | None = None
+    character_id: str | None = None
 
 
 class CollectionUpdate(BaseModel):
@@ -100,6 +101,36 @@ def import_collections(data: CollectionBulkImport, session: Session = Depends(ge
     }
 
 
+@router.get("/by-character/{character_id}")
+def get_character_collection(
+    character_id: str,
+    include_images: bool = Query(True),
+    repo: CollectionRepository = Depends(get_collection_repo),
+):
+    """Get or create the auto-generated collection for a character."""
+    collection = repo.get_collection_by_character_id(character_id)
+    if not collection:
+        return None
+
+    result = {
+        "id": collection.id,
+        "name": collection.name,
+        "color": collection.color,
+        "description": collection.description,
+        "thumbnail": collection.thumbnail,
+        "character_id": collection.character_id,
+        "created_at": collection.created_at,
+        "updated_at": collection.updated_at,
+    }
+
+    if include_images:
+        images = repo.get_collection_images(collection.id)
+        result["images"] = [img.image_filename for img in images]
+        result["image_count"] = len(images)
+
+    return result
+
+
 @router.get("/{collection_id}")
 def get_collection(
     collection_id: str, 
@@ -117,6 +148,7 @@ def get_collection(
         "color": collection.color,
         "description": collection.description,
         "thumbnail": collection.thumbnail,
+        "character_id": collection.character_id,
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,
     }
@@ -135,7 +167,8 @@ def create_collection(data: CollectionCreate, session: Session = Depends(get_ses
     collection = Collection(
         name=data.name,
         color=data.color,
-        description=data.description
+        description=data.description,
+        character_id=data.character_id
     )
     repo.create_collection(collection)
     session.commit()

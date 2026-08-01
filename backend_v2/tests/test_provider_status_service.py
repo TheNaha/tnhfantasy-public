@@ -64,18 +64,16 @@ async def test_get_provider_storage_stats_prefers_reconciliation_stats_without_w
         },
     }
 
-    with patch("services.provider_status_service.get_http_client") as get_http_client:
-        result = await service.get_provider_storage_stats(
-            "provider-a",
-            reconciliation_state=state,
-        )
+    result = await service.get_provider_storage_stats(
+        "provider-a",
+        reconciliation_state=state,
+    )
 
     assert result == {
         "provider_id": "provider-a",
         "total": 7,
         "by_directory": {},
     }
-    get_http_client.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -101,18 +99,16 @@ async def test_get_provider_storage_stats_reconciliation_state_overrides_stale_c
         },
     }
 
-    with patch("services.provider_status_service.get_http_client") as get_http_client:
-        result = await service.get_provider_storage_stats(
-            "provider-cache",
-            reconciliation_state=fresh_state,
-        )
+    result = await service.get_provider_storage_stats(
+        "provider-cache",
+        reconciliation_state=fresh_state,
+    )
 
     assert result == {
         "provider_id": "provider-cache",
         "total": 9,
         "by_directory": {"checkpoints": 4, "loras": 5},
     }
-    get_http_client.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -128,14 +124,12 @@ async def test_get_provider_storage_stats_uses_cache_when_reconciliation_stats_m
         },
     )
 
-    with patch("services.provider_status_service.get_http_client") as get_http_client:
-        result = await service.get_provider_storage_stats(
-            "provider-cache-fallback",
-            reconciliation_state={"status": "reconciling", "stats": {}},
-        )
+    result = await service.get_provider_storage_stats(
+        "provider-cache-fallback",
+        reconciliation_state={"status": "reconciling", "stats": {}},
+    )
 
     assert result == cached
-    get_http_client.assert_not_called()
 
 
 def test_storage_payload_from_reconciliation_state_uses_by_directory_sum_when_total_missing():

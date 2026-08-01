@@ -3,8 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from api.lifecycle import recover_post_processing_jobs
-from api.main import _requeue_inflight_jobs_for_shutdown
+from api.lifecycle import recover_post_processing_jobs, requeue_inflight_jobs_for_shutdown
 from core.entities import Job, JobStatus
 
 
@@ -49,7 +48,7 @@ class TestMainLifecycle:
 
         monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
 
-        count = _requeue_inflight_jobs_for_shutdown()
+        count = requeue_inflight_jobs_for_shutdown()
 
         refreshed_running = session.get(Job, running_job_id)
         refreshed_post_processing = session.get(Job, post_processing_job_id)
@@ -76,7 +75,7 @@ class TestMainLifecycle:
     def test_requeue_inflight_jobs_for_shutdown_when_empty(self, session, monkeypatch):
         monkeypatch.setattr("api.lifecycle.get_session_sync", lambda: session)
 
-        count = _requeue_inflight_jobs_for_shutdown()
+        count = requeue_inflight_jobs_for_shutdown()
 
         assert count == 0
 

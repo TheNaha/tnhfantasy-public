@@ -566,6 +566,22 @@ def _migration_add_provider_worker_type(conn) -> bool:
     _verify_required_columns(conn, "providers", {"worker_type"})
     return True
 
+def _migration_add_collection_character_id(conn) -> bool:
+    """Ensure collections table includes character_id column for character-scoped galleries."""
+
+    inspector = inspect(conn)
+    if "collections" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("collections")}
+
+    if "character_id" not in columns:
+        conn.execute(text("ALTER TABLE collections ADD COLUMN character_id TEXT DEFAULT NULL"))
+        logger.info("migration_column_added", table="collections", column="character_id")
+
+    _verify_required_columns(conn, "collections", {"character_id"})
+    return True
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -608,5 +624,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="008_add_provider_worker_type",
             description="Add worker_type column to providers table",
             apply_fn=_migration_add_provider_worker_type,
+        ),
+        MigrationStep(
+            version="009_add_collection_character_id",
+            description="Add character_id column to collections for character-scoped galleries",
+            apply_fn=_migration_add_collection_character_id,
         ),
     ]

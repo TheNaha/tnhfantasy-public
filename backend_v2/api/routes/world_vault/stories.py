@@ -1,10 +1,11 @@
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session
+from api.deps import get_job_service, get_job_submission_service, get_session
 from core.entities import Story, StoryBeatRole, StoryChapter
 from services.job_queue import job_queue
 
@@ -18,6 +19,10 @@ class StoryContinueRequest(BaseModel):
 class StoryBeatRequest(BaseModel):
     content: str
     role: str = "user"
+
+
+class StoryIllustrateRequest(BaseModel):
+    image_prompt: str = ""
 
 @router.get("/", response_model=list[Story])
 def list_stories(session: Session = Depends(get_session)):
@@ -152,7 +157,23 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     if story and story.genre:
         system_prompt += f"\nThe genre is {story.genre}."
         
-    # TODO: In the future, fetch and append active Lorebooks here
+    if story and story.lorebook_ids:
+        from core.entities import Lorebook, LorebookEntry
+        from sqlmodel import select
+        lorebooks_content = []
+        for lorebook_id in story.lorebook_ids:
+            lb = session.get(Lorebook, lorebook_id)
+            if lb:
+                entries = session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)).all()
+                if entries:
+                    lb_text = f"Lorebook: {lb.name}\n"
+                    for entry in entries:
+                        keys_str = ", ".join(entry.keys) if entry.keys else "General"
+                        lb_text += f"- [{keys_str}]: {entry.content}\n"
+                    lorebooks_content.append(lb_text)
+        
+        if lorebooks_content:
+            system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
         
     messages.append({"role": "system", "content": system_prompt})
     
@@ -197,3 +218,125 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     session.commit()
     session.refresh(chapter)
     return chapter
+
+@router.post("/{story_id}/chapters/{chapter_id}/illustrate")
+async def illustrate_chapter(
+    story_id: str,
+    chapter_id: str,
+    data: StoryIllustrateRequest,
+    session: Session = Depends(get_session),
+):
+    chapter = session.get(StoryChapter, chapter_id)
+    if not chapter or chapter.story_id != story_id:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    story = session.get(Story, story_id)
+
+    if data.image_prompt:
+        enriched_prompt = data.image_prompt
+    else:
+        from core.entities import JobStatus, Lorebook, LorebookEntry
+        from services.job_service import JobService
+
+        system_prompt = (
+            "You are an AI art director for a story. Given the story chapter text, "
+            "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
+            "camera angle, subjects, mood) that captures the most vivid scene. "
+            "Return ONLY the prompt text."
+        )
+
+        if story and story.genre:
+            system_prompt += f"\nThe genre is {story.genre}."
+
+        if story and story.lorebook_ids:
+            lorebooks_content = []
+            for lb_id in story.lorebook_ids:
+                lb = session.get(Lorebook, lb_id)
+                if lb:
+                    entries = session.exec(
+                        select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)
+                    ).all()
+                    if entries:
+                        lb_text = f"Lorebook: {lb.name}\n"
+                        for entry in entries:
+                            keys_str = ", ".join(entry.keys) if entry.keys else "General"
+                            lb_text += f"- [{keys_str}]: {entry.content}\n"
+                        lorebooks_content.append(lb_text)
+            if lorebooks_content:
+                system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
+
+        job_service = JobService(session)
+        prompt_job = await job_service.create_job(
+            task_type="text",
+            workflow={
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
+                ]
+            },
+            metadata={"source": "story_illustrate_prompt"}
+        )
+        await job_queue.enqueue(prompt_job.id)
+
+        enriched_prompt = "beautiful scenery, masterpiece, high quality, highly detailed"
+        for _ in range(30):
+            status = await job_service.get_job(prompt_job.id)
+            if status.status == JobStatus.COMPLETED:
+                if status.outputs and len(status.outputs) > 0:
+                    enriched_prompt = status.outputs[0].get("content", enriched_prompt)
+                break
+            elif status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+                break
+            await asyncio.sleep(1.0)
+
+    submission_service = get_job_submission_service(session)
+
+    image_workflow = {
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": 0, "steps": 20, "cfg": 7, "sampler_name": "euler",
+                "scheduler": "normal", "denoise": 1,
+                "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0],
+                "latent_image": ["5", 0]
+            }
+        },
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"batch_size": 1, "width": 1024, "height": 1024}
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": enriched_prompt, "clip": ["4", 1]}
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": "worst quality, low quality, bad anatomy, bad hands, missing fingers",
+                "clip": ["4", 1]
+            }
+        },
+        "8": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["3", 0], "vae": ["4", 2]}
+        },
+        "9": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "ComfyUI", "images": ["8", 0]}
+        }
+    }
+
+    img_job = await submission_service.create_and_enqueue_job(
+        workflow=image_workflow,
+        metadata={
+            "story_id": story_id,
+            "chapter_id": chapter_id,
+            "prompt": enriched_prompt,
+        }
+    )
+
+    return {"job_id": img_job.id, "prompt": enriched_prompt}

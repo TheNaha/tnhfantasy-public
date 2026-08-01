@@ -100,3 +100,7 @@ class CollectionRepository:
         return self.session.exec(
             select(CollectionImage).where(CollectionImage.collection_id.in_(collection_ids))
         ).all()
+
+    def get_collection_by_character_id(self, character_id: str) -> Collection | None:
+        stmt = select(Collection).where(Collection.character_id == character_id)
+        return self.session.exec(stmt).first()

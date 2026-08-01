@@ -1,213 +1,364 @@
+"""
+Agentic Orchestrator Service
+
+Executes tool calls from LLM responses and chains follow-up jobs.
+Works as a post-completion processor inside job_processing.py:
+  1. LLM returns tool_calls → execute tools (create sub-jobs, wait)
+  2. Feed tool results back as a follow-up LLM job
+  3. Repeat until plain text response (max depth enforced)
+"""
+
+import asyncio
 import json
 import logging
 from typing import Any
 
-from sqlmodel import Session
+from infrastructure.logging import get_logger
 
-from core.entities import JobStatus
-from services.job_service import JobService
+logger = get_logger("orchestrator")
 
-logger = logging.getLogger("orchestrator")
+MAX_AGENTIC_DEPTH = 5
 
-class OrchestratorError(Exception):
-    pass
+AGENTIC_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": (
+                "Generate an image based on a detailed prompt. "
+                "Use this when the conversation calls for visual content: "
+                "scene illustrations, character portraits, action shots, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "A detailed image generation prompt using comma-separated tags "
+                            "(Danbooru style). Include subject, pose, lighting, camera angle, "
+                            "style, and quality tags."
+                        ),
+                    },
+                    "negative_prompt": {
+                        "type": "string",
+                        "description": "Negative prompt to avoid unwanted features.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+]
 
-class ToolExecutionLimitExceeded(OrchestratorError):
-    pass
 
-class AgenticOrchestrator:
+def has_tool_calls(assistant_output: dict[str, Any]) -> bool:
+    """Check if an LLM output dict contains tool calls."""
+    return bool(assistant_output.get("tool_calls"))
+
+
+def get_agentic_depth(metadata: dict[str, Any] | None) -> int:
+    """Read the current agentic loop depth from job metadata."""
+    if not metadata:
+        return 0
+    return metadata.get("orchestrator_depth", 0)
+
+
+def can_continue_agentic(metadata: dict[str, Any] | None) -> bool:
+    """Whether the orchestrator should process another iteration."""
+    return get_agentic_depth(metadata) < MAX_AGENTIC_DEPTH
+
+
+async def execute_tool(
+    tool_call: dict[str, Any],
+    *,
+    chat_id: str | None = None,
+    character_id: str | None = None,
+    source_job_id: str | None = None,
+) -> dict[str, Any]:
     """
-    Manages autonomous loops for Agentic workflows (e.g., Roleplay Chatbots).
-    Intercepts tool calls, orchestrates tool execution (like image generation),
-    and feeds the results back into the LLM until the final response is ready.
+    Execute a single tool call and return the result dict.
+    Currently supports: generate_image
     """
-    
-    def __init__(self, session: Session, max_tool_calls: int = 5):
-        self.session = session
-        self.job_service = JobService(session)
-        self.max_tool_calls = max_tool_calls
-        
-    async def process_llm_response(
-        self, 
-        message_payload: dict[str, Any], 
-        context: list[dict[str, Any]],
-        provider_id: str | None = None
-    ) -> dict[str, Any]:
-        """
-        Processes an LLM assistant response (which may contain tool_calls), 
-        running any tool calls autonomously until a plain text response is returned.
-        
-        NOTE: This method expects `message_payload` to be an ASSISTANT message 
-        (potentially with tool_calls). To start a new turn from a user message, 
-        use `run_chat_turn()` instead.
-        """
-        current_context = list(context)
-        current_context.append(message_payload)
-        
-        loop_count = 0
-        
-        while loop_count < self.max_tool_calls:
-            latest_msg = current_context[-1]
-            
-            # 1. Check if the LLM wants to call tools
-            tool_calls = latest_msg.get("tool_calls", [])
-            
-            if not tool_calls:
-                # No more tools to run; return the final text response
-                return latest_msg
-            
-            logger.info(f"Agent requested {len(tool_calls)} tool calls. Loop: {loop_count}")
-            
-            # 2. Execute the tools (Autonomous Execution)
-            tool_results = []
-            for tool_call in tool_calls:
-                try:
-                    result = await self._execute_tool(tool_call)
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": tool_call.get("function", {}).get("name"),
-                        "content": json.dumps(result)
-                    })
-                except Exception as e:
-                    logger.error(f"Tool execution failed: {e}")
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": tool_call.get("function", {}).get("name"),
-                        "content": json.dumps({"error": str(e)})
-                    })
-            
-            current_context.extend(tool_results)
-            
-            # 3. Request next step from LLM with tool results
-            next_llm_response = await self._request_llm_completion(current_context, provider_id)
-            current_context.append(next_llm_response)
-            
-            loop_count += 1
-            
-        raise ToolExecutionLimitExceeded(f"Exceeded max tool calls ({self.max_tool_calls})")
+    function = tool_call.get("function", {})
+    name = function.get("name", "")
+    try:
+        args = json.loads(function.get("arguments", "{}"))
+    except (json.JSONDecodeError, TypeError):
+        args = {}
 
-    async def run_chat_turn(
-        self,
-        user_message: str,
-        context: list[dict[str, Any]],
-        provider_id: str | None = None,
-        character_system_prompt: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Main entry point for a single chat turn.
-        1. Optionally prepends a character system prompt.
-        2. Adds the user message to context.
-        3. Gets an initial LLM completion.
-        4. Runs the agentic tool loop on the response.
-        Returns the final assistant message dict.
-        """
-        current_context = list(context)
-
-        # Inject character system prompt if provided and not already first
-        if character_system_prompt:
-            if not current_context or current_context[0].get("role") != "system":
-                current_context.insert(0, {"role": "system", "content": character_system_prompt})
-
-        # Append user message
-        current_context.append({"role": "user", "content": user_message})
-
-        # Get initial LLM completion
-        logger.info(f"Dispatching initial LLM completion for chat turn (provider={provider_id})")
-        llm_response = await self._request_llm_completion(current_context, provider_id)
-
-        # Run agentic tool loop on LLM response
-        # Pass context *without* the user message so process_llm_response can append llm_response cleanly
-        return await self.process_llm_response(llm_response, current_context[:-1], provider_id)
-
-    async def _execute_tool(self, tool_call: dict[str, Any]) -> dict[str, Any]:
-        """
-        Executes a single tool call based on its function name and arguments.
-        """
-        function = tool_call.get("function", {})
-        name = function.get("name")
-        try:
-            args = json.loads(function.get("arguments", "{}"))
-        except json.JSONDecodeError:
-            args = {}
-            
-        if name == "generate_image":
-            return await self._tool_generate_image(args)
-        
-        raise OrchestratorError(f"Unknown tool: {name}")
-
-    async def _tool_generate_image(self, args: dict[str, Any]) -> dict[str, Any]:
-        """
-        Tool: Generates an image and returns the asset reference.
-        """
-        import asyncio
-        prompt = args.get("prompt", "a beautiful fantasy landscape")
-        
-        logger.info(f"Executing generate_image tool with prompt: {prompt}")
-        
-        # Spawn an image generation job and wait for it
-        job = await self.job_service.create_job(
-            task_type="image",
-            workflow={"prompt": prompt},
-            metadata={"source": "tool_call"}
+    if name == "generate_image":
+        return await _tool_generate_image(
+            args,
+            chat_id=chat_id,
+            character_id=character_id,
+            source_job_id=source_job_id,
         )
-        
-        while True:
-            job_status = await self.job_service.get_job(job.id)
-            if job_status.status == JobStatus.COMPLETED:
-                outputs = job_status.outputs or []
-                asset_url = outputs[0].get("url", f"/gallery/generated_{hash(prompt)}.png") if outputs else f"/gallery/generated_{hash(prompt)}.png"
-                return {
-                    "status": "success",
-                    "asset_url": asset_url,
-                    "prompt_used": prompt
-                }
-            elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-                return {"status": "error", "error": job_status.error or "Job failed or cancelled"}
-            await asyncio.sleep(1.0)
-        
-    async def _request_llm_completion(self, context: list[dict[str, Any]], provider_id: str | None) -> dict[str, Any]:
-        """
-        Dispatches the completion job to the LLM worker.
-        """
-        import asyncio
-        workflow = {
-            "messages": context,
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "generate_image",
-                        "description": "Generate an image based on a prompt.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "prompt": {
-                                    "type": "string",
-                                    "description": "The prompt to generate the image."
-                                }
-                            },
-                            "required": ["prompt"]
-                        }
-                    }
-                }
-            ]
-        }
-        
-        job = await self.job_service.create_job(
-            task_type="text",
+
+    return {"status": "error", "error": f"Unknown tool: {name}"}
+
+
+async def _tool_generate_image(
+    args: dict[str, Any],
+    *,
+    chat_id: str | None = None,
+    character_id: str | None = None,
+    source_job_id: str | None = None,
+) -> dict[str, Any]:
+    """Generate an image via the job pipeline and wait for completion."""
+    from core.entities import JobStatus
+    from services.job_submission_service import JobSubmissionService
+    from infrastructure.database import get_session_sync
+
+    prompt = args.get("prompt", "a beautiful fantasy landscape")
+    negative = args.get("negative_prompt", "worst quality, low quality, bad anatomy")
+
+    logger.info("tool_generate_image", prompt=prompt[:80], chat_id=chat_id)
+
+    session = get_session_sync()
+    submission = JobSubmissionService(session)
+
+    workflow = _build_default_image_workflow(prompt, negative)
+
+    metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image"}
+    if chat_id:
+        metadata["chat_id"] = chat_id
+    if character_id:
+        metadata["character_id"] = character_id
+    if source_job_id:
+        metadata["parent_job_id"] = source_job_id
+
+    try:
+        job = await submission.create_and_enqueue_job(
             workflow=workflow,
-            metadata={"provider_id": provider_id} if provider_id else {}
+            metadata=metadata,
         )
-        
-        while True:
-            job_status = await self.job_service.get_job(job.id)
-            if job_status.status == JobStatus.COMPLETED:
-                outputs = job_status.outputs or []
-                if outputs:
-                    return outputs[0]
-                return {"role": "assistant", "content": ""}
-            elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-                raise OrchestratorError(f"LLM completion job failed: {job_status.error}")
+    except Exception as e:
+        logger.error("tool_generate_image_failed", error=str(e))
+        return {"status": "error", "error": str(e)}
+
+    for _ in range(120):
+        try:
+            from services.job_service import JobService
+            js = JobService(session)
+            job_status = await js.get_job(job.id)
+        except Exception:
             await asyncio.sleep(1.0)
+            continue
+
+        if job_status.status == JobStatus.COMPLETED:
+            outputs = job_status.outputs or []
+            image_path = None
+            if outputs:
+                image_path = outputs[0].get("relative_path") or outputs[0].get("filename")
+            return {
+                "status": "success",
+                "image_path": image_path or f"Generated_{job.id[:8]}.png",
+                "prompt_used": prompt,
+                "job_id": job.id,
+            }
+
+        if job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+            return {"status": "error", "error": job_status.error or "Image generation failed"}
+
+        await asyncio.sleep(1.0)
+
+    return {"status": "error", "error": "Image generation timed out (120s)"}
+
+
+def _build_default_image_workflow(prompt: str, negative: str) -> dict[str, Any]:
+    """Build a basic SDXL text-to-image workflow."""
+    return {
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "seed": 0,
+                "steps": 20,
+                "cfg": 7,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1,
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0],
+            },
+        },
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"},
+        },
+        "5": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"batch_size": 1, "width": 1024, "height": 1024},
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": prompt, "clip": ["4", 1]},
+        },
+        "7": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": negative, "clip": ["4", 1]},
+        },
+        "8": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
+        },
+        "9": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "AgenticGen", "images": ["8", 0]},
+        },
+    }
+
+
+async def process_tool_calls_and_chain(
+    *,
+    job,
+    assistant_output: dict[str, Any],
+    final_result: dict[str, Any],
+    chat_id: str | None,
+    character_id: str | None,
+    job_service,
+    enqueue_fn,
+) -> bool:
+    """
+    Detect tool_calls in an LLM response and chain follow-up jobs.
+
+    Returns True if a follow-up job was enqueued (caller should NOT finalize).
+    Returns False if there are no tool_calls (caller should finalize normally).
+    """
+    tool_calls = assistant_output.get("tool_calls", [])
+    if not tool_calls:
+        return False
+
+    metadata = job.metadata_ or {}
+    depth = get_agentic_depth(metadata)
+    if not can_continue_agentic(metadata):
+        logger.warning(
+            "agentic_depth_exceeded",
+            job_id=job.id,
+            depth=depth,
+            max=MAX_AGENTIC_DEPTH,
+        )
+        return False
+
+    text_content = assistant_output.get("content", "")
+    if text_content:
+        await _persist_system_message(
+            chat_id=chat_id,
+            content=f"*{text_content}*",
+        )
+
+    tool_results = []
+    for tc in tool_calls:
+        result = await execute_tool(
+            tc,
+            chat_id=chat_id,
+            character_id=character_id,
+            source_job_id=job.id,
+        )
+        tool_results.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id", ""),
+            "name": tc.get("function", {}).get("name", ""),
+            "content": json.dumps(result),
+        })
+
+        if result.get("image_path") and chat_id:
+            await _persist_tool_image_message(
+                chat_id=chat_id,
+                image_path=result["image_path"],
+                tool_name=tc.get("function", {}).get("name", ""),
+            )
+
+    original_messages = metadata.get("original_messages", [])
+    context = list(original_messages) if original_messages else []
+    if not context:
+        wf = job.workflow if isinstance(job.workflow, dict) else {}
+        context = wf.get("messages", [])
+
+    context.append(assistant_output)
+    context.extend(tool_results)
+
+    followup_metadata: dict[str, Any] = {
+        "chat_id": chat_id,
+        "character_id": character_id,
+        "type": "chat_reply",
+        "agentic": True,
+        "orchestrator_depth": depth + 1,
+        "parent_job_id": job.id,
+        "workspace": "roleplay",
+        "original_messages": context,
+    }
+
+    followup_workflow: dict[str, Any] = {
+        "messages": context,
+        "chat_id": chat_id,
+        "character_system_prompt": metadata.get("character_system_prompt"),
+        "type": "chat_reply",
+        "tools": AGENTIC_TOOLS,
+    }
+
+    try:
+        followup_job = await job_service.create_job(
+            task_type="text",
+            workflow=followup_workflow,
+            metadata=followup_metadata,
+        )
+        await enqueue_fn(followup_job.id)
+        logger.info(
+            "agentic_followup_enqueued",
+            parent_job_id=job.id,
+            followup_job_id=followup_job.id,
+            depth=depth + 1,
+            tool_count=len(tool_calls),
+        )
+        return True
+    except Exception as e:
+        logger.error("agentic_followup_failed", error=str(e))
+        return False
+
+
+async def _persist_system_message(chat_id: str, content: str) -> None:
+    """Persist a system message to the chat (for tool-use narration)."""
+    try:
+        from datetime import datetime, timezone
+        from sqlmodel import Session
+        from core.entities import Message, MessageRole
+        from infrastructure.database import engine
+
+        with Session(engine) as session:
+            msg = Message(
+                chat_id=chat_id,
+                role=MessageRole.SYSTEM,
+                content=content,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            session.add(msg)
+            session.commit()
+    except Exception as e:
+        logger.error("persist_system_message_failed", error=str(e))
+
+
+async def _persist_tool_image_message(chat_id: str, image_path: str, tool_name: str) -> None:
+    """Persist a system message with the generated image to the chat."""
+    try:
+        from datetime import datetime, timezone
+        from sqlmodel import Session
+        from core.entities import Message, MessageRole
+        from infrastructure.database import engine
+
+        with Session(engine) as session:
+            msg = Message(
+                chat_id=chat_id,
+                role=MessageRole.SYSTEM,
+                content=f"[Image generated by {tool_name}]",
+                image_path=image_path,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            session.add(msg)
+            session.commit()
+    except Exception as e:
+        logger.error("persist_tool_image_message_failed", error=str(e))

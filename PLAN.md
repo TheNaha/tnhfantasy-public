@@ -50,7 +50,5 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 - [x] **Asset Cross-Pollination:** Build the logic for users to migrate or reference assets freely between different workspaces.
 
 ### Phase 7: The Story Sandbox & Future Frontiers
-*Focus: Completing the vision with the narrative sandbox, audio, and multi-tenancy.*
+*Focus: Completing the vision with the sandbox.*
 - [ ] **Story UI:** Build the Story Sandbox Workspace (AI Dungeon style interactive document editor).
-- [ ] **Audio/TTS:** Integrate an `audio_worker` and assign voice profiles to Character Cards.
-- [ ] **Multi-Tenancy:** Implement the "Guest/Ephemeral" cookie-based multi-tenancy mode.

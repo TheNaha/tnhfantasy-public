@@ -158,6 +158,7 @@ class Collection(SQLModel, table=True):
     color: str = Field(default="#3B82F6")
     description: str | None = Field(default=None)
     thumbnail: str | None = Field(default=None)  # First image filename
+    character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)  # Link to character for auto-generated galleries
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

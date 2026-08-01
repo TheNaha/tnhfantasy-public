@@ -7,6 +7,9 @@ const worldVaultApi = {
         create: (data) => api.post('/api/v2/characters', data),
         update: (id, data) => api.put(`/api/v2/characters/${id}`, data),
         delete: (id) => api.delete(`/api/v2/characters/${id}`),
+        importCard: (formData) => api.post('/api/v2/characters/import', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        }),
     },
     chats: {
         list: () => api.get('/api/v2/chats'),
@@ -50,6 +53,15 @@ const worldVaultApi = {
         deleteChapter: (storyId, cid) => api.delete(`/api/v2/stories/${storyId}/chapters/${cid}`),
         continue: (storyId, cid, data) => api.post(`/api/v2/stories/${storyId}/chapters/${cid}/continue`, data),
         addBeat: (storyId, cid, data) => api.post(`/api/v2/stories/${storyId}/chapters/${cid}/beats`, data),
+        illustrate: (storyId, cid, data) => api.post(`/api/v2/stories/${storyId}/chapters/${cid}/illustrate`, data),
+    },
+    collections: {
+        getByCharacter: (characterId) => api.get(`/api/collections/by-character/${characterId}`),
+    },
+    upload: {
+        chatAttachment: (formData) => api.post('/api/upload?path=chat_attachments', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        }),
     },
 };
 

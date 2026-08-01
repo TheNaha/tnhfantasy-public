@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User } from 'lucide-react';
+import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, getAvatarUrl } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import EmptyState from '../components/EmptyState';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -255,6 +255,10 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
 }
 
 function CharacterCard({ character, onEdit, onDelete, onChat }) {
+    const { data: collection } = useCharacterCollection(character.id);
+    const imageCount = collection?.image_count || 0;
+    const thumbnails = collection?.images?.slice(0, 4) || [];
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -292,6 +296,28 @@ function CharacterCard({ character, onEdit, onDelete, onChat }) {
                 </div>
             )}
 
+            {imageCount > 0 && (
+                <div className="mt-3">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                        <Images size={12} className="text-gray-500" />
+                        <span className="text-[11px] text-gray-500">{imageCount} scene{imageCount !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1">
+                        {thumbnails.map((filename, idx) => (
+                            <div key={idx} className="aspect-square rounded bg-gray-800/50 border border-white/5 overflow-hidden">
+                                <img
+                                    src={`/api/files/${filename}`}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             <div className="flex items-center gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button onClick={() => onChat(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors" title="Start chat with this character">
                     <MessageSquare size={14} /> Chat
@@ -312,6 +338,7 @@ export default function Characters() {
     const [modalOpen, setModalOpen] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const fileInputRef = useRef(null);
 
     const navigate = useNavigate();
     const setActiveChat = useWorldVaultStore(state => state.setActiveChat);
@@ -320,6 +347,7 @@ export default function Characters() {
     const createCharacter = useCreateCharacter();
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
+    const importCharacterCard = useImportCharacterCard();
 
     const filteredCharacters = useMemo(() => {
         if (!searchQuery.trim()) return characters;
@@ -358,6 +386,22 @@ export default function Characters() {
         toast(`Starting chat with ${character.name}...`, { icon: '💬' });
     };
 
+    const handleImportCard = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        toast.promise(
+            importCharacterCard.mutateAsync(formData),
+            {
+                loading: 'Importing character card...',
+                success: (character) => `"${character.name}" imported successfully`,
+                error: (err) => err?.response?.data?.detail || 'Failed to import card',
+            }
+        );
+        e.target.value = '';
+    };
+
     const openCreate = () => {
         setEditingCharacter(null);
         setModalOpen(true);
@@ -388,8 +432,19 @@ export default function Characters() {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-3">
-                    <button className="btn-secondary flex items-center gap-2 opacity-50 cursor-not-allowed" disabled title="Coming soon">
-                        <Upload size={18} />
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".png"
+                        className="hidden"
+                        onChange={handleImportCard}
+                    />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={importCharacterCard.isPending}
+                        className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+                    >
+                        {importCharacterCard.isPending ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
                         Import Card
                     </button>
                     <button onClick={openCreate} className="btn-primary flex items-center gap-2">

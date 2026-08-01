@@ -192,6 +192,26 @@ export const useDeleteCharacter = () => {
     });
 };
 
+export const useImportCharacterCard = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (formData) => api.post('/api/v2/characters/import', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+        }
+    });
+};
+
+export const useCharacterCollection = (characterId) => {
+    return useQuery({
+        queryKey: ['world_vault', 'characters', characterId, 'collection'],
+        queryFn: () => api.get(`/api/collections/by-character/${characterId}`),
+        enabled: !!characterId
+    });
+};
+
 export const useCreateStory = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -225,6 +245,13 @@ export const useAddStoryBeat = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
         }
+    });
+};
+
+export const useIllustrateChapter = () => {
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, image_prompt }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/illustrate`, { image_prompt: image_prompt || '' }),
     });
 };
 

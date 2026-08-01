@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter } from '../hooks/useWorldVault';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
@@ -164,10 +164,14 @@ export default function StorySandbox() {
     const deleteStory = useDeleteStory();
     const deleteChapter = useDeleteChapter();
     const updateChapter = useUpdateChapter();
+    const illustrateChapter = useIllustrateChapter();
 
     const [activeChapterId, setActiveChapterId] = useState(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
+    const [illustratePrompt, setIllustratePrompt] = useState('');
+    const [showIllustrateModal, setShowIllustrateModal] = useState(false);
+    const [isIllustrating, setIsIllustrating] = useState(false);
 
     const { subscribe } = useWebSocket();
 
@@ -216,11 +220,17 @@ export default function StorySandbox() {
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
             const job = event.data?.job || event;
             if (job.metadata_?.story_id === activeStoryId && job.metadata_?.chapter_id === activeChapterId) {
-                setIsStreaming(false);
-                streamingRef.current = '';
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                if (job.id) {
-                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                if (job.type === 'story_image') {
+                    setIsIllustrating(false);
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                    toast.success('Illustration complete');
+                } else {
+                    setIsStreaming(false);
+                    streamingRef.current = '';
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                    if (job.id) {
+                        useWorldVaultStore.getState().clearStreamingJob(job.id);
+                    }
                 }
             }
         });
@@ -322,6 +332,29 @@ export default function StorySandbox() {
             toast.error('Failed to save chapter');
         }
     }, [activeStoryId, activeChapterId, editorContent, isStreaming, updateChapter]);
+
+    const handleIllustrate = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || isIllustrating) return;
+        setShowIllustrateModal(true);
+    }, [activeStoryId, activeChapterId, isIllustrating]);
+
+    const handleConfirmIllustrate = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId) return;
+        setIsIllustrating(true);
+        setShowIllustrateModal(false);
+        try {
+            await illustrateChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                image_prompt: illustratePrompt.trim()
+            });
+            setIllustratePrompt('');
+            toast('Generating illustration...', { icon: '🎨' });
+        } catch {
+            toast.error('Failed to start illustration');
+            setIsIllustrating(false);
+        }
+    }, [activeStoryId, activeChapterId, illustratePrompt, illustrateChapter]);
 
     const handleStoryTitleUpdate = async (e) => {
         const newTitle = e.target.value;
@@ -493,7 +526,6 @@ export default function StorySandbox() {
                                                     : "bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_30px_rgba(79,70,229,0.8)]"
                                             )}
                                         >
-                                            {/* Glow effect */}
                                             {!(isStreaming || continueChapter.isPending) && (
                                                 <motion.div 
                                                     className="absolute inset-0 bg-white/20"
@@ -512,6 +544,31 @@ export default function StorySandbox() {
                                                 <>
                                                     <Play size={18} fill="currentColor" className="opacity-80" />
                                                     Continue
+                                                </>
+                                            )}
+                                        </motion.button>
+                                        <motion.button
+                                            onClick={handleIllustrate}
+                                            disabled={isIllustrating}
+                                            whileHover={{ scale: isIllustrating ? 1 : 1.05 }}
+                                            whileTap={{ scale: isIllustrating ? 1 : 0.95 }}
+                                            className={clsx(
+                                                "flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all",
+                                                isIllustrating
+                                                    ? "bg-amber-500/50 text-white/50 cursor-not-allowed"
+                                                    : "bg-amber-600 text-white shadow-[0_0_15px_rgba(245,158,11,0.3)] hover:shadow-[0_0_25px_rgba(245,158,11,0.6)]"
+                                            )}
+                                            title="Generate illustration for this chapter"
+                                        >
+                                            {isIllustrating ? (
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                    Illustrating
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <ImageIcon size={18} />
+                                                    Illustrate
                                                 </>
                                             )}
                                         </motion.button>
@@ -619,6 +676,57 @@ export default function StorySandbox() {
                 confirmText="Delete"
                 isDangerous
             />
+
+            {/* Illustrate Prompt Modal */}
+            <AnimatePresence>
+                {showIllustrateModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                        onClick={() => setShowIllustrateModal(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="bg-gray-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <h3 className="text-lg font-semibold text-gray-100 flex items-center gap-2 mb-4">
+                                <ImageIcon size={18} className="text-amber-400" />
+                                Generate Illustration
+                            </h3>
+                            <p className="text-sm text-gray-400 mb-4">
+                                Optionally describe what you want to see, or leave blank for the AI to choose based on the chapter content.
+                            </p>
+                            <textarea
+                                value={illustratePrompt}
+                                onChange={e => setIllustratePrompt(e.target.value)}
+                                placeholder="e.g. A moonlit forest clearing with a mysterious figure... (optional)"
+                                className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50 resize-none h-24 mb-4"
+                                autoFocus
+                            />
+                            <div className="flex gap-2 justify-end">
+                                <button
+                                    onClick={() => { setShowIllustrateModal(false); setIllustratePrompt(''); }}
+                                    className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirmIllustrate}
+                                    className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition-colors flex items-center gap-2"
+                                >
+                                    <ImageIcon size={14} />
+                                    Generate
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </motion.div>
     );
 }

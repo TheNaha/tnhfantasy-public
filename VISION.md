@@ -79,7 +79,6 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 
 ## Future Frontiers
 Once the core pillars (Image + Text + World) are integrated, the platform can expand into:
-*   **Immersive Audio:** Assigning Text-to-Speech (TTS) voice profiles to Character Cards so the AI speaks its responses.
 *   **Video/Animation:** Transforming static generated scenes into short animations using AnimateDiff or SVD.
 *   **Visual Novel Mode:** An automated mode that turns roleplay logs or story generations into a playable, visual-novel style UI.
 
