@@ -1,25 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import httpx
-from cachetools import TTLCache
 from sqlmodel import Session, select
 
-from services.provider_runtime import resolve_provider_runtime
 from config import get_worker_backend_url
-from core.entities import ModelFile, ModelVersion, ModelV2
-from infrastructure.http_client import get_http_client
+from core.entities import ModelFile, ModelV2, ModelVersion
 from infrastructure.logging import get_logger
-from api.deps import get_container_manager
 from services.model_service import ModelServiceV2
+from services.provider_runtime import resolve_provider_runtime
 from services.provider_service import ProviderService
 
 logger = get_logger("provider_status_service")
 
 from infrastructure.cache import get_provider_stats_cache, invalidate_cache
 
-def invalidate_provider_status_caches(provider_id: Optional[str] = None) -> None:
+
+def invalidate_provider_status_caches(provider_id: str | None = None) -> None:
     """Clear cached provider status snapshots after lifecycle changes."""
     if provider_id:
         invalidate_cache("provider_stats", f"modal_stats_{provider_id}")
@@ -33,13 +30,13 @@ class ProviderStatusService:
     def __init__(
         self,
         session: Session,
-        provider_service: Optional[ProviderService] = None,
+        provider_service: ProviderService | None = None,
     ) -> None:
         self.session = session
         self.provider_service = provider_service or ProviderService(session)
 
     @staticmethod
-    def normalize_reconciliation_for_card(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def normalize_reconciliation_for_card(state: dict[str, Any] | None) -> dict[str, Any]:
         """Normalize reconciliation state for provider card display."""
         normalized = dict(state or {})
         status = ProviderService.normalize_reconciliation_status(normalized.get("status"))
@@ -51,8 +48,8 @@ class ProviderStatusService:
         return normalized
 
     @staticmethod
-    def empty_storage_payload(provider_id: str, error: Optional[str] = None) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
+    def empty_storage_payload(provider_id: str, error: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "provider_id": provider_id,
             "total": 0,
             "by_directory": {},
@@ -64,8 +61,8 @@ class ProviderStatusService:
     @staticmethod
     def _storage_payload_from_reconciliation_state(
         provider_id: str,
-        reconciliation_state: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
+        reconciliation_state: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         """Derive storage stats from persisted reconciliation state when available."""
         if not isinstance(reconciliation_state, dict):
             return None
@@ -101,7 +98,7 @@ class ProviderStatusService:
             "by_directory": by_directory,
         }
 
-    async def get_provider_sync_status(self, provider_id: str) -> Dict[str, Any]:
+    async def get_provider_sync_status(self, provider_id: str) -> dict[str, Any]:
         """Return V2-backed sync counts for a provider."""
         service = ModelServiceV2(self.session)
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
@@ -152,10 +149,11 @@ class ProviderStatusService:
             "models": models,
         }
 
-    async def get_provider_sync_stats(self, provider_id: str) -> Dict[str, Any]:
+    async def get_provider_sync_stats(self, provider_id: str) -> dict[str, Any]:
         """Fast aggregated provider sync counts using SQL GROUP BY."""
+        from sqlmodel import func, select
+
         from core.entities import ProviderVersionStatus
-        from sqlmodel import select, func, or_
         
         total_stmt = select(func.count(ModelFile.id)).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
@@ -201,9 +199,9 @@ class ProviderStatusService:
     async def get_provider_storage_stats(
         self,
         provider_id: str,
-        provider: Optional[Any] = None,
-        reconciliation_state: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        provider: Any | None = None,
+        reconciliation_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Fetch provider storage stats from the worker with cache and fallbacks to DB."""
         cache_key = f"modal_stats_{provider_id}"
 
@@ -224,8 +222,9 @@ class ProviderStatusService:
             return _modal_stats_cache[cache_key]
 
         # Fall back to querying the database directly
+        from sqlmodel import func, select
+
         from core.entities import ProviderVersionStatus
-        from sqlmodel import select, func, or_
         
         try:
             count = self.session.exec(
@@ -255,8 +254,8 @@ class ProviderStatusService:
     async def get_live_reconciliation_state(
         self,
         provider_id: str,
-        provider: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        provider: Any | None = None,
+    ) -> dict[str, Any]:
         """Return the latest known reconciliation state (uses websockets for live updates)."""
         persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
         return self.normalize_reconciliation_for_card(persisted_state)
@@ -264,8 +263,8 @@ class ProviderStatusService:
     async def get_live_deploy_state(
         self,
         provider_id: str,
-        provider: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        provider: Any | None = None,
+    ) -> dict[str, Any]:
         """Return the latest known deploy state without synchronous HTTP polling."""
         persisted_state = await self.provider_service.get_provider_deploy_state(provider_id)
         return persisted_state
@@ -274,15 +273,15 @@ class ProviderStatusService:
     def build_provider_diagnostics(
         *,
         provider_id: str,
-        provider_info: Dict[str, Any],
+        provider_info: dict[str, Any],
         runtime: Any,
-        storage_stats: Dict[str, Any],
-        reconciliation_state: Dict[str, Any],
-        deploy_state: Dict[str, Any],
-        model_sync: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        warnings: List[str] = []
-        errors: List[str] = []
+        storage_stats: dict[str, Any],
+        reconciliation_state: dict[str, Any],
+        deploy_state: dict[str, Any],
+        model_sync: dict[str, Any],
+    ) -> dict[str, Any]:
+        warnings: list[str] = []
+        errors: list[str] = []
 
         if storage_stats.get("error"):
             warnings.append(f"Storage stats unavailable: {storage_stats['error']}")
@@ -324,9 +323,9 @@ class ProviderStatusService:
         self,
         provider_id: str,
         *,
-        provider_payload: Optional[Dict[str, Any]] = None,
-        provider: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        provider_payload: dict[str, Any] | None = None,
+        provider: Any | None = None,
+    ) -> dict[str, Any]:
         """Build the canonical provider status payload used by provider cards."""
         provider = provider or await self.provider_service.get_provider(provider_id)
         provider_info = provider_payload or self.provider_service._provider_to_dict(provider)
@@ -375,10 +374,10 @@ class ProviderStatusService:
 
     def build_provider_status_card_fallback(
         self,
-        provider_info: Dict[str, Any],
+        provider_info: dict[str, Any],
         *,
         error: str = "Failed to build provider status card",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return a stable fallback status card when live assembly fails."""
         provider_id = provider_info.get("id")
         runtime_state = provider_info.get("runtime_state") or {}
@@ -413,9 +412,9 @@ class ProviderStatusService:
         self,
         provider_id: str,
         *,
-        provider_payload: Optional[Dict[str, Any]] = None,
-        provider: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        provider_payload: dict[str, Any] | None = None,
+        provider: Any | None = None,
+    ) -> dict[str, Any]:
         """Build the canonical provider record returned by /api/providers."""
         provider = provider or await self.provider_service.get_provider(provider_id)
         base_payload = provider_payload or self.provider_service._provider_to_dict(provider)
@@ -445,8 +444,8 @@ class ProviderStatusService:
 
     async def build_provider_records(
         self,
-        providers: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[Dict[str, Any]]:
+        providers: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Build canonical provider records for a list response."""
         providers = providers if providers is not None else await self.provider_service.list_providers()
         records = []
@@ -468,11 +467,11 @@ class ProviderStatusService:
 
     async def build_provider_status_cards(
         self,
-        providers: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+        providers: list[dict[str, Any]] | None = None,
+    ) -> dict[str, dict[str, Any]]:
         """Build canonical provider status cards for all providers."""
         providers = providers if providers is not None else await self.provider_service.list_providers()
-        cards: Dict[str, Dict[str, Any]] = {}
+        cards: dict[str, dict[str, Any]] = {}
 
         for provider in providers:
             provider_id = provider.get("id")

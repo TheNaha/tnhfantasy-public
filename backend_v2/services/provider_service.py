@@ -1,33 +1,31 @@
 # Provider Service - Business logic for provider management
 from copy import deepcopy
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 from sqlmodel import Session
 
-from core.entities import Provider, LoadBalancingConfig
-from core.events import event_bus, Event, EventType, emit_provider_event
-from core.exceptions import NotFoundError, ProviderError, ValidationError
-from infrastructure.repositories import ProviderRepository, LoadBalancingRepository
+from core.entities import LoadBalancingConfig, Provider
+from core.events import EventType, emit_provider_event
+from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
+from infrastructure.repositories import LoadBalancingRepository, ProviderRepository
+from services.provider_deploy_service import ProviderDeployService
+from services.provider_env_builder import build_provider_environment
+from services.provider_reconciliation_service import ProviderReconciliationService
 from services.provider_runtime import resolve_provider_runtime
-
 from services.provider_utils import (
-    extract_runtime_config,
-    extract_deploy_config,
-    compose_config,
-    clean_dict,
-    mask_secret,
-    default_deploy_mode,
-    default_deploy_targets,
     _get_supported_managed_deploy_types,
+    clean_dict,
+    compose_config,
+    default_deploy_mode,
+    extract_deploy_config,
+    extract_runtime_config,
+    mask_secret,
+    normalize_reconciliation_status,
     read_deploy_state,
     read_reconciliation_state,
-    normalize_reconciliation_status,
 )
-from services.provider_env_builder import build_provider_environment
-from services.provider_deploy_service import ProviderDeployService
-from services.provider_reconciliation_service import ProviderReconciliationService
 
 logger = provider_logger()
 
@@ -44,7 +42,7 @@ class ProviderService:
         self.deploy_service = ProviderDeployService(self.repo)
         self.reconciliation_service = ProviderReconciliationService(self.repo)
 
-    def _normalize_provider_for_storage(self, provider_data: Dict[str, Any], existing: Optional[Provider] = None) -> Dict[str, Any]:
+    def _normalize_provider_for_storage(self, provider_data: dict[str, Any], existing: Provider | None = None) -> dict[str, Any]:
         payload = deepcopy(provider_data)
         provider_type = payload.get("type") or getattr(existing, "type", "modal")
         existing_config = clean_dict(getattr(existing, "config", None))
@@ -96,7 +94,7 @@ class ProviderService:
             "config": config,
         }
 
-    def _summarize_credentials(self, provider_type: str, credentials: Dict[str, Any], deploy_config: Dict[str, Any], runtime: Any) -> Dict[str, Any]:
+    def _summarize_credentials(self, provider_type: str, credentials: dict[str, Any], deploy_config: dict[str, Any], runtime: Any) -> dict[str, Any]:
         validation = ProviderRegistry.validate_provider(provider_type, credentials, deploy_config)
         configured_fields = sorted(
             key for key, value in credentials.items()
@@ -125,9 +123,9 @@ class ProviderService:
         *,
         provider: Provider,
         runtime: Any,
-        runtime_config: Optional[Dict[str, Any]],
-        deploy_config: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], Dict[str, Optional[str]]]:
+        runtime_config: dict[str, Any] | None,
+        deploy_config: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str | None]]:
         deploy_mode = deploy_config.get("deploy_mode", default_deploy_mode(provider.type))
         managed_deploy = deploy_mode == "managed" and provider.type in _get_supported_managed_deploy_types()
         runtime_available = runtime_config is not None
@@ -160,31 +158,31 @@ class ProviderService:
 
     # DELEGATED METHODS
     
-    def build_provider_environment(self, provider: Provider) -> Dict[str, str]:
+    def build_provider_environment(self, provider: Provider) -> dict[str, str]:
         return build_provider_environment(provider)
 
-    async def get_provider_deploy_state(self, provider_id: str) -> Dict[str, Any]:
+    async def get_provider_deploy_state(self, provider_id: str) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
         return await self.deploy_service.get_provider_deploy_state(provider)
 
-    async def deploy_provider_app(self, provider_id: str, container_manager: Any) -> Dict[str, Any]:
+    async def deploy_provider_app(self, provider_id: str, container_manager: Any) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
         return await self.deploy_service.deploy_provider_app(provider, container_manager)
 
-    async def get_provider_reconciliation_state(self, provider_id: str) -> Dict[str, Any]:
+    async def get_provider_reconciliation_state(self, provider_id: str) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
         return await self.reconciliation_service.get_provider_reconciliation_state(provider)
 
-    async def start_reconciliation_session(self, provider_id: str, force: bool = False) -> Dict[str, Any]:
+    async def start_reconciliation_session(self, provider_id: str, force: bool = False) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
         return await self.reconciliation_service.start_reconciliation_session(provider, force=force)
 
-    async def upsert_reconciliation_state(self, provider_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def upsert_reconciliation_state(self, provider_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         provider = await self.get_provider(provider_id)
         return await self.reconciliation_service.upsert_reconciliation_state(provider, updates)
     
     @staticmethod
-    def normalize_reconciliation_status(status: Optional[str]) -> str:
+    def normalize_reconciliation_status(status: str | None) -> str:
         return normalize_reconciliation_status(status)
     
     @staticmethod
@@ -194,7 +192,7 @@ class ProviderService:
 
     # CRUD METHODS
     
-    async def create_provider(self, provider_data: Dict[str, Any]) -> Provider:
+    async def create_provider(self, provider_data: dict[str, Any]) -> Provider:
         if "id" not in provider_data:
             raise ValidationError("Provider ID is required", field="id")
         if "type" not in provider_data:
@@ -222,7 +220,7 @@ class ProviderService:
             raise NotFoundError("Provider", provider_id)
         return provider
     
-    async def list_providers(self) -> List[Dict[str, Any]]:
+    async def list_providers(self) -> list[dict[str, Any]]:
         providers = self.repo.get_all()
         result = [self._provider_to_dict(p) for p in providers]
         # Sort: discovered (live) providers first, then by priority
@@ -233,10 +231,10 @@ class ProviderService:
         ))
         return result
     
-    def get_enabled_providers(self) -> List[Provider]:
+    def get_enabled_providers(self) -> list[Provider]:
         return self.repo.get_enabled()
     
-    async def update_provider(self, provider_id: str, updates: Dict[str, Any]) -> Provider:
+    async def update_provider(self, provider_id: str, updates: dict[str, Any]) -> Provider:
         existing = await self.get_provider(provider_id)
         normalized = self._normalize_provider_for_storage(updates, existing=existing)
         provider = self.repo.update(
@@ -310,7 +308,7 @@ class ProviderService:
 
         existing = self.repo.get(provider_id)
         if existing:
-            updates: Dict[str, Any] = {}
+            updates: dict[str, Any] = {}
             config = dict(existing.config or {})
             config["last_seen_at"] = now
             config["discovery_url"] = internal_url
@@ -342,7 +340,7 @@ class ProviderService:
     async def update_load_balancing_config(self, **updates) -> LoadBalancingConfig:
         return self.lb_repo.update(**updates)
     
-    def _provider_to_dict(self, provider: Provider) -> Dict[str, Any]:
+    def _provider_to_dict(self, provider: Provider) -> dict[str, Any]:
         runtime = resolve_provider_runtime(provider)
         deploy_state = read_deploy_state(provider)
         reconciliation_state = read_reconciliation_state(provider)
@@ -382,18 +380,18 @@ class ProviderService:
             "credential_summary": self._summarize_credentials(provider.type, clean_dict(provider.credentials), deploy_config, runtime),
         }
     
-    def get_model_cache(self) -> Dict[str, Any]:
+    def get_model_cache(self) -> dict[str, Any]:
         from services.model_service import ModelServiceV2
         model_service = ModelServiceV2(self.session)
         return model_service.get_full_cache()
     
-    def get_model_cache_for_directory(self, directory: str) -> List[Dict[str, Any]]:
+    def get_model_cache_for_directory(self, directory: str) -> list[dict[str, Any]]:
         from services.model_service import ModelServiceV2
         model_service = ModelServiceV2(self.session)
         cache = model_service.get_full_cache()
         return cache.get(directory, [])
     
-    async def get_load_balancer_stats(self) -> Dict[str, Any]:
+    async def get_load_balancer_stats(self) -> dict[str, Any]:
         from services.load_balancer_factory import create_load_balancer
         config = self.get_load_balancing_config()
         load_balancer = create_load_balancer(

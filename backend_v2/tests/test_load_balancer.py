@@ -2,8 +2,8 @@
 import pytest
 from sqlmodel import Session
 
-from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
 from core.entities import LoadBalancerState, Provider
+from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
 
 
 @pytest.fixture

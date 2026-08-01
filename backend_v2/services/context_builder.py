@@ -4,9 +4,11 @@ Assembles the final prompt context for LLM inference,
 handling lorebook injection, character system prompts, and context pruning.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 from sqlmodel import Session, select
-from core.entities import Lorebook, LorebookEntry, MessageRole
+
+from core.entities import LorebookEntry, MessageRole
 
 logger = logging.getLogger("context_builder")
 
@@ -30,7 +32,7 @@ def build_character_system_prompt(character) -> str:
 
 def inject_lorebooks_into_system_prompt(
     system_prompt: str,
-    lorebook_entries: List[Dict],
+    lorebook_entries: list[dict],
     injection_mode: str = "system_prompt",  # "system_prompt" or "messages"
 ) -> str:
     """Inject relevant lorebook entries into system prompt."""
@@ -43,11 +45,11 @@ def inject_lorebooks_into_system_prompt(
 
 
 def prune_context(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     system_prompt: str,
-    lorebook_entries: List[Dict],
+    lorebook_entries: list[dict],
     max_chars: int = MAX_CHARS_APPROX * 4,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Prune context to fit within limit.
     Priority (prune first to last):
@@ -69,12 +71,12 @@ def prune_context(
 
 def build_chat_context(
     session: Session,
-    messages: List,  # DB Message objects
+    messages: list,  # DB Message objects
     character=None,
-    lorebook_ids: List[str] = None,
+    lorebook_ids: list[str] = None,
     injection_mode: str = "system_prompt",
     max_context_chars: int = MAX_CHARS_APPROX * 4,
-) -> tuple[str, List[Dict[str, Any]]]:
+) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
     Returns: (system_prompt, messages_list)

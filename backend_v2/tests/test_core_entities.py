@@ -1,15 +1,14 @@
-import pytest
 from datetime import datetime
-from sqlmodel import SQLModel
 
 from core.entities import (
-    Job, JobStatus,
-    Provider,
-    LoadBalancingConfig,
-    LoadBalancerState,
-    Prompt,
     Collection,
-    CollectionImage
+    CollectionImage,
+    Job,
+    JobStatus,
+    LoadBalancerState,
+    LoadBalancingConfig,
+    Prompt,
+    Provider,
 )
 
 # ============================================================================

@@ -1,22 +1,23 @@
 """Tests for infrastructure/scheduler.py"""
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timedelta
+
+import pytest
+
 import infrastructure.scheduler as sched_module
 from infrastructure.scheduler import (
-    get_scheduler,
-    start_scheduler,
-    stop_scheduler,
-    add_interval_job,
     add_cron_job,
-    remove_job,
+    add_interval_job,
     get_jobs_status,
-    schedule_reconciliation,
-    schedule_model_sync,
+    get_scheduler,
+    remove_job,
     schedule_cleanup,
+    schedule_model_sync,
     schedule_preview_prefetch,
+    schedule_reconciliation,
     schedule_stats_refresh,
     schedule_vacuum,
+    start_scheduler,
+    stop_scheduler,
 )
 
 

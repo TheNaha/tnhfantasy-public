@@ -1,7 +1,6 @@
 """Tests for api/routes/settings.py"""
-import pytest
 from unittest.mock import patch
-import config as cfg_module
+
 from config import DEFAULT_CONFIG
 
 

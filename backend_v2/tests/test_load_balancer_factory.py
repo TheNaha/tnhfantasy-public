@@ -1,8 +1,11 @@
 from sqlmodel import Session
 
 from core.entities import Provider
-from services.load_balancer_factory import create_load_balancer, get_load_balancing_strategy
 from services.load_balancer import LoadBalancerRuntimeState
+from services.load_balancer_factory import (
+    create_load_balancer,
+    get_load_balancing_strategy,
+)
 
 
 def test_get_load_balancing_strategy_defaults(session: Session):

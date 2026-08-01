@@ -1,9 +1,9 @@
-from typing import Dict, Any, List, Optional
 import re
+from typing import Any
 
 from sqlmodel import Session
 
-from core.entities import ModelV2, ModelVersion, ModelFile
+from core.entities import ModelFile, ModelV2, ModelVersion
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
 _DIRECTORY_TO_MODEL_TYPE = {
@@ -71,15 +71,15 @@ class ModelReconciliationService:
     and reconciliation caching for the model service.
     """
 
-    def __init__(self, session: Session, repo: Optional[ModelRepositoryV2] = None):
+    def __init__(self, session: Session, repo: ModelRepositoryV2 | None = None):
         self.session = session
         self.repo = repo or ModelRepositoryV2(session)
 
     async def register_discovered_files(
         self,
         provider_id: str,
-        files: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        files: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         imported = 0
         skipped = 0
         errors = 0
@@ -187,10 +187,10 @@ class ModelReconciliationService:
             "files": results,
         }
 
-    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
+    def get_pending_downloads(self, provider_id: str) -> list[dict[str, Any]]:
         """Get files pending download for a provider (sync method for worker)."""
         return self.repo.get_pending_downloads(provider_id)
 
-    def get_full_cache(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_full_cache(self) -> dict[str, list[dict[str, Any]]]:
         """Get all model metadata for reconciliation (sync method for worker)."""
         return self.repo.get_grouped_by_directory()

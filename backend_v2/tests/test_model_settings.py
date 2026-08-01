@@ -1,13 +1,12 @@
 """Tests for infrastructure/model_settings.py"""
-import pytest
 from infrastructure.model_settings import (
     BASE_MODEL_DEFAULTS,
     SAMPLER_MAP,
-    parse_recommended_settings,
     detect_base_model,
     get_base_model_defaults,
     get_model_settings,
     get_settings_summary,
+    parse_recommended_settings,
 )
 
 

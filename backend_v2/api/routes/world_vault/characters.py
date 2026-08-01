@@ -1,17 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
-from sqlmodel import Session, select
-from typing import List
-from datetime import datetime, timezone
 import os
 import shutil
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Character
 
 router = APIRouter()
 
-@router.get("/", response_model=List[Character])
+@router.get("/", response_model=list[Character])
 def list_characters(session: Session = Depends(get_session)):
     return session.exec(select(Character).order_by(Character.name)).all()
 

@@ -1,10 +1,8 @@
 # Workflow Parser Tests
-import pytest
 from core.workflow_parser import (
     extract_models_from_workflow,
     get_all_required_files,
     get_required_storage_paths,
-    MODEL_LOADER_NODES
 )
 
 

@@ -1,23 +1,20 @@
 """Tests for infrastructure/logging.py"""
-import logging
-import pytest
-import structlog
 from infrastructure.logging import (
-    configure_logging,
-    get_logger,
-    job_logger,
-    provider_logger,
-    model_logger,
-    download_logger,
+    Colors,
     api_logger,
     cache_logger,
-    db_logger,
-    scheduler_logger,
-    http_logger,
-    config_logger,
-    ws_logger,
     compact_renderer,
-    Colors,
+    config_logger,
+    configure_logging,
+    db_logger,
+    download_logger,
+    get_logger,
+    http_logger,
+    job_logger,
+    model_logger,
+    provider_logger,
+    scheduler_logger,
+    ws_logger,
 )
 
 

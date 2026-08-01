@@ -8,12 +8,12 @@
 # Repository classes are session-scoped – create a new instance per request
 # using the FastAPI dependency in `api/deps.py`.
 from .job_repo import JobRepository
-from .provider_repo import ProviderRepository, LoadBalancingRepository
 from .model_repo_v2 import ModelRepositoryV2
+from .provider_repo import LoadBalancingRepository, ProviderRepository
 
 __all__ = [
     "JobRepository",
-    "ProviderRepository",
     "LoadBalancingRepository",
     "ModelRepositoryV2",
+    "ProviderRepository",
 ]

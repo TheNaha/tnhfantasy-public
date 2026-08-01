@@ -1,7 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+
 from services.container_manager import ContainerManager
-import docker
+
 
 # Mocking the ContainerManager dependencies
 @pytest.fixture

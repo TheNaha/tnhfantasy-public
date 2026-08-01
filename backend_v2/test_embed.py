@@ -1,5 +1,5 @@
-import asyncio
 from services.embedding_service import get_embedding_service
+
 
 def test():
     svc = get_embedding_service()

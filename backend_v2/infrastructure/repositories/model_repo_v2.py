@@ -1,22 +1,29 @@
 # Model Repository V2 - Version-aware data access layer
-from sqlmodel import Session, select, col, and_, or_
-from sqlalchemy import func
-from sqlalchemy.orm import selectinload
-from typing import Optional, List, Dict, Any, Tuple, Union
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, and_, col, or_, select
 
 from core.entities import (
-    ModelV2, ModelVersion, ModelFile, ModelImage, 
-    ProviderVersionStatus, ModelTag, compute_storage_filename, get_directory_from_type,
-    is_unet_only_model, FLUX_DEFAULT_COMPONENTS, DeletedFileTombstone
+    DeletedFileTombstone,
+    ModelFile,
+    ModelImage,
+    ModelTag,
+    ModelV2,
+    ModelVersion,
+    ProviderVersionStatus,
+    compute_storage_filename,
+    get_directory_from_type,
+    is_unet_only_model,
 )
 from infrastructure.logging import get_logger
 
 logger = get_logger("model_repo_v2")
 
 
-def parse_civitai_datetime(value: Any) -> Optional[datetime]:
+def parse_civitai_datetime(value: Any) -> datetime | None:
     """Parse CivitAI datetime string to Python datetime object."""
     if value is None:
         return None
@@ -56,7 +63,7 @@ class ModelRepositoryV2:
         """Build a provider filter."""
         return ProviderVersionStatus.provider_id == provider_key
 
-    def _provider_match_clause_many(self, provider_keys: List[str]):
+    def _provider_match_clause_many(self, provider_keys: list[str]):
         """Build a provider filter for multiple providers."""
         return ProviderVersionStatus.provider_id.in_(provider_keys)
     
@@ -66,8 +73,8 @@ class ModelRepositoryV2:
     
     def create_model_with_versions(
         self,
-        civitai_data: Dict[str, Any],
-        selected_version_ids: List[int]
+        civitai_data: dict[str, Any],
+        selected_version_ids: list[int]
     ) -> ModelV2:
         """
         Create a model with only the selected versions.
@@ -223,9 +230,9 @@ class ModelRepositoryV2:
     def add_versions_to_model(
         self,
         model: ModelV2,
-        civitai_data: Dict[str, Any],
-        selected_version_ids: List[int]
-    ) -> List[ModelVersion]:
+        civitai_data: dict[str, Any],
+        selected_version_ids: list[int]
+    ) -> list[ModelVersion]:
         """
         Add new versions to an existing model.
         
@@ -332,26 +339,26 @@ class ModelRepositoryV2:
         self.session.commit()
         return created_versions
     
-    def get_model(self, model_id: int) -> Optional[ModelV2]:
+    def get_model(self, model_id: int) -> ModelV2 | None:
         """Get a model by ID."""
         return self.session.get(ModelV2, model_id)
     
-    def get_model_by_civitai_id(self, civitai_id: int) -> Optional[ModelV2]:
+    def get_model_by_civitai_id(self, civitai_id: int) -> ModelV2 | None:
         """Get a model by CivitAI model ID."""
         stmt = select(ModelV2).where(ModelV2.civitai_model_id == civitai_id)
         return self.session.exec(stmt).first()
     
-    def get_all_models(self) -> List[ModelV2]:
+    def get_all_models(self) -> list[ModelV2]:
         """Get all models."""
         stmt = select(ModelV2).order_by(col(ModelV2.updated_at).desc())
         return list(self.session.exec(stmt).all())
     
-    def get_models_by_directory(self, directory: str) -> List[ModelV2]:
+    def get_models_by_directory(self, directory: str) -> list[ModelV2]:
         """Get models in a specific directory."""
         stmt = select(ModelV2).where(ModelV2.directory == directory)
         return list(self.session.exec(stmt).all())
     
-    def get_models_by_type(self, model_type: str) -> List[ModelV2]:
+    def get_models_by_type(self, model_type: str) -> list[ModelV2]:
         """Get models of a specific type."""
         stmt = select(ModelV2).where(ModelV2.type == model_type)
         return list(self.session.exec(stmt).all())
@@ -395,19 +402,19 @@ class ModelRepositoryV2:
     # VERSION OPERATIONS
     # =========================================================================
     
-    def get_versions_for_model(self, model_id: int) -> List[ModelVersion]:
+    def get_versions_for_model(self, model_id: int) -> list[ModelVersion]:
         """Get all versions for a model."""
         stmt = select(ModelVersion).where(ModelVersion.model_id == model_id)
         return list(self.session.exec(stmt).all())
     
-    def get_default_version(self, model_id: int) -> Optional[ModelVersion]:
+    def get_default_version(self, model_id: int) -> ModelVersion | None:
         """Get the default version for a model."""
         stmt = select(ModelVersion).where(
             and_(ModelVersion.model_id == model_id, ModelVersion.is_default == True)
         )
         return self.session.exec(stmt).first()
     
-    def get_version_by_civitai_id(self, civitai_version_id: int) -> Optional[ModelVersion]:
+    def get_version_by_civitai_id(self, civitai_version_id: int) -> ModelVersion | None:
         """Get a version by CivitAI version ID."""
         stmt = select(ModelVersion).where(
             ModelVersion.civitai_version_id == civitai_version_id
@@ -423,7 +430,7 @@ class ModelRepositoryV2:
         self.session.commit()
         return True
     
-    def toggle_version_enabled(self, version_id: int) -> Optional[ModelVersion]:
+    def toggle_version_enabled(self, version_id: int) -> ModelVersion | None:
         """Toggle whether a version is enabled."""
         version = self.session.get(ModelVersion, version_id)
         if version:
@@ -436,26 +443,26 @@ class ModelRepositoryV2:
     # FILE OPERATIONS
     # =========================================================================
     
-    def get_files_for_version(self, version_id: int) -> List[ModelFile]:
+    def get_files_for_version(self, version_id: int) -> list[ModelFile]:
         """Get all files for a version."""
         stmt = select(ModelFile).where(ModelFile.version_id == version_id)
         return list(self.session.exec(stmt).all())
     
-    def get_files_for_model(self, model_id: int) -> List[ModelFile]:
+    def get_files_for_model(self, model_id: int) -> list[ModelFile]:
         """Get all files for all versions of a model in a single query."""
         stmt = select(ModelFile).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).where(ModelVersion.model_id == model_id)
         return list(self.session.exec(stmt).all())
     
-    def get_primary_file_for_version(self, version_id: int) -> Optional[ModelFile]:
+    def get_primary_file_for_version(self, version_id: int) -> ModelFile | None:
         """Get the primary file for a version."""
         stmt = select(ModelFile).where(
             and_(ModelFile.version_id == version_id, ModelFile.is_primary == True)
         )
         return self.session.exec(stmt).first()
     
-    def get_file_by_storage_path(self, directory: str, filename: str) -> Optional[ModelFile]:
+    def get_file_by_storage_path(self, directory: str, filename: str) -> ModelFile | None:
         """Get a file by its storage path components."""
         stmt = select(ModelFile).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
@@ -486,7 +493,7 @@ class ModelRepositoryV2:
         size_mb: float = 0,
         description: str = "",
         base_model: str = ""
-    ) -> Optional[ModelV2]:
+    ) -> ModelV2 | None:
         """
         Create a system dependency model (CLIP, VAE for Flux/AuraFlow).
         
@@ -570,7 +577,7 @@ class ModelRepositoryV2:
     # PROVIDER STATUS OPERATIONS
     # =========================================================================
     
-    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
+    def get_pending_downloads(self, provider_id: str) -> list[dict[str, Any]]:
         """
         Get files pending download for a provider.
         Returns file info with version and model context.
@@ -615,7 +622,7 @@ class ModelRepositoryV2:
         self, 
         file_id: int, 
         provider_id: str
-    ) -> Optional[ProviderVersionStatus]:
+    ) -> ProviderVersionStatus | None:
         """Get provider status for a specific file."""
         stmt = select(ProviderVersionStatus).where(
             and_(
@@ -627,9 +634,9 @@ class ModelRepositoryV2:
 
     def get_provider_statuses_for_files(
         self,
-        file_ids: List[int],
+        file_ids: list[int],
         provider_id: str,
-    ) -> Dict[int, ProviderVersionStatus]:
+    ) -> dict[int, ProviderVersionStatus]:
         """Get provider statuses for many files in one query."""
         if not file_ids:
             return {}
@@ -648,9 +655,9 @@ class ModelRepositoryV2:
         file_id: int,
         provider_id: str,
         status: str,
-        storage_path: Optional[str] = None,
-        size_bytes: Optional[int] = None,
-        error_message: Optional[str] = None
+        storage_path: str | None = None,
+        size_bytes: int | None = None,
+        error_message: str | None = None
     ) -> ProviderVersionStatus:
         """Update or create provider status for a file."""
         existing = self.get_provider_status(file_id, provider_id)
@@ -697,7 +704,7 @@ class ModelRepositoryV2:
     def get_provider_statuses_for_model(
         self, 
         model_id: int
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """
         Get all provider statuses for a model's files.
         Returns dict keyed by provider_id.
@@ -709,7 +716,7 @@ class ModelRepositoryV2:
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).where(ModelVersion.model_id == model_id)
         
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for status, file, version in self.session.exec(stmt).all():
             provider_key = self._get_provider_key(status)
             if not provider_key:
@@ -754,7 +761,7 @@ class ModelRepositoryV2:
         
         return count
     
-    def cleanup_orphaned_provider_statuses(self, active_provider_names: List[str]) -> Dict[str, int]:
+    def cleanup_orphaned_provider_statuses(self, active_provider_names: list[str]) -> dict[str, int]:
         """
         Delete ProviderVersionStatus records for providers that no longer exist.
         
@@ -792,7 +799,7 @@ class ModelRepositoryV2:
         self,
         *,
         stale_before: datetime,
-        provider_names: Optional[List[str]] = None,
+        provider_names: list[str] | None = None,
     ) -> int:
         """
         Reset stale downloading statuses back to pending.
@@ -829,14 +836,14 @@ class ModelRepositoryV2:
     # IMAGE OPERATIONS
     # =========================================================================
     
-    def get_images_for_version(self, version_id: int) -> List[ModelImage]:
+    def get_images_for_version(self, version_id: int) -> list[ModelImage]:
         """Get all images for a version."""
         stmt = select(ModelImage).where(
             ModelImage.version_id == version_id
         ).order_by(ModelImage.sort_order)
         return list(self.session.exec(stmt).all())
     
-    def get_primary_image_for_model(self, model_id: int) -> Optional[ModelImage]:
+    def get_primary_image_for_model(self, model_id: int) -> ModelImage | None:
         """Get the first image from the default version."""
         default_version = self.get_default_version(model_id)
         if not default_version:
@@ -851,12 +858,12 @@ class ModelRepositoryV2:
     # TAG OPERATIONS
     # =========================================================================
     
-    def get_tags_for_model(self, model_id: int) -> List[str]:
+    def get_tags_for_model(self, model_id: int) -> list[str]:
         """Get all tags for a model."""
         stmt = select(ModelTag.tag).where(ModelTag.model_id == model_id)
         return list(self.session.exec(stmt).all())
     
-    def search_by_tag(self, tag: str) -> List[ModelV2]:
+    def search_by_tag(self, tag: str) -> list[ModelV2]:
         """Search models by tag."""
         stmt = select(ModelV2).join(
             ModelTag, ModelV2.id == ModelTag.model_id
@@ -871,51 +878,51 @@ class ModelRepositoryV2:
     # BULK LOADING (eliminates N+1 queries)
     # =========================================================================
 
-    def _bulk_load_tags(self, model_ids: List[int]) -> Dict[int, List[str]]:
+    def _bulk_load_tags(self, model_ids: list[int]) -> dict[int, list[str]]:
         """Load all tags for multiple models in one query."""
         if not model_ids:
             return {}
         stmt = select(ModelTag).where(ModelTag.model_id.in_(model_ids))
-        result: Dict[int, List[str]] = {mid: [] for mid in model_ids}
+        result: dict[int, list[str]] = {mid: [] for mid in model_ids}
         for tag in self.session.exec(stmt).all():
             result.setdefault(tag.model_id, []).append(tag.tag)
         return result
 
-    def _bulk_load_versions(self, model_ids: List[int]) -> Dict[int, List[ModelVersion]]:
+    def _bulk_load_versions(self, model_ids: list[int]) -> dict[int, list[ModelVersion]]:
         """Load all versions for multiple models in one query."""
         if not model_ids:
             return {}
         stmt = select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
-        result: Dict[int, List[ModelVersion]] = {mid: [] for mid in model_ids}
+        result: dict[int, list[ModelVersion]] = {mid: [] for mid in model_ids}
         for version in self.session.exec(stmt).all():
             result.setdefault(version.model_id, []).append(version)
         return result
 
-    def _bulk_load_files(self, version_ids: List[int]) -> Dict[int, List[ModelFile]]:
+    def _bulk_load_files(self, version_ids: list[int]) -> dict[int, list[ModelFile]]:
         """Load all files for multiple versions in one query."""
         if not version_ids:
             return {}
         stmt = select(ModelFile).where(ModelFile.version_id.in_(version_ids))
         from collections import defaultdict
-        result: Dict[int, List[ModelFile]] = defaultdict(list)
+        result: dict[int, list[ModelFile]] = defaultdict(list)
         for file in self.session.exec(stmt).all():
             result[file.version_id].append(file)
         return dict(result)
 
-    def _bulk_load_images(self, version_ids: List[int]) -> Dict[int, List[ModelImage]]:
+    def _bulk_load_images(self, version_ids: list[int]) -> dict[int, list[ModelImage]]:
         """Load all images for multiple versions in one query, ordered by sort_order."""
         if not version_ids:
             return {}
         stmt = select(ModelImage).where(ModelImage.version_id.in_(version_ids)).order_by(ModelImage.sort_order)
         from collections import defaultdict
-        result: Dict[int, List[ModelImage]] = defaultdict(list)
+        result: dict[int, list[ModelImage]] = defaultdict(list)
         for image in self.session.exec(stmt).all():
             result[image.version_id].append(image)
         return dict(result)
 
     def _bulk_load_provider_statuses_by_model(
-        self, model_ids: List[int]
-    ) -> Dict[int, Dict[str, Dict[str, Any]]]:
+        self, model_ids: list[int]
+    ) -> dict[int, dict[str, dict[str, Any]]]:
         """Load all provider statuses for multiple models in one query."""
         if not model_ids:
             return {}
@@ -925,8 +932,7 @@ class ModelRepositoryV2:
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).where(ModelVersion.model_id.in_(model_ids))
 
-        from collections import defaultdict
-        result: Dict[int, Dict[str, Dict[str, Any]]] = {}
+        result: dict[int, dict[str, dict[str, Any]]] = {}
         for status, file, version in self.session.exec(stmt).all():
             model_id = version.model_id
             if model_id not in result:
@@ -955,12 +961,12 @@ class ModelRepositoryV2:
         model: ModelV2,
         include_versions: bool = True,
         *,
-        _tags_map: Optional[Dict[int, List[str]]] = None,
-        _versions_map: Optional[Dict[int, List[ModelVersion]]] = None,
-        _files_map: Optional[Dict[int, List[ModelFile]]] = None,
-        _images_map: Optional[Dict[int, List[ModelImage]]] = None,
-        _statuses_map: Optional[Dict[int, Dict[str, Dict[str, Any]]]] = None,
-    ) -> Dict[str, Any]:
+        _tags_map: dict[int, list[str]] | None = None,
+        _versions_map: dict[int, list[ModelVersion]] | None = None,
+        _files_map: dict[int, list[ModelFile]] | None = None,
+        _images_map: dict[int, list[ModelImage]] | None = None,
+        _statuses_map: dict[int, dict[str, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
         """Convert model to dictionary for API response.
         
         Accepts optional pre-loaded bulk data to avoid N+1 queries.
@@ -1030,9 +1036,9 @@ class ModelRepositoryV2:
 
     def models_to_dict(
         self,
-        models: List[ModelV2],
+        models: list[ModelV2],
         include_versions: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Convert multiple models to dicts with bulk-loaded related data.
         
         Eliminates the N+1 query problem by loading all tags, versions,
@@ -1068,9 +1074,9 @@ class ModelRepositoryV2:
         self,
         version: ModelVersion,
         *,
-        _files_map: Optional[Dict[int, List[ModelFile]]] = None,
-        _images_map: Optional[Dict[int, List[ModelImage]]] = None,
-    ) -> Dict[str, Any]:
+        _files_map: dict[int, list[ModelFile]] | None = None,
+        _images_map: dict[int, list[ModelImage]] | None = None,
+    ) -> dict[str, Any]:
         """Convert version to dictionary, accepting optional pre-loaded data."""
         vid = version.id
         files = _files_map.get(vid, []) if _files_map is not None else self.get_files_for_version(vid)
@@ -1109,11 +1115,11 @@ class ModelRepositoryV2:
             "created_at": version.created_at.isoformat() if version.created_at else None
         }
     
-    def get_grouped_by_directory(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_grouped_by_directory(self) -> dict[str, list[dict[str, Any]]]:
         """Get all models grouped by directory (bulk-loaded, no N+1)."""
         models = self.get_all_models()
         dicts = self.models_to_dict(models, include_versions=False)
-        result: Dict[str, List[Dict[str, Any]]] = {}
+        result: dict[str, list[dict[str, Any]]] = {}
         for d in dicts:
             directory = d.get("directory", "other")
             if directory not in result:
@@ -1121,7 +1127,7 @@ class ModelRepositoryV2:
             result[directory].append(d)
         return result
     
-    def migrate_unet_only_models(self) -> Dict[str, Any]:
+    def migrate_unet_only_models(self) -> dict[str, Any]:
         """
         Migration function: Find UNET-only models incorrectly stored in 'checkpoints'
         and move them to 'unet' directory.
@@ -1228,7 +1234,7 @@ class ModelRepositoryV2:
         statuses_map = self._bulk_load_provider_statuses_by_model(model_ids)
         
         deleted = 0
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         recent_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
         for m in models:
             # Skip models created recently to avoid race conditions with initial download.
@@ -1241,7 +1247,7 @@ class ModelRepositoryV2:
                     continue
                 
             has_viable = False
-            if m.id in statuses_map and statuses_map[m.id]:
+            if statuses_map.get(m.id):
                 has_viable = True
                 
             if not has_viable:
@@ -1251,7 +1257,7 @@ class ModelRepositoryV2:
 
 
 
-    def get_orphan_models(self) -> List[tuple]:
+    def get_orphan_models(self) -> list[tuple]:
         from sqlmodel import func
         stmt = select(ModelV2, func.count(ModelVersion.id).label("version_count")) \
             .outerjoin(ModelVersion, ModelVersion.model_id == ModelV2.id) \
@@ -1259,8 +1265,7 @@ class ModelRepositoryV2:
             .having(func.count(ModelVersion.id) == 0)
         return self.session.exec(stmt).all()
 
-    def get_models_for_resync(self, include_relations: bool = True) -> List[ModelV2]:
-        from sqlalchemy.orm import selectinload
+    def get_models_for_resync(self, include_relations: bool = True) -> list[ModelV2]:
         stmt = select(ModelV2) \
             .where(ModelV2.civitai_model_id != None) \
             .where(ModelV2.description.not_like("%Auto-discovered%"))
@@ -1271,7 +1276,7 @@ class ModelRepositoryV2:
         return self.session.exec(stmt).all()
 
 
-    def get_existing_filenames(self, filenames: List[str]) -> List[str]:
+    def get_existing_filenames(self, filenames: list[str]) -> list[str]:
         stmt = select(ModelFile.storage_filename).where(ModelFile.storage_filename.in_(filenames))
         return [row for row in self.session.exec(stmt).all()]
 
@@ -1303,18 +1308,18 @@ class ModelRepositoryV2:
         self.session.commit()
         return deleted_count
 
-    def get_models_needing_population(self) -> List[ModelV2]:
+    def get_models_needing_population(self) -> list[ModelV2]:
         stmt = select(ModelV2).where(
             ModelV2.description.like("%Auto-discovered%"),
             ModelV2.civitai_model_id.is_(None)
         )
         return self.session.exec(stmt).all()
 
-    def get_auto_discovered_models(self) -> List[ModelV2]:
+    def get_auto_discovered_models(self) -> list[ModelV2]:
         stmt = select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
         return self.session.exec(stmt).all()
 
-    def get_all_storage_paths(self) -> List[str]:
+    def get_all_storage_paths(self) -> list[str]:
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
@@ -1326,15 +1331,15 @@ class ModelRepositoryV2:
             paths.append(storage_path)
         return paths
 
-    def get_models_by_civitai_ids(self, civitai_ids: List[int]) -> List[ModelV2]:
+    def get_models_by_civitai_ids(self, civitai_ids: list[int]) -> list[ModelV2]:
         stmt = select(ModelV2).where(ModelV2.civitai_model_id.in_(civitai_ids))
         return self.session.exec(stmt).all()
 
-    def get_versions_for_models(self, model_ids: List[int]) -> List[ModelVersion]:
+    def get_versions_for_models(self, model_ids: list[int]) -> list[ModelVersion]:
         stmt = select(ModelVersion).where(ModelVersion.model_id.in_(model_ids))
         return self.session.exec(stmt).all()
         
-    def get_file_ids_by_storage_paths(self, paths: List[str]) -> Dict[str, int]:
+    def get_file_ids_by_storage_paths(self, paths: list[str]) -> dict[str, int]:
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(

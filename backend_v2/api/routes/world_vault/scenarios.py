@@ -1,8 +1,8 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from typing import List, Optional
-from datetime import datetime, timezone
 
 from api.deps import get_session
 from core.entities import Scenario
@@ -11,11 +11,11 @@ router = APIRouter()
 
 
 class ScenarioUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    prompt_template: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    prompt_template: str | None = None
 
-@router.get("/", response_model=List[Scenario])
+@router.get("/", response_model=list[Scenario])
 def list_scenarios(session: Session = Depends(get_session)):
     return session.exec(select(Scenario).order_by(Scenario.name)).all()
 

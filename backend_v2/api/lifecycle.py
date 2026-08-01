@@ -1,27 +1,31 @@
 import asyncio
 
+from sqlmodel import select
+
 from api.deps import get_session_sync
-from services.provider_runtime import monitor_provider_changes
 from api.startup_helpers import (
     cleanup_provider_state_artifacts,
     configure_worker_pool,
     recover_pending_jobs,
 )
 from core.entities import JobStatus
-from infrastructure.background_tasks import cancel_background_tasks, start_background_task
+from infrastructure.background_tasks import (
+    cancel_background_tasks,
+    start_background_task,
+)
 from infrastructure.database import create_db_and_tables, vacuum_database
 from infrastructure.http_client import close_http_client
 from infrastructure.logging import get_logger
 from infrastructure.scheduler import (
+    schedule_cleanup,
     schedule_preview_prefetch,
     schedule_vacuum,
-    schedule_cleanup,
     start_scheduler,
     stop_scheduler,
 )
 from services.job_queue import job_queue
 from services.job_service import JobService
-from sqlmodel import select
+from services.provider_runtime import monitor_provider_changes
 
 logger = get_logger("lifecycle")
 
@@ -115,7 +119,8 @@ async def run_data_cleanup() -> None:
 
 async def prune_stale_providers() -> None:
     """Remove provider records that have not sent a discovery heartbeat in 24 hours."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
+
     from api.deps import get_session_sync
     from infrastructure.repositories import ProviderRepository
 
@@ -269,8 +274,8 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
 
 async def recover_post_processing_jobs(process_image_background_fn=None) -> int:
     """Resume jobs that already have persisted outputs but were not marked completed yet."""
-    from services.job_processing import finalize_persisted_job_outputs
     from core.entities import Job
+    from services.job_processing import finalize_persisted_job_outputs
 
     process_image_background_fn = process_image_background_fn or _process_image_background_for_recovery
 

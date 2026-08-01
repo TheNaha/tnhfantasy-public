@@ -3,10 +3,10 @@
 Utility to parse ComfyUI workflow JSON and extract model filenames.
 Used for pre-flight validation to check if required models are available on providers.
 """
-from typing import Dict, List, Any, Set
+from typing import Any
 
 # Node types that load model files, mapped to (input_key, directory)
-MODEL_LOADER_NODES: Dict[str, tuple[str, str]] = {
+MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     # Checkpoint loaders
     "CheckpointLoaderSimple": ("ckpt_name", "checkpoints"),
     "CheckpointLoader": ("ckpt_name", "checkpoints"),
@@ -47,12 +47,12 @@ MODEL_LOADER_NODES: Dict[str, tuple[str, str]] = {
 }
 
 # Nodes with multiple model inputs
-MULTI_INPUT_NODES: Dict[str, List[tuple[str, str]]] = {
+MULTI_INPUT_NODES: dict[str, list[tuple[str, str]]] = {
     "DualCLIPLoader": [("clip_name1", "clip"), ("clip_name2", "clip")],
 }
 
 
-def extract_models_from_workflow(workflow: Dict[str, Any]) -> Dict[str, List[str]]:
+def extract_models_from_workflow(workflow: dict[str, Any]) -> dict[str, list[str]]:
     """
     Extract model filenames from a ComfyUI workflow.
     
@@ -63,7 +63,7 @@ def extract_models_from_workflow(workflow: Dict[str, Any]) -> Dict[str, List[str
         Dictionary mapping directory names to lists of model filenames.
         Example: {"checkpoints": ["model.safetensors"], "loras": ["lora1.safetensors"]}
     """
-    result: Dict[str, Set[str]] = {}
+    result: dict[str, set[str]] = {}
     
     # Get nodes from workflow - handle both formats
     # Format 1: {"nodes": {...}} or {"nodes": [...]}
@@ -105,7 +105,7 @@ def extract_models_from_workflow(workflow: Dict[str, Any]) -> Dict[str, List[str
     return {dir_name: sorted(list(files)) for dir_name, files in result.items()}
 
 
-def get_all_required_files(workflow: Dict[str, Any]) -> List[tuple[str, str]]:
+def get_all_required_files(workflow: dict[str, Any]) -> list[tuple[str, str]]:
     """
     Get all required model files as a flat list of (directory, filename) tuples.
     
@@ -125,7 +125,7 @@ def get_all_required_files(workflow: Dict[str, Any]) -> List[tuple[str, str]]:
     return result
 
 
-def get_required_storage_paths(workflow: Dict[str, Any]) -> List[str]:
+def get_required_storage_paths(workflow: dict[str, Any]) -> list[str]:
     """
     Get all required model files as storage paths.
     

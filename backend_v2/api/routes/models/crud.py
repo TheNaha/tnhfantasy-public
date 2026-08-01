@@ -1,15 +1,16 @@
-from .schemas import *
-from typing import Dict, Any, Optional, List
+
 from fastapi import APIRouter, Depends
 
-from sqlmodel import Session
-from pydantic import BaseModel
-
-from api.deps import get_session, get_session_sync, get_model_service_v2, get_model_repo_v2
-from services.model_service import ModelServiceV2
+from api.deps import (
+    get_model_repo_v2,
+    get_model_service_v2,
+    model_logger,
+)
+from core.exceptions import NotFoundError, ValidationError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-from core.exceptions import NotFoundError, ValidationError, ComfyError
-from api.deps import model_logger
+from services.model_service import ModelServiceV2
+
+from .schemas import *
 
 logger = model_logger()
 
@@ -228,8 +229,8 @@ async def list_models_by_directory(
 @router.get("/search")
 async def search_models(
     q: str = "",
-    type: Optional[str] = None,
-    base_model: Optional[str] = None,
+    type: str | None = None,
+    base_model: str | None = None,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Search models by name, type, or base model."""
@@ -305,7 +306,7 @@ async def toggle_version_enabled(
 @router.get("/{model_id}/generation-info")
 async def get_generation_info(
     model_id: str,
-    version_id: Optional[int] = None,
+    version_id: int | None = None,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """

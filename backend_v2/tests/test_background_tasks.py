@@ -2,7 +2,10 @@ import asyncio
 
 import pytest
 
-from infrastructure.background_tasks import cancel_background_tasks, start_background_task
+from infrastructure.background_tasks import (
+    cancel_background_tasks,
+    start_background_task,
+)
 
 
 @pytest.fixture(autouse=True)

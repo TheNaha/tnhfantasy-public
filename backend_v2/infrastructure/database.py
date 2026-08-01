@@ -1,7 +1,7 @@
 # Database setup with SQLModel
 import os
+from collections.abc import Generator
 from contextlib import asynccontextmanager
-from typing import Generator
 
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -20,8 +20,7 @@ def get_database_url() -> str:
     if url.startswith("sqlite"):
         # Extract path from sqlite:///./data/comfy.db
         db_path = url.replace("sqlite:///", "")
-        if db_path.startswith("./"):
-            db_path = db_path[2:]
+        db_path = db_path.removeprefix("./")
 
         db_dir = os.path.dirname(db_path)
         if db_dir:
@@ -92,14 +91,8 @@ def _enable_pgvector_extension() -> None:
 def create_db_and_tables() -> None:
     """Create all tables in the database."""
     # Import V1 entities to register them with SQLModel
-    from core.entities import (Collection, CollectionImage, Job,
-                               LoadBalancerState, LoadBalancingConfig,
-                               Prompt, Provider)
     # Import V2 entities (normalized schema)
-    from core.entities import (ModelFile, ModelImage, ModelTag, ModelV2,
-                                  ModelVersion, ProviderVersionStatus, DeletedFileTombstone)
     # Import World Vault entities
-    from core.entities import (Character, Chat, Message, Lorebook, LorebookEntry, Scenario, Story, StoryChapter)
 
     # Enable pgvector before creating tables (required for Vector columns)
     _enable_pgvector_extension()

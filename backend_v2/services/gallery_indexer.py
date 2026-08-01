@@ -20,13 +20,14 @@
 #   background thread while API requests read from the main thread.
 
 import os
-import time
-import threading
 import re
+import threading
+import time
 from collections import defaultdict
-from typing import List, Dict, Any, Optional, Set
-from watchdog.observers import Observer
+from typing import Any
+
 from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 from infrastructure.logging import get_logger
 
@@ -77,7 +78,7 @@ class GalleryIndexer:
     
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(GalleryIndexer, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
@@ -86,10 +87,10 @@ class GalleryIndexer:
             return
             
         self.output_dir = output_dir or os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(__file__), "../../output"))
-        self.files: Dict[str, Dict[str, Any]] = {}
-        self.relative_path_index: Dict[str, str] = {}
-        self.filename_index: Dict[str, Set[str]] = defaultdict(set)
-        self.sorted_keys_date_desc: List[str] = []
+        self.files: dict[str, dict[str, Any]] = {}
+        self.relative_path_index: dict[str, str] = {}
+        self.filename_index: dict[str, set[str]] = defaultdict(set)
+        self.sorted_keys_date_desc: list[str] = []
         
         self.lock = threading.RLock()
         self.observer = None
@@ -103,7 +104,7 @@ class GalleryIndexer:
         if not isinstance(value, dict):
             return value
 
-        compact: Dict[str, Any] = {}
+        compact: dict[str, Any] = {}
         for key in ["name", "display_name", "filename", "type", "size", "id"]:
             if key in value:
                 compact[key] = value.get(key)
@@ -122,7 +123,7 @@ class GalleryIndexer:
         if not isinstance(value, dict):
             return value
 
-        compact: Dict[str, Any] = {}
+        compact: dict[str, Any] = {}
         for key in ["name", "display_name", "filename", "strength", "weight", "id"]:
             if key in value:
                 compact[key] = value.get(key)
@@ -139,7 +140,7 @@ class GalleryIndexer:
         return compact
 
     @classmethod
-    def _compact_metadata(cls, metadata: Any) -> Dict[str, Any]:
+    def _compact_metadata(cls, metadata: Any) -> dict[str, Any]:
         """
         Keep scalar metadata and compact known heavy nested structures.
 
@@ -149,7 +150,7 @@ class GalleryIndexer:
         if not isinstance(metadata, dict):
             return {}
 
-        compact: Dict[str, Any] = {}
+        compact: dict[str, Any] = {}
         passthrough_dict_keys = {"job", "dimensions", "thumbnails"}
         passthrough_list_keys = {"embeddings", "tags"}
 
@@ -228,7 +229,7 @@ class GalleryIndexer:
                 pass
         return 0
 
-    def _process_file(self, filepath: str) -> Optional[Dict[str, Any]]:
+    def _process_file(self, filepath: str) -> dict[str, Any] | None:
         """Extract metadata and info for a single file."""
         try:
             name = os.path.relpath(filepath, self.output_dir).replace("\\", "/")
@@ -296,7 +297,7 @@ class GalleryIndexer:
         
         processed_files = {}
         processed_relative_index = {}
-        processed_filename_index: Dict[str, Set[str]] = defaultdict(set)
+        processed_filename_index: dict[str, set[str]] = defaultdict(set)
         for root, dirs, files in os.walk(self.output_dir):
             if "thumb" in dirs:
                 dirs.remove("thumb")
@@ -363,7 +364,7 @@ class GalleryIndexer:
         if not self.is_ready:
             self._ready_event.wait(timeout=5.0)
 
-    def get_path_by_relative_path(self, relative_path: str) -> Optional[str]:
+    def get_path_by_relative_path(self, relative_path: str) -> str | None:
         """Get the absolute path for an exact relative path."""
         self._wait_until_ready()
         normalized = relative_path.lstrip("/\\").replace("\\", "/")
@@ -371,7 +372,7 @@ class GalleryIndexer:
         with self.lock:
             return self.relative_path_index.get(normalized)
 
-    def get_path_by_filename(self, filename: str) -> Optional[str]:
+    def get_path_by_filename(self, filename: str) -> str | None:
         """
         Get the absolute path for a basename only when it is unambiguous.
         Thread-safe.
@@ -384,7 +385,7 @@ class GalleryIndexer:
                 return next(iter(matches))
             return None
 
-    def get_path(self, relative_or_filename: str) -> Optional[str]:
+    def get_path(self, relative_or_filename: str) -> str | None:
         """Resolve a file path by exact relative path first, then safe basename fallback."""
         normalized = relative_or_filename.lstrip("/\\").replace("\\", "/")
         if "/" in normalized:
@@ -393,7 +394,7 @@ class GalleryIndexer:
                 return path
         return self.get_path_by_filename(os.path.basename(normalized))
                 
-    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None, workspace: Optional[str] = None, character_id: Optional[str] = None, story_id: Optional[str] = None):
+    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: str | None = None, workspace: str | None = None, character_id: str | None = None, story_id: str | None = None):
         """
         Query the in-memory index with optional search, sort, and pagination.
 
@@ -477,7 +478,7 @@ class GalleryIndexer:
             # Shallow copy - callers only read dicts during JSON serialization
             return {"files": list(result), "total": total}
 
-    def get_all_files(self) -> List[Dict[str, Any]]:
+    def get_all_files(self) -> list[dict[str, Any]]:
         """
         Get all file metadata from the index.
         Thread-safe method for statistics generation.

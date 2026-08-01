@@ -1,9 +1,11 @@
 """Tests for infrastructure/providers/base.py, beam_provider.py, and modal_provider.py"""
-from contextlib import asynccontextmanager
 import base64
-import pytest
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
-from infrastructure.providers.base import ServerlessProvider, FileProxyProvider
+
+import pytest
+
+from infrastructure.providers.base import FileProxyProvider, ServerlessProvider
 from infrastructure.providers.beam_provider import BeamProvider
 from infrastructure.providers.modal_provider import ModalProvider
 from infrastructure.providers.provider_registry import HttpFileProxy

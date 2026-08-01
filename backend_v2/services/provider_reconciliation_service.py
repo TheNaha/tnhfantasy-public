@@ -1,27 +1,29 @@
-from typing import Dict, Any
+from datetime import datetime, timezone
+from typing import Any
+
 from core.entities import Provider
-from infrastructure.repositories import ProviderRepository
 from core.exceptions import NotFoundError
+from infrastructure.repositories import ProviderRepository
 from services.provider_utils import (
-    read_reconciliation_state,
-    normalize_reconciliation_status,
     RECONCILIATION_IN_PROGRESS_STATUSES,
-    RECONCILIATION_TERMINAL_STATUSES,
     RECONCILIATION_IN_PROGRESS_TTL,
-    utcnow_iso,
+    RECONCILIATION_TERMINAL_STATUSES,
+    compose_config,
+    extract_deploy_config,
+    extract_runtime_config,
+    normalize_reconciliation_status,
     parse_utc_timestamp,
     read_deploy_state,
-    extract_runtime_config,
-    extract_deploy_config,
-    compose_config
+    read_reconciliation_state,
+    utcnow_iso,
 )
-from datetime import datetime, timezone
+
 
 class ProviderReconciliationService:
     def __init__(self, repo: ProviderRepository):
         self.repo = repo
 
-    def _persist_reconciliation_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _persist_reconciliation_state(self, provider: Provider, state: dict[str, Any]) -> dict[str, Any]:
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
@@ -34,10 +36,10 @@ class ProviderReconciliationService:
             raise NotFoundError("Provider", provider.id)
         return state
 
-    def _is_reconciliation_in_progress(self, state: Dict[str, Any]) -> bool:
+    def _is_reconciliation_in_progress(self, state: dict[str, Any]) -> bool:
         return normalize_reconciliation_status(state.get("status")) in RECONCILIATION_IN_PROGRESS_STATUSES
 
-    def _is_reconciliation_state_fresh(self, state: Dict[str, Any]) -> bool:
+    def _is_reconciliation_state_fresh(self, state: dict[str, Any]) -> bool:
         if not self._is_reconciliation_in_progress(state):
             return True
 
@@ -48,7 +50,7 @@ class ProviderReconciliationService:
         age = datetime.now(timezone.utc) - updated_at
         return age.total_seconds() <= RECONCILIATION_IN_PROGRESS_TTL
 
-    async def get_provider_reconciliation_state(self, provider: Provider) -> Dict[str, Any]:
+    async def get_provider_reconciliation_state(self, provider: Provider) -> dict[str, Any]:
         state = read_reconciliation_state(provider)
         state["status"] = normalize_reconciliation_status(state.get("status"))
         if self._is_reconciliation_state_fresh(state):
@@ -70,7 +72,7 @@ class ProviderReconciliationService:
         self._persist_reconciliation_state(provider, stale_state)
         return stale_state
 
-    async def start_reconciliation_session(self, provider: Provider, force: bool = False) -> Dict[str, Any]:
+    async def start_reconciliation_session(self, provider: Provider, force: bool = False) -> dict[str, Any]:
         current_state = read_reconciliation_state(provider)
         if not force and self._is_reconciliation_in_progress(current_state) and self._is_reconciliation_state_fresh(current_state):
             return {
@@ -92,7 +94,7 @@ class ProviderReconciliationService:
         self._persist_reconciliation_state(provider, next_state)
         return {"accepted": True, "state": next_state}
 
-    async def upsert_reconciliation_state(self, provider: Provider, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def upsert_reconciliation_state(self, provider: Provider, updates: dict[str, Any]) -> dict[str, Any]:
         current_state = read_reconciliation_state(provider)
 
         merged = dict(current_state)

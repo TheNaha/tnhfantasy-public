@@ -1,7 +1,9 @@
 # EventBus Unit Tests
 import asyncio
+
 import pytest
-from core.events import EventBus, Event, EventType, emit_job_event, emit_download_event
+
+from core.events import Event, EventBus, EventType, emit_download_event, emit_job_event
 
 
 class TestEvent:
@@ -417,7 +419,7 @@ class TestEmitProviderFunctions:
 
     @pytest.mark.asyncio
     async def test_emit_provider_event(self):
-        from core.events import emit_provider_event, EventType
+        from core.events import EventType, emit_provider_event
         await emit_provider_event(
             EventType.JOB_CREATED, "modal-primary", {"status": "connected"}
         )

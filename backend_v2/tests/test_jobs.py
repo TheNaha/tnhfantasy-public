@@ -1,5 +1,4 @@
 # Job API tests
-import pytest
 from infrastructure.request_dedup import clear_dedup_cache
 
 

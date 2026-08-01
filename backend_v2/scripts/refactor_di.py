@@ -1,6 +1,5 @@
-import os
-import re
 import glob
+import re
 
 routes_dir = "backend_v2/api/routes"
 files = glob.glob(f"{routes_dir}/**/*.py", recursive=True)

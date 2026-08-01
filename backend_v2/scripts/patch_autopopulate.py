@@ -1,5 +1,3 @@
-import sys
-import re
 
 file_path = "/home/thenaha/containers/stacks/comfyui/backend_v2/api/routes/models/autopopulate.py"
 with open(file_path, "r") as f:

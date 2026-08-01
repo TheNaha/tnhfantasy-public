@@ -1,8 +1,9 @@
 import os
 import shutil
+
 import pytest
 from fastapi.testclient import TestClient
-from api.main import app
+
 import api.routes.files as files_module
 
 # Setup directories for testing

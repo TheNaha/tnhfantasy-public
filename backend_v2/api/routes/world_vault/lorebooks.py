@@ -1,10 +1,10 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from typing import List, Optional, Any
-from datetime import datetime, timezone
 
-from api.deps import get_session, get_embedding_service
+from api.deps import get_embedding_service, get_session
 from core.entities import Lorebook, LorebookEntry
 from services.embedding_service import EmbeddingService
 
@@ -12,15 +12,15 @@ router = APIRouter()
 
 
 class LorebookUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
 
 
 class EntryUpdate(BaseModel):
-    keys: Optional[List[str]] = None
-    content: Optional[str] = None
+    keys: list[str] | None = None
+    content: str | None = None
 
-@router.get("/", response_model=List[Lorebook])
+@router.get("/", response_model=list[Lorebook])
 def list_lorebooks(session: Session = Depends(get_session)):
     return session.exec(select(Lorebook).order_by(Lorebook.name)).all()
 
@@ -76,7 +76,7 @@ def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
 # SEARCH ENDPOINT
 # ============================================================================
 
-@router.get("/{lorebook_id}/search", response_model=List[LorebookEntry])
+@router.get("/{lorebook_id}/search", response_model=list[LorebookEntry])
 def search_entries(
     lorebook_id: str, 
     q: str, 
@@ -107,7 +107,7 @@ def search_entries(
         ).all()
         
         return results
-    except Exception as e:
+    except Exception:
         # Fallback to simple ILIKE if pgvector/embeddings fail (e.g. SQLite fallback for testing)
         search_query = f"%{q.strip()}%"
         from sqlalchemy import or_
@@ -126,7 +126,7 @@ def search_entries(
 # ============================================================================
 # ENTRIES CRUD
 # ============================================================================
-@router.get("/{lorebook_id}/entries", response_model=List[LorebookEntry])
+@router.get("/{lorebook_id}/entries", response_model=list[LorebookEntry])
 def list_entries(lorebook_id: str, session: Session = Depends(get_session)):
     return session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)).all()
 
@@ -148,7 +148,7 @@ def create_entry(
     text_to_embed = f"{' '.join(keys_list)} {entry.content or ''}".strip()
     try:
         entry.embedding = embedding_service.generate_embedding(text_to_embed)
-    except Exception as e:
+    except Exception:
         # Non-fatal if embedding generation fails, though in production we'd want to know
         pass
         

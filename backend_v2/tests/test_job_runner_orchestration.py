@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.job_runner import maybe_retry_current_provider, select_next_provider
 from core.entities import JobStatus
+from services.job_runner import maybe_retry_current_provider, select_next_provider
 
 
 class StubJobService:

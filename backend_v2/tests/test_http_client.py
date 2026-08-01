@@ -1,16 +1,18 @@
 """Tests for infrastructure/http_client.py"""
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
+import pytest
+
+import infrastructure.http_client as http_module
 from infrastructure.http_client import (
-    get_http_client,
     close_http_client,
-    get_streaming_client,
     get,
+    get_http_client,
+    get_streaming_client,
     post,
     post_json,
 )
-import infrastructure.http_client as http_module
 
 
 @pytest.fixture(autouse=True)

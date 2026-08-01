@@ -1,12 +1,13 @@
 """Tests for services/model_service_v2.py"""
-import pytest
-from unittest.mock import patch, AsyncMock
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from services.model_service import ModelServiceV2
 from core.exceptions import NotFoundError
+from services.model_service import ModelServiceV2
 
 
 @pytest.fixture(name="engine")

@@ -1,10 +1,10 @@
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from sqlmodel import Session
-from core.entities import Job, JobStatus
-from infrastructure.database import get_session
+
+from core.entities import JobStatus
 from services.job_service import JobService
 
 logger = logging.getLogger("orchestrator")
@@ -29,10 +29,10 @@ class AgenticOrchestrator:
         
     async def process_llm_response(
         self, 
-        message_payload: Dict[str, Any], 
-        context: List[Dict[str, Any]],
-        provider_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        message_payload: dict[str, Any], 
+        context: list[dict[str, Any]],
+        provider_id: str | None = None
+    ) -> dict[str, Any]:
         """
         Processes an LLM assistant response (which may contain tool_calls), 
         running any tool calls autonomously until a plain text response is returned.
@@ -91,10 +91,10 @@ class AgenticOrchestrator:
     async def run_chat_turn(
         self,
         user_message: str,
-        context: List[Dict[str, Any]],
-        provider_id: Optional[str] = None,
-        character_system_prompt: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        context: list[dict[str, Any]],
+        provider_id: str | None = None,
+        character_system_prompt: str | None = None,
+    ) -> dict[str, Any]:
         """
         Main entry point for a single chat turn.
         1. Optionally prepends a character system prompt.
@@ -121,7 +121,7 @@ class AgenticOrchestrator:
         # Pass context *without* the user message so process_llm_response can append llm_response cleanly
         return await self.process_llm_response(llm_response, current_context[:-1], provider_id)
 
-    async def _execute_tool(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_tool(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         """
         Executes a single tool call based on its function name and arguments.
         """
@@ -137,7 +137,7 @@ class AgenticOrchestrator:
         
         raise OrchestratorError(f"Unknown tool: {name}")
 
-    async def _tool_generate_image(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _tool_generate_image(self, args: dict[str, Any]) -> dict[str, Any]:
         """
         Tool: Generates an image and returns the asset reference.
         """
@@ -167,7 +167,7 @@ class AgenticOrchestrator:
                 return {"status": "error", "error": job_status.error or "Job failed or cancelled"}
             await asyncio.sleep(1.0)
         
-    async def _request_llm_completion(self, context: List[Dict[str, Any]], provider_id: Optional[str]) -> Dict[str, Any]:
+    async def _request_llm_completion(self, context: list[dict[str, Any]], provider_id: str | None) -> dict[str, Any]:
         """
         Dispatches the completion job to the LLM worker.
         """

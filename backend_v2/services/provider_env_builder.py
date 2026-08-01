@@ -1,15 +1,14 @@
-from typing import Dict
-from core.entities import Provider
 
+from core.entities import Provider
 from infrastructure.providers.provider_registry import ProviderRegistry
 from services.provider_utils import (
-    extract_runtime_config,
-    extract_deploy_config,
     clean_dict,
+    extract_deploy_config,
+    extract_runtime_config,
 )
 
 
-def build_provider_environment(provider: Provider) -> Dict[str, str]:
+def build_provider_environment(provider: Provider) -> dict[str, str]:
     """Build environment variables for a provider worker container.
 
     Common env vars (PROVIDER_ID, BACKEND_URL, worker config, shared tokens)
@@ -24,7 +23,7 @@ def build_provider_environment(provider: Provider) -> Dict[str, str]:
     credentials = clean_dict(provider.credentials)
 
     # ── Common env vars ──────────────────────────────────────────────
-    env_vars: Dict[str, str] = {}
+    env_vars: dict[str, str] = {}
     env_vars["PROVIDER_ID"] = provider.id
 
     from config import settings

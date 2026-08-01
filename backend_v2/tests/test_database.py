@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 from sqlmodel.pool import StaticPool
 
 import infrastructure.database as db_module
@@ -174,7 +174,10 @@ class TestRunMigrations:
             conn.execute(text("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)"))
 
         from infrastructure.migrations import run_migrations
-        from infrastructure.migrations.steps import _get_table_columns, _get_applied_migrations
+        from infrastructure.migrations.steps import (
+            _get_applied_migrations,
+            _get_table_columns,
+        )
 
         run_migrations(engine)
 
@@ -212,7 +215,10 @@ class TestRunMigrations:
             """))
 
         from infrastructure.migrations import run_migrations
-        from infrastructure.migrations.steps import _get_table_columns, _get_applied_migrations
+        from infrastructure.migrations.steps import (
+            _get_applied_migrations,
+            _get_table_columns,
+        )
 
         run_migrations(engine)
 

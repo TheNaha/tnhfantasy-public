@@ -1,6 +1,7 @@
 import json
-from sqlalchemy import create_engine, MetaData, select, insert, text
 import logging
+
+from sqlalchemy import MetaData, create_engine, insert, select, text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migration")
@@ -75,9 +76,7 @@ def migrate():
                     # Fill in defaults for missing columns (added in new schema)
                     for col in pg_table.columns:
                         if col.name not in row_dict:
-                            if col.name == 'worker_type':
-                                row_dict[col.name] = 'image'
-                            elif col.name == 'task_type':
+                            if col.name == 'worker_type' or col.name == 'task_type':
                                 row_dict[col.name] = 'image'
                             elif col.default is not None:
                                 # Use default value from SQLAlchemy column if available

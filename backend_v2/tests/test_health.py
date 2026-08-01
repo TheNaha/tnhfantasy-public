@@ -1,5 +1,4 @@
 # Health API tests
-import pytest
 
 def test_health_check(client):
     """Test health endpoint."""

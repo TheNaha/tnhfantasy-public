@@ -1,8 +1,7 @@
 """Additional tests for api/routes/providers.py"""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-import json
-from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -117,8 +116,9 @@ class TestProvidersRouteSaveImage:
 
     def test_save_image_with_data(self, client):
         import base64
-        from PIL import Image
         import io
+
+        from PIL import Image
         img = Image.new("RGB", (10, 10))
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -183,8 +183,8 @@ class TestProvidersRouteReconcile:
     def test_reconcile_provider_conflict_when_already_running(self, client):
         client.post("/api/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
         
-        from api.main import app
         from api.deps import get_provider_lifecycle_service
+        from api.main import app
         
         lifecycle = MagicMock()
         lifecycle.trigger_reconciliation = AsyncMock(
@@ -241,8 +241,8 @@ class TestProvidersRouteReconcile:
         emit_stats.assert_awaited_once_with("test-provider", {"total_models_in_storage": 9})
 
     def test_reconciliation_event_without_stats_does_not_send_stats_overwrite(self, client):
-        from api.main import app
         from api.deps import get_provider_service
+        from api.main import app
         mock_service = MagicMock()
         mock_service.upsert_reconciliation_state = AsyncMock(
             return_value={"provider_id": "test-provider", "status": "reconciling"}

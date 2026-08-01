@@ -13,18 +13,16 @@
 #   POST   /api/collections/{id}/images          – Add images to collection
 #   DELETE /api/collections/{id}/images          – Remove images from collection
 #   POST   /api/collections/import               – Bulk import (for localStorage migration)
-from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, select
-from sqlalchemy import text, func
-from typing import Optional, List
 from datetime import datetime, timezone
-from pydantic import BaseModel
 
-from api.deps import get_session, get_collection_repo
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+from sqlmodel import Session
+
+from api.deps import get_collection_repo, get_session
 from core.entities import Collection, CollectionImage
 from core.exceptions import NotFoundError
 from infrastructure.repositories.collection_repo import CollectionRepository
-
 
 router = APIRouter(prefix="/api/collections", tags=["collections"])
 
@@ -33,22 +31,22 @@ router = APIRouter(prefix="/api/collections", tags=["collections"])
 class CollectionCreate(BaseModel):
     name: str
     color: str = "#3B82F6"
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class CollectionUpdate(BaseModel):
-    name: Optional[str] = None
-    color: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    color: str | None = None
+    description: str | None = None
 
 
 class AddImages(BaseModel):
-    images: List[str]  # List of image filenames
+    images: list[str]  # List of image filenames
 
 
 class CollectionBulkImport(BaseModel):
     """For migrating from localStorage."""
-    collections: List[dict]  # { name, color, images: [filenames] }
+    collections: list[dict]  # { name, color, images: [filenames] }
 
 
 # CRUD endpoints

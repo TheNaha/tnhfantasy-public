@@ -1,17 +1,20 @@
-from typing import Dict, Any, List, Optional
-import os
+from typing import Any
 
 from sqlmodel import Session
 
-from core.entities import Provider
 from core.entities import (
-    ModelV2, ModelVersion, ModelFile, ProviderVersionStatus,
-    FLUX_DEFAULT_COMPONENTS, AURAFLOW_DEFAULT_COMPONENTS, is_unet_only_model
+    AURAFLOW_DEFAULT_COMPONENTS,
+    FLUX_DEFAULT_COMPONENTS,
+    ModelFile,
+    ModelV2,
+    ModelVersion,
+    Provider,
+    is_unet_only_model,
 )
 from core.exceptions import NotFoundError
 from infrastructure.http_client import get_http_client
-from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.logging import model_logger
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
 logger = model_logger()
 
@@ -22,16 +25,16 @@ class ModelDownloader:
     and dependency tracking for the model service.
     """
 
-    def __init__(self, session: Session, repo: Optional[ModelRepositoryV2] = None):
+    def __init__(self, session: Session, repo: ModelRepositoryV2 | None = None):
         self.session = session
         self.repo = repo or ModelRepositoryV2(session)
 
     async def trigger_download_to_providers(
         self, 
         model_id: int, 
-        version_ids: List[int] = None,
-        provider_ids: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        version_ids: list[int] = None,
+        provider_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """
         Trigger immediate download of model files to all enabled providers.
         Called after adding a model to the database.
@@ -99,7 +102,7 @@ class ModelDownloader:
         
         return results
 
-    async def trigger_delete_from_providers(self, model_id: int) -> Dict[str, Any]:
+    async def trigger_delete_from_providers(self, model_id: int) -> dict[str, Any]:
         """
         Trigger immediate deletion of model files from all providers.
         Called BEFORE deleting model from database.
@@ -109,8 +112,9 @@ class ModelDownloader:
             return {"status": "error", "message": f"Model {model_id} not found"}
         
         # Get all providers (even disabled - clean up everywhere)
-        from core.entities import Provider
         from sqlmodel import select
+
+        from core.entities import Provider
         providers = list(self.session.exec(select(Provider)).all())
         
         results = {"deleted": 0, "providers": []}
@@ -173,9 +177,9 @@ class ModelDownloader:
         name: str,
         directory: str,
         download_url: str,
-        provider_ids: Optional[List[str]] = None,
-        model_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        provider_ids: list[str] | None = None,
+        model_type: str | None = None,
+    ) -> dict[str, Any]:
         """Create a V2 model entry for a direct download URL and trigger sync."""
         filename = name.split("/")[-1].strip()
         if not filename:
@@ -237,9 +241,9 @@ class ModelDownloader:
 
     async def check_and_trigger_dependencies(
         self, 
-        civitai_data: Optional[Dict[str, Any]] = None,
-        base_model_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        civitai_data: dict[str, Any] | None = None,
+        base_model_name: str | None = None
+    ) -> dict[str, Any]:
         """
         Check for and trigger auto-download of dependencies (CLIP/VAE) for UNET models.
         """
@@ -357,10 +361,10 @@ class ModelDownloader:
         file_id: int,
         provider_id: str,
         status: str,
-        storage_path: Optional[str] = None,
-        size_bytes: Optional[int] = None,
-        error_message: Optional[str] = None
-    ) -> Dict[str, Any]:
+        storage_path: str | None = None,
+        size_bytes: int | None = None,
+        error_message: str | None = None
+    ) -> dict[str, Any]:
         """Update provider status for a file."""
         status_obj = self.repo.update_provider_status(
             file_id=file_id,
@@ -385,6 +389,6 @@ class ModelDownloader:
             "downloaded_at": status_obj.downloaded_at.isoformat() if status_obj.downloaded_at else None
         }
 
-    async def get_model_provider_statuses(self, model_id: int) -> Dict[str, Dict[str, Any]]:
+    async def get_model_provider_statuses(self, model_id: int) -> dict[str, dict[str, Any]]:
         """Get all provider statuses for a model."""
         return self.repo.get_provider_statuses_for_model(model_id)

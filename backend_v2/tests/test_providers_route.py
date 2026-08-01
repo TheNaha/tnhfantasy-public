@@ -1,8 +1,8 @@
 """Tests for api/routes/providers.py"""
 import base64
 import io
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from PIL import Image
 
 

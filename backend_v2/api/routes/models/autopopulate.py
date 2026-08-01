@@ -1,24 +1,26 @@
 import asyncio
+
 from fastapi import APIRouter, Depends
-from core.exceptions import NotFoundError, ValidationError, ComfyError
-from sqlmodel import Session, select
-from api.deps import get_session, get_model_repo_v2, get_model_civitai_sync_service
+from pydantic import BaseModel
+from sqlmodel import Session
+
+from api.deps import (
+    get_logger,
+    get_model_civitai_sync_service,
+    get_model_repo_v2,
+    get_session,
+    get_session_context,
+)
+from api.routes.websocket import broadcast_to_all
+from core.exceptions import ComfyError, NotFoundError, ValidationError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_civitai_sync import ModelCivitaiSyncService
-from core.entities import ModelV2
-from api.deps import get_session_context
-from api.deps import get_logger
-
-from pydantic import BaseModel
-from typing import Optional
-
-from api.routes.websocket import broadcast_to_all
 
 logger = get_logger("autopopulate")
 router = APIRouter(prefix="", tags=["Models"])
 
 class AutopopulateRequest(BaseModel):
-    civitai_id: Optional[int] = None
+    civitai_id: int | None = None
 
 class BatchAutopopulateCandidatesRequest(BaseModel):
     model_ids: list[int]
@@ -54,7 +56,7 @@ async def get_autopopulate_candidates(
     """
     try:
         return await service.search_civitai_candidates(str(model_id))
-    except ValueError as e:
+    except ValueError:
         raise NotFoundError("Model", model_id)
     except Exception as e:
         raise ValidationError(str(e))
@@ -87,7 +89,7 @@ async def batch_get_autopopulate_candidates(
 async def search_autopopulate_candidates(
     model_id: str,
     query: str,
-    types: Optional[str] = None,
+    types: str | None = None,
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     """Manual CivitAI search for autopopulate. Formats results like candidates."""
@@ -129,13 +131,13 @@ async def search_autopopulate_candidates(
 @router.post("/{model_id}/autopopulate")
 async def autopopulate_model_details(
     model_id: str, 
-    request: Optional[AutopopulateRequest] = None,
+    request: AutopopulateRequest | None = None,
     service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):
     target_id = request.civitai_id if request else None
     try:
         return await service.autopopulate_model(model_id, target_civitai_id=target_id)
-    except ValueError as e:
+    except ValueError:
         raise NotFoundError("Model", model_id)
     except Exception as e:
         raise ValidationError(str(e))

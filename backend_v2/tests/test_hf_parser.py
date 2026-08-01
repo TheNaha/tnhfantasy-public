@@ -1,14 +1,13 @@
 """Tests for infrastructure/parsers/hf_parser.py"""
-import pytest
 from infrastructure.parsers.hf_parser import (
-    infer_model_type,
-    infer_base_model,
-    extract_preview_images,
     extract_description,
+    extract_preview_images,
     generate_hf_id,
+    get_download_url,
+    infer_base_model,
+    infer_model_type,
     normalize_hf_to_civitai,
     parse_hf_url,
-    get_download_url,
 )
 
 

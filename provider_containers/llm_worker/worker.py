@@ -25,6 +25,15 @@ runtime_config = {
 if ENGINE == "openai_compat":
     from llm_worker.engines.openai_compat.client import OpenAICompatProviderClient
     client = OpenAICompatProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
+elif ENGINE == "anthropic":
+    from llm_worker.engines.anthropic.client import AnthropicProviderClient
+    client = AnthropicProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
+elif ENGINE == "google":
+    from llm_worker.engines.google.client import GoogleProviderClient
+    client = GoogleProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
+elif ENGINE == "modal":
+    from llm_worker.engines.modal.client import VLLMModalProviderClient
+    client = VLLMModalProviderClient(provider_id=PROVIDER_ID, runtime_config=runtime_config)
 else:
     raise ValueError(f"Unknown ENGINE: {ENGINE}")
 

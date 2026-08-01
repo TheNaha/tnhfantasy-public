@@ -1,10 +1,11 @@
 # Cache utilities using cachetools for in-memory TTL caching
 # Provides lightweight caching for frequently accessed data like statistics and model metadata
 
-from typing import Any, Callable, Optional
-from functools import wraps
-from cachetools import TTLCache, LRUCache
 import asyncio
+from collections.abc import Callable
+from functools import wraps
+
+from cachetools import LRUCache, TTLCache
 
 from infrastructure.logging import cache_logger
 from infrastructure.metrics import metrics
@@ -35,7 +36,7 @@ _lru_cache = LRUCache(maxsize=200)
 # CACHE DECORATOR
 # ============================================================================
 
-def cached(cache_name: str = "stats", ttl: Optional[int] = None):
+def cached(cache_name: str = "stats", ttl: int | None = None):
     """
     Decorator for caching function results.
     
@@ -122,7 +123,7 @@ def _make_key(func_name: str, args: tuple, kwargs: dict) -> str:
 # CACHE MANAGEMENT
 # ============================================================================
 
-def invalidate_cache(cache_name: str = "stats", key: Optional[str] = None):
+def invalidate_cache(cache_name: str = "stats", key: str | None = None):
     """
     Invalidate cache entries.
     

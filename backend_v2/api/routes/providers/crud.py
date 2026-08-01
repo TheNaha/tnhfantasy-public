@@ -8,24 +8,23 @@
 #   DELETE /api/providers/{id}         – Remove provider + cascade status records
 #   GET    /api/providers/load-balancing – Current LB strategy
 #   PUT    /api/providers/load-balancing – Update LB strategy
-from typing import Dict, Any, Optional, List
 import asyncio
-from datetime import datetime, timezone, timedelta
-import httpx
-from fastapi import APIRouter, Depends
-from sqlmodel import Session
-from pydantic import BaseModel
+from typing import Any
 
-from api.deps import get_session, get_provider_service, get_container_manager, get_provider_worker_url
-from core.events import Event, EventType, emit_provider_stats
-from services.provider_service import ProviderService
-from api.deps import get_provider_lifecycle_service, get_provider_status_service
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlmodel import Session
+
+from api.deps import (
+    api_logger,
+    get_http_client,
+    get_provider_service,
+    get_provider_status_service,
+    get_provider_worker_url,
+    get_session,
+    start_background_task,
+)
 from services.provider_status_service import invalidate_provider_status_caches
-from core.exceptions import NotFoundError, ProviderError, ValidationError
-from api.deps import start_background_task
-from api.deps import get_http_client
-from api.deps import api_logger
-from config import get_worker_backend_url
 
 logger = api_logger()
 
@@ -45,35 +44,35 @@ class ProviderRequest(BaseModel):
     type: str = "modal"
     enabled: bool = True
     priority: int = 1
-    credentials: Dict[str, Any] = {}
-    runtime_config: Optional[Dict[str, Any]] = None
-    deploy_config: Optional[Dict[str, Any]] = None
+    credentials: dict[str, Any] = {}
+    runtime_config: dict[str, Any] | None = None
+    deploy_config: dict[str, Any] | None = None
     # Legacy compatibility fields accepted on write only.
-    config: Dict[str, Any] = {}
-    container_config: Optional[Dict[str, Any]] = None
+    config: dict[str, Any] = {}
+    container_config: dict[str, Any] | None = None
 
 
 class ProviderUpdateRequest(BaseModel):
-    type: Optional[str] = None
-    enabled: Optional[bool] = None
-    priority: Optional[int] = None
-    credentials: Optional[Dict[str, Any]] = None
-    runtime_config: Optional[Dict[str, Any]] = None
-    deploy_config: Optional[Dict[str, Any]] = None
+    type: str | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    credentials: dict[str, Any] | None = None
+    runtime_config: dict[str, Any] | None = None
+    deploy_config: dict[str, Any] | None = None
     # Legacy compatibility fields accepted on write only.
-    config: Optional[Dict[str, Any]] = None
-    container_config: Optional[Dict[str, Any]] = None
+    config: dict[str, Any] | None = None
+    container_config: dict[str, Any] | None = None
 
 
 class LoadBalancingConfigRequest(BaseModel):
-    strategy: Optional[str] = None
-    fallback_enabled: Optional[bool] = None
+    strategy: str | None = None
+    fallback_enabled: bool | None = None
 
 
 class AddCustomProviderModelRequest(BaseModel):
     directory: str
-    model_data: Dict[str, Any]
-    provider_ids: List[str]
+    model_data: dict[str, Any]
+    provider_ids: list[str]
 
 
 

@@ -1,5 +1,4 @@
 # Model API V2 tests
-import pytest
 
 def test_list_models_empty(client):
     """Test listing models when empty."""

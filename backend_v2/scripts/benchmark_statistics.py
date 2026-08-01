@@ -1,21 +1,23 @@
 
-import os
-import json
-import time
-import shutil
 import asyncio
-from PIL import Image
-from PIL.PngImagePlugin import PngInfo
-from datetime import datetime
+import json
+import os
+import shutil
 
 # Import the function to test
 # We need to mock the OUTPUT_DIR in the module or monkeypatch it
 import sys
+import time
+
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 # Create a dummy statistics module that mimics the real one but allows us to point to a test dir
 from api.routes import statistics
 from infrastructure.cache import invalidate_cache
+
 
 async def benchmark_detailed_stats(num_files=100):
     """

@@ -1,20 +1,21 @@
-import base64
 import asyncio
+import base64
 import io
 import os
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from collections.abc import Awaitable, Callable
+from typing import Any
 
+from config import settings
 from core.entities import JobStatus
 from core.events import EventType, emit_job_event
 from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
-from config import settings
 
 logger = get_logger("job_processing")
 
 
-_finalizing_jobs: Set[str] = set()
+_finalizing_jobs: set[str] = set()
 _finalizing_jobs_lock = None
 
 
@@ -26,7 +27,7 @@ def _get_finalization_lock():
     return _finalizing_jobs_lock
 
 
-def _serialize_datetime(value: Any) -> Optional[str]:
+def _serialize_datetime(value: Any) -> str | None:
     if value is None:
         return None
     isoformat = getattr(value, "isoformat", None)
@@ -51,7 +52,7 @@ async def _release_finalization(job_id: str) -> None:
         _finalizing_jobs.discard(job_id)
 
 
-def normalize_persisted_output(output: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_persisted_output(output: dict[str, Any]) -> dict[str, Any]:
     normalized = {
         "type": output.get("type", "image"),
         "filename": output["filename"],
@@ -81,7 +82,7 @@ def normalize_persisted_output(output: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def normalize_external_outputs(outputs) -> List[Dict[str, Any]]:
+def normalize_external_outputs(outputs) -> list[dict[str, Any]]:
     """Accept only persisted structured outputs from external workers."""
     if not isinstance(outputs, list):
         raise ValueError("Worker result outputs must be a list")
@@ -99,10 +100,11 @@ def normalize_external_outputs(outputs) -> List[Dict[str, Any]]:
     return normalized
 
 
-def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str, duration_seconds: float = None) -> List[Dict[str, Any]]:
+def build_job_outputs(job, images: list[dict[str, Any]], provider_id: str, duration_seconds: float = None) -> list[dict[str, Any]]:
     """Persist worker images and return normalized job outputs."""
-    from PIL import Image
     from datetime import datetime, timezone
+
+    from PIL import Image
 
     from infrastructure.image_processor import (
         get_output_path,
@@ -110,7 +112,7 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str, durat
         write_metadata_sidecar,
     )
 
-    outputs: List[Dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
     base_output_dir = settings.output_dir
     final_output_dir = get_output_path(base_output_dir)
 
@@ -206,9 +208,10 @@ def build_job_outputs(job, images: List[Dict[str, Any]], provider_id: str, durat
     return outputs
 
 
-def build_text_outputs(job, text_content: str, provider_id: str) -> List[Dict[str, Any]]:
+def build_text_outputs(job, text_content: str, provider_id: str) -> list[dict[str, Any]]:
     """Persist text output and return normalized job outputs."""
     import os
+
     from infrastructure.image_processor import get_output_path
     
     base_output_dir = settings.output_dir
@@ -240,8 +243,8 @@ async def mark_job_post_processing(
     *,
     job_service,
     job_id: str,
-    outputs: List[Dict[str, Any]],
-    provider_id: Optional[str] = None,
+    outputs: list[dict[str, Any]],
+    provider_id: str | None = None,
 ) -> None:
     await job_service.update_job(
         job_id,
@@ -257,8 +260,8 @@ async def complete_job(
     *,
     job_service,
     job_id: str,
-    outputs: List[Dict[str, Any]],
-    provider_id: Optional[str] = None,
+    outputs: list[dict[str, Any]],
+    provider_id: str | None = None,
     load_balancer=None,
 ) -> None:
     # Note: duration_seconds is already saved to image metadata in build_job_outputs
@@ -278,7 +281,7 @@ async def complete_job(
 
 
 async def wait_for_gallery_outputs(
-    outputs: List[Dict[str, Any]],
+    outputs: list[dict[str, Any]],
     *,
     resolve_output_path,
     attempts: int = 20,
@@ -302,10 +305,10 @@ async def finalize_persisted_job_outputs(
     *,
     job_service,
     job_id: str,
-    outputs: List[Dict[str, Any]],
-    provider_id: Optional[str] = None,
+    outputs: list[dict[str, Any]],
+    provider_id: str | None = None,
     load_balancer=None,
-    process_image_background_fn: Optional[Callable[[str, str], Awaitable[Any]]] = None,
+    process_image_background_fn: Callable[[str, str], Awaitable[Any]] | None = None,
 ) -> None:
     try:
         job = await job_service.get_job(job_id)
@@ -394,7 +397,7 @@ async def finalize_successful_job(
     job_service,
     load_balancer,
     provider_id: str,
-    final_result: Dict[str, Any],
+    final_result: dict[str, Any],
     process_image_background_fn: Callable[[str, str], Any],
 ) -> None:
     """Finalize a successful provider result and schedule image post-processing."""
@@ -427,9 +430,10 @@ async def finalize_successful_job(
             entity_id = final_result.get("chat_id")
             
         if entity_id and assistant_content:
-            from infrastructure.database import engine
             from sqlmodel import Session
+
             from core.entities import Message, MessageRole
+            from infrastructure.database import engine
             
             with Session(engine) as session:
                 if is_chat_reply:
@@ -439,7 +443,7 @@ async def finalize_successful_job(
                 else:
                     chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
                     if chapter_id:
-                        from core.entities import StoryChapter, StoryBeatRole
+                        from core.entities import StoryBeatRole, StoryChapter
                         chapter = session.get(StoryChapter, chapter_id)
                         if chapter:
                             chapter.beats.append({"role": StoryBeatRole.NARRATOR, "content": assistant_content})
@@ -458,6 +462,34 @@ async def finalize_successful_job(
                 "chat_id": entity_id, 
                 "content": assistant_content
             })
+
+    # NEW: Handle Image jobs that belong to a chat
+    if job.task_type == 'image' and job.metadata_ and job.metadata_.get("chat_id"):
+        chat_id = job.metadata_.get("chat_id")
+        if outputs and len(outputs) > 0:
+            image_path = outputs[0].get("relative_path") or outputs[0].get("filename")
+            if image_path:
+                from sqlmodel import Session
+
+                from core.entities import Message, MessageRole
+                from infrastructure.database import engine
+                with Session(engine) as session:
+                    msg = Message(
+                        role=MessageRole.SYSTEM, 
+                        content=job.metadata_.get("image_context", "Generated Image:"), 
+                        image_path=image_path,
+                        chat_id=chat_id
+                    )
+                    session.add(msg)
+                    session.commit()
+                
+                await emit_job_event(EventType.JOB_COMPLETED, {
+                    "id": job.id, 
+                    "task_type": "image", 
+                    "type": "chat_image",
+                    "chat_id": chat_id, 
+                    "image_path": image_path
+                })
 
     await finalize_persisted_job_outputs(
         job_service=job_service,

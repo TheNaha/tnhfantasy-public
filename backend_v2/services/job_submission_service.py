@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from sqlmodel import Session
 
@@ -7,7 +7,10 @@ from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_queue import job_queue
 from services.job_service import JobService
-from services.model_availability_service import AvailabilityResult, ModelAvailabilityService
+from services.model_availability_service import (
+    AvailabilityResult,
+    ModelAvailabilityService,
+)
 
 logger = get_logger("job_submission")
 
@@ -22,10 +25,10 @@ class JobSubmissionService:
 
     def validate_workflow(
         self,
-        workflow: Dict[str, Any],
+        workflow: dict[str, Any],
         *,
-        preferred_provider_id: Optional[str] = None,
-    ) -> Tuple[Dict[str, Any], AvailabilityResult]:
+        preferred_provider_id: str | None = None,
+    ) -> tuple[dict[str, Any], AvailabilityResult]:
         required_models = extract_models_from_workflow(workflow)
         availability = self.availability_service.check_availability(required_models)
 
@@ -38,10 +41,10 @@ class JobSubmissionService:
 
     def build_validation_response(
         self,
-        workflow: Dict[str, Any],
+        workflow: dict[str, Any],
         *,
-        preferred_provider_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        preferred_provider_id: str | None = None,
+    ) -> dict[str, Any]:
         required_models, result = self.validate_workflow(
             workflow,
             preferred_provider_id=preferred_provider_id,
@@ -57,10 +60,10 @@ class JobSubmissionService:
 
     async def create_and_enqueue_job(
         self,
-        workflow: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
+        workflow: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
         *,
-        preferred_provider_id: Optional[str] = None,
+        preferred_provider_id: str | None = None,
         task_type: str = "image",
     ):
         metadata = metadata or {}

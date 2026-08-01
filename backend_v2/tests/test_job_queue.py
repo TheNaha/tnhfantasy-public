@@ -1,7 +1,7 @@
 """Tests for services/job_queue.py"""
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
+
 from services.job_queue import JobQueue
 
 

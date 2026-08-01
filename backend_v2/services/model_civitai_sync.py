@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 from sqlmodel import Session
 
@@ -15,8 +15,8 @@ class ModelCivitaiSyncService:
     def __init__(
         self,
         session: Session,
-        repo: Optional[ModelRepositoryV2] = None,
-        downloader: Optional[ModelDownloader] = None,
+        repo: ModelRepositoryV2 | None = None,
+        downloader: ModelDownloader | None = None,
     ):
         self.session = session
         self.repo = repo or ModelRepositoryV2(session)
@@ -24,9 +24,9 @@ class ModelCivitaiSyncService:
 
     async def add_model_from_civitai(
         self,
-        civitai_data: Dict[str, Any],
-        selected_version_ids: List[int]
-    ) -> Dict[str, Any]:
+        civitai_data: dict[str, Any],
+        selected_version_ids: list[int]
+    ) -> dict[str, Any]:
         """
         Add a model from CivitAI with selected versions.
 
@@ -72,12 +72,13 @@ class ModelCivitaiSyncService:
 
         return self.repo.model_to_dict(model)
 
-    async def autopopulate_model(self, model_id: str, target_civitai_id: Optional[int] = None) -> Dict[str, Any]:
+    async def autopopulate_model(self, model_id: str, target_civitai_id: int | None = None) -> dict[str, Any]:
         import json
-        import re
-        from services.external_model_service import ExternalModelService
-        from core.entities import ModelImage, ModelTag
+
         from sqlmodel import select
+
+        from core.entities import ModelImage, ModelTag
+        from services.external_model_service import ExternalModelService
 
         model = self.repo.get_model(model_id)
         if not model:
@@ -270,6 +271,7 @@ class ModelCivitaiSyncService:
         (e.g. my_model_v1_413394.safetensors). This extracts that ID.
         """
         import re
+
         from sqlmodel import select
 
         files = self.session.exec(
@@ -318,9 +320,10 @@ class ModelCivitaiSyncService:
         Stage 3: Unfiltered search
         Stage 4: Raw filename-based search
         """
-        from services.external_model_service import ExternalModelService
+
         from sqlmodel import select
-        import re as _re
+
+        from services.external_model_service import ExternalModelService
         external = ExternalModelService()
 
         search_query = self._clean_search_query(model.name)

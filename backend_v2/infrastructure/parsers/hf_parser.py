@@ -1,16 +1,16 @@
 # HuggingFace Model Metadata Parser and Normalizer
 # Converts HuggingFace model data to CivitAI-compatible format for unified UI/UX
 
-import re
 import hashlib
-from typing import Dict, List, Optional, Any
+import re
+from typing import Any
 
 from infrastructure.logging import get_logger
 
 logger = get_logger("hf_parser")
 
 
-def infer_model_type(tags: List[str], pipeline_tag: str = None) -> str:
+def infer_model_type(tags: list[str], pipeline_tag: str = None) -> str:
     """
     Infer ComfyUI model type from HuggingFace tags and pipeline.
     
@@ -57,7 +57,7 @@ def infer_model_type(tags: List[str], pipeline_tag: str = None) -> str:
     return 'Checkpoint'  # Safe default
 
 
-def infer_base_model(tags: List[str], card_content: str = None) -> str:
+def infer_base_model(tags: list[str], card_content: str = None) -> str:
     """
     Infer base model version from tags and model card.
     
@@ -97,7 +97,7 @@ def infer_base_model(tags: List[str], card_content: str = None) -> str:
     return 'SD 1.5'  # Safe default
 
 
-def extract_preview_images(card_content: str) -> List[Dict[str, Any]]:
+def extract_preview_images(card_content: str) -> list[dict[str, Any]]:
     """
     Extract image URLs from HuggingFace model card (README.md).
     
@@ -194,7 +194,7 @@ def generate_hf_id(repo_id: str) -> int:
     return int.from_bytes(hash_obj.digest()[:8], 'big') % (10**9)  # Keep it reasonable size
 
 
-def normalize_hf_to_civitai(hf_data: Dict[str, Any], files_data: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+def normalize_hf_to_civitai(hf_data: dict[str, Any], files_data: list[dict[str, Any]] = None) -> dict[str, Any]:
     """
     Convert HuggingFace model data to CivitAI-compatible format.
     
@@ -298,7 +298,7 @@ def normalize_hf_to_civitai(hf_data: Dict[str, Any], files_data: List[Dict[str, 
     return normalized
 
 
-def fetch_hf_files(repo_id: str) -> List[Dict[str, Any]]:
+def fetch_hf_files(repo_id: str) -> list[dict[str, Any]]:
     """
     Fetch file tree from HuggingFace repo.
     
@@ -317,7 +317,7 @@ def fetch_hf_files(repo_id: str) -> List[Dict[str, Any]]:
         return []
 
 
-def parse_hf_url(url: str) -> Optional[Dict[str, str]]:
+def parse_hf_url(url: str) -> dict[str, str] | None:
     """
     Parse a HuggingFace URL to extract repo_id, branch, and file path.
     

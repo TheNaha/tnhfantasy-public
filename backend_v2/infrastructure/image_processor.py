@@ -1,12 +1,13 @@
 # Image Processing Utility for BlurHash and Thumbnail Generation
 # Handles thumbnail generation, BlurHash encoding, and metadata storage
 
-import os
 import json
+import os
 from datetime import datetime
+
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from typing import Tuple, Optional, Dict, List
+
 import config as app_config
 from infrastructure.logging import get_logger
 
@@ -226,7 +227,7 @@ def encode_blurhash(image_path: str, components_x: int = None, components_y: int
     return hash_value
 
 
-def get_image_dimensions(image_path: str) -> Tuple[int, int]:
+def get_image_dimensions(image_path: str) -> tuple[int, int]:
     """
     Get image dimensions without loading full image into memory.
     
@@ -325,7 +326,7 @@ def process_image(image_path: str, save_metadata: bool = True) -> dict:
     return result
 
 
-def process_directory(directory: str, pattern: str = "*.png", skip_existing: bool = True) -> List[str]:
+def process_directory(directory: str, pattern: str = "*.png", skip_existing: bool = True) -> list[str]:
     """
     Process all images in a directory that don't already have thumbnails.
     

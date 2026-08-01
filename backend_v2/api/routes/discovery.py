@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from sqlmodel import Session
 
-from api.deps import get_session, get_provider_service, get_logger
+from api.deps import get_logger, get_provider_service
 from services.provider_service import ProviderService
 
 logger = get_logger("discovery_router")

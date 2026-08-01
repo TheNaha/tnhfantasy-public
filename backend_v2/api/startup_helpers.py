@@ -1,9 +1,9 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from api.deps import get_session_sync
 from infrastructure.logging import get_logger
-from services.job_service import JobService
 from services.job_queue import job_queue
+from services.job_service import JobService
 
 logger = get_logger("startup_helpers")
 

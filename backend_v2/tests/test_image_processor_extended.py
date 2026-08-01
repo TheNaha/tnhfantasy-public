@@ -1,14 +1,16 @@
 """Additional tests for infrastructure/image_processor.py - covering uncovered functions"""
-import os
 import json
+import os
 import tempfile
+
 import pytest
 from PIL import Image
+
 from infrastructure.image_processor import (
-    process_image,
-    process_directory,
     cleanup_thumbnails,
     encode_blurhash,
+    process_directory,
+    process_image,
 )
 
 

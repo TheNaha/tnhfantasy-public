@@ -471,18 +471,34 @@ export default function StorySandbox() {
 
                                 {/* Floating Action Bar */}
                                 {activeChapterId && (
-                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 rounded-2xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-indigo-500/10">
+                                    <motion.div 
+                                        initial={{ y: 50, opacity: 0, x: '-50%' }}
+                                        animate={{ y: 0, opacity: 1, x: '-50%' }}
+                                        className="absolute bottom-6 left-1/2 flex items-center gap-2 p-2 rounded-2xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-indigo-500/10"
+                                    >
                                         <div className="w-px h-8 bg-white/10 mx-1" />
-                                        <button
+                                        <motion.button
                                             onClick={handleContinue}
                                             disabled={isStreaming || continueChapter.isPending}
+                                            whileHover={{ scale: (isStreaming || continueChapter.isPending) ? 1 : 1.05 }}
+                                            whileTap={{ scale: (isStreaming || continueChapter.isPending) ? 1 : 0.95 }}
                                             className={clsx(
-                                                "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all",
+                                                "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all relative overflow-hidden",
                                                 isStreaming || continueChapter.isPending
                                                     ? "bg-indigo-500/50 text-white/50 cursor-not-allowed"
-                                                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.6)]"
+                                                    : "bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:shadow-[0_0_30px_rgba(79,70,229,0.8)]"
                                             )}
                                         >
+                                            {/* Glow effect */}
+                                            {!(isStreaming || continueChapter.isPending) && (
+                                                <motion.div 
+                                                    className="absolute inset-0 bg-white/20"
+                                                    initial={{ x: '-100%', opacity: 0 }}
+                                                    animate={{ x: '100%', opacity: 0 }}
+                                                    transition={{ repeat: Infinity, duration: 2, ease: 'linear', repeatDelay: 1 }}
+                                                    whileHover={{ opacity: 1 }}
+                                                />
+                                            )}
                                             {isStreaming || continueChapter.isPending ? (
                                                 <div className="flex items-center gap-2">
                                                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -494,9 +510,9 @@ export default function StorySandbox() {
                                                     Continue
                                                 </>
                                             )}
-                                        </button>
+                                        </motion.button>
                                         <div className="w-px h-8 bg-white/10 mx-1" />
-                                    </div>
+                                    </motion.div>
                                 )}
                             </div>
                         </div>

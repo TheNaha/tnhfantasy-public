@@ -12,24 +12,27 @@
 #   POST /api/upload/input                 – Upload a source image (Img2Img)
 #   POST /api/upload/mask                  – Upload an inpainting mask (base64→PNG)
 #   DELETE /api/files/{filename}           – Delete a file and its thumbnail
-import os
-import json
-import base64
-from typing import Optional
-from fastapi import APIRouter, Response, Depends, UploadFile, File
-from core.exceptions import NotFoundError, ValidationError, ComfyError
-from fastapi.responses import FileResponse, StreamingResponse
-from starlette.background import BackgroundTask
-from sqlmodel import Session
-from pydantic import BaseModel
-from typing import List
-import tempfile
 import asyncio
+import base64
+import json
+import os
+import tempfile
 
-from api.deps import get_session, get_provider_service, get_session_context, get_model_service_v2
-from services.provider_service import ProviderService
-from api.deps import get_logger
+from fastapi import APIRouter, Depends, File, Response, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlmodel import Session
+from starlette.background import BackgroundTask
+
+from api.deps import (
+    get_logger,
+    get_model_service_v2,
+    get_provider_service,
+    get_session,
+)
 from config import settings
+from core.exceptions import ComfyError, NotFoundError, ValidationError
+from services.provider_service import ProviderService
 
 logger = get_logger("files_route")
 
@@ -116,17 +119,18 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
 
 class BatchDeleteRequest(BaseModel):
     directory: str
-    files: List[str]
+    files: list[str]
 
 
 class BatchDownloadRequest(BaseModel):
-    files: List[str]
+    files: list[str]
 
 
 @router.post("/api/files/batch-download")
 async def batch_download(request: BatchDownloadRequest):
     """Create a ZIP file of multiple images for batch download."""
     import zipfile
+
     from services.gallery_indexer import gallery_indexer
     
     fd, temp_path = tempfile.mkstemp(suffix=".zip")
@@ -159,7 +163,7 @@ async def batch_download(request: BatchDownloadRequest):
         if os.path.exists(temp_path):
             os.remove(temp_path)
         from core.exceptions import ComfyError
-        raise ComfyError(f"Failed to create batch download: {str(e)}")
+        raise ComfyError(f"Failed to create batch download: {e!s}")
 
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
@@ -270,10 +274,10 @@ async def get_v2_gallery(
     limit: int = 20, 
     offset: int = 0, 
     sort: str = "date_desc", 
-    search: Optional[str] = None,
-    workspace: Optional[str] = None,
-    character_id: Optional[str] = None,
-    story_id: Optional[str] = None,
+    search: str | None = None,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
     model_service = Depends(get_model_service_v2)
 ):
     return await list_files_endpoint(
@@ -294,14 +298,14 @@ async def list_files_endpoint(
     limit: int = 20, 
     offset: int = 0, 
     sort: str = "date_desc", 
-    search: Optional[str] = None,
-    base_model: Optional[str] = None,
-    model_type: Optional[str] = None,
+    search: str | None = None,
+    base_model: str | None = None,
+    model_type: str | None = None,
     show_nsfw: bool = True,
-    tags: Optional[str] = None,
-    workspace: Optional[str] = None,
-    character_id: Optional[str] = None,
-    story_id: Optional[str] = None,
+    tags: str | None = None,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
     model_service = Depends(get_model_service_v2)
 ):
     """List files in a directory with pagination and search."""
@@ -464,6 +468,7 @@ async def list_files_endpoint(
 async def view_file_endpoint(path: str):
     """Serve files from local output or cached previews."""
     import glob
+
     from services.gallery_indexer import gallery_indexer
     
     # Try local output first
@@ -549,8 +554,9 @@ async def serve_thumbnail(size: str, filename: str):
     Returns:
         Thumbnail image if exists, otherwise falls back to full image
     """
-    import hashlib
     import glob
+    import hashlib
+
     from services.gallery_indexer import gallery_indexer
     
     if size not in ("medium",):
@@ -760,7 +766,7 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
 @router.post("/api/upload/input")
 async def upload_input_image(
     file: UploadFile = File(...),
-    provider_id: Optional[str] = None,
+    provider_id: str | None = None,
     session: Session = Depends(get_session)
 ):
     """
@@ -771,10 +777,10 @@ async def upload_input_image(
         file: Image file to upload
         provider_id: Deprecated - now syncs to all active providers
     """
-    import uuid
-    import base64
-    from PIL import Image
     import io
+    import uuid
+
+    from PIL import Image
     
     # Generate unique filename to avoid collisions
     ext = os.path.splitext(file.filename)[1] or ".png"
@@ -819,7 +825,7 @@ async def upload_input_image(
 @router.post("/api/upload/mask")
 async def upload_mask_image(
     request: dict,
-    provider_id: Optional[str] = None,
+    provider_id: str | None = None,
     session: Session = Depends(get_session)
 ):
     """
@@ -827,8 +833,8 @@ async def upload_mask_image(
     Accepts base64 data URL from canvas export.
     Syncs to ALL active providers.
     """
-    import uuid
     import base64
+    import uuid
     
     mask_data = request.get("mask_data")
     source_filename = request.get("source_filename", "")
@@ -1073,7 +1079,7 @@ async def proxy_file(
 
 class BatchMetadataRequest(BaseModel):
     """Request model for batch metadata fetching."""
-    paths: List[str]
+    paths: list[str]
 
 
 @router.post("/api/files/metadata/batch")

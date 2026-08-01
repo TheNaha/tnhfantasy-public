@@ -1,10 +1,15 @@
 """Tests for infrastructure/repositories/model_repo_v2.py"""
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
-from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2, parse_civitai_datetime
-from core.entities import ModelV2, ModelVersion, ModelFile, ProviderVersionStatus
+
+from core.entities import ProviderVersionStatus
+from infrastructure.repositories.model_repo_v2 import (
+    ModelRepositoryV2,
+    parse_civitai_datetime,
+)
 
 
 @pytest.fixture(name="engine")

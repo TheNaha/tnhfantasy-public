@@ -1,12 +1,13 @@
 import json
-from typing import Any, AsyncIterator, Dict, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from infrastructure.logging import get_logger
 
 logger = get_logger("provider_ndjson")
 
 
-def _parse_line(raw_line: str, *, source: str) -> Optional[Dict[str, Any]]:
+def _parse_line(raw_line: str, *, source: str) -> dict[str, Any] | None:
     line = raw_line.strip()
     if not line:
         return None
@@ -32,7 +33,7 @@ async def iter_ndjson_payloads(
     chunks: AsyncIterator[bytes],
     *,
     source: str,
-) -> AsyncIterator[Dict[str, Any]]:
+) -> AsyncIterator[dict[str, Any]]:
     """Parse an NDJSON byte stream into JSON object payloads."""
     buffer = ""
 

@@ -1,5 +1,4 @@
 # Provider API tests
-import pytest
 
 
 def test_list_providers_empty(client):

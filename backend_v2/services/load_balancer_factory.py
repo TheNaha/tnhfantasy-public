@@ -1,4 +1,3 @@
-from typing import Optional
 
 from sqlmodel import Session
 
@@ -15,8 +14,8 @@ def get_load_balancing_strategy(session: Session, default: str = "round-robin") 
 def create_load_balancer(
     session: Session,
     *,
-    strategy: Optional[str] = None,
-    runtime_state: Optional[LoadBalancerRuntimeState] = None,
+    strategy: str | None = None,
+    runtime_state: LoadBalancerRuntimeState | None = None,
 ) -> LoadBalancer:
     """Create a load balancer with either an explicit or persisted strategy."""
     return LoadBalancer(

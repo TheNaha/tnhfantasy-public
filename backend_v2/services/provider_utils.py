@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from core.entities import Provider
 
 DEPLOY_STATE_KEY = "deploy_state"
@@ -37,7 +38,7 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=timezone.utc).isoformat()
 
 
-def parse_utc_timestamp(raw_value: Optional[str]) -> Optional[datetime]:
+def parse_utc_timestamp(raw_value: str | None) -> datetime | None:
     if not raw_value:
         return None
     try:
@@ -49,11 +50,11 @@ def parse_utc_timestamp(raw_value: Optional[str]) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
-def clean_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def clean_dict(value: dict[str, Any] | None) -> dict[str, Any]:
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
-def mask_secret(value: Optional[str]) -> Optional[str]:
+def mask_secret(value: str | None) -> str | None:
     if not value:
         return None
     if len(value) <= 6:
@@ -65,7 +66,7 @@ def default_deploy_mode(provider_type: str) -> str:
     return "managed" if provider_type in _get_supported_managed_deploy_types() else "manual"
 
 
-def default_deploy_targets(provider_type: str) -> List[Dict[str, Any]]:
+def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
     if provider_type == "modal":
         return [
             {
@@ -110,7 +111,7 @@ def normalize_beam_handler_spec(handler: str) -> str:
     return f"{module_path}:{object_name}"
 
 
-def normalize_deploy_step_command(provider_type: str, command: List[str]) -> List[str]:
+def normalize_deploy_step_command(provider_type: str, command: list[str]) -> list[str]:
     if provider_type != "beam" or not command:
         return command
 
@@ -128,7 +129,7 @@ def normalize_deploy_step_command(provider_type: str, command: List[str]) -> Lis
     return normalized_command
 
 
-def extract_runtime_config(provider_type: str, container_config: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_runtime_config(provider_type: str, container_config: Any, config: dict[str, Any]) -> dict[str, Any] | None:
     runtime_config = clean_dict(config.get(RUNTIME_CONFIG_KEY))
     if not runtime_config:
         runtime_config = clean_dict(container_config)
@@ -145,7 +146,7 @@ def extract_runtime_config(provider_type: str, container_config: Any, config: Di
     return runtime_config
 
 
-def extract_deploy_config(provider_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+def extract_deploy_config(provider_type: str, config: dict[str, Any]) -> dict[str, Any]:
     deploy_config = clean_dict(config.get(DEPLOY_CONFIG_KEY))
 
     for key in LEGACY_DEPLOY_CONFIG_FIELDS:
@@ -163,12 +164,12 @@ def extract_deploy_config(provider_type: str, config: Dict[str, Any]) -> Dict[st
 
 def compose_config(
     *,
-    base_config: Optional[Dict[str, Any]],
-    runtime_config: Optional[Dict[str, Any]],
-    deploy_config: Dict[str, Any],
-    deploy_state: Optional[Dict[str, Any]] = None,
-    reconciliation_state: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    base_config: dict[str, Any] | None,
+    runtime_config: dict[str, Any] | None,
+    deploy_config: dict[str, Any],
+    deploy_state: dict[str, Any] | None = None,
+    reconciliation_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     config = clean_dict(base_config)
     config[RUNTIME_CONFIG_KEY] = runtime_config or None
     config[DEPLOY_CONFIG_KEY] = deploy_config
@@ -196,17 +197,17 @@ def compose_config(
 
     return config
 
-def read_deploy_state(provider: Provider) -> Dict[str, Any]:
+def read_deploy_state(provider: Provider) -> dict[str, Any]:
     config = provider.config if isinstance(provider.config, dict) else {}
     state = config.get(DEPLOY_STATE_KEY)
     return state if isinstance(state, dict) else {"status": "idle"}
 
-def read_reconciliation_state(provider: Provider) -> Dict[str, Any]:
+def read_reconciliation_state(provider: Provider) -> dict[str, Any]:
     config = provider.config if isinstance(provider.config, dict) else {}
     state = config.get(RECONCILIATION_STATE_KEY)
     return state if isinstance(state, dict) else {"status": "idle"}
 
-def normalize_reconciliation_status(status: Optional[str]) -> str:
+def normalize_reconciliation_status(status: str | None) -> str:
     if status in {"started", "queued"}:
         return "queued"
     if status in {"progress", "running", "reconciling"}:

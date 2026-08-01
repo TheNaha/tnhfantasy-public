@@ -1,10 +1,10 @@
-import os
 import json
+import os
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from typing import Optional, List, Dict, Any
 
 from api.deps import get_session
 from core.entities import Provider
@@ -64,7 +64,7 @@ async def get_available_models(session: Session = Depends(get_session)):
             resp = await client.get(f"{runtime.worker_url}/models")
             if resp.status_code == 200:
                 return resp.json()
-    except Exception as e:
+    except Exception:
         pass
         
     return [{"id": "default", "name": "Default Model"}]

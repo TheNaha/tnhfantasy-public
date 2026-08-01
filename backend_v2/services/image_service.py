@@ -1,19 +1,19 @@
 # Image Service - Handle incoming generated images from workers
 # Integrates with image_processor for metadata embedding, thumbnails, and blurhash
 
-import os
-import io
 import base64
+import io
+import os
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
+
 from PIL import Image
 
 from infrastructure.image_processor import (
+    encode_blurhash,
+    generate_thumbnails,
     get_output_path,
     save_image_with_metadata,
-    generate_thumbnails,
-    encode_blurhash,
-    get_image_dimensions
 )
 from infrastructure.logging import get_logger
 
@@ -40,11 +40,11 @@ class ImageService:
     async def save_generated_image(
         self,
         image_data: bytes,
-        metadata: Optional[Dict[str, Any]] = None,
-        job_id: Optional[str] = None,
-        filename: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        job_id: str | None = None,
+        filename: str | None = None,
         batch_index: int = 0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Save a generated image with metadata embedding and thumbnail generation.
         
@@ -133,8 +133,8 @@ class ImageService:
     async def save_images_from_base64(
         self,
         images: list,
-        metadata: Optional[Dict[str, Any]] = None,
-        job_id: Optional[str] = None
+        metadata: dict[str, Any] | None = None,
+        job_id: str | None = None
     ) -> list:
         """
         Save multiple base64-encoded images.

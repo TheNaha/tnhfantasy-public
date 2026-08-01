@@ -1,12 +1,13 @@
 # OpenAI Compat Provider Type Configuration
 
-from typing import Dict, Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry
 from .base import ServerlessProvider
 from .ndjson import iter_ndjson_payloads
+from .provider_registry import ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url
-from infrastructure.http_client import get_http_client
+
 
 class OpenAICompatProvider(ServerlessProvider):
     """
@@ -14,7 +15,7 @@ class OpenAICompatProvider(ServerlessProvider):
     Routes text requests to the LLM worker container.
     """
     
-    def __init__(self, provider_id: str, config: Dict[str, Any]):
+    def __init__(self, provider_id: str, config: dict[str, Any]):
         super().__init__(provider_id, config)
         
         self.container_port = 8000
@@ -24,7 +25,7 @@ class OpenAICompatProvider(ServerlessProvider):
         self.api_base = self.config.get("api_base", "http://localhost:11434/v1")
         self.api_key = self.config.get("api_key", "")
     
-    async def run_inference(self, workflow: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         """
         Run LLM generation via worker container.
         """
@@ -44,7 +45,7 @@ class OpenAICompatProvider(ServerlessProvider):
                 ):
                     yield payload
     
-    def get_provider_info(self) -> Dict[str, Any]:
+    def get_provider_info(self) -> dict[str, Any]:
         return {
             "id": self.provider_id,
             "type": self.provider_type,
@@ -53,11 +54,11 @@ class OpenAICompatProvider(ServerlessProvider):
             "api_base": self.api_base,
         }
 
-def build_openai_compat_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
+def build_openai_compat_env_vars(credentials: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
     """
     Build environment variables for LLM worker container.
     """
-    env_vars: Dict[str, str] = {}
+    env_vars: dict[str, str] = {}
 
     env_vars["ENGINE"] = "openai_compat"
     if config.get("id"):

@@ -1,19 +1,15 @@
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+
 import pytest
-import os
-import shutil
-import json
-import asyncio
-from contextlib import asynccontextmanager
-from unittest.mock import patch, MagicMock, AsyncMock, mock_open
-from fastapi.testclient import TestClient
 from fastapi import FastAPI, Response
+from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from api.routes.files import router, get_safe_path
-from api.deps import get_session, get_provider_service
+from api.deps import get_provider_service, get_session
 from api.error_handlers import register_exception_handlers
-from services.gallery_indexer import GalleryIndexer
+from api.routes.files import get_safe_path, router
+
 
 # Setup database fixtures
 @pytest.fixture(name="engine")
@@ -211,7 +207,6 @@ class TestFilesRoute:
             assert response.json()["results"]["output/test.png"]["success"] is True
 
     def test_proxy_file(self, client):
-        from api.deps import get_provider_service
         mock_service = AsyncMock()
         mock_provider = MagicMock()
         mock_provider.type = "modal"

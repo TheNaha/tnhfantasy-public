@@ -17,6 +17,7 @@ export default function ChatWorkspace() {
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const messagesEndRef = useRef(null);
     const location = useLocation();
 
@@ -137,6 +138,29 @@ export default function ChatWorkspace() {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSendMessage();
+        }
+    };
+
+    const handleGenerateScene = async () => {
+        if (!activeChatId) return;
+        setIsGeneratingScene(true);
+        toast.success('Generating scene... This may take a moment.', { icon: '📸' });
+        
+        try {
+            const res = await fetch(`/api/world_vault/chats/${activeChatId}/scene`, {
+                method: 'POST'
+            });
+            if (!res.ok) throw new Error('Failed to generate scene');
+            const data = await res.json();
+            
+            if (data.job_id) {
+                updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId });
+            }
+        } catch (error) {
+            console.error('Generate scene error:', error);
+            toast.error('Failed to generate scene');
+        } finally {
+            setIsGeneratingScene(false);
         }
     };
 
@@ -302,6 +326,11 @@ export default function ChatWorkspace() {
                                             : "bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm"
                                     )}>
                                         {msg.content}
+                                        {msg.image_path && (
+                                            <div className="mt-3">
+                                                <img src={`/api/files/${msg.image_path}`} alt="Scene" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -340,10 +369,19 @@ export default function ChatWorkspace() {
                             <Paperclip size={20} />
                         </button>
                         <button 
+                            onClick={handleGenerateScene}
+                            disabled={isGeneratingScene || !activeChatId}
+                            className="absolute right-12 bottom-3 p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
+                            title="Generate Scene Image"
+                            type="button"
+                        >
+                            {isGeneratingScene ? <Loader2 size={20} className="animate-spin" /> : <ImageIcon size={20} />}
+                        </button>
+                        <button 
                             onClick={handleSendMessage}
                             disabled={!message.trim() || sendMessageMutation.isPending}
                             className={clsx(
-                                "absolute right-3 bottom-3 p-2 transition-all rounded-xl",
+                                "absolute right-2 bottom-3 p-2 transition-all rounded-xl",
                                 message.trim() && !sendMessageMutation.isPending
                                     ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105" 
                                     : "bg-gray-800 text-gray-500 cursor-not-allowed"

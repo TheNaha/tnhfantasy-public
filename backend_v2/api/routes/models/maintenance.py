@@ -1,12 +1,18 @@
-from .schemas import *
-from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlmodel import Session, select, delete
-from api.deps import get_session, get_model_service_v2, get_http_client
-from core.exceptions import NotFoundError, ValidationError, ComfyError
+
+from fastapi import APIRouter, BackgroundTasks, Depends
+from sqlmodel import Session, delete
+
+from api.deps import (
+    get_http_client,
+    get_model_service_v2,
+    get_session,
+    get_session_context,
+    model_logger,
+)
 from api.routes.websocket import broadcast_to_all
-from api.deps import get_session_context
-from api.deps import model_logger
+from core.exceptions import ComfyError, NotFoundError, ValidationError
+
+from .schemas import *
 
 logger = model_logger()
 
@@ -18,7 +24,7 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
     Apply CivitAI API response data to a model entity and its related tags/versions.
     Shared by single-model resync and background resync.
     """
-    from core.entities import ModelTag, ModelVersion, ModelFile
+    from core.entities import ModelTag
 
     stats = civitai_data.get("stats") or {}
     creator = civitai_data.get("creator") or {}
@@ -76,11 +82,11 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
     Remove models that have no versions (orphaned during failed imports or migration).
     These models cannot be used and should be cleaned up.
     """
-    from sqlmodel import select, delete, func
-    from core.entities import ModelV2, ModelVersion, ModelTag
-    
+    from sqlmodel import delete
+
     # Find all models with no versions using a LEFT JOIN in a single query
     from api.deps import get_model_repo_v2
+    from core.entities import ModelTag
     repo = get_model_repo_v2(session)
     orphans = repo.get_orphan_models()
     
@@ -111,8 +117,6 @@ async def check_dependencies(
     Check for and auto-download dependencies (CLIP, VAE) for a model.
     Useful for Flux/AuraFlow models if dependencies failed to download initially.
     """
-    from core.entities import ModelVersion
-    from sqlmodel import select
     
     service = get_model_service_v2(session)
     
@@ -152,7 +156,6 @@ async def resync_model_from_civitai(
     Version/file data cannot be updated without re-downloading.
     """
     from core.entities import ModelV2
-    from api.deps import get_http_client
     
     # Get the model
     model = session.get(ModelV2, model_id)
@@ -171,7 +174,7 @@ async def resync_model_from_civitai(
             raise ComfyError(f"CivitAI API error: {response.status_code}")
         civitai_data = response.json()
     except Exception as e:
-        raise ComfyError(f"Failed to fetch from CivitAI: {str(e)}")
+        raise ComfyError(f"Failed to fetch from CivitAI: {e!s}")
     
     # Apply metadata using shared helper
     _apply_civitai_metadata(model, civitai_data, session)
@@ -188,10 +191,8 @@ async def resync_model_from_civitai(
 
 async def run_background_resync():
     """Run a full metadata resync for all eligible models."""
-    from api.deps import get_http_client
-    from core.entities import ModelV2
-    from core.exceptions import ComfyError
     from api.deps import get_model_repo_v2
+    from core.exceptions import ComfyError
     repo = get_model_repo_v2(bg_session)
     
     async with get_session_context() as bg_session:
@@ -265,7 +266,6 @@ async def run_background_resync():
 @router.post("/resync-all")
 async def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
-    from core.entities import ModelV2
     from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)
     
@@ -292,11 +292,9 @@ async def backfill_provider_statuses(
     Backfill provider_statuses for all models by querying each provider.
     Useful for migrating existing models or after worker issues.
     """
-    from core.entities import Provider
-    from sqlmodel import select
-    from services.provider_runtime import resolve_provider_runtime
     from api.deps import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
+    from services.provider_runtime import resolve_provider_runtime
 
     service = get_model_service_v2(session)
 
@@ -355,7 +353,7 @@ async def backfill_provider_statuses(
                     updates.append((provider_id, file_id))
             return updates
         except Exception as e:
-            results["errors"].append(f"Failed to query {provider_id} at {directory}: {str(e)}")
+            results["errors"].append(f"Failed to query {provider_id} at {directory}: {e!s}")
             return []
     
     for provider in providers:

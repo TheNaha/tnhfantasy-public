@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Wand2, BookOpen } from 'lucide-react';
+import { Wand2, BookOpen, Sparkles, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useGeneratorStore } from '../../store/generatorStore';
 import PromptLibrary from './PromptLibrary';
 
@@ -9,9 +10,33 @@ export default function PromptPanel() {
     const negativePrompt = useGeneratorStore((state) => state.negativePrompt);
     const setNegativePrompt = useGeneratorStore((state) => state.setNegativePrompt);
     const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+    const [isMagicLoading, setIsMagicLoading] = useState(false);
 
     const promptRef = useRef(null);
     const negPromptRef = useRef(null);
+
+    const handleMagicPrompt = async () => {
+        if (!prompt.trim()) return;
+        setIsMagicLoading(true);
+        try {
+            const response = await fetch('/api/prompts/magic', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt })
+            });
+            if (!response.ok) throw new Error('Magic prompt failed');
+            const data = await response.json();
+            if (data.enriched_prompt) {
+                setPrompt(data.enriched_prompt);
+                toast.success('Prompt enriched!', { icon: '✨' });
+            }
+        } catch (error) {
+            console.error('Magic prompt error:', error);
+            toast.error('Failed to enrich prompt');
+        } finally {
+            setIsMagicLoading(false);
+        }
+    };
 
     // Auto-resize textareas
     useEffect(() => {
@@ -42,16 +67,28 @@ export default function PromptPanel() {
                     <Wand2 size={20} className="text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]" />
                     Prompts
                 </h3>
-                <button
-                    onClick={() => setShowPromptLibrary(true)}
-                    className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 hover:text-white border border-blue-500/30 text-xs lg:text-sm rounded-xl flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(59,130,246,0.1)] hover:shadow-[0_0_15px_rgba(59,130,246,0.3)] hover:-translate-y-0.5"
-                    aria-label="Open prompt library"
-                    type="button"
-                >
-                    <BookOpen size={16} aria-hidden="true" />
-                    <span className="hidden sm:inline font-semibold tracking-wide">Library</span>
-                    <span className="sm:hidden font-semibold">Library</span>
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleMagicPrompt}
+                        disabled={isMagicLoading || !prompt.trim()}
+                        className="px-4 py-2 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 hover:text-white border border-purple-500/30 text-xs lg:text-sm rounded-xl flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(168,85,247,0.1)] hover:shadow-[0_0_15px_rgba(168,85,247,0.3)] hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        aria-label="Magic Prompt"
+                        type="button"
+                    >
+                        {isMagicLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} aria-hidden="true" />}
+                        <span className="hidden sm:inline font-semibold tracking-wide">Magic</span>
+                    </button>
+                    <button
+                        onClick={() => setShowPromptLibrary(true)}
+                        className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 hover:text-white border border-blue-500/30 text-xs lg:text-sm rounded-xl flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(59,130,246,0.1)] hover:shadow-[0_0_15px_rgba(59,130,246,0.3)] hover:-translate-y-0.5"
+                        aria-label="Open prompt library"
+                        type="button"
+                    >
+                        <BookOpen size={16} aria-hidden="true" />
+                        <span className="hidden sm:inline font-semibold tracking-wide">Library</span>
+                        <span className="sm:hidden font-semibold">Library</span>
+                    </button>
+                </div>
             </div>
             
             <div className="space-y-1 group">

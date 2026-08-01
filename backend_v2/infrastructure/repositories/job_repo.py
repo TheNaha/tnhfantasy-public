@@ -1,12 +1,12 @@
 # Job Repository - Data access layer for jobs
-from sqlmodel import Session, select, col, delete
-from sqlalchemy import func, or_, and_
-from sqlalchemy.orm import aliased
-from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+from typing import Any
 
-from core.entities import Job, JobStatus
+from sqlalchemy import func
+from sqlmodel import Session, col, delete, select
+
 from core.dtos import JobQueueItem
+from core.entities import Job, JobStatus
 
 
 class JobRepository:
@@ -15,7 +15,7 @@ class JobRepository:
     def __init__(self, session: Session):
         self.session = session
     
-    def create(self, workflow: Dict[str, Any], metadata: Dict[str, Any], task_type: str = "image") -> Job:
+    def create(self, workflow: dict[str, Any], metadata: dict[str, Any], task_type: str = "image") -> Job:
         """Create a new job."""
         job = Job(
             task_type=task_type,
@@ -28,11 +28,11 @@ class JobRepository:
         self.session.refresh(job)
         return job
     
-    def get(self, job_id: str) -> Optional[Job]:
+    def get(self, job_id: str) -> Job | None:
         """Get a job by ID."""
         return self.session.get(Job, job_id)
     
-    def get_all(self, limit: int = 20, offset: int = 0) -> tuple[List[tuple[Job, Optional[int]]], int]:
+    def get_all(self, limit: int = 20, offset: int = 0) -> tuple[list[tuple[Job, int | None]], int]:
         """
         Get jobs with pagination and queue positions.
         
@@ -61,24 +61,24 @@ class JobRepository:
         results = list(self.session.exec(stmt).all())
         return results, total
     
-    def get_pending(self) -> List[Job]:
+    def get_pending(self) -> list[Job]:
         """Get all pending jobs, ordered by creation time (FIFO)."""
         stmt = select(Job).where(Job.status == JobStatus.PENDING).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
 
 
 
-    def get_by_status(self, status: JobStatus) -> List[Job]:
+    def get_by_status(self, status: JobStatus) -> list[Job]:
         """Get all jobs with a specific status."""
         stmt = select(Job).where(Job.status == status)
         return list(self.session.exec(stmt).all())
     
-    def get_by_statuses(self, statuses: List[JobStatus]) -> List[Job]:
+    def get_by_statuses(self, statuses: list[JobStatus]) -> list[Job]:
         """Get all jobs with any of the specified statuses."""
         stmt = select(Job).where(Job.status.in_(statuses)).order_by(Job.created_at)
         return list(self.session.exec(stmt).all())
 
-    def get_queue_items(self, statuses: List[JobStatus]) -> List[JobQueueItem]:
+    def get_queue_items(self, statuses: list[JobStatus]) -> list[JobQueueItem]:
         """
         Get lightweight queue items for specified statuses.
         Avoids loading heavy workflow JSON.
@@ -108,7 +108,7 @@ class JobRepository:
             for row in rows
         ]
     
-    def get_recently_completed(self, limit: int = 10) -> List[Job]:
+    def get_recently_completed(self, limit: int = 10) -> list[Job]:
         """Get recently completed jobs, ordered by completion time descending."""
         stmt = (
             select(Job)
@@ -118,7 +118,7 @@ class JobRepository:
         )
         return list(self.session.exec(stmt).all())
     
-    def update(self, job_id: str, **kwargs) -> Optional[Job]:
+    def update(self, job_id: str, **kwargs) -> Job | None:
         """Update a job with new values."""
         job = self.get(job_id)
         if not job:
@@ -150,7 +150,7 @@ class JobRepository:
         self.session.commit()
         return count or 0
     
-    def count_by_status(self) -> Dict[str, int]:
+    def count_by_status(self) -> dict[str, int]:
         """Get count of jobs by status using efficient GROUP BY query."""
         # Single query with GROUP BY instead of N separate queries
         stmt = select(Job.status, func.count()).group_by(Job.status)

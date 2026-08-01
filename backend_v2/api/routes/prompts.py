@@ -12,17 +12,16 @@
 #   DELETE /api/prompts/{id}     – Delete a prompt
 #   POST   /api/prompts/{id}/use – Increment usage counter
 #   GET    /api/prompts/categories – List all distinct categories
-from fastapi import APIRouter, Depends, Query
-from core.exceptions import NotFoundError, ValidationError, ComfyError
-from sqlmodel import Session, select, or_
-from sqlalchemy import text
-from typing import Optional, List
 from datetime import datetime, timezone
-from pydantic import BaseModel
 
-from api.deps import get_session
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+from sqlalchemy import text
+from sqlmodel import Session, or_, select
+
+from api.deps import get_logger, get_session
 from core.entities import Prompt
-from api.deps import get_logger
+from core.exceptions import ComfyError, NotFoundError
 
 logger = get_logger("prompts_route")
 
@@ -34,36 +33,40 @@ router = APIRouter(prefix="/api/prompts", tags=["prompts"])
 class PromptCreate(BaseModel):
     name: str = ""
     text: str
-    negative: Optional[str] = None
+    negative: str | None = None
     category: str = "Custom"
-    description: Optional[str] = None
-    tags: List[str] = []
+    description: str | None = None
+    tags: list[str] = []
     favorite: bool = False
-    settings: Optional[dict] = None
+    settings: dict | None = None
 
 
 class PromptUpdate(BaseModel):
-    name: Optional[str] = None
-    text: Optional[str] = None
-    negative: Optional[str] = None
-    category: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
-    favorite: Optional[bool] = None
-    settings: Optional[dict] = None
+    name: str | None = None
+    text: str | None = None
+    negative: str | None = None
+    category: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    favorite: bool | None = None
+    settings: dict | None = None
 
 
 class PromptBulkImport(BaseModel):
-    prompts: List[PromptCreate]
+    prompts: list[PromptCreate]
+
+
+class PromptMagicRequest(BaseModel):
+    prompt: str
 
 
 # CRUD endpoints
 
 @router.get("")
 async def list_prompts(
-    q: Optional[str] = Query(None, description="Search query for FTS5"),
-    category: Optional[str] = Query(None, description="Filter by category"),
-    favorite: Optional[bool] = Query(None, description="Filter favorites only"),
+    q: str | None = Query(None, description="Search query for FTS5"),
+    category: str | None = Query(None, description="Filter by category"),
+    favorite: bool | None = Query(None, description="Filter favorites only"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session)
@@ -260,3 +263,57 @@ async def export_prompts(session: Session = Depends(get_session)):
     repo = get_prompt_repo(session)
     prompts = repo.get_all_prompts()
     return {"prompts": prompts}
+
+@router.post("/magic")
+async def magic_prompt(
+    request: PromptMagicRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Enriches a simple prompt into a highly detailed ComfyUI prompt using the LLM worker.
+    """
+    import asyncio
+
+    from core.entities import JobStatus
+    from services.job_service import JobService
+    
+    job_service = JobService(session)
+    
+    system_prompt = (
+        "You are an expert AI image generation prompt engineer. "
+        "Your task is to take a simple user idea and expand it into a highly detailed, "
+        "comma-separated list of Danbooru-style tags and visual descriptions suitable for Stable Diffusion / ComfyUI. "
+        "Include lighting, camera angles, quality modifiers (masterpiece, best quality, ultra-detailed), "
+        "and specific subject details. "
+        "Return ONLY the expanded prompt text, nothing else. No conversational text."
+    )
+    
+    workflow = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": request.prompt}
+        ]
+    }
+    
+    job = await job_service.create_job(
+        task_type="text",
+        workflow=workflow,
+        metadata={"source": "magic_prompt"}
+    )
+    
+    # Poll for completion (timeout after 30s)
+    max_retries = 30
+    for _ in range(max_retries):
+        job_status = await job_service.get_job(job.id)
+        if job_status.status == JobStatus.COMPLETED:
+            outputs = job_status.outputs or []
+            if outputs and len(outputs) > 0:
+                enriched_text = outputs[0].get("content", "")
+                return {"enriched_prompt": enriched_text.strip()}
+            return {"enriched_prompt": request.prompt}
+        elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+            raise ComfyError(f"Magic prompt failed: {job_status.error}")
+            
+        await asyncio.sleep(1.0)
+        
+    raise ComfyError("Magic prompt timed out")

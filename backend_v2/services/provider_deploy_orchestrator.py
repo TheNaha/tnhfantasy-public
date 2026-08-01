@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from infrastructure.logging import provider_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
@@ -22,7 +22,7 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _resolve_step_timeout_seconds(raw_timeout: Optional[float]) -> float:
+def _resolve_step_timeout_seconds(raw_timeout: float | None) -> float:
     raw_value: Any = raw_timeout
     if raw_value is None:
         raw_value = os.getenv("COMFY_PROVIDER_DEPLOY_STEP_TIMEOUT_SECONDS", str(DEFAULT_STEP_TIMEOUT_SECONDS))
@@ -46,7 +46,7 @@ class ProviderDeployStepExecutionError(RuntimeError):
 class ProviderDeployOrchestrator:
     """Run provider deploy commands in a dedicated ephemeral container."""
 
-    def __init__(self, container_manager: Any, *, step_timeout_seconds: Optional[float] = None):
+    def __init__(self, container_manager: Any, *, step_timeout_seconds: float | None = None):
         self.container_manager = container_manager
         self.step_timeout_seconds = _resolve_step_timeout_seconds(step_timeout_seconds)
         self.force_rebuild_image = _env_bool(
@@ -60,7 +60,7 @@ class ProviderDeployOrchestrator:
         provider_id: str,
         provider_type: str,
         attempt_id: str,
-        env_vars: Dict[str, str],
+        env_vars: dict[str, str],
     ) -> Any:
         image_tag = ProviderRegistry.get_worker_image(provider_type)
         self._ensure_image(provider_type)
@@ -93,7 +93,7 @@ class ProviderDeployOrchestrator:
             network="tnhcomfy",
         )
 
-    async def run_step(self, container: Any, command: List[str], *, timeout_seconds: Optional[float] = None) -> Any:
+    async def run_step(self, container: Any, command: list[str], *, timeout_seconds: float | None = None) -> Any:
         step_timeout = self.step_timeout_seconds if timeout_seconds is None else max(float(timeout_seconds), 1.0)
         logger.info(
             "provider_deploy_step_exec",
@@ -119,7 +119,7 @@ class ProviderDeployOrchestrator:
         except Exception as exc:
             raise ProviderDeployStepExecutionError("Deploy step execution crashed") from exc
 
-    def cleanup_container(self, container: Optional[Any]) -> None:
+    def cleanup_container(self, container: Any | None) -> None:
         if container is None:
             return
 
@@ -152,8 +152,8 @@ class ProviderDeployOrchestrator:
         except Exception:
             self.container_manager.build_worker_image(provider_type)
 
-    def _build_volumes(self) -> Dict[str, Dict[str, str]]:
-        volumes: Dict[str, Dict[str, str]] = {}
+    def _build_volumes(self) -> dict[str, dict[str, str]]:
+        volumes: dict[str, dict[str, str]] = {}
 
         backend_host_path = os.getenv("HOST_BACKEND_PATH")
         if backend_host_path:

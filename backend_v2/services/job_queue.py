@@ -1,10 +1,10 @@
 # Job Queue - Async job processing with worker pool
 import asyncio
-from typing import Optional, Callable, Awaitable, Dict, Any, List
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from core.entities import JobStatus
-from core.events import emit_job_event, EventType
+from core.events import EventType, emit_job_event
 from infrastructure.logging import get_logger
 
 logger = get_logger("job_queue")
@@ -18,15 +18,15 @@ class JobQueue:
     
     def __init__(self, max_workers: int = 2):
         self._queue: asyncio.Queue = asyncio.Queue()
-        self._workers: List[asyncio.Task] = []
+        self._workers: list[asyncio.Task] = []
         self._running = False
         self.max_workers = max_workers
         
         # Job processor callback - set by the API layer
-        self._processor: Optional[Callable[[str, Optional[str]], Awaitable[None]]] = None
+        self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
         
         # Track active jobs
-        self._active_jobs: Dict[str, asyncio.Task] = {}
+        self._active_jobs: dict[str, asyncio.Task] = {}
         
         # Track workers that should stop after their current job (graceful shutdown)
         self._stopping_workers: set[asyncio.Task] = set()
@@ -35,7 +35,7 @@ class JobQueue:
         self._recovery_lock: asyncio.Lock = asyncio.Lock()
         self._recovering: bool = False
     
-    def set_processor(self, processor: Callable[[str, Optional[str]], Awaitable[None]]):
+    def set_processor(self, processor: Callable[[str, str | None], Awaitable[None]]):
         """
         Set the job processing callback.
         
@@ -43,7 +43,7 @@ class JobQueue:
         """
         self._processor = processor
     
-    async def enqueue(self, job_id: str, provider_id: Optional[str] = None) -> None:
+    async def enqueue(self, job_id: str, provider_id: str | None = None) -> None:
         """
         Add a job to the queue.
         
@@ -102,8 +102,7 @@ class JobQueue:
         Args:
             new_count: New number of workers (must be >= 1)
         """
-        if new_count < 1:
-            new_count = 1
+        new_count = max(new_count, 1)
             
         current_count = len(self._workers)
         if new_count == current_count:

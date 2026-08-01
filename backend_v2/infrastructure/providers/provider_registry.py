@@ -1,14 +1,14 @@
 # Provider Registry - Type-agnostic provider configuration system
 # This module abstracts provider-specific logic from the core backend
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Type, Callable
 import base64
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
 
-from infrastructure.logging import provider_logger
 from infrastructure.http_client import get_http_client
+from infrastructure.logging import provider_logger
 
 logger = provider_logger()
 
@@ -23,7 +23,7 @@ def clean_registry_dict(d):
 class HttpFileProxy:
     """Shared file proxy implementation for HTTP-based provider containers."""
 
-    def __init__(self, provider_id: str, config: Dict[str, Any], base_url: str):
+    def __init__(self, provider_id: str, config: dict[str, Any], base_url: str):
         self.provider_id = provider_id
         self.config = config
         self.base_url = base_url.rstrip("/")
@@ -74,16 +74,16 @@ class ProviderTypeConfig:
     type_name: str
     
     # Credential fields
-    required_credentials: List[str] = field(default_factory=list)
-    optional_credentials: List[str] = field(default_factory=list)
+    required_credentials: list[str] = field(default_factory=list)
+    optional_credentials: list[str] = field(default_factory=list)
     
     # Config fields
-    required_config: List[str] = field(default_factory=list)
-    optional_config: List[str] = field(default_factory=list)
+    required_config: list[str] = field(default_factory=list)
+    optional_config: list[str] = field(default_factory=list)
     
     # Environment variable builder function
     # Signature: (credentials: Dict, config: Dict) -> Dict[str, str]
-    env_builder: Optional[Callable[[Dict, Dict], Dict[str, str]]] = None
+    env_builder: Callable[[dict, dict], dict[str, str]] | None = None
     
     # Worker image name for this provider type
     worker_image: str = "comfy-provider"
@@ -92,9 +92,9 @@ class ProviderTypeConfig:
     default_port: int = 8000
     
     # The ServerlessProvider class for API interactions
-    client_class: Optional[Type['ServerlessProvider']] = None
+    client_class: type['ServerlessProvider'] | None = None
     
-    def build_env_vars(self, credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
+    def build_env_vars(self, credentials: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
         """
         Build container environment variables from credentials and config.
         
@@ -109,7 +109,7 @@ class ProviderTypeConfig:
             return self.env_builder(credentials, config)
         return {}
     
-    def validate_credentials(self, credentials: Dict[str, Any]) -> List[str]:
+    def validate_credentials(self, credentials: dict[str, Any]) -> list[str]:
         """
         Validate that required credentials are present.
         
@@ -122,7 +122,7 @@ class ProviderTypeConfig:
                 missing.append(field_name)
         return missing
     
-    def validate_config(self, config: Dict[str, Any]) -> List[str]:
+    def validate_config(self, config: dict[str, Any]) -> list[str]:
         """
         Validate that required config fields are present.
         
@@ -151,7 +151,7 @@ class ProviderRegistry:
         # Usage (in main.py or container_manager.py)
         env_vars = ProviderRegistry.build_container_env(provider)
     """
-    _types: Dict[str, ProviderTypeConfig] = {}
+    _types: dict[str, ProviderTypeConfig] = {}
     
     @classmethod
     def register(cls, config: ProviderTypeConfig) -> None:
@@ -160,12 +160,12 @@ class ProviderRegistry:
         logger.info("provider_type_registered", type_name=config.type_name)
     
     @classmethod
-    def get(cls, type_name: str) -> Optional[ProviderTypeConfig]:
+    def get(cls, type_name: str) -> ProviderTypeConfig | None:
         """Get configuration for a provider type."""
         return cls._types.get(type_name)
     
     @classmethod
-    def get_all(cls) -> Dict[str, ProviderTypeConfig]:
+    def get_all(cls) -> dict[str, ProviderTypeConfig]:
         """Get all registered provider types."""
         return cls._types.copy()
     
@@ -175,7 +175,7 @@ class ProviderRegistry:
         return type_name in cls._types
     
     @classmethod
-    def build_container_env(cls, provider: Any) -> Dict[str, str]:
+    def build_container_env(cls, provider: Any) -> dict[str, str]:
         """
         Build container environment variables for a provider.
         
@@ -199,7 +199,7 @@ class ProviderRegistry:
         return type_config.build_env_vars(credentials, config)
     
     @classmethod
-    def validate_provider(cls, provider_type: str, credentials: Dict, config: Dict) -> Dict[str, List[str]]:
+    def validate_provider(cls, provider_type: str, credentials: dict, config: dict) -> dict[str, list[str]]:
         """
         Validate a provider's credentials and config.
         

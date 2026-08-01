@@ -1,11 +1,13 @@
 # Request deduplication using in-flight tracking + short TTL cache
 # Prevents duplicate work when multiple SSE clients or rapid refreshes hit same endpoints
 
-from cachetools import TTLCache
 import asyncio
-import threading
 import os
-from typing import Callable, Any, TypeVar, Coroutine
+import threading
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar
+
+from cachetools import TTLCache
 
 from infrastructure.logging import get_logger
 

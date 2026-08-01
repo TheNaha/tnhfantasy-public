@@ -1,11 +1,14 @@
 """Tests for services/model_availability_service.py"""
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
-from unittest.mock import MagicMock, patch
 
-from services.model_availability_service import ModelAvailabilityService, AvailabilityResult
 from core.entities import Provider
+from services.model_availability_service import (
+    AvailabilityResult,
+    ModelAvailabilityService,
+)
 
 
 @pytest.fixture(name="engine")

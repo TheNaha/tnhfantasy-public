@@ -1,15 +1,16 @@
 # Direct URL Provider Type Configuration
 # This module contains all Direct URL-specific logic for bypassing serverless platforms.
 
-from typing import Dict, Any
+from collections.abc import AsyncIterator
+from typing import Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_registry_dict as clean_dict
-from .base import ServerlessProvider, FileProxyProvider
-from .ndjson import iter_ndjson_payloads
-from .runtime import get_provider_worker_base_url
 from infrastructure.http_client import get_http_client
-from .provider_registry import HttpFileProxy
-from typing import AsyncIterator, Optional, List
+
+from .base import FileProxyProvider, ServerlessProvider
+from .ndjson import iter_ndjson_payloads
+from .provider_registry import HttpFileProxy, ProviderRegistry, ProviderTypeConfig
+from .runtime import get_provider_worker_base_url
+
 
 class DirectUrlProvider(ServerlessProvider):
     """
@@ -18,7 +19,7 @@ class DirectUrlProvider(ServerlessProvider):
     Uses CONTAINERIZED mode - calls HTTP endpoints on direct_url_worker container.
     """
     
-    def __init__(self, provider_id: str, config: Dict[str, Any]):
+    def __init__(self, provider_id: str, config: dict[str, Any]):
         super().__init__(provider_id, config)
         
         # Container mode settings
@@ -33,7 +34,7 @@ class DirectUrlProvider(ServerlessProvider):
         
         self.comfy_url = self.config.get("comfy_url", "http://localhost:8188")
     
-    async def run_inference(self, workflow: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         """
         Run ComfyUI inference via worker container.
         """
@@ -59,9 +60,9 @@ class DirectUrlProvider(ServerlessProvider):
         path: str,
         token: str = None,
         preview_url: str = None,
-        metadata: Dict = None,
-        info: Optional[Dict] = None
-    ) -> Dict[str, Any]:
+        metadata: dict = None,
+        info: dict | None = None
+    ) -> dict[str, Any]:
         client = get_http_client()
         endpoint = f"{self.worker_url}/download-model"
         payload = {
@@ -78,7 +79,7 @@ class DirectUrlProvider(ServerlessProvider):
             return response.json()
         return {"status": "error", "error": f"Download failed: {response.status_code}"}
     
-    async def list_models(self, directory: str) -> List[Dict[str, Any]]:
+    async def list_models(self, directory: str) -> list[dict[str, Any]]:
         client = get_http_client()
         response = await client.post(f"{self.worker_url}/list-models", json={"directory": directory})
         if response.status_code == 200:
@@ -106,7 +107,7 @@ class DirectUrlProvider(ServerlessProvider):
     def get_file_proxy(self) -> FileProxyProvider:
         return self._file_proxy
     
-    def get_provider_info(self) -> Dict[str, Any]:
+    def get_provider_info(self) -> dict[str, Any]:
         return {
             "id": self.provider_id,
             "type": self.provider_type,
@@ -116,11 +117,11 @@ class DirectUrlProvider(ServerlessProvider):
         }
 
 
-def build_direct_url_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
+def build_direct_url_env_vars(credentials: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
     """
     Build environment variables for Direct URL worker container.
     """
-    env_vars: Dict[str, str] = {}
+    env_vars: dict[str, str] = {}
 
     # Core config
     env_vars["ENGINE"] = "direct_url"

@@ -1,8 +1,10 @@
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
-from api.routes.statistics import _calculate_statistics, _calculate_detailed_statistics
-from services.gallery_indexer import GalleryIndexer
+
+from api.routes.statistics import _calculate_detailed_statistics, _calculate_statistics
+
 
 class TestStatisticsOptimization:
     """Tests for the optimized statistics logic using GalleryIndexer."""

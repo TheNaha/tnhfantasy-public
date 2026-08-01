@@ -1,11 +1,12 @@
 # Background task scheduler using APScheduler
 # Consolidates all periodic tasks (reconciliation, cleanup, etc.)
 
-from typing import Callable, Optional
+from collections.abc import Callable
 from datetime import datetime, timedelta
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from infrastructure.logging import scheduler_logger
 
@@ -13,7 +14,7 @@ logger = scheduler_logger()
 
 
 # Global scheduler instance
-_scheduler: Optional[AsyncIOScheduler] = None
+_scheduler: AsyncIOScheduler | None = None
 
 
 def get_scheduler() -> AsyncIOScheduler:

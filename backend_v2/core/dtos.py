@@ -1,7 +1,10 @@
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
+
 from core.entities import JobStatus
+
 
 class JobQueueItem(BaseModel):
     """
@@ -12,4 +15,4 @@ class JobQueueItem(BaseModel):
     status: JobStatus
     created_at: datetime
     overall_progress: float = 0.0
-    metadata_: Dict[str, Any] = {}
+    metadata_: dict[str, Any] = {}

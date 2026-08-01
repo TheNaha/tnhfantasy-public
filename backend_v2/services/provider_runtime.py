@@ -1,10 +1,9 @@
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
 from types import SimpleNamespace
 
-from infrastructure.http_client import get_http_client
 from api.deps import get_session_sync
+from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 
 logger = get_logger("provider_runtime")
@@ -16,13 +15,13 @@ class ProviderRuntimeTarget:
 
     provider_id: str
     mode: str
-    worker_url: Optional[str] = None
-    container_name: Optional[str] = None
+    worker_url: str | None = None
+    container_name: str | None = None
     supports_setup: bool = False
     supports_reconciliation: bool = False
     connected: bool = False
-    status: Optional[str] = None
-    healthy: Optional[bool] = None
+    status: str | None = None
+    healthy: bool | None = None
 
 
 def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
@@ -30,7 +29,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     from api.routes.worker_ws import is_worker_connected
 
     container_config = getattr(provider, "container_config", None) or {}
-    provider_id = getattr(provider, "id")
+    provider_id = provider.id
     provider_type = getattr(provider, "type", "")
     provider_config = getattr(provider, "config", None) or {}
 

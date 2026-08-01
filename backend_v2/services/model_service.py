@@ -7,16 +7,16 @@
 # KEY RESPONSIBILITIES:
 #   - Facade class coordinating sub-services for download, reconciliation, and sync.
 #   - Ensuring 100% backward compatibility with all existing callers.
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 from sqlmodel import Session
 
-from core.entities import ModelV2, ModelVersion, ModelFile
+from core.entities import ModelV2, ModelVersion
 from core.exceptions import NotFoundError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+from services.model_civitai_sync import ModelCivitaiSyncService
 from services.model_downloader import ModelDownloader
 from services.model_reconciliation import ModelReconciliationService
-from services.model_civitai_sync import ModelCivitaiSyncService
 
 
 class ModelServiceV2:
@@ -40,30 +40,30 @@ class ModelServiceV2:
 
     async def add_model_from_civitai(
         self,
-        civitai_data: Dict[str, Any],
-        selected_version_ids: List[int]
-    ) -> Dict[str, Any]:
+        civitai_data: dict[str, Any],
+        selected_version_ids: list[int]
+    ) -> dict[str, Any]:
         """Add a model from CivitAI with selected versions."""
         return await self.civitai_sync.add_model_from_civitai(civitai_data, selected_version_ids)
 
-    async def get_model(self, model_id: int) -> Dict[str, Any]:
+    async def get_model(self, model_id: int) -> dict[str, Any]:
         """Get a model by ID."""
         model = self.repo.get_model(model_id)
         if not model:
             raise NotFoundError("Model", str(model_id))
         return self.repo.model_to_dict(model)
 
-    async def list_models(self, include_versions: bool = False) -> List[Dict[str, Any]]:
+    async def list_models(self, include_versions: bool = False) -> list[dict[str, Any]]:
         """List all models (bulk-loaded, no N+1)."""
         models = self.repo.get_all_models()
         return self.repo.models_to_dict(models, include_versions=include_versions)
 
-    async def list_models_by_directory(self, directory: str) -> List[Dict[str, Any]]:
+    async def list_models_by_directory(self, directory: str) -> list[dict[str, Any]]:
         """List models in a specific directory (bulk-loaded, no N+1)."""
         models = self.repo.get_models_by_directory(directory)
         return self.repo.models_to_dict(models, include_versions=True)
 
-    async def get_models_grouped(self) -> Dict[str, List[Dict[str, Any]]]:
+    async def get_models_grouped(self) -> dict[str, list[dict[str, Any]]]:
         """Get all models grouped by directory."""
         return self.repo.get_grouped_by_directory()
 
@@ -84,9 +84,9 @@ class ModelServiceV2:
 
     async def check_and_trigger_dependencies(
         self, 
-        civitai_data: Optional[Dict[str, Any]] = None,
-        base_model_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+        civitai_data: dict[str, Any] | None = None,
+        base_model_name: str | None = None
+    ) -> dict[str, Any]:
         """Check for and trigger auto-download of dependencies (CLIP/VAE) for UNET models."""
         return await self.downloader.check_and_trigger_dependencies(civitai_data, base_model_name)
 
@@ -97,9 +97,9 @@ class ModelServiceV2:
     async def trigger_download_to_providers(
         self, 
         model_id: int, 
-        version_ids: List[int] = None,
-        provider_ids: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        version_ids: list[int] = None,
+        provider_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Trigger immediate download of model files to all enabled providers."""
         return await self.downloader.trigger_download_to_providers(model_id, version_ids, provider_ids)
 
@@ -109,9 +109,9 @@ class ModelServiceV2:
         name: str,
         directory: str,
         download_url: str,
-        provider_ids: Optional[List[str]] = None,
-        model_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        provider_ids: list[str] | None = None,
+        model_type: str | None = None,
+    ) -> dict[str, Any]:
         """Create a V2 model entry for a direct download URL and trigger sync."""
         return await self.downloader.add_custom_model(
             name=name,
@@ -124,12 +124,12 @@ class ModelServiceV2:
     async def register_discovered_files(
         self,
         provider_id: str,
-        files: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        files: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Register files discovered on a provider's storage."""
         return await self.reconciliation.register_discovered_files(provider_id, files)
 
-    async def trigger_delete_from_providers(self, model_id: int) -> Dict[str, Any]:
+    async def trigger_delete_from_providers(self, model_id: int) -> dict[str, Any]:
         """Trigger immediate deletion of model files from all providers."""
         return await self.downloader.trigger_delete_from_providers(model_id)
 
@@ -137,7 +137,7 @@ class ModelServiceV2:
     # VERSION OPERATIONS
     # =========================================================================
 
-    async def get_versions(self, model_id: int) -> List[Dict[str, Any]]:
+    async def get_versions(self, model_id: int) -> list[dict[str, Any]]:
         """Get all versions for a model."""
         versions = self.repo.get_versions_for_model(model_id)
         return [self.repo._version_to_dict(v) for v in versions]
@@ -146,7 +146,7 @@ class ModelServiceV2:
         """Set a version as the default for generation."""
         return self.repo.set_default_version(model_id, version_id)
 
-    async def toggle_version_enabled(self, version_id: int) -> Optional[Dict[str, Any]]:
+    async def toggle_version_enabled(self, version_id: int) -> dict[str, Any] | None:
         """Toggle whether a version is enabled."""
         version = self.repo.toggle_version_enabled(version_id)
         if version:
@@ -156,8 +156,8 @@ class ModelServiceV2:
     async def get_version_for_generation(
         self, 
         model_id: int, 
-        version_id: Optional[int] = None
-    ) -> Dict[str, Any]:
+        version_id: int | None = None
+    ) -> dict[str, Any]:
         """
         Get version info for generation.
         If version_id is not specified, returns the default version.
@@ -197,10 +197,10 @@ class ModelServiceV2:
         file_id: int,
         provider_id: str,
         status: str,
-        storage_path: Optional[str] = None,
-        size_bytes: Optional[int] = None,
-        error_message: Optional[str] = None
-    ) -> Dict[str, Any]:
+        storage_path: str | None = None,
+        size_bytes: int | None = None,
+        error_message: str | None = None
+    ) -> dict[str, Any]:
         """Update provider status for a file."""
         return await self.downloader.update_provider_file_status(
             file_id=file_id,
@@ -211,7 +211,7 @@ class ModelServiceV2:
             error_message=error_message,
         )
 
-    async def get_model_provider_statuses(self, model_id: int) -> Dict[str, Dict[str, Any]]:
+    async def get_model_provider_statuses(self, model_id: int) -> dict[str, dict[str, Any]]:
         """Get all provider statuses for a model."""
         return await self.downloader.get_model_provider_statuses(model_id)
 
@@ -219,11 +219,11 @@ class ModelServiceV2:
     # RECONCILIATION OPERATIONS
     # =========================================================================
 
-    def get_pending_downloads(self, provider_id: str) -> List[Dict[str, Any]]:
+    def get_pending_downloads(self, provider_id: str) -> list[dict[str, Any]]:
         """Get pending downloads for a specific provider."""
         return self.reconciliation.get_pending_downloads(provider_id)
 
-    def get_full_cache(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_full_cache(self) -> dict[str, list[dict[str, Any]]]:
         """Get all model metadata for reconciliation (sync method for worker)."""
         return self.reconciliation.get_full_cache()
 
@@ -231,7 +231,7 @@ class ModelServiceV2:
     # SEARCH OPERATIONS
     # =========================================================================
 
-    async def search_by_tag(self, tag: str) -> List[Dict[str, Any]]:
+    async def search_by_tag(self, tag: str) -> list[dict[str, Any]]:
         """Search models by tag (bulk-loaded, no N+1)."""
         models = self.repo.search_by_tag(tag)
         return self.repo.models_to_dict(models, include_versions=False)
@@ -239,11 +239,11 @@ class ModelServiceV2:
     async def search_models(
         self, 
         query: str = "",
-        model_type: Optional[str] = None,
-        base_model: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        model_type: str | None = None,
+        base_model: str | None = None
+    ) -> list[dict[str, Any]]:
         """Search models by name, type, or base model."""
-        from sqlmodel import select, or_
+        from sqlmodel import or_, select
         
         stmt = select(ModelV2)
         

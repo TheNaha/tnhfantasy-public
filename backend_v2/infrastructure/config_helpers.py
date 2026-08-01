@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+
 from infrastructure.logging import get_logger
 
 logger = get_logger("config_helpers")
@@ -24,7 +24,7 @@ def resolve_env_bool(env_name: str, default_value: bool) -> bool:
     return default_value
 
 
-def resolve_env_int(env_name: str, default_value: int, min_value: Optional[int] = None) -> int:
+def resolve_env_int(env_name: str, default_value: int, min_value: int | None = None) -> int:
     """Resolve integer config from env var with optional min limit."""
     raw_value = os.getenv(env_name)
     if raw_value is None:
@@ -52,7 +52,7 @@ def resolve_env_int(env_name: str, default_value: int, min_value: Optional[int] 
     return parsed
 
 
-def resolve_env_float(env_name: str, default_value: float, min_value: Optional[float] = None) -> float:
+def resolve_env_float(env_name: str, default_value: float, min_value: float | None = None) -> float:
     """Resolve float config from env var with optional min limit."""
     raw_value = os.getenv(env_name)
     if raw_value is None:

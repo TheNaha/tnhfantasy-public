@@ -1,4 +1,3 @@
-import sys
 
 file_path = "/home/thenaha/containers/stacks/comfyui/backend_v2/api/routes/models/provider_sync.py"
 with open(file_path, "r") as f:

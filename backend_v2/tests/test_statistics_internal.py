@@ -1,7 +1,10 @@
 """Tests for api/routes/statistics.py - _calculate_statistics and _calculate_detailed_statistics"""
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from infrastructure.cache import invalidate_cache
+
 
 # Helper to create file data structure returned by GalleryIndexer
 def create_file_data(metadata: dict = None) -> dict:

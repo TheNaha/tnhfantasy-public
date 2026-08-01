@@ -1,10 +1,11 @@
 # Core domain entities as SQLModel models
-from sqlmodel import SQLModel, Field, Column
-from sqlalchemy import JSON, Index
-from typing import Optional, Dict, Any, List
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
-import uuid
+from typing import Any, Optional
+
+from sqlalchemy import JSON, Index
+from sqlmodel import Column, Field, SQLModel
 
 
 class JobStatus(str, Enum):
@@ -40,29 +41,29 @@ class Job(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Timing for ETA calculation
-    started_at: Optional[datetime] = Field(default=None)  # When job started processing
-    completed_at: Optional[datetime] = Field(default=None)  # When job finished
+    started_at: datetime | None = Field(default=None)  # When job started processing
+    completed_at: datetime | None = Field(default=None)  # When job finished
     
     # Workflow data (ComfyUI workflow JSON)
-    workflow: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    workflow: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     
     # Metadata (prompt, seed, dimensions, etc.)
-    metadata_: Dict[str, Any] = Field(default={}, sa_column=Column(JSON), alias="metadata")
+    metadata_: dict[str, Any] = Field(default={}, sa_column=Column(JSON), alias="metadata")
     
     # Structured output entries produced by workers/post-processing.
-    outputs: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    outputs: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     
     # Progress tracking
     progress: float = Field(default=0.0)
     overall_progress: float = Field(default=0.0)
-    message: Optional[str] = Field(default=None)
-    error: Optional[str] = Field(default=None)
+    message: str | None = Field(default=None)
+    error: str | None = Field(default=None)
     
     # Provider assignment
-    provider_id: Optional[str] = Field(default=None)
+    provider_id: str | None = Field(default=None)
     
     # Queue position (calculated, not stored)
-    queue_position: Optional[int] = Field(default=None, exclude=True)
+    queue_position: int | None = Field(default=None, exclude=True)
 
 
 class Provider(SQLModel, table=True):
@@ -79,13 +80,13 @@ class Provider(SQLModel, table=True):
     priority: int = Field(default=1)  # Lower = higher priority
     
     # Credentials (stored securely, used for container env vars)
-    credentials: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    credentials: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     
     # Provider-specific config
-    config: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    config: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     
     # Container config for multi-profile mode
-    container_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    container_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
 
 
 
@@ -107,8 +108,8 @@ class LoadBalancerState(SQLModel, table=True):
     
     id: int = Field(default=1, primary_key=True)
     round_robin_index: int = Field(default=0)
-    provider_job_counts: Dict[str, int] = Field(default={}, sa_column=Column(JSON))
-    provider_failures: Dict[str, int] = Field(default={}, sa_column=Column(JSON))
+    provider_job_counts: dict[str, int] = Field(default={}, sa_column=Column(JSON))
+    provider_failures: dict[str, int] = Field(default={}, sa_column=Column(JSON))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -130,15 +131,15 @@ class Prompt(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     text: str  # Positive prompt
-    negative: Optional[str] = Field(default=None)
+    negative: str | None = Field(default=None)
     category: str = Field(default="Custom")
-    description: Optional[str] = Field(default=None)
-    tags: List[str] = Field(default=[], sa_column=Column(JSON))
+    description: str | None = Field(default=None)
+    tags: list[str] = Field(default=[], sa_column=Column(JSON))
     favorite: bool = Field(default=False)
     usage_count: int = Field(default=0)
     
     # Full generation settings (optional, includes model, LoRAs, etc.)
-    settings: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    settings: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -155,8 +156,8 @@ class Collection(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     color: str = Field(default="#3B82F6")
-    description: Optional[str] = Field(default=None)
-    thumbnail: Optional[str] = Field(default=None)  # First image filename
+    description: str | None = Field(default=None)
+    thumbnail: str | None = Field(default=None)  # First image filename
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -177,15 +178,13 @@ class CollectionImage(SQLModel, table=True):
 
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
-from sqlmodel import SQLModel, Field, Column, Relationship
-from sqlalchemy import JSON, Index, UniqueConstraint, Text, BigInteger
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from pgvector.sqlalchemy import Vector
+from typing import Any
 
-if TYPE_CHECKING:
-    from typing import List as TypeList
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, BigInteger, Index, Text, UniqueConstraint
+from sqlmodel import Column, Field, Relationship, SQLModel
 
 
 class ModelType(str, Enum):
@@ -228,40 +227,40 @@ class ModelV2(SQLModel, table=True):
     )
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    civitai_model_id: Optional[int] = Field(default=None, index=True)
+    civitai_model_id: int | None = Field(default=None, index=True)
     
     # Basic info
     name: str = Field(index=True)  # Model display name
     type: str = Field(index=True)  # Checkpoint, LORA, ControlNet, etc.
     directory: str = Field(index=True)  # ComfyUI directory: checkpoints, loras, etc.
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    description: str | None = Field(default=None, sa_column=Column(Text))
     
     # NSFW/Safety
     nsfw: bool = Field(default=False)
     nsfw_level: int = Field(default=1)
     
     # Creator info
-    creator_username: Optional[str] = Field(default=None, index=True)
-    creator_image: Optional[str] = None
+    creator_username: str | None = Field(default=None, index=True)
+    creator_image: str | None = None
     
     # Stats (cached, can be refreshed periodically)
     stats_downloads: int = Field(default=0)
     stats_thumbs_up: int = Field(default=0)
     stats_thumbs_down: int = Field(default=0)
     stats_comments: int = Field(default=0)
-    stats_updated_at: Optional[datetime] = None
+    stats_updated_at: datetime | None = None
     
     # Source tracking
     source: str = Field(default="civitai")  # civitai, huggingface, custom
-    source_url: Optional[str] = None  # Original URL for reference
+    source_url: str | None = None  # Original URL for reference
     
     # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships (for eager loading)
-    versions: List["ModelVersion"] = Relationship(back_populates="model")
-    tags: List["ModelTag"] = Relationship(back_populates="model")
+    versions: list["ModelVersion"] = Relationship(back_populates="model")
+    tags: list["ModelTag"] = Relationship(back_populates="model")
 
 
 # ============================================================================
@@ -281,32 +280,32 @@ class ModelVersion(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     model_id: str = Field(foreign_key="models_v2.id", index=True)
-    civitai_version_id: Optional[int] = Field(default=None, index=True)
+    civitai_version_id: int | None = Field(default=None, index=True)
     
     # Version info
     name: str  # "v1.0", "v2.0-inpainting", etc.
-    base_model: Optional[str] = None  # "SDXL", "SD1.5", "Illustrious", "Pony"
-    base_model_type: Optional[str] = None  # "Standard", "Inpainting", "Turbo"
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    base_model: str | None = None  # "SDXL", "SD1.5", "Illustrious", "Pony"
+    base_model_type: str | None = None  # "Standard", "Inpainting", "Turbo"
+    description: str | None = Field(default=None, sa_column=Column(Text))
     
     # User selection state
     is_enabled: bool = Field(default=True)  # User can disable without deleting
     is_default: bool = Field(default=False)  # Default version for generation
     
     # LoRA-specific: trigger words (stored as JSON array string)
-    trained_words: Optional[str] = None
+    trained_words: str | None = None
     
     # Timestamps from CivitAI
-    civitai_created_at: Optional[datetime] = None
-    civitai_published_at: Optional[datetime] = None
+    civitai_created_at: datetime | None = None
+    civitai_published_at: datetime | None = None
     
     # Local timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
     model: Optional["ModelV2"] = Relationship(back_populates="versions")
-    files: List["ModelFile"] = Relationship(back_populates="version")
-    images: List["ModelImage"] = Relationship(back_populates="version")
+    files: list["ModelFile"] = Relationship(back_populates="version")
+    images: list["ModelImage"] = Relationship(back_populates="version")
 
 
 # ============================================================================
@@ -325,22 +324,22 @@ class ModelFile(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     version_id: str = Field(foreign_key="model_versions.id", index=True)
-    civitai_file_id: Optional[int] = Field(default=None, index=True)
+    civitai_file_id: int | None = Field(default=None, index=True)
     
     # File info
     original_filename: str  # Original filename from source
     storage_filename: str  # Computed: {model}_{version}_{id}.safetensors
     size_kb: float = Field(default=0.0)
-    format: Optional[str] = None  # SafeTensor, PickleTensor, Diffusers, etc.
+    format: str | None = None  # SafeTensor, PickleTensor, Diffusers, etc.
     
     # Hashes for integrity verification
-    hash_sha256: Optional[str] = None
-    hash_autov2: Optional[str] = None
-    hash_blake3: Optional[str] = None
-    hash_crc32: Optional[str] = None
+    hash_sha256: str | None = None
+    hash_autov2: str | None = None
+    hash_blake3: str | None = None
+    hash_crc32: str | None = None
     
     # Download URL (with token placeholder)
-    download_url: Optional[str] = None
+    download_url: str | None = None
     
     # File type
     is_primary: bool = Field(default=True)  # Primary model file for this version
@@ -348,7 +347,7 @@ class ModelFile(SQLModel, table=True):
     
     # Relationships
     version: Optional["ModelVersion"] = Relationship(back_populates="files")
-    provider_statuses: List["ProviderVersionStatus"] = Relationship(back_populates="file")
+    provider_statuses: list["ProviderVersionStatus"] = Relationship(back_populates="file")
 
 
 # ============================================================================
@@ -370,9 +369,9 @@ class ModelImage(SQLModel, table=True):
     
     # Image data
     url: str
-    width: Optional[int] = None
-    height: Optional[int] = None
-    blurhash: Optional[str] = None  # For progressive loading
+    width: int | None = None
+    height: int | None = None
+    blurhash: str | None = None  # For progressive loading
     
     # Type and safety
     type: str = Field(default="image")  # image, video
@@ -406,20 +405,20 @@ class ProviderVersionStatus(SQLModel, table=True):
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     file_id: str = Field(foreign_key="model_files.id", index=True)
-    provider_id: Optional[str] = Field(default=None, index=True)
+    provider_id: str | None = Field(default=None, index=True)
     
     # Status tracking
     status: str = Field(default="pending")  # pending, downloading, ready, failed
-    storage_path: Optional[str] = None  # Actual path on provider storage
-    size_bytes: Optional[int] = Field(default=None, sa_type=BigInteger)  # Actual size after download
+    storage_path: str | None = None  # Actual path on provider storage
+    size_bytes: int | None = Field(default=None, sa_type=BigInteger)  # Actual size after download
     
     # Timestamps
     queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    downloaded_at: Optional[datetime] = None
-    verified_at: Optional[datetime] = None  # Last integrity check
+    downloaded_at: datetime | None = None
+    verified_at: datetime | None = None  # Last integrity check
     
     # Error tracking
-    error_message: Optional[str] = None
+    error_message: str | None = None
     retry_count: int = Field(default=0)
     
     # Relationships
@@ -649,20 +648,20 @@ class Character(SQLModel, table=True):
     __tablename__ = "characters"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
-    personality: Optional[str] = Field(default=None, sa_column=Column(Text))
-    scenario: Optional[str] = Field(default=None, sa_column=Column(Text))
-    first_mes: Optional[str] = Field(default=None, sa_column=Column(Text))
-    mes_example: Optional[str] = Field(default=None, sa_column=Column(Text))
-    creator_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
-    system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
+    description: str | None = Field(default=None, sa_column=Column(Text))
+    personality: str | None = Field(default=None, sa_column=Column(Text))
+    scenario: str | None = Field(default=None, sa_column=Column(Text))
+    first_mes: str | None = Field(default=None, sa_column=Column(Text))
+    mes_example: str | None = Field(default=None, sa_column=Column(Text))
+    creator_notes: str | None = Field(default=None, sa_column=Column(Text))
+    system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     
     # Custom Extensions
-    visual_tags: List[str] = Field(default=[], sa_column=Column(JSON))
-    lora_triggers: List[str] = Field(default=[], sa_column=Column(JSON))
-    voice_profile: Optional[str] = Field(default=None)
+    visual_tags: list[str] = Field(default=[], sa_column=Column(JSON))
+    lora_triggers: list[str] = Field(default=[], sa_column=Column(JSON))
+    voice_profile: str | None = Field(default=None)
     
-    avatar_path: Optional[str] = Field(default=None)
+    avatar_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -670,7 +669,7 @@ class Chat(SQLModel, table=True):
     __tablename__ = "chats"
     __table_args__ = (Index('idx_chat_type', 'chat_type'),)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    character_id: Optional[str] = Field(foreign_key="characters.id", default=None, index=True)
+    character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
     name: str = Field(default="New Chat")
     chat_type: str = Field(default="roleplay")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -689,7 +688,7 @@ class Message(SQLModel, table=True):
     chat_id: str = Field(foreign_key="chats.id", index=True)
     role: MessageRole
     content: str = Field(sa_column=Column(Text))
-    image_path: Optional[str] = Field(default=None)
+    image_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -697,13 +696,13 @@ class Lorebook(SQLModel, table=True):
     __tablename__ = "lorebooks"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    description: str | None = Field(default=None, sa_column=Column(Text))
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
-    entries: List["LorebookEntry"] = Relationship(back_populates="lorebook")
+    entries: list["LorebookEntry"] = Relationship(back_populates="lorebook")
 
 class LorebookEntry(SQLModel, table=True):
     __tablename__ = "lorebook_entries"
@@ -711,11 +710,11 @@ class LorebookEntry(SQLModel, table=True):
     lorebook_id: str = Field(foreign_key="lorebooks.id", index=True)
     
     # Trigger words or keys for this entry
-    keys: List[str] = Field(default=[], sa_column=Column(JSON))
+    keys: list[str] = Field(default=[], sa_column=Column(JSON))
     content: str = Field(sa_column=Column(Text))
     
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
-    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384)))
+    embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
     
     lorebook: Optional["Lorebook"] = Relationship(back_populates="entries")
 
@@ -723,7 +722,7 @@ class Scenario(SQLModel, table=True):
     __tablename__ = "scenarios"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    description: str | None = Field(default=None, sa_column=Column(Text))
     prompt_template: str = Field(sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -732,17 +731,17 @@ class Story(SQLModel, table=True):
     __tablename__ = "stories"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     title: str = Field(index=True)
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
-    genre: Optional[str] = Field(default=None)  # e.g., "fantasy", "sci-fi", "horror"
+    description: str | None = Field(default=None, sa_column=Column(Text))
+    genre: str | None = Field(default=None)  # e.g., "fantasy", "sci-fi", "horror"
     # World Vault associations
-    character_ids: List[str] = Field(default=[], sa_column=Column(JSON))  # protagonist characters
-    lorebook_ids: List[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
-    scenario_id: Optional[str] = Field(default=None)  # base scenario
+    character_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # protagonist characters
+    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
+    scenario_id: str | None = Field(default=None)  # base scenario
     # Story state
     is_archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    chapters: List["StoryChapter"] = Relationship(back_populates="story")
+    chapters: list["StoryChapter"] = Relationship(back_populates="story")
 
 class StoryBeatRole(str, Enum):
     NARRATOR = "narrator"  # AI-generated story prose
@@ -755,13 +754,13 @@ class StoryChapter(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     story_id: str = Field(foreign_key="stories.id", index=True)
     chapter_number: int = Field(default=1)
-    title: Optional[str] = Field(default=None)
+    title: str | None = Field(default=None)
     # Full chapter content as accumulated prose (snapshot)
     content: str = Field(default="", sa_column=Column(Text))
     # Individual beats/turns within the chapter
-    beats: List[Dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    beats: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
     # Images generated for this chapter
-    image_paths: List[str] = Field(default=[], sa_column=Column(JSON))
+    image_paths: list[str] = Field(default=[], sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     story: Optional["Story"] = Relationship(back_populates="chapters")

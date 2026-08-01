@@ -1,10 +1,9 @@
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from sqlalchemy import inspect, text
 
-from core.entities import compute_storage_filename
 from infrastructure.logging import db_logger
 
 logger = db_logger()
@@ -23,7 +22,6 @@ class MigrationStep:
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
     """Return the current column names for a table."""
-    from sqlalchemy import inspect
 
     inspector = inspect(conn)
     return {col["name"] for col in inspector.get_columns(table_name)}
@@ -41,7 +39,6 @@ def _verify_required_columns(conn, table_name: str, required_columns: set[str]) 
 
 def _ensure_schema_migrations_table(conn) -> None:
     """Create the schema migration tracking table if it does not exist."""
-    from sqlalchemy import text
 
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -54,7 +51,6 @@ def _ensure_schema_migrations_table(conn) -> None:
 
 def _get_applied_migrations(conn) -> set[str]:
     """Return the set of migration versions already recorded."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if SCHEMA_MIGRATIONS_TABLE not in inspector.get_table_names():
@@ -66,7 +62,6 @@ def _get_applied_migrations(conn) -> set[str]:
 
 def _record_migration(conn, step: MigrationStep) -> None:
     """Record a successfully applied migration step."""
-    from sqlalchemy import text
 
     conn.execute(
         text(
@@ -78,7 +73,6 @@ def _record_migration(conn, step: MigrationStep) -> None:
 
 def _migration_add_job_timestamps(conn) -> bool:
     """Ensure jobs table includes started_at and completed_at columns."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "jobs" not in inspector.get_table_names():
@@ -100,7 +94,6 @@ def _migration_add_job_timestamps(conn) -> bool:
 
 def _migration_setup_prompts_fts(conn) -> bool:
     """Create the prompts FTS table and synchronization triggers."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "prompts" not in inspector.get_table_names():
@@ -149,7 +142,6 @@ def _migration_setup_prompts_fts(conn) -> bool:
 
 def _migration_add_provider_status_provider_id(conn) -> bool:
     """Add provider_id column and indexes to provider_version_status."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "provider_version_status" not in inspector.get_table_names():
@@ -198,7 +190,6 @@ def _migration_add_provider_status_provider_id(conn) -> bool:
 
 def _migration_normalize_legacy_job_statuses(conn) -> bool:
     """Normalize legacy job statuses to the current lifecycle model."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "jobs" not in inspector.get_table_names():
@@ -229,7 +220,6 @@ def _migrate_models_to_v2(conn) -> bool:
     Per user clarification: existing models always used latest version,
     so we treat the first version in modelVersions as the selected default.
     """
-    import json
 
     from sqlalchemy import inspect, text
 
@@ -523,7 +513,6 @@ def _migrate_models_to_v2(conn) -> bool:
 
 def _migration_create_deleted_file_tombstones(conn) -> bool:
     """Create the deleted_file_tombstones table if it does not exist."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "deleted_file_tombstones" in inspector.get_table_names():
@@ -547,7 +536,6 @@ def _migration_create_deleted_file_tombstones(conn) -> bool:
 
 def _migration_add_job_task_type(conn) -> bool:
     """Ensure jobs table includes task_type column."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "jobs" not in inspector.get_table_names():
@@ -564,7 +552,6 @@ def _migration_add_job_task_type(conn) -> bool:
 
 def _migration_add_provider_worker_type(conn) -> bool:
     """Ensure providers table includes worker_type column."""
-    from sqlalchemy import inspect, text
 
     inspector = inspect(conn)
     if "providers" not in inspector.get_table_names():

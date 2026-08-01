@@ -1,18 +1,20 @@
 """Tests for infrastructure/image_processor.py"""
-import os
 import json
+import os
 import tempfile
+from unittest.mock import patch
+
 import pytest
 from PIL import Image
-from unittest.mock import patch, MagicMock
+
 from infrastructure.image_processor import (
-    get_output_path,
-    save_image_with_metadata,
-    write_metadata_sidecar,
-    read_image_metadata,
     generate_thumbnails,
     get_image_dimensions,
+    get_output_path,
+    read_image_metadata,
     resize_image,
+    save_image_with_metadata,
+    write_metadata_sidecar,
 )
 
 

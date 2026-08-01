@@ -1,7 +1,10 @@
 import asyncio
+
 from sqlmodel import Session
+
 from infrastructure.database import engine
 from services.model_service import ModelServiceV2
+
 
 async def main():
     with Session(engine) as session:

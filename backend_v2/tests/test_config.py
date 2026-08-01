@@ -1,51 +1,53 @@
 """Tests for config.py"""
-import os
 import json
-import pytest
+import os
 import tempfile
+
+import pytest
+
 import config as cfg
 from config import (
     DEFAULT_CONFIG,
     Settings,
-    get_settings,
-    load_config,
-    get_config,
-    update_config,
-    reset_config,
     _deep_merge,
     _validate_config,
-    get_worker_poll_interval,
-    get_worker_retry_delay,
-    get_worker_poll_limit,
+    get_blurhash_components,
+    get_blurhash_resize_max,
+    get_config,
+    get_cors_origins,
     get_default_jobs_limit,
-    get_max_jobs_in_memory,
-    get_max_concurrent_jobs,
-    get_job_timeout,
+    get_download_auto_remove_delay,
+    get_download_chunk_size,
+    get_embed_metadata_in_png,
+    get_gzip_minimum_size,
     get_job_max_retries,
     get_job_retry_base_delay,
     get_job_retry_max_delay,
-    get_model_sync_interval,
-    get_model_sync_retry_delay,
-    get_reconciliation_interval,
-    get_worker_backend_url,
-    get_download_chunk_size,
-    get_download_auto_remove_delay,
-    get_modal_timeout,
-    get_modal_max_containers,
-    get_modal_scaledown_window,
-    get_cors_origins,
-    get_gzip_minimum_size,
-    get_jobs_cleanup_max_age,
+    get_job_timeout,
     get_jobs_cleanup_auto,
     get_jobs_cleanup_interval,
-    get_thumbnail_sizes,
-    get_thumbnail_quality,
-    get_blurhash_components,
-    get_blurhash_resize_max,
-    get_thumbnail_format,
-    get_thumbnail_directory,
+    get_jobs_cleanup_max_age,
+    get_max_concurrent_jobs,
+    get_max_jobs_in_memory,
+    get_modal_max_containers,
+    get_modal_scaledown_window,
+    get_modal_timeout,
+    get_model_sync_interval,
+    get_model_sync_retry_delay,
     get_output_date_hierarchy,
-    get_embed_metadata_in_png,
+    get_reconciliation_interval,
+    get_settings,
+    get_thumbnail_directory,
+    get_thumbnail_format,
+    get_thumbnail_quality,
+    get_thumbnail_sizes,
+    get_worker_backend_url,
+    get_worker_poll_interval,
+    get_worker_poll_limit,
+    get_worker_retry_delay,
+    load_config,
+    reset_config,
+    update_config,
 )
 
 
@@ -206,7 +208,6 @@ class TestValidateConfig:
 
 class TestLoadConfig:
     def test_load_from_file(self):
-        import config as cfg_module
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False
         ) as f:
@@ -220,7 +221,6 @@ class TestLoadConfig:
             os.unlink(tmp_path)
 
     def test_creates_default_config_if_not_exists(self):
-        import config as cfg_module
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = os.path.join(tmpdir, "config.json")
             result = load_config(tmp_path)
@@ -228,7 +228,6 @@ class TestLoadConfig:
             assert os.path.exists(tmp_path)
 
     def test_falls_back_to_defaults_on_bad_json(self):
-        import config as cfg_module
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False
         ) as f:
@@ -243,7 +242,6 @@ class TestLoadConfig:
             os.unlink(tmp_path)
 
     def test_merges_with_defaults(self):
-        import config as cfg_module
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False
         ) as f:

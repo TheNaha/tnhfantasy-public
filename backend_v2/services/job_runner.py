@@ -1,19 +1,21 @@
 import asyncio
-from typing import Optional
 
-from core.entities import Provider
-from services.load_balancer import LoadBalancer
-from services.job_processing import finalize_successful_job
-from services.provider_client import JobCancelledError, JobTimeoutError, ProviderCallError
-from services.provider_runtime import resolve_provider_runtime
-from core.workflow_parser import extract_models_from_workflow
-from core.entities import JobStatus
+from core.entities import JobStatus, Provider
 from core.exceptions import NotFoundError
+from core.workflow_parser import extract_models_from_workflow
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
+from services.job_processing import finalize_successful_job
 from services.job_service import JobService
-from services.provider_service import ProviderService
+from services.load_balancer import LoadBalancer
 from services.load_balancer_factory import create_load_balancer
+from services.provider_client import (
+    JobCancelledError,
+    JobTimeoutError,
+    ProviderCallError,
+)
+from services.provider_runtime import resolve_provider_runtime
+from services.provider_service import ProviderService
 
 logger = get_logger("job_runner")
 
@@ -43,10 +45,10 @@ async def select_next_provider(
     job_service,
     job_id: str,
     exhausted_providers: set[str],
-    preferred_provider_id: Optional[str],
-    required_models: Optional[dict] = None,
+    preferred_provider_id: str | None,
+    required_models: dict | None = None,
     task_type: str = "image",
-) -> Optional[Provider]:
+) -> Provider | None:
     """Select the next provider or fail the job when no providers remain."""
     provider = await load_balancer.get_next_provider(
         preferred_provider_id=preferred_provider_id,
@@ -194,7 +196,7 @@ async def _handle_provider_failure(
 
 async def execute_job(
     job_id: str,
-    preferred_provider_id: Optional[str] = None,
+    preferred_provider_id: str | None = None,
     *,
     session_context_manager,
     call_provider_fn,

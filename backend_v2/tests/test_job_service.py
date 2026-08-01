@@ -1,12 +1,13 @@
 # Job Service Unit Tests
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from sqlmodel import Session
 
-from services.job_service import JobService
-from core.entities import Job, JobStatus
 from core.dtos import JobQueueItem
+from core.entities import Job, JobStatus
 from core.exceptions import NotFoundError
+from services.job_service import JobService
 
 
 class TestJobServiceCreate:

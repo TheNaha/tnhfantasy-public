@@ -1,15 +1,14 @@
 # Pytest configuration and fixtures
+
 import pytest
-from typing import Dict, Any, List
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from api.main import app
 from api.deps import get_session
+from api.main import app
+
 # Need to import all models so SQLModel metadata is complete
-from core.entities import Job, Provider
-from core.entities import ModelV2, ProviderVersionStatus
 
 
 @pytest.fixture(name="engine")

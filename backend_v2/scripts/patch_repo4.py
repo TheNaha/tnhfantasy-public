@@ -1,4 +1,3 @@
-import sys
 
 file_path = "/home/thenaha/containers/stacks/comfyui/backend_v2/infrastructure/repositories/model_repo_v2.py"
 with open(file_path, "r") as f:

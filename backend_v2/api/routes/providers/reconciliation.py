@@ -10,24 +10,24 @@
 #   PUT    /api/providers/load-balancing – Update LB strategy
 #   POST   /api/providers/{id}/reconcile – Trigger model sync
 #   GET/POST /api/providers/{id}/container/* – Container lifecycle management
-from typing import Dict, Any, Optional, List
-import asyncio
-from datetime import datetime, timezone, timedelta
+from typing import Any
+
 import httpx
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
 from pydantic import BaseModel
+from sqlmodel import Session
 
-from api.deps import get_session, get_provider_service, get_container_manager, get_event_bus
+from api.deps import (
+    api_logger,
+    get_event_bus,
+    get_provider_lifecycle_service,
+    get_provider_service,
+    get_session,
+)
 from core.events import Event, EventType, emit_provider_stats
+from core.exceptions import ComfyError, ProviderError, ValidationError
 from services.provider_service import ProviderService
-from services.provider_status_service import invalidate_provider_status_caches
-from api.deps import get_provider_lifecycle_service
-from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
-from api.deps import start_background_task
-from api.deps import get_http_client
-from api.deps import api_logger
-from config import get_worker_backend_url
+
 from .lifecycle import _invalidate_provider_runtime_caches
 
 logger = api_logger()
@@ -87,9 +87,9 @@ async def reconcile_provider(
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:
             raise ValidationError("Reconciliation already running in worker") from exc
-        raise ProviderError(provider_id, f"Worker error: {str(exc)}") from exc
+        raise ProviderError(provider_id, f"Worker error: {exc!s}") from exc
     except httpx.HTTPError as exc:
-        raise ComfyError(f"Failed to reach worker: {str(exc)}") from exc
+        raise ComfyError(f"Failed to reach worker: {exc!s}") from exc
 
     if result.get("status") == "already_running":
         raise ValidationError(result.get("message", "Reconciliation already in progress"))
@@ -111,12 +111,12 @@ async def get_reconciliation_status(
 class ReconciliationEventRequest(BaseModel):
     """Request model for reconciliation event push from workers."""
     status: str  # reconciling, completed, failed
-    phase: Optional[str] = None  # validating, fetching, downloading, deleting
-    stats: Optional[Dict[str, Any]] = None
-    current_download: Optional[Dict[str, Any]] = None
-    active_downloads: Optional[List[Dict[str, Any]]] = None  # For concurrent downloads
-    errors: Optional[List[str]] = None
-    message: Optional[str] = None
+    phase: str | None = None  # validating, fetching, downloading, deleting
+    stats: dict[str, Any] | None = None
+    current_download: dict[str, Any] | None = None
+    active_downloads: list[dict[str, Any]] | None = None  # For concurrent downloads
+    errors: list[str] | None = None
+    message: str | None = None
 
 
 @router.post("/{provider_id}/reconciliation-event")

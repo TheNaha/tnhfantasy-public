@@ -1,19 +1,32 @@
 import time
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response as FastAPIResponse
-from urllib.parse import urlparse
 
 from api.error_handlers import register_exception_handlers
-from api.routes import jobs, providers, health, files, settings as settings_routes, statistics, generation
-from api.routes import models, models_external, prompts, collections, nodes
-from api.routes import worker_ws, discovery
-from api.routes import world_vault
+from api.routes import (
+    collections,
+    discovery,
+    files,
+    generation,
+    health,
+    jobs,
+    models,
+    models_external,
+    nodes,
+    prompts,
+    providers,
+    statistics,
+    worker_ws,
+    world_vault,
+)
+from api.routes import settings as settings_routes
 from api.routes.websocket import socket_app
-from config import settings, get_cors_origins
+from config import get_cors_origins, settings
 from infrastructure.logging import api_logger
 from infrastructure.metrics import metrics
 

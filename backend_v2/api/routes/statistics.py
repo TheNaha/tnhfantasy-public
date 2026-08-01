@@ -7,16 +7,16 @@
 # KEY ENDPOINTS:
 #   GET /api/statistics          – Overall usage summary (job counts, generation stats)
 #   GET /api/statistics/timeline – Daily generation counts for chart rendering
-import os
-import re
 import asyncio
+import re
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any
+
 from fastapi import APIRouter
-from api.deps import cache_stats
-from api.deps import get_logger
-from services.gallery_indexer import gallery_indexer
+
+from api.deps import cache_stats, get_logger
 from config import settings
+from services.gallery_indexer import gallery_indexer
 
 logger = get_logger("statistics_route")
 
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 OUTPUT_DIR = settings.output_dir
 
 
-def _calculate_statistics() -> Dict[str, Any]:
+def _calculate_statistics() -> dict[str, Any]:
     """
     Synchronous worker function to calculate basic statistics.
     Should be run in a thread pool to avoid blocking the event loop.
@@ -162,7 +162,7 @@ def _calculate_statistics() -> Dict[str, Any]:
     return stats
 
 
-def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
+def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
     """
     Synchronous worker function to calculate detailed statistics.
     Should be run in a thread pool to avoid blocking the event loop.
@@ -390,7 +390,7 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
                         detailed_stats["prompts"]["keywords"][word] = \
                             detailed_stats["prompts"]["keywords"].get(word, 0) + 1
 
-            if "negativePrompt" in meta and meta["negativePrompt"]:
+            if meta.get("negativePrompt"):
                 detailed_stats["prompts"]["negative_usage"] += 1
 
             # === PERFORMANCE METRICS ===
@@ -524,6 +524,7 @@ def _calculate_detailed_statistics(time_range: str = "all") -> Dict[str, Any]:
 
 
 from core.exceptions import ComfyError
+
 
 @router.get("")
 @cache_stats

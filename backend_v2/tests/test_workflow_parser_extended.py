@@ -1,11 +1,9 @@
 """Additional workflow parser tests for uncovered edge cases."""
-import pytest
 from core.workflow_parser import (
+    MODEL_LOADER_NODES,
     extract_models_from_workflow,
     get_all_required_files,
     get_required_storage_paths,
-    MODEL_LOADER_NODES,
-    MULTI_INPUT_NODES,
 )
 
 

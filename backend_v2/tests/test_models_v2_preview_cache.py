@@ -1,13 +1,13 @@
 import asyncio
 from pathlib import Path
 
-import pytest
 import httpx
+import pytest
 
-from services import model_preview_service as models_router
-from services import external_model_service
 from api.routes.models.preview import get_model_preview_image
 from infrastructure.request_dedup import clear_dedup_cache
+from services import external_model_service
+from services import model_preview_service as models_router
 
 
 class _DummyResponse:

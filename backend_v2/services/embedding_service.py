@@ -1,6 +1,6 @@
 import threading
+
 import structlog
-from typing import List, Optional
 
 logger = structlog.get_logger(__name__)
 
@@ -15,7 +15,7 @@ class EmbeddingService:
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(EmbeddingService, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._model = None
                 cls._instance._model_name = "all-MiniLM-L6-v2"
                 cls._instance._model_lock = threading.Lock()
@@ -37,7 +37,7 @@ class EmbeddingService:
                         raise RuntimeError(f"Failed to load embedding model: {e}")
         return self._model
 
-    def generate_embedding(self, text: str) -> List[float]:
+    def generate_embedding(self, text: str) -> list[float]:
         """
         Generate a 384-dimensional embedding for the given text.
         """
@@ -53,7 +53,7 @@ class EmbeddingService:
             logger.error("embedding_generation_failed", error=str(e))
             raise RuntimeError(f"Failed to generate embedding: {e}")
 
-    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for a list of texts in batch.
         """

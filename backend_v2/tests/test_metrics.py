@@ -1,26 +1,22 @@
 """Tests for infrastructure/metrics.py - Prometheus metrics"""
-import pytest
 from infrastructure.metrics import (
-    metrics,
-    MetricsManager,
-    REGISTRY,
-    HTTP_REQUESTS_TOTAL,
-    HTTP_REQUEST_DURATION_SECONDS,
-    JOBS_CREATED_TOTAL,
-    JOBS_COMPLETED_TOTAL,
-    JOBS_QUEUE_SIZE,
-    JOBS_ACTIVE,
-    PROVIDER_REQUESTS_TOTAL,
     CACHE_HITS_TOTAL,
     CACHE_MISSES_TOTAL,
     CACHE_SIZE,
     DB_OPERATIONS_TOTAL,
-    DOWNLOADS_TOTAL,
     DOWNLOADS_ACTIVE,
+    DOWNLOADS_TOTAL,
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    JOBS_ACTIVE,
+    JOBS_CREATED_TOTAL,
+    JOBS_QUEUE_SIZE,
     MODELS_TOTAL,
-    WEBSOCKET_CONNECTIONS,
+    PROVIDER_REQUESTS_TOTAL,
     SCHEDULER_TASKS_TOTAL,
-    APP_INFO,
+    WEBSOCKET_CONNECTIONS,
+    MetricsManager,
+    metrics,
 )
 
 

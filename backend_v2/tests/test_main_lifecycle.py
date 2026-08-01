@@ -1,11 +1,11 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-from datetime import datetime, timezone
 import pytest
 
-from core.entities import Job, JobStatus
-from api.main import _requeue_inflight_jobs_for_shutdown
 from api.lifecycle import recover_post_processing_jobs
+from api.main import _requeue_inflight_jobs_for_shutdown
+from core.entities import Job, JobStatus
 
 
 class TestMainLifecycle:

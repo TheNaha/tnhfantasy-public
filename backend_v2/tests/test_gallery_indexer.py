@@ -1,13 +1,14 @@
 
-import unittest
-from unittest.mock import MagicMock, patch
 import os
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
 
 # Add backend_v2 to sys.path if not present, to ensure imports work
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from services.gallery_indexer import GalleryIndexer
+
 
 class TestGalleryIndexer(unittest.TestCase):
     def setUp(self):

@@ -1,16 +1,24 @@
 # Provider implementations
-from .base import ServerlessProvider, FileProxyProvider
-from .modal_provider import ModalProvider
+from .base import FileProxyProvider, ServerlessProvider
 from .beam_provider import BeamProvider
-from .provider_registry import ProviderRegistry, ProviderTypeConfig, HttpFileProxy, clean_registry_dict
+from .modal_provider import ModalProvider
+from .provider_registry import (
+    HttpFileProxy,
+    ProviderRegistry,
+    ProviderTypeConfig,
+    clean_registry_dict,
+)
+
 clean_dict = clean_registry_dict  # backward compat alias
+# Import provider configs to trigger auto-registration
+from . import (
+    beam_config,  # noqa: F401 - Registers Beam provider type
+    direct_url_config,  # noqa: F401 - Registers Direct URL provider type
+    modal_config,  # noqa: F401 - Registers Modal provider type
+    openai_compat_config,  # noqa: F401 - Registers OpenAI Compat provider type
+)
 from .runtime import get_provider_worker_base_url
 
-# Import provider configs to trigger auto-registration
-from . import modal_config  # noqa: F401 - Registers Modal provider type
-from . import beam_config   # noqa: F401 - Registers Beam provider type
-from . import direct_url_config  # noqa: F401 - Registers Direct URL provider type
-from . import openai_compat_config # noqa: F401 - Registers OpenAI Compat provider type
 
 def create_provider_client(provider_id: str, config: dict):
     provider_type = (config or {}).get("type")
@@ -23,16 +31,16 @@ def create_provider_client(provider_id: str, config: dict):
     raise ValueError(f"Unsupported provider type or missing client_class: {provider_type}")
 
 __all__ = [
-    "ServerlessProvider",
-    "FileProxyProvider",
-    "ModalProvider",
-    "BeamProvider",
-    "HttpFileProxy",
-    "clean_registry_dict",
     "DIRECT_URL_PROVIDER_CONFIG",
     "OPENAI_COMPAT_PROVIDER_CONFIG",
-    "create_provider_client",
-    "get_provider_worker_base_url",
+    "BeamProvider",
+    "FileProxyProvider",
+    "HttpFileProxy",
+    "ModalProvider",
     "ProviderRegistry",
     "ProviderTypeConfig",
+    "ServerlessProvider",
+    "clean_registry_dict",
+    "create_provider_client",
+    "get_provider_worker_base_url",
 ]

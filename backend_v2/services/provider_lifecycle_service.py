@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 from sqlmodel import Session
 
-from services.provider_runtime import resolve_provider_runtime
 from core.events import EventType, emit_provider_event
 from core.exceptions import ProviderError
 from infrastructure.http_client import get_http_client
+from services.provider_runtime import resolve_provider_runtime
 from services.provider_service import ProviderService
 from services.provider_status_service import ProviderStatusService
 
@@ -20,9 +21,9 @@ class ProviderLifecycleService:
         self,
         session: Session,
         *,
-        provider_service: Optional[ProviderService] = None,
+        provider_service: ProviderService | None = None,
         container_manager: Any = None,
-        invalidate_caches: Optional[Callable[[Optional[str]], None]] = None,
+        invalidate_caches: Callable[[str | None], None] | None = None,
     ) -> None:
         self.session = session
         self.provider_service = provider_service or ProviderService(session)
@@ -35,7 +36,7 @@ class ProviderLifecycleService:
             raise ProviderError("provider-runtime", "Container manager not initialized")
         return self.container_manager
 
-    async def start_container(self, provider_id: str) -> Dict[str, Any]:
+    async def start_container(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
         provider = await self.provider_service.get_provider(provider_id)
         container_config = provider.container_config
@@ -63,7 +64,7 @@ class ProviderLifecycleService:
             "container_id": container.short_id,
         }
 
-    async def stop_container(self, provider_id: str) -> Dict[str, Any]:
+    async def stop_container(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
         container_manager.stop_container(provider_id)
         self.invalidate_caches(provider_id)
@@ -77,7 +78,7 @@ class ProviderLifecycleService:
             "message": f"Container for provider '{provider_id}' stopped",
         }
 
-    async def restart_container(self, provider_id: str) -> Dict[str, Any]:
+    async def restart_container(self, provider_id: str) -> dict[str, Any]:
         await self.stop_container(provider_id)
         await self.start_container(provider_id)
         return {
@@ -85,7 +86,7 @@ class ProviderLifecycleService:
             "message": f"Container for provider '{provider_id}' restarted",
         }
 
-    def get_container_logs(self, provider_id: str, tail: int = 100) -> Dict[str, Any]:
+    def get_container_logs(self, provider_id: str, tail: int = 100) -> dict[str, Any]:
         container_manager = self._require_container_manager()
         logs = container_manager.get_container_logs(provider_id, tail=tail)
         return {
@@ -93,7 +94,7 @@ class ProviderLifecycleService:
             "logs": logs,
         }
 
-    async def get_container_status(self, provider_id: str) -> Dict[str, Any]:
+    async def get_container_status(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
         container_name = f"comfy-provider-{provider_id}"
 
@@ -138,7 +139,7 @@ class ProviderLifecycleService:
             "ports": container.ports,
         }
 
-    async def setup_provider(self, provider_id: str) -> Dict[str, Any]:
+    async def setup_provider(self, provider_id: str) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
         if not runtime.supports_setup or runtime.mode not in ("container_http", "discovery"):
@@ -181,7 +182,7 @@ class ProviderLifecycleService:
             "result": result,
         }
 
-    async def trigger_reconciliation(self, provider_id: str, force: bool = False) -> Dict[str, Any]:
+    async def trigger_reconciliation(self, provider_id: str, force: bool = False) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         runtime = resolve_provider_runtime(provider)
         if not runtime.supports_reconciliation or runtime.mode not in ("container_http", "discovery"):
@@ -210,7 +211,7 @@ class ProviderLifecycleService:
                 provider_id,
                 {
                     "status": "failed",
-                    "message": f"Failed to reach worker: {str(exc)}",
+                    "message": f"Failed to reach worker: {exc!s}",
                 },
             )
             self.invalidate_caches(provider_id)
@@ -264,7 +265,7 @@ class ProviderLifecycleService:
             response=response,
         )
 
-    async def get_reconciliation_status(self, provider_id: str) -> Dict[str, Any]:
+    async def get_reconciliation_status(self, provider_id: str) -> dict[str, Any]:
         provider = await self.provider_service.get_provider(provider_id)
         persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
         runtime = resolve_provider_runtime(provider)
@@ -288,12 +289,12 @@ class ProviderLifecycleService:
             if persisted_state.get("status") and persisted_state.get("status") != "idle":
                 merged_state = dict(persisted_state)
                 merged_state["message"] = merged_state.get("message") or "Worker unreachable; showing last persisted reconciliation state"
-                merged_state["warning"] = f"Cannot reach worker: {str(exc)}"
+                merged_state["warning"] = f"Cannot reach worker: {exc!s}"
                 return merged_state
             return {
                 "provider_id": provider_id,
                 "status": "idle",
-                "warning": f"Cannot reach worker: {str(exc)}",
+                "warning": f"Cannot reach worker: {exc!s}",
             }
 
         if response.status_code == 200:

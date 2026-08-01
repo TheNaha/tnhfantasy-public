@@ -7,14 +7,13 @@
 #   metrics.track_job_created()
 
 from prometheus_client import (
-    Counter,
-    Histogram,
-    Gauge,
-    Info,
-    CollectorRegistry,
-    generate_latest,
     CONTENT_TYPE_LATEST,
     REGISTRY,
+    Counter,
+    Gauge,
+    Histogram,
+    Info,
+    generate_latest,
 )
 
 # Use the default registry so all metrics are auto-registered

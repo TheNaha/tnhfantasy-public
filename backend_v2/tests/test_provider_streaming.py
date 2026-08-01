@@ -1,15 +1,15 @@
 """Tests for provider streaming response parsing in services.provider_client."""
 
-from contextlib import asynccontextmanager
 import importlib
 import json
-from pathlib import Path
 import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
 import httpx
+import pytest
 
 from core.entities import JobStatus
 from services.provider_client import JobCancelledError, ProviderCallError, call_provider

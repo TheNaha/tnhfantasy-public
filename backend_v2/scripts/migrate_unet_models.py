@@ -3,14 +3,15 @@
 Migrate UNET-only models (Flux, AuraFlow, Pony V7) from 'checkpoints' to 'unet' directory.
 Usage: python scripts/migrate_unet_models.py
 """
-import sys
 import os
+import sys
 
 # Ensure we can import from backend_v2
 sys.path.insert(0, os.getcwd())
 
 from api.deps import get_session_sync
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+
 
 def main():
     print("Starting UNET model migration...")
@@ -19,7 +20,7 @@ def main():
             repo = ModelRepositoryV2(session)
             result = repo.migrate_unet_only_models()
 
-        print(f"Migration complete.")
+        print("Migration complete.")
         print(f"Migrated {result['count']} models to unet directory.")
         if result['migrated']:
             for m in result['migrated']:

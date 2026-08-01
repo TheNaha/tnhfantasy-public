@@ -2,23 +2,20 @@ import asyncio
 import base64
 import io
 import json
-import os
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from PIL import Image
-
 import pytest
+from PIL import Image
 from sqlmodel import Session
 
 from api.main import process_job
-from services.provider_client import JobTimeoutError, ProviderCallError
 from core.entities import JobStatus, Provider
 from services.job_service import JobService
 from services.load_balancer import LoadBalancer
+from services.provider_client import JobTimeoutError, ProviderCallError
 
-
-from contextlib import asynccontextmanager
 
 def _session_override(session: Session):
     def fake_get_session():

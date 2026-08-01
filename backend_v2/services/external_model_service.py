@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
@@ -25,7 +25,7 @@ class ExternalModelServiceError(Exception):
 class ExternalModelService:
     """Service for external model parsing and search APIs."""
 
-    async def parse_model_url(self, raw_url: str) -> Dict[str, Any]:
+    async def parse_model_url(self, raw_url: str) -> dict[str, Any]:
         url = (raw_url or "").strip()
         if not url:
             raise ExternalModelServiceError(status_code=400, detail="URL is required")
@@ -54,7 +54,7 @@ class ExternalModelService:
         cursor: str = None,
         username: str = None,
         tag: str = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         params = {"limit": limit}
         if query:
             params["query"] = query
@@ -134,7 +134,7 @@ class ExternalModelService:
         except Exception as exc:
             raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
 
-    async def get_civitai_model_version_by_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
+    async def get_civitai_model_version_by_hash(self, file_hash: str) -> Optional[dict[str, Any]]:
         """Fetch a specific model version from CivitAI by its SHA256 file hash."""
         url = f"https://civitai.com/api/v1/model-versions/by-hash/{file_hash}"
         try:
@@ -152,7 +152,7 @@ class ExternalModelService:
         except Exception as exc:
             raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
 
-    async def get_civitai_enums(self) -> Dict[str, Any]:
+    async def get_civitai_enums(self) -> dict[str, Any]:
         """Fetch current valid enum values (ModelType, BaseModel, etc.) from CivitAI API."""
         url = "https://civitai.com/api/v1/enums"
         try:
@@ -168,7 +168,7 @@ class ExternalModelService:
                 raise
             raise ExternalModelServiceError(500, str(e))
 
-    async def search_huggingface(self, query: str, limit: int = 20) -> Dict[str, Any]:
+    async def search_huggingface(self, query: str, limit: int = 20) -> dict[str, Any]:
         encoded_query = urllib.parse.quote(query, safe="")
         url = f"https://huggingface.co/api/models?search={encoded_query}&limit={limit}&filter=diffusers"
 
@@ -188,7 +188,7 @@ class ExternalModelService:
         except Exception as exc:
             raise ExternalModelServiceError(status_code=500, detail=str(exc)) from exc
 
-    async def get_civitai_tags(self, limit: int = 20) -> Dict[str, Any]:
+    async def get_civitai_tags(self, limit: int = 20) -> dict[str, Any]:
         """Fetch popular tags from CivitAI."""
         url = f"https://civitai.com/api/v1/tags?limit={limit}"
         client = get_http_client()
@@ -200,7 +200,7 @@ class ExternalModelService:
             logger.error(f"Error fetching CivitAI tags: {exc}")
             raise ExternalModelServiceError(status_code=502, detail="Failed to fetch tags from CivitAI")
 
-    async def _parse_civitai_url(self, url: str) -> Dict[str, Any]:
+    async def _parse_civitai_url(self, url: str) -> dict[str, Any]:
         match = re.search(r"models/(\d+)", url)
         if not match:
             raise ExternalModelServiceError(
@@ -217,10 +217,10 @@ class ExternalModelService:
         except Exception as exc:
             raise ExternalModelServiceError(
                 status_code=500,
-                detail=f"Failed to fetch from CivitAI: {str(exc)}",
+                detail=f"Failed to fetch from CivitAI: {exc!s}",
             ) from exc
 
-    async def get_civitai_model(self, model_id: int) -> Dict[str, Any]:
+    async def get_civitai_model(self, model_id: int) -> dict[str, Any]:
         try:
             response = await get_http_client().get(
                 f"https://civitai.com/api/v1/models/{model_id}",
@@ -231,14 +231,14 @@ class ExternalModelService:
         except httpx.HTTPStatusError as exc:
             raise ExternalModelServiceError(
                 status_code=exc.response.status_code,
-                detail=f"Failed to fetch from CivitAI: {str(exc)}",
+                detail=f"Failed to fetch from CivitAI: {exc!s}",
             ) from exc
         except Exception as exc:
             raise ExternalModelServiceError(
                 status_code=500,
-                detail=f"Failed to fetch from CivitAI: {str(exc)}",
+                detail=f"Failed to fetch from CivitAI: {exc!s}",
             ) from exc
-    async def get_civitai_model_version(self, version_id: int) -> Dict[str, Any]:
+    async def get_civitai_model_version(self, version_id: int) -> dict[str, Any]:
         try:
             response = await get_http_client().get(
                 f"https://civitai.com/api/v1/model-versions/{version_id}",
@@ -249,14 +249,14 @@ class ExternalModelService:
         except httpx.HTTPStatusError as exc:
             raise ExternalModelServiceError(
                 status_code=exc.response.status_code,
-                detail=f"Failed to fetch version from CivitAI: {str(exc)}",
+                detail=f"Failed to fetch version from CivitAI: {exc!s}",
             ) from exc
         except Exception as exc:
             raise ExternalModelServiceError(
                 status_code=500,
-                detail=f"Failed to fetch version from CivitAI: {str(exc)}",
+                detail=f"Failed to fetch version from CivitAI: {exc!s}",
             ) from exc
-    async def _parse_huggingface_url(self, url: str) -> Dict[str, Any]:
+    async def _parse_huggingface_url(self, url: str) -> dict[str, Any]:
         match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
         if not match:
             raise ExternalModelServiceError(
@@ -277,14 +277,14 @@ class ExternalModelService:
         except (httpx.HTTPError, ValueError) as exc:
             raise ExternalModelServiceError(
                 status_code=500,
-                detail=f"Failed to fetch from HuggingFace: {str(exc)}",
+                detail=f"Failed to fetch from HuggingFace: {exc!s}",
             ) from exc
 
     def _normalize_huggingface_model_detail(
         self,
         model_path: str,
-        hf_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        hf_data: dict[str, Any],
+    ) -> dict[str, Any]:
         owner = model_path.split("/")[0]
         model_name = model_path.split("/")[-1]
 
@@ -319,7 +319,7 @@ class ExternalModelService:
             "source": "huggingface",
         }
 
-    def _normalize_huggingface_model(self, model: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_huggingface_model(self, model: dict[str, Any]) -> dict[str, Any]:
         model_id = model.get("id", "")
         return {
             "id": model_id,

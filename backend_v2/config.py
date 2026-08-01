@@ -20,12 +20,13 @@
 # - Production deployments to use env vars for secrets and overrides
 # - Runtime configuration updates via UI without restarts
 # - Sensible defaults for quick setup
-import os
 import json
-from typing import Dict, Any, List, Optional
-from pydantic_settings import BaseSettings
-from pydantic import Field, model_validator
+import os
 from functools import lru_cache
+from typing import Any
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings
 
 from infrastructure.logging import config_logger
 
@@ -126,7 +127,7 @@ class Settings(BaseSettings):
     # API
     # Default: accept all origins ('*') for easier development
     # Override via COMFY_CORS_ORIGINS environment variable for production
-    cors_origins: List[str] = ["*"]
+    cors_origins: list[str] = ["*"]
     gzip_minimum_size: int = 1000
     worker_backend_url: str = "http://backend_v2:8002"
     
@@ -181,11 +182,11 @@ settings = get_settings()
 # ============================================================================
 
 # Global configuration instance
-_config: Dict[str, Any] = None
+_config: dict[str, Any] = None
 _config_path = os.path.join(os.path.dirname(__file__), "config.json")
 
 
-def load_config(config_path: str = None) -> Dict[str, Any]:
+def load_config(config_path: str = None) -> dict[str, Any]:
     """
     Load configuration from JSON file.
     Creates default config.json if it doesn't exist.
@@ -226,7 +227,7 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     return _config
 
 
-def get_config() -> Dict[str, Any]:
+def get_config() -> dict[str, Any]:
     """
     Get current configuration.
     Loads config if not already loaded.
@@ -240,7 +241,7 @@ def get_config() -> Dict[str, Any]:
     return _config
 
 
-def update_config(updates: Dict[str, Any], persist: bool = True) -> Dict[str, Any]:
+def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, Any]:
     """
     Update configuration with new values.
     
@@ -278,7 +279,7 @@ def update_config(updates: Dict[str, Any], persist: bool = True) -> Dict[str, An
     return _config
 
 
-def reset_config() -> Dict[str, Any]:
+def reset_config() -> dict[str, Any]:
     """
     Reset configuration to defaults.
     
@@ -298,7 +299,7 @@ def reset_config() -> Dict[str, Any]:
     return _config
 
 
-def _deep_merge(base: Dict, updates: Dict) -> Dict:
+def _deep_merge(base: dict, updates: dict) -> dict:
     """
     Deep merge two dictionaries.
     
@@ -318,7 +319,7 @@ def _deep_merge(base: Dict, updates: Dict) -> Dict:
     return result
 
 
-def _validate_config(config: Dict[str, Any]) -> None:
+def _validate_config(config: dict[str, Any]) -> None:
     """
     Validate configuration values.
     
@@ -454,7 +455,7 @@ def _env_var_is_set(env_name: str) -> bool:
     return os.environ.get(f"COMFY_{env_name}") is not None
 
 
-def _normalize_worker_backend_url(url: Optional[str]) -> str:
+def _normalize_worker_backend_url(url: str | None) -> str:
     """Normalize legacy or empty worker backend URL values."""
     default_url = "http://backend_v2:8002"
     candidate = (url or "").strip()
@@ -553,7 +554,7 @@ def get_modal_scaledown_window() -> int:
 
 
 # API settings
-def get_cors_origins() -> List[str]:
+def get_cors_origins() -> list[str]:
     """Get CORS origins list."""
     if _env_var_is_set("CORS_ORIGINS"):
         return settings.cors_origins

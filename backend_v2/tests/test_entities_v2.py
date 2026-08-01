@@ -1,11 +1,10 @@
 """Tests for uncovered parts of core/entities_v2.py"""
-import pytest
 from core.entities import (
-    get_directory_from_type,
-    compute_storage_filename,
-    is_unet_only_model,
     FLUX_DEFAULT_COMPONENTS,
     UNET_ONLY_BASE_MODELS,
+    compute_storage_filename,
+    get_directory_from_type,
+    is_unet_only_model,
 )
 
 

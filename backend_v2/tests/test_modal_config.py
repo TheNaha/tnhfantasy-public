@@ -1,5 +1,5 @@
-import pytest
 from infrastructure.providers.modal_config import build_modal_env_vars
+
 
 def test_build_modal_env_vars_empty():
     """Test with empty credentials and config."""
@@ -79,7 +79,10 @@ def test_build_modal_env_vars_ignores_unknown_keys():
 
 def test_modal_provider_config_structure():
     """Test that MODAL_PROVIDER_CONFIG is structured correctly."""
-    from infrastructure.providers.modal_config import MODAL_PROVIDER_CONFIG, build_modal_env_vars
+    from infrastructure.providers.modal_config import (
+        MODAL_PROVIDER_CONFIG,
+        build_modal_env_vars,
+    )
     from infrastructure.providers.provider_registry import ProviderTypeConfig
 
     assert isinstance(MODAL_PROVIDER_CONFIG, ProviderTypeConfig)

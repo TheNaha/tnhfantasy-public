@@ -1,12 +1,13 @@
 # Modal provider implementation
-import os
-from typing import Dict, List, AsyncIterator, Any, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
-from .base import ServerlessProvider, FileProxyProvider
-from .ndjson import iter_ndjson_payloads
-from .runtime import get_provider_worker_base_url
-from .provider_registry import HttpFileProxy
 from infrastructure.http_client import get_http_client
+
+from .base import FileProxyProvider, ServerlessProvider
+from .ndjson import iter_ndjson_payloads
+from .provider_registry import HttpFileProxy
+from .runtime import get_provider_worker_base_url
 
 
 class ModalProvider(ServerlessProvider):
@@ -16,7 +17,7 @@ class ModalProvider(ServerlessProvider):
     Uses CONTAINERIZED mode - calls HTTP endpoints on modal_worker container.
     """
     
-    def __init__(self, provider_id: str, config: Dict[str, Any]):
+    def __init__(self, provider_id: str, config: dict[str, Any]):
         super().__init__(provider_id, config)
         
         # Container mode settings
@@ -33,7 +34,7 @@ class ModalProvider(ServerlessProvider):
         self.credentials = config.get("credentials", {})
         self.username = self.credentials.get("username", "")
     
-    async def run_inference(self, workflow: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
         """
         Run ComfyUI inference via worker container.
         Streams progress updates.
@@ -60,9 +61,9 @@ class ModalProvider(ServerlessProvider):
         path: str,
         token: str = None,
         preview_url: str = None,
-        metadata: Dict = None,
-        info: Optional[Dict] = None
-    ) -> Dict[str, Any]:
+        metadata: dict = None,
+        info: dict | None = None
+    ) -> dict[str, Any]:
         """Download model via worker container."""
         client = get_http_client()
         endpoint = f"{self.worker_url}/download-model"
@@ -80,7 +81,7 @@ class ModalProvider(ServerlessProvider):
             return response.json()
         return {"status": "error", "error": f"Download failed: {response.status_code}"}
     
-    async def list_models(self, directory: str) -> List[Dict[str, Any]]:
+    async def list_models(self, directory: str) -> list[dict[str, Any]]:
         """List models via worker container."""
         client = get_http_client()
         response = await client.post(f"{self.worker_url}/list-models", json={"directory": directory})
@@ -110,7 +111,7 @@ class ModalProvider(ServerlessProvider):
     def get_file_proxy(self) -> FileProxyProvider:
         return self._file_proxy
     
-    def get_provider_info(self) -> Dict[str, Any]:
+    def get_provider_info(self) -> dict[str, Any]:
         return {
             "id": self.provider_id,
             "type": self.provider_type,

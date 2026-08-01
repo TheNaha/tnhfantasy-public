@@ -16,16 +16,18 @@
 # Optional idempotency:
 #   - POST /api/generate and POST /api/generate/batch accept `Idempotency-Key`
 #     to deduplicate duplicate submissions within a short server-side window.
-from typing import Dict, Any, List, Optional
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header
-from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session
+from api.deps import (
+    api_logger,
+    deduplicated,
+    get_job_submission_service,
+    make_key,
+)
 from core.exceptions import ValidationError
-from api.deps import deduplicated, make_key
-from api.deps import api_logger
-from api.deps import get_job_submission_service
 from services.job_submission_service import JobSubmissionService
 
 logger = api_logger()
@@ -35,21 +37,21 @@ router = APIRouter(prefix="/api", tags=["generation"])
 
 class GenerateRequest(BaseModel):
     """Request body for single-image generation."""
-    workflow: Dict[str, Any] | None = None  # Full ComfyUI workflow node graph
-    metadata: Dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
+    workflow: dict[str, Any] | None = None  # Full ComfyUI workflow node graph
+    metadata: dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
 
 
 class GenerateBatchRequest(BaseModel):
-    workflows: List[Dict[str, Any]] | None = None
-    metadata: Dict[str, Any] = {}
+    workflows: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] = {}
 
 
 class SaveImageRequest(BaseModel):
     """Request to save a generated image from worker."""
     image_base64: str
-    job_id: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    filename: Optional[str] = None
+    job_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    filename: str | None = None
     batch_index: int = 0
 
 
@@ -69,8 +71,9 @@ async def save_generated_image(
     
     Returns saved image info for frontend display.
     """
-    import base64
     import asyncio
+    import base64
+
     from services.image_service import get_image_service as _get_image_service
     
     try:
@@ -100,7 +103,7 @@ async def save_generated_image(
 @router.post("/generate")
 async def generate(
     request: GenerateRequest,
-    idempotency_key: Optional[str] = Header(
+    idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",
@@ -142,7 +145,7 @@ async def generate(
 @router.post("/generate/batch")
 async def generate_batch(
     request: GenerateBatchRequest,
-    idempotency_key: Optional[str] = Header(
+    idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same batch response for a short deduplication window.",

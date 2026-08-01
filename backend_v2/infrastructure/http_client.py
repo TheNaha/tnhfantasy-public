@@ -1,16 +1,16 @@
 # HTTP Client with Connection Pooling
 # Provides a singleton httpx AsyncClient for efficient connection reuse
 
-import httpx
-from typing import Optional
 from contextlib import asynccontextmanager
+
+import httpx
 
 from infrastructure.logging import http_logger
 
 logger = http_logger()
 
 # Singleton HTTP client instance
-_client: Optional[httpx.AsyncClient] = None
+_client: httpx.AsyncClient | None = None
 
 
 def get_http_client() -> httpx.AsyncClient:

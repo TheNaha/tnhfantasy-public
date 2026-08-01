@@ -1,19 +1,21 @@
 
+from unittest.mock import Mock
+
 import pytest
-import asyncio
-from unittest.mock import Mock, call
+
 from infrastructure.cache import (
-    cached,
-    invalidate_cache,
-    get_cache_stats,
-    cache_stats,
-    cache_model,
-    cache_search,
-    _stats_cache,
+    _lru_cache,
     _model_cache,
     _search_cache,
-    _lru_cache,
+    _stats_cache,
+    cache_model,
+    cache_search,
+    cache_stats,
+    cached,
+    get_cache_stats,
+    invalidate_cache,
 )
+
 
 @pytest.fixture(autouse=True)
 def clear_caches():

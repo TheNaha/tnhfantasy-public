@@ -12,25 +12,23 @@
 #
 # The ContainerManager is a singleton because it holds a Docker/Podman client
 # connection that is expensive to create on every request.
+from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Generator
 
 from fastapi import Depends, Request
 from sqlmodel import Session
 
+from core.events import EventBus, event_bus
 from infrastructure.database import (
     get_session as db_get_session,
+)
+from infrastructure.database import (
     get_session_context as db_get_session_context,
+)
+from infrastructure.database import (
     get_session_sync as db_get_session_sync,
 )
-from core.events import event_bus, EventBus
-from infrastructure.logging import get_logger, api_logger, model_logger
-from infrastructure.http_client import get_http_client
-from infrastructure.background_tasks import start_background_task
-from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.providers import create_provider_client
-from infrastructure.image_processor import read_image_metadata
-from infrastructure.cache import cache_stats
+from infrastructure.logging import get_logger
 
 logger = get_logger("api_deps")
 

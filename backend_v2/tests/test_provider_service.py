@@ -1,15 +1,15 @@
 """Tests for services/provider_service.py"""
-import asyncio
 import time
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
+
+from core.entities import LoadBalancerState
+from core.exceptions import NotFoundError, ProviderError
 from services.provider_service import ProviderService
 from services.provider_utils import utcnow_iso
-from services.load_balancer import LoadBalancer
-from core.exceptions import NotFoundError, ProviderError
-from core.entities import LoadBalancerState
 
 
 @pytest.fixture(name="engine")

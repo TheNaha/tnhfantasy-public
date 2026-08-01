@@ -1,15 +1,20 @@
-import os
-import time
-import random
 import asyncio
-import httpx
-from typing import Dict, Any, List, Optional, Tuple
+import os
+import random
+import time
+from typing import Any
 
-from infrastructure.logging import get_logger
-from infrastructure.http_client import get_http_client
-from infrastructure.config_helpers import resolve_env_bool, resolve_env_int, resolve_env_float
-from infrastructure.request_dedup import deduplicated, make_key
+import httpx
+
 from api.deps import get_session_sync
+from infrastructure.config_helpers import (
+    resolve_env_bool,
+    resolve_env_float,
+    resolve_env_int,
+)
+from infrastructure.http_client import get_http_client
+from infrastructure.logging import get_logger
+from infrastructure.request_dedup import deduplicated, make_key
 
 logger = get_logger("model_preview_service")
 
@@ -119,7 +124,7 @@ def _save_preview_to_cache(cache_path: str, cache_meta_path: str, image_data: by
             os.remove(tmp_meta_path)
 
 
-def _select_preview_url(model_data: Dict[str, Any], version_id: Optional[int], image_index: int) -> Optional[str]:
+def _select_preview_url(model_data: dict[str, Any], version_id: int | None, image_index: int) -> str | None:
     model_versions = model_data.get('modelVersions', [])
     if not model_versions:
         return None
@@ -153,7 +158,7 @@ def _select_preview_url(model_data: Dict[str, Any], version_id: Optional[int], i
 
 def _is_preview_cache_stale(
     model_id: int,
-    version_id: Optional[int],
+    version_id: int | None,
     image_index: int,
     stale_after_seconds: int,
 ) -> bool:
@@ -170,8 +175,9 @@ def _is_preview_cache_stale(
         return True
 
 
-def _list_civitai_model_ids_for_prefetch() -> List[int]:
+def _list_civitai_model_ids_for_prefetch() -> list[int]:
     from sqlmodel import select
+
     from core.entities import ModelV2
 
     session = get_session_sync()
@@ -193,11 +199,11 @@ def _list_civitai_model_ids_for_prefetch() -> List[int]:
 
 
 def _select_stale_prefetch_candidates(
-    model_ids: List[int],
+    model_ids: list[int],
     max_candidates: int,
     batch_size: int,
     stale_after_seconds: int,
-) -> List[int]:
+) -> list[int]:
     if not model_ids or batch_size <= 0:
         return []
 
@@ -207,7 +213,7 @@ def _select_stale_prefetch_candidates(
     if max_candidates > 0 and len(shuffled_ids) > max_candidates:
         shuffled_ids = shuffled_ids[:max_candidates]
 
-    stale_candidates: List[int] = []
+    stale_candidates: list[int] = []
     for model_id in shuffled_ids:
         if _is_preview_cache_stale(
             model_id,
@@ -228,7 +234,7 @@ async def fetch_civitai_preview(
     image_index: int = 0,
     force_refresh: bool = False,
     width: int = None,
-) -> Tuple[Optional[bytes], Optional[str], bool]:
+) -> tuple[bytes | None, str | None, bool]:
     """Fetch preview image from CivitAI API and cache it using non-blocking I/O.
     Returns (image_data, content_type, is_cache_hit).
     """
@@ -384,9 +390,10 @@ async def fetch_civitai_preview(
     if width is None:
         return base_image_data, base_content_type, False
         
-    def _resize(data: bytes, w: int, content_type: str) -> Tuple[bytes, str]:
+    def _resize(data: bytes, w: int, content_type: str) -> tuple[bytes, str]:
         try:
             import io
+
             from PIL import Image
             img = Image.open(io.BytesIO(data))
             if img.mode == 'RGBA':
@@ -422,7 +429,7 @@ async def fetch_civitai_preview(
 
 
 
-async def get_preview_deduplicated(model_id: int, version_id: int = None, image_index: int = 0, width: int = None) -> Tuple[Optional[bytes], Optional[str], bool]:
+async def get_preview_deduplicated(model_id: int, version_id: int = None, image_index: int = 0, width: int = None) -> tuple[bytes | None, str | None, bool]:
     """Fetch preview using deduplication."""
     dedup_key = make_key(
         "civitai_preview",
@@ -437,7 +444,7 @@ async def get_preview_deduplicated(model_id: int, version_id: int = None, image_
     )
 
 
-async def prefetch_stale_model_previews() -> Dict[str, Any]:
+async def prefetch_stale_model_previews() -> dict[str, Any]:
     """Warm stale model preview cache entries with jittered, sampled background fetches."""
     if not PREVIEW_PREFETCH_ENABLED:
         logger.debug("preview_prefetch_disabled")

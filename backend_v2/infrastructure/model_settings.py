@@ -6,8 +6,7 @@ This module parses model descriptions to extract recommended settings like
 steps, CFG, sampler, etc. and provides base model defaults as fallbacks.
 """
 import re
-from typing import Dict, Any, Optional
-
+from typing import Any
 
 # Base model default settings - curated from community best practices
 BASE_MODEL_DEFAULTS = {
@@ -98,7 +97,7 @@ SAMPLER_MAP = {
 }
 
 
-def parse_recommended_settings(description: str) -> Dict[str, Any]:
+def parse_recommended_settings(description: str) -> dict[str, Any]:
     """
     Parse recommended settings from CivitAI HTML description.
     
@@ -184,7 +183,7 @@ def parse_recommended_settings(description: str) -> Dict[str, Any]:
     return settings
 
 
-def detect_base_model(metadata: Dict[str, Any]) -> Optional[str]:
+def detect_base_model(metadata: dict[str, Any]) -> str | None:
     """
     Detect the base model from metadata.
     
@@ -228,7 +227,7 @@ def detect_base_model(metadata: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def get_base_model_defaults(base_model: str) -> Dict[str, Any]:
+def get_base_model_defaults(base_model: str) -> dict[str, Any]:
     """
     Get default settings for a base model.
     
@@ -250,7 +249,7 @@ def get_base_model_defaults(base_model: str) -> Dict[str, Any]:
     return {}
 
 
-def get_model_settings(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def get_model_settings(metadata: dict[str, Any]) -> dict[str, Any]:
     """
     Get recommended settings for a model based on its metadata.
     
@@ -293,7 +292,7 @@ def get_model_settings(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return settings
 
 
-def get_settings_summary(settings: Dict[str, Any]) -> str:
+def get_settings_summary(settings: dict[str, Any]) -> str:
     """
     Get a human-readable summary of the settings.
     

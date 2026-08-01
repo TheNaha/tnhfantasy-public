@@ -1,19 +1,20 @@
-import pytest
-import asyncio
+import os
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-import sys
-import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../provider_containers")))
 
-from core.entities import Provider
-from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
-from services.provider_client import call_provider, ProviderCallError
 from provider_core.router import attach_provider_routes
-from provider_core.models import InferenceRequest
+
+from core.entities import Provider
+from services.load_balancer import LoadBalancer
+from services.provider_client import ProviderCallError, call_provider
+
 
 # -----------------------------------------------------------------------------
 # 1. Test Provider Call Error retryable flag extraction

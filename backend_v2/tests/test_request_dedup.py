@@ -1,6 +1,14 @@
-import pytest
 import asyncio
-from infrastructure.request_dedup import deduplicated, make_key, clear_dedup_cache, get_dedup_stats
+
+import pytest
+
+from infrastructure.request_dedup import (
+    clear_dedup_cache,
+    deduplicated,
+    get_dedup_stats,
+    make_key,
+)
+
 
 @pytest.fixture(autouse=True)
 async def cleanup_dedup_cache():

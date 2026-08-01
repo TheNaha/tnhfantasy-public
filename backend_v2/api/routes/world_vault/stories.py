@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from typing import List, Optional
-from datetime import datetime, timezone
-from api.deps import get_session, get_job_service
-from core.entities import Story, StoryChapter, StoryBeatRole
+
+from api.deps import get_job_service, get_session
+from core.entities import Story, StoryBeatRole, StoryChapter
 from services.job_queue import job_queue
 
 router = APIRouter()
@@ -18,7 +19,7 @@ class StoryBeatRequest(BaseModel):
     content: str
     role: str = "user"
 
-@router.get("/", response_model=List[Story])
+@router.get("/", response_model=list[Story])
 def list_stories(session: Session = Depends(get_session)):
     return session.exec(select(Story).where(Story.is_archived == False).order_by(Story.updated_at.desc())).all()
 
@@ -69,7 +70,7 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
     session.commit()
     return {"message": "Story deleted"}
 
-@router.get("/{story_id}/chapters", response_model=List[StoryChapter])
+@router.get("/{story_id}/chapters", response_model=list[StoryChapter])
 def list_chapters(story_id: str, session: Session = Depends(get_session)):
     return session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).all()
 
@@ -132,6 +133,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         
     prompt = data.prompt
     if prompt:
+        # If user explicitly provided a prompt/action via the "Add Beat" style input
         chapter.beats.append({"role": StoryBeatRole.USER, "content": prompt})
         chapter.content += f"\n\n> {prompt}\n\n"
         session.add(chapter)
@@ -139,9 +141,26 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         session.refresh(chapter)
         
     messages = []
-    for beat in chapter.beats:
-        role = "user" if beat.get("role") == StoryBeatRole.USER else "assistant"
-        messages.append({"role": role, "content": beat.get("content")})
+    # Base instructions for the AI
+    system_prompt = (
+        "You are a collaborative AI storyteller. Your task is to continue the story naturally "
+        "from the provided text. Maintain the tone and style. Do not include conversational filler "
+        "(e.g. 'Sure, here is the continuation:'). Just output the next part of the prose."
+    )
+    
+    story = session.get(Story, story_id)
+    if story and story.genre:
+        system_prompt += f"\nThe genre is {story.genre}."
+        
+    # TODO: In the future, fetch and append active Lorebooks here
+        
+    messages.append({"role": "system", "content": system_prompt})
+    
+    # Use the actual full edited content as context
+    user_context = "Here is the story so far. Please write the next few paragraphs to continue it:\n\n"
+    user_context += chapter.content.strip()
+    
+    messages.append({"role": "user", "content": user_context})
         
     job_service = get_job_service(session)
     job = await job_service.create_job(

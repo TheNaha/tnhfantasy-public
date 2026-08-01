@@ -15,20 +15,21 @@
 #
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
-from typing import Optional, Dict, List
+
 from fastapi import APIRouter, Depends, Header
-from core.exceptions import NotFoundError, ValidationError, ComfyError
-from sqlmodel import Session
 from pydantic import BaseModel
 
-from api.deps import get_session, get_job_service
-from api.deps import deduplicated, make_key
-from api.deps import api_logger
-from api.deps import get_job_submission_service
-from services.job_queue import job_queue
+from api.deps import (
+    api_logger,
+    deduplicated,
+    get_job_service,
+    get_job_submission_service,
+    make_key,
+)
+from core.entities import JobStatus
+from core.exceptions import ValidationError
 from services.job_service import JobService
 from services.job_submission_service import JobSubmissionService
-from core.entities import JobStatus
 
 logger = api_logger()
 
@@ -44,17 +45,17 @@ class CreateJobRequest(BaseModel):
 class ValidateWorkflowRequest(BaseModel):
     """Request to validate workflow model availability."""
     workflow: dict
-    preferred_provider_id: Optional[str] = None
+    preferred_provider_id: str | None = None
 
 
 class ValidateWorkflowResponse(BaseModel):
     """Response with model availability information."""
     valid: bool
-    eligible_providers: List[str]
-    missing_models: Dict[str, Dict[str, List[str]]]  # {provider: {dir: [files]}}
-    global_missing: Dict[str, List[str]]  # Models missing on ALL providers
+    eligible_providers: list[str]
+    missing_models: dict[str, dict[str, list[str]]]  # {provider: {dir: [files]}}
+    global_missing: dict[str, list[str]]  # Models missing on ALL providers
     can_trigger_download: bool
-    required_models: Dict[str, List[str]]  # What models were found in workflow
+    required_models: dict[str, list[str]]  # What models were found in workflow
 
 
 @router.post("/validate")
@@ -85,7 +86,7 @@ async def validate_workflow(
 @router.post("")
 async def create_job(
     request: CreateJobRequest,
-    idempotency_key: Optional[str] = Header(
+    idempotency_key: str | None = Header(
         default=None,
         alias="Idempotency-Key",
         description="Optional request key. Re-using the same key reuses the same response for a short deduplication window.",

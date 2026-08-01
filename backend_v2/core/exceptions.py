@@ -12,7 +12,6 @@
 #
 # All exceptions carry a machine-readable `code` field so API error handlers
 # can produce consistent JSON responses without string matching.
-from typing import Optional
 
 
 class ComfyError(Exception):
@@ -36,7 +35,7 @@ class NotFoundError(ComfyError):
 
 class ValidationError(ComfyError):
     """Validation failed."""
-    def __init__(self, message: str, field: Optional[str] = None):
+    def __init__(self, message: str, field: str | None = None):
         super().__init__(message=message, code="VALIDATION_ERROR")
         self.field = field
 

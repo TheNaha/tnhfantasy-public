@@ -1,15 +1,21 @@
+from typing import Any
+
 import httpx
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
-from typing import Dict, Any
 
-from api.deps import get_session, get_provider_service
+from api.deps import get_provider_service, get_session
+from core.exceptions import (
+    NotFoundError,
+    ProviderError,
+    ProviderTimeoutError,
+    ValidationError,
+)
 from services.provider_runtime import resolve_provider_runtime
-from core.exceptions import NotFoundError, ValidationError, ProviderTimeoutError, ProviderError
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
-@router.get("/object_info", response_model=Dict[str, Any])
+@router.get("/object_info", response_model=dict[str, Any])
 async def get_object_info(provider_id: str, session: Session = Depends(get_session)):
     """
     Fetch the node definition mapping (object_info) from a specific provider.

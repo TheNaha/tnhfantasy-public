@@ -1,9 +1,8 @@
 # Provider Registry Unit Tests
-import pytest
 
 from infrastructure.providers.provider_registry import (
     ProviderRegistry,
-    ProviderTypeConfig
+    ProviderTypeConfig,
 )
 
 

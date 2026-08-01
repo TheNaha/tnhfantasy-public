@@ -1,14 +1,8 @@
-import os
-import asyncio
-from typing import Optional
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response
 
-from api.deps import get_session
-from core.exceptions import NotFoundError, ValidationError
-from api.deps import get_http_client
-from api.deps import deduplicated, make_key
 from api.deps import model_logger
-from services.model_preview_service import get_preview_deduplicated, prefetch_stale_model_previews
+from core.exceptions import NotFoundError, ValidationError
+from services.model_preview_service import get_preview_deduplicated
 
 logger = model_logger()
 

@@ -1,5 +1,4 @@
 """Tests for api/routes/generation.py"""
-import pytest
 
 from core.entities import Provider
 from infrastructure.request_dedup import clear_dedup_cache

@@ -11,11 +11,11 @@ Usage:
 import os
 import sqlite3
 import time
+
 import httpx
 
 DB_PATH = os.environ.get("COMFY_DATABASE_URL", "sqlite:///./data/db/comfy.db")
-if DB_PATH.startswith("sqlite:///"):
-    DB_PATH = DB_PATH[len("sqlite:///"):]
+DB_PATH = DB_PATH.removeprefix("sqlite:///")
 
 CIVITAI_API = "https://civitai.com/api/v1/models"
 BATCH_DELAY = 0.3  # seconds between API calls

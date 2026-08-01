@@ -1,8 +1,8 @@
-import os
 import io
-import sys
+import os
+
 from PIL import Image
-from PIL import ImageFile
+
 
 def validate_and_clean_cache(cache_dir):
     if not os.path.exists(cache_dir):
@@ -35,7 +35,7 @@ def validate_and_clean_cache(cache_dir):
                     # verify() doesn't catch all truncation errors, so we also need to load it
                     img = Image.open(io.BytesIO(data))
                     img.load()
-                except Exception as e:
+                except Exception:
                     # Verification failed
                     is_corrupted = True
         except Exception as e:

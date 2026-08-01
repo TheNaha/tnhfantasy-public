@@ -2,10 +2,10 @@ from fastapi import APIRouter
 
 from .characters import router as characters_router
 from .chats import router as chats_router
+from .llm_config import router as llm_config_router
 from .lorebooks import router as lorebooks_router
 from .scenarios import router as scenarios_router
 from .stories import router as stories_router
-from .llm_config import router as llm_config_router
 
 router = APIRouter(prefix="/api/v2")
 

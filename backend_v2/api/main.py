@@ -17,36 +17,32 @@
 # RETRY STRATEGY (for provider calls):
 #   Uses tenacity with exponential back-off (base 1 s, max 60 s).
 #   Non-retryable errors (e.g. 400 Bad Request from provider) bypass retries.
-import os
 from contextlib import asynccontextmanager
-from typing import Optional
+
 from fastapi import FastAPI
 
 # Import logging config early to suppress noisy loggers before they initialize
 import infrastructure.logging  # noqa: F401
-
 from api.app_setup import configure_app
-from services.job_runner import execute_job
+from api.deps import get_session_context
 from api.lifecycle import (
-    requeue_inflight_jobs_for_shutdown as _requeue_inflight_jobs_for_shutdown,
     shutdown_application,
     startup_application,
 )
-from services.provider_client import call_provider as _call_provider
-from config import (
-    get_job_timeout,
-    get_job_max_retries,
-    get_job_retry_base_delay,
-    get_job_retry_max_delay
-)
-from api.deps import get_session_context
-from services.job_queue import job_queue
 
 # Import routers
 from api.routes.websocket import ws_manager
+from config import (
+    get_job_max_retries,
+    get_job_retry_base_delay,
+    get_job_retry_max_delay,
+    get_job_timeout,
+)
 
 # Structured logging - use structlog for consistent output
 from infrastructure.logging import get_logger
+from services.job_runner import execute_job
+from services.provider_client import call_provider as _call_provider
 
 # Logger for this module
 logger = get_logger("main")
@@ -64,7 +60,7 @@ async def _process_image_background(image_path: str, job_id: str):
                     thumbnails=list(img_result['thumbnails'].keys()))
         
         # Emit event that image processing is complete
-        from core.events import emit_job_event, EventType
+        from core.events import EventType, emit_job_event
         await emit_job_event(EventType.JOB_PROGRESS, {
             "id": job_id,
             "message": "Thumbnails generated",
@@ -74,7 +70,7 @@ async def _process_image_background(image_path: str, job_id: str):
         logger.warning("image_processing_failed", job_id=job_id, path=image_path, error=str(e))
 
 
-async def process_job(job_id: str, preferred_provider_id: Optional[str] = None):
+async def process_job(job_id: str, preferred_provider_id: str | None = None):
     """Thin wrapper that preserves stable patch points for tests and lifecycle wiring."""
     await execute_job(
         job_id,
@@ -95,8 +91,8 @@ async def lifespan(app: FastAPI):
     Application lifespan handler.
     Runs on startup and shutdown.
     """
-    from services.container_manager import ContainerManager
     from api.deps import set_global_container_manager
+    from services.container_manager import ContainerManager
     
     try:
         container_manager = ContainerManager()

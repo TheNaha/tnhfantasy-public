@@ -1,10 +1,11 @@
 """Extended tests for services/gallery_indexer.py"""
 import os
-import time
 import tempfile
+from unittest.mock import MagicMock, patch
+
 import pytest
 from PIL import Image
-from unittest.mock import patch, MagicMock
+
 from services.gallery_indexer import GalleryIndexer, _GalleryEventHandler
 
 

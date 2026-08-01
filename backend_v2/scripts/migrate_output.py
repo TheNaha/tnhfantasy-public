@@ -14,10 +14,10 @@ Usage:
     python migrate_output.py --dry-run  # Preview only
 """
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -197,9 +197,9 @@ def find_flat_original_images(output_dir: Path) -> list:
 def reorganize_image(image_path: Path, output_dir: Path, dry_run: bool = False) -> bool:
     """Move an image to date-based directory structure."""
     try:
-        from datetime import datetime
-        import shutil
         import re
+        import shutil
+        from datetime import datetime
         
         name = image_path.name
         
@@ -239,8 +239,8 @@ def reorganize_image(image_path: Path, output_dir: Path, dry_run: bool = False) 
 def restore_file_mtime(file_path: Path, dry_run: bool = False) -> bool:
     """Restore file modification time based on date in filename."""
     try:
-        from datetime import datetime
         import re
+        from datetime import datetime
         
         name = file_path.name
         

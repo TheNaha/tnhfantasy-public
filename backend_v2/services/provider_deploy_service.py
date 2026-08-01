@@ -1,36 +1,35 @@
-import asyncio
-from uuid import uuid4
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
+from typing import Any
+from uuid import uuid4
 
 import httpx
-from core.events import EventType, emit_provider_event
 
 from core.entities import Provider
-from infrastructure.repositories import ProviderRepository
+from core.events import EventType, emit_provider_event
+from core.exceptions import NotFoundError, ProviderError, ValidationError
 from infrastructure.http_client import get_http_client
-from core.exceptions import NotFoundError, ValidationError, ProviderError
-from services.provider_utils import (
-    read_deploy_state,
-    extract_runtime_config,
-    extract_deploy_config,
-    compose_config,
-    utcnow_iso,
-    parse_utc_timestamp,
-    DEPLOY_IN_PROGRESS_TTL,
-    read_reconciliation_state,
-    default_deploy_mode,
-    default_deploy_targets,
-    normalize_deploy_step_command
-)
-from services.provider_env_builder import build_provider_environment
+from infrastructure.logging import provider_logger
+from infrastructure.repositories import ProviderRepository
+from infrastructure.request_dedup import deduplicated, is_in_flight
 from services.provider_deploy_orchestrator import (
     ProviderDeployOrchestrator,
     ProviderDeployStepExecutionError,
     ProviderDeployStepTimeoutError,
 )
-from infrastructure.request_dedup import deduplicated, is_in_flight
-from infrastructure.logging import provider_logger
+from services.provider_env_builder import build_provider_environment
+from services.provider_utils import (
+    DEPLOY_IN_PROGRESS_TTL,
+    compose_config,
+    default_deploy_mode,
+    default_deploy_targets,
+    extract_deploy_config,
+    extract_runtime_config,
+    normalize_deploy_step_command,
+    parse_utc_timestamp,
+    read_deploy_state,
+    read_reconciliation_state,
+    utcnow_iso,
+)
 
 logger = provider_logger()
 
@@ -45,14 +44,14 @@ class ProviderDeployService:
         provider_type: str,
         status: str,
         attempt_id: str,
-        started_at: Optional[str] = None,
-        finished_at: Optional[str] = None,
-        message: Optional[str] = None,
-        completed_steps: Optional[List[str]] = None,
-        failed_steps: Optional[List[str]] = None,
-        steps: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        state: Dict[str, Any] = {
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        message: str | None = None,
+        completed_steps: list[str] | None = None,
+        failed_steps: list[str] | None = None,
+        steps: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        state: dict[str, Any] = {
             "provider_id": provider_id,
             "provider_type": provider_type,
             "status": status,
@@ -73,7 +72,7 @@ class ProviderDeployService:
             state["steps"] = steps
         return state
 
-    async def _persist_deploy_state(self, provider: Provider, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def _persist_deploy_state(self, provider: Provider, state: dict[str, Any]) -> dict[str, Any]:
         config = compose_config(
             base_config=provider.config,
             runtime_config=extract_runtime_config(provider.type, provider.container_config, provider.config or {}),
@@ -101,7 +100,7 @@ class ProviderDeployService:
         
         return state
 
-    def _is_deploy_in_progress(self, state: Dict[str, Any]) -> bool:
+    def _is_deploy_in_progress(self, state: dict[str, Any]) -> bool:
         if state.get("status") != "deploying":
             return False
         started_at_raw = state.get("started_at")
@@ -115,7 +114,7 @@ class ProviderDeployService:
         self,
         container_manager: Any,
         provider_id: str,
-        attempt_id: Optional[str],
+        attempt_id: str | None,
     ) -> bool:
         if not attempt_id:
             return False
@@ -168,7 +167,7 @@ class ProviderDeployService:
 
         return False
 
-    async def _mark_deploy_state_failed(self, provider: Provider, state: Dict[str, Any], *, message: str) -> Dict[str, Any]:
+    async def _mark_deploy_state_failed(self, provider: Provider, state: dict[str, Any], *, message: str) -> dict[str, Any]:
         failed_state = self._build_deploy_state(
             provider_id=provider.id,
             provider_type=provider.type,
@@ -193,7 +192,7 @@ class ProviderDeployService:
         stderr = stderr_bytes.decode("utf-8") if stderr_bytes else ""
         return getattr(exec_result, "exit_code", -1), f"{stdout}{stderr}"
 
-    async def get_provider_deploy_state(self, provider: Provider) -> Dict[str, Any]:
+    async def get_provider_deploy_state(self, provider: Provider) -> dict[str, Any]:
         state = read_deploy_state(provider)
         from services.provider_runtime import resolve_provider_runtime
         runtime = resolve_provider_runtime(provider)
@@ -238,7 +237,7 @@ class ProviderDeployService:
 
         return state
 
-    async def deploy_provider_app(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
+    async def deploy_provider_app(self, provider: Provider, container_manager: Any) -> dict[str, Any]:
         from services.provider_runtime import resolve_provider_runtime
         runtime = resolve_provider_runtime(provider)
         
@@ -260,7 +259,7 @@ class ProviderDeployService:
             except httpx.TimeoutException as exc:
                 raise ProviderError(provider.id, "Deploy request timed out") from exc
             except (httpx.HTTPError, ValueError) as exc:
-                raise ProviderError(provider.id, f"Deploy failed: {str(exc)}") from exc
+                raise ProviderError(provider.id, f"Deploy failed: {exc!s}") from exc
 
         current_state = read_deploy_state(provider)
         if self._is_deploy_in_progress(current_state):
@@ -293,12 +292,12 @@ class ProviderDeployService:
                 "deploy_state": current_state,
             }
 
-        async def _run_deploy() -> Dict[str, Any]:
+        async def _run_deploy() -> dict[str, Any]:
             return await self._execute_provider_deploy(provider, container_manager)
 
         return await deduplicated(dedup_key, _run_deploy)
 
-    async def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> Dict[str, Any]:
+    async def _execute_provider_deploy(self, provider: Provider, container_manager: Any) -> dict[str, Any]:
         attempt_id = str(uuid4())
         started_at = utcnow_iso()
         deploy_config = extract_deploy_config(provider.type, provider.config or {})
@@ -308,7 +307,7 @@ class ProviderDeployService:
             raise ValidationError(f"Managed deploy is disabled for provider '{provider.id}'")
 
         previous_state = read_deploy_state(provider)
-        resumed_steps: List[str] = []
+        resumed_steps: list[str] = []
         if provider.type == "beam" and previous_state.get("status") == "failed":
             resumed_steps = [
                 step
@@ -343,7 +342,7 @@ class ProviderDeployService:
             )
             deployments = deploy_config.get("targets") or default_deploy_targets(provider.type)
             completed_steps = set(resumed_steps)
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             for step in deployments:
                 name = step.get("name") or "deploy-step"
@@ -484,6 +483,7 @@ class ProviderDeployService:
         worker_url: str,
     ) -> None:
         import time
+
         from services.provider_utils import utcnow_iso
         testing_state = self._build_deploy_state(
             provider_id=provider.id,

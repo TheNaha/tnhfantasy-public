@@ -1,11 +1,11 @@
-from typing import Dict, Any, Optional, List
+from typing import Any
+
 from fastapi import APIRouter, Depends
-
-from sqlmodel import Session
 from pydantic import BaseModel
+from sqlmodel import Session
 
-from api.deps import get_session, get_model_service_v2
-from api.deps import model_logger
+from api.deps import get_model_service_v2, get_session, model_logger
+
 from .schemas import UpdateProviderStatusRequest
 
 logger = model_logger()
@@ -59,7 +59,7 @@ async def update_file_provider_status(
 
 class RegisterDiscoveredRequest(BaseModel):
     provider_id: str
-    files: List[Dict[str, Any]]
+    files: list[dict[str, Any]]
 
 
 @router.post("/register-discovered")
@@ -112,17 +112,17 @@ def get_model_cache(session: Session = Depends(get_session)):
 
 class BatchStatusUpdate(BaseModel):
     """Single item in batch status update."""
-    file_id: Optional[int] = None  # Optional if storage_path provided
+    file_id: int | None = None  # Optional if storage_path provided
     status: str
-    storage_path: Optional[str] = None  # Can be used to lookup file_id
-    size_bytes: Optional[int] = None
+    storage_path: str | None = None  # Can be used to lookup file_id
+    size_bytes: int | None = None
 
 
 class BatchUpdateRequest(BaseModel):
     """Batch status update from worker."""
-    provider_name: Optional[str] = None
-    provider_id: Optional[str] = None
-    updates: List[BatchStatusUpdate]
+    provider_name: str | None = None
+    provider_id: str | None = None
+    updates: list[BatchStatusUpdate]
 
 
 @router.post("/providers/batch-status-update")
@@ -232,8 +232,8 @@ class SyncProgressRequest(BaseModel):
     directory: str
     progress: float  # 0-100
     status: str  # downloading, completed, failed
-    message: Optional[str] = None
-    size_bytes: Optional[int] = None
+    message: str | None = None
+    size_bytes: int | None = None
 
 
 @router.post("/sync-progress")
@@ -246,8 +246,8 @@ async def receive_sync_progress(
     Worker calls this endpoint to report download progress.
     Backend emits WebSocket event to frontend.
     """
-    from core.events import Event, EventType
     from api.deps import get_event_bus
+    from core.events import Event, EventType
     
     event_bus = get_event_bus()
     
@@ -284,13 +284,13 @@ class BatchSyncItem(BaseModel):
     model_name: str
     directory: str
     status: str  # completed, pending, failed
-    size_bytes: Optional[int] = None
+    size_bytes: int | None = None
 
 
 class BatchSyncProgressRequest(BaseModel):
     """Batch sync progress from worker - updates multiple models at once."""
     provider_id: str
-    models: List[BatchSyncItem]
+    models: list[BatchSyncItem]
 
 
 @router.post("/sync-progress/batch")
@@ -350,7 +350,7 @@ async def receive_batch_sync_progress(
                     storage_path=f"models/{item.directory}/{item.model_name}",
                 )
                 updated += 1
-        except Exception as e:
+        except Exception:
             failed += 1
     
     return {

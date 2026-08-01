@@ -1,5 +1,4 @@
 """Extended tests for api/routes/jobs.py"""
-import pytest
 from core.entities import Job, JobStatus
 
 

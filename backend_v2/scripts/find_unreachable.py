@@ -1,6 +1,6 @@
 import ast
 import os
-import glob
+
 
 def check_unreachable(filepath):
     with open(filepath, 'r') as f:

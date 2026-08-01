@@ -1,26 +1,26 @@
 # Load Balancer - Distributes jobs across multiple providers.
+import asyncio
 import os
 import random
 import threading
 import time
 from dataclasses import dataclass, field
-import asyncio
-from typing import Optional, List, Dict, Any, Set, Tuple
 from datetime import datetime, timezone
+from typing import Any
 
+from cachetools import TTLCache
 from sqlmodel import Session, select
 
-from core.entities import Provider, LoadBalancerState
-from infrastructure.repositories import ProviderRepository
-from infrastructure.logging import get_logger
-from cachetools import TTLCache
+from core.entities import LoadBalancerState, Provider
 from infrastructure.http_client import get_http_client
+from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import get_provider_worker_base_url
+from infrastructure.repositories import ProviderRepository
 
 logger = get_logger("load_balancer")
 
 
-def _parse_positive_float(raw_value: Optional[str], default: float) -> float:
+def _parse_positive_float(raw_value: str | None, default: float) -> float:
     try:
         parsed = float(raw_value) if raw_value is not None else default
     except (TypeError, ValueError):
@@ -28,7 +28,7 @@ def _parse_positive_float(raw_value: Optional[str], default: float) -> float:
     return parsed if parsed > 0 else default
 
 
-def _parse_positive_int(raw_value: Optional[str], default: int) -> int:
+def _parse_positive_int(raw_value: str | None, default: int) -> int:
     try:
         parsed = int(raw_value) if raw_value is not None else default
     except (TypeError, ValueError):
@@ -61,18 +61,18 @@ class LoadBalancerRuntimeState:
     """Shared in-memory runtime state for load balancing decisions."""
 
     round_robin_index: int = 0
-    provider_failures: Dict[str, int] = field(default_factory=dict)
-    provider_job_counts: Dict[str, int] = field(default_factory=dict)
+    provider_failures: dict[str, int] = field(default_factory=dict)
+    provider_job_counts: dict[str, int] = field(default_factory=dict)
     initialized: bool = False
     initializing: bool = False
-    _lock: Optional[asyncio.Lock] = None
+    _lock: asyncio.Lock | None = None
 
     def get_lock(self) -> asyncio.Lock:
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "round_robin_index": self.round_robin_index,
             "provider_failures": dict(self.provider_failures),
@@ -102,8 +102,8 @@ class LoadBalancer:
     @classmethod
     def invalidate_model_availability_cache(
         cls,
-        provider_id: Optional[str] = None,
-        runtime_state: Optional[LoadBalancerRuntimeState] = None,
+        provider_id: str | None = None,
+        runtime_state: LoadBalancerRuntimeState | None = None,
     ) -> None:
         """Clear cached model-availability lookups after model status changes."""
         cleared_entries = len(_model_availability_cache)
@@ -117,7 +117,7 @@ class LoadBalancer:
             )
 
     @classmethod
-    def _get_state_snapshot(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None) -> Dict[str, Any]:
+    def _get_state_snapshot(cls, runtime_state: LoadBalancerRuntimeState | None = None) -> dict[str, Any]:
         """Return a copy of current in-memory balancer state."""
         snapshot = (runtime_state or _global_runtime_state).snapshot()
         snapshot.pop("model_availability_cache", None)
@@ -125,7 +125,7 @@ class LoadBalancer:
         return snapshot
 
     @staticmethod
-    def _build_model_availability_cache_key(required_models: Dict[str, List[str]]) -> Any:
+    def _build_model_availability_cache_key(required_models: dict[str, list[str]]) -> Any:
         """Create stable hashable key for required-model lookup payload."""
         return tuple(
             (directory, tuple(sorted(set(filenames))))
@@ -133,16 +133,16 @@ class LoadBalancer:
             if filenames
         )
 
-    def _get_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]]) -> Optional[List[str]]:
+    def _get_cached_eligible_provider_ids(self, required_models: dict[str, list[str]]) -> list[str] | None:
         cache_key = self._build_model_availability_cache_key(required_models)
         return list(_model_availability_cache[cache_key]) if cache_key in _model_availability_cache else None
 
-    def _set_cached_eligible_provider_ids(self, required_models: Dict[str, List[str]], eligible_provider_ids: List[str]) -> None:
+    def _set_cached_eligible_provider_ids(self, required_models: dict[str, list[str]], eligible_provider_ids: list[str]) -> None:
         cache_key = self._build_model_availability_cache_key(required_models)
         _model_availability_cache[cache_key] = tuple(eligible_provider_ids)
 
     @classmethod
-    def reset_state(cls, runtime_state: Optional[LoadBalancerRuntimeState] = None):
+    def reset_state(cls, runtime_state: LoadBalancerRuntimeState | None = None):
         """Reset in-memory state. Intended for tests and controlled startup flows."""
         (runtime_state or _global_runtime_state).reset()
         _model_availability_cache.clear()
@@ -152,7 +152,7 @@ class LoadBalancer:
     def load_state_from_db(
         cls,
         session: Session,
-        runtime_state: Optional[LoadBalancerRuntimeState] = None,
+        runtime_state: LoadBalancerRuntimeState | None = None,
         *,
         force: bool = False,
     ):
@@ -176,7 +176,7 @@ class LoadBalancer:
                 select(Job).where(Job.status.in_(active_states))
             ).all()
 
-            active_job_counts: Dict[str, int] = {}
+            active_job_counts: dict[str, int] = {}
             for job in running_jobs:
                 if job.provider_id:
                     active_job_counts[job.provider_id] = active_job_counts.get(job.provider_id, 0) + 1
@@ -204,7 +204,7 @@ class LoadBalancer:
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
-    def save_state_to_db(cls, session: Session, runtime_state: Optional[LoadBalancerRuntimeState] = None):
+    def save_state_to_db(cls, session: Session, runtime_state: LoadBalancerRuntimeState | None = None):
         """Persist state to database."""
         snapshot = cls._get_state_snapshot(runtime_state)
         try:
@@ -223,7 +223,7 @@ class LoadBalancer:
             logger.warning("lb_state_save_failed", error=str(e))
     
     @classmethod
-    async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: Optional[LoadBalancerRuntimeState] = None):
+    async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: LoadBalancerRuntimeState | None = None):
         """Remove a provider's job counts and failures when the provider is deleted."""
         state_store = runtime_state or _global_runtime_state
         async with state_store.get_lock():
@@ -237,7 +237,7 @@ class LoadBalancer:
             if persist_needed:
                 cls.save_state_to_db(session, runtime_state=state_store)
     
-    def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: Optional[LoadBalancerRuntimeState] = None):
+    def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: LoadBalancerRuntimeState | None = None):
         """
         Initialize load balancer.
         
@@ -322,11 +322,11 @@ class LoadBalancer:
 
     async def get_next_provider(
         self, 
-        preferred_provider_id: Optional[str] = None,
-        required_models: Optional[Dict[str, List[str]]] = None,
-        exclude_provider_ids: Optional[Set[str]] = None,
+        preferred_provider_id: str | None = None,
+        required_models: dict[str, list[str]] | None = None,
+        exclude_provider_ids: set[str] | None = None,
         task_type: str = "image",
-    ) -> Optional[Provider]:
+    ) -> Provider | None:
         """
         Get the next provider to handle a job.
         
@@ -424,8 +424,10 @@ class LoadBalancer:
             # Since the selected provider is cold, trigger container startup and poll/wait
             if selected_provider:
                 try:
-                    from services.provider_lifecycle_service import ProviderLifecycleService
                     from api.deps import get_container_manager
+                    from services.provider_lifecycle_service import (
+                        ProviderLifecycleService,
+                    )
                     
                     lifecycle_service = ProviderLifecycleService(
                         self.session,
@@ -505,7 +507,7 @@ class LoadBalancer:
             if total_jobs % 5 == 0:
                 LoadBalancer.save_state_to_db(self.session, self.runtime_state)
     
-    async def _round_robin(self, providers: List[Provider]) -> Provider:
+    async def _round_robin(self, providers: list[Provider]) -> Provider:
         """Round-robin selection."""
         async with self.runtime_state.get_lock():
             provider = providers[self.runtime_state.round_robin_index % len(providers)]
@@ -514,11 +516,11 @@ class LoadBalancer:
         logger.debug("lb_round_robin_selected", provider_id=provider.id, index=index)
         return provider
     
-    async def _random(self, providers: List[Provider]) -> Provider:
+    async def _random(self, providers: list[Provider]) -> Provider:
         """Random selection."""
         return random.choice(providers)
     
-    async def _priority(self, providers: List[Provider]) -> Provider:
+    async def _priority(self, providers: list[Provider]) -> Provider:
         """
         Priority-based selection.
         Lower priority number = higher priority.
@@ -527,7 +529,7 @@ class LoadBalancer:
         sorted_providers = sorted(providers, key=lambda p: (p.priority, p.id))
         return sorted_providers[0]
     
-    async def _least_connections(self, providers: List[Provider]) -> Provider:
+    async def _least_connections(self, providers: list[Provider]) -> Provider:
         """
         Least-connections selection.
         Selects the provider with fewest active jobs.
@@ -552,14 +554,14 @@ class LoadBalancer:
         logger.debug("lb_least_conn_selected", provider_id=selected.id, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
-    def _get_best_priority_tier(self, providers: List[Provider]) -> List[Provider]:
+    def _get_best_priority_tier(self, providers: list[Provider]) -> list[Provider]:
         """Get providers in the highest priority tier (lowest priority number)."""
         if not providers:
             return []
         best_priority = min(p.priority for p in providers)
         return [p for p in providers if p.priority == best_priority]
     
-    async def _priority_round_robin(self, providers: List[Provider]) -> Provider:
+    async def _priority_round_robin(self, providers: list[Provider]) -> Provider:
         """
         Priority + Round-Robin: Among providers with the best priority,
         use round-robin selection.
@@ -575,7 +577,7 @@ class LoadBalancer:
         logger.debug("lb_priority_rr_selected", provider_id=provider.id, priority=provider.priority, tier_size=len(best_tier))
         return provider
     
-    async def _priority_least_connections(self, providers: List[Provider]) -> Provider:
+    async def _priority_least_connections(self, providers: list[Provider]) -> Provider:
         """
         Priority + Least-Connections: Among providers with the best priority,
         select the one with fewest active jobs. Uses round-robin for ties.
@@ -603,7 +605,7 @@ class LoadBalancer:
         logger.debug("lb_priority_lc_selected", provider_id=selected.id, priority=selected.priority, active_jobs=counts[selected.id], tied=len(tied_providers))
         return selected
     
-    async def _select_by_strategy(self, providers: List[Provider]) -> Provider:
+    async def _select_by_strategy(self, providers: list[Provider]) -> Provider:
         """Dispatch to the configured load-balancing strategy."""
         if self.strategy == "round-robin":
             return await self._round_robin(providers)
@@ -660,7 +662,7 @@ class LoadBalancer:
 
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
     
-    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: Optional[Set[str]] = None, task_type: Optional[str] = None) -> Optional[Provider]:
+    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: set[str] | None = None, task_type: str | None = None) -> Provider | None:
         """
         Get a fallback provider when one fails.
         
@@ -694,7 +696,7 @@ class LoadBalancer:
         
         return best
     
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""
         providers = self.repo.get_enabled()
         async with self.runtime_state.get_lock():

@@ -1,10 +1,11 @@
 import asyncio
-from typing import Awaitable, Set, Any
+from collections.abc import Awaitable
+from typing import Any
 
 from infrastructure.logging import get_logger
 
 logger = get_logger("background_tasks")
-_background_tasks: Set[asyncio.Task[Any]] = set()
+_background_tasks: set[asyncio.Task[Any]] = set()
 
 
 def start_background_task(

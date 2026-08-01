@@ -1,13 +1,14 @@
 # Modal Provider Type Configuration
 # This module contains all Modal-specific logic, keeping it out of core backend
 
-from typing import Dict, Any
+from typing import Any
 
-from .provider_registry import ProviderTypeConfig, ProviderRegistry, clean_registry_dict as clean_dict
 from .modal_provider import ModalProvider
+from .provider_registry import ProviderRegistry, ProviderTypeConfig
+from .provider_registry import clean_registry_dict as clean_dict
 
 
-def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, str]:
+def build_modal_env_vars(credentials: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
     """
     Build environment variables for Modal worker container.
 
@@ -21,7 +22,7 @@ def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) ->
     Returns:
         Environment variables dict
     """
-    env_vars: Dict[str, str] = {}
+    env_vars: dict[str, str] = {}
 
     # Core config
     env_vars["ENGINE"] = "modal"

@@ -10,17 +10,17 @@
 #   POST /api/settings/reset     – Reset to compiled-in defaults
 #   GET  /api/settings/branding  – Read UI branding configuration
 #   PUT  /api/settings/branding  – Update branding (name, logo, theme)
-import os
 import json
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Request, Depends
-from core.exceptions import NotFoundError, ValidationError, ComfyError
+import os
+from typing import Any
+
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session
 
 import config as app_config
-from api.deps import get_session
-from api.deps import get_logger
+from api.deps import get_logger, get_session
+from core.exceptions import ComfyError, ValidationError
 
 logger = get_logger("settings_route")
 
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # ============================================================================
 
 @router.get("")
-async def get_settings() -> Dict[str, Any]:
+async def get_settings() -> dict[str, Any]:
     """
     Get current application settings.
     
@@ -49,7 +49,7 @@ async def get_settings() -> Dict[str, Any]:
 
 
 @router.get("/schema")
-async def get_settings_schema() -> Dict[str, Any]:
+async def get_settings_schema() -> dict[str, Any]:
     """
     Get settings schema with descriptions and types.
     Useful for building dynamic UI.
@@ -297,14 +297,14 @@ async def get_settings_schema() -> Dict[str, Any]:
 
 class SettingsUpdate(BaseModel):
     """Pydantic model for settings updates to ensure type safety."""
-    worker: Optional[Dict[str, Any]] = None
-    jobs: Optional[Dict[str, Any]] = None
-    api: Optional[Dict[str, Any]] = None
-    generator: Optional[Dict[str, Any]] = None
+    worker: dict[str, Any] | None = None
+    jobs: dict[str, Any] | None = None
+    api: dict[str, Any] | None = None
+    generator: dict[str, Any] | None = None
 
 
 @router.put("")
-async def update_settings(updates: SettingsUpdate) -> Dict[str, Any]:
+async def update_settings(updates: SettingsUpdate) -> dict[str, Any]:
     """
     Update application settings.
     
@@ -336,7 +336,7 @@ async def update_settings(updates: SettingsUpdate) -> Dict[str, Any]:
 
 
 @router.post("/reset")
-async def reset_settings() -> Dict[str, Any]:
+async def reset_settings() -> dict[str, Any]:
     """
     Reset all settings to defaults.
     
@@ -360,7 +360,7 @@ async def reset_settings() -> Dict[str, Any]:
 
 BRANDING_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "branding.json")
 
-def get_branding_config() -> Dict[str, Any]:
+def get_branding_config() -> dict[str, Any]:
     """Load branding configuration from JSON file."""
     default_branding = {
         "appName": "TNH-Comfy",
@@ -383,7 +383,7 @@ def get_branding_config() -> Dict[str, Any]:
         return default_branding
 
 
-def save_branding_config(config: Dict[str, Any]):
+def save_branding_config(config: dict[str, Any]):
     """Save branding configuration to JSON file."""
     os.makedirs(os.path.dirname(BRANDING_CONFIG_PATH), exist_ok=True)
     with open(BRANDING_CONFIG_PATH, 'w') as f:
@@ -392,8 +392,8 @@ def save_branding_config(config: Dict[str, Any]):
 
 class BrandingRequest(BaseModel):
     appName: str
-    logoUrl: Optional[str] = "/logo.png"
-    faviconUrl: Optional[str] = "/favicon.ico"
+    logoUrl: str | None = "/logo.png"
+    faviconUrl: str | None = "/favicon.ico"
 
 
 @router.get("/branding")

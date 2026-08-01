@@ -1,15 +1,15 @@
 # Job Service - Business logic for job management
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlmodel import Session
 
-from core.entities import Job, JobStatus
 from core.dtos import JobQueueItem
-from core.events import event_bus, Event, EventType, emit_job_event
-from core.exceptions import NotFoundError, JobError
-from infrastructure.repositories import JobRepository
+from core.entities import Job, JobStatus
+from core.events import EventType, emit_job_event
+from core.exceptions import NotFoundError
 from infrastructure.logging import job_logger
+from infrastructure.repositories import JobRepository
 
 logger = job_logger()
 
@@ -24,7 +24,7 @@ class JobService:
         self.session = session
         self.repo = JobRepository(session)
     
-    async def create_job(self, workflow: Dict[str, Any], metadata: Dict[str, Any], task_type: str = "image") -> Job:
+    async def create_job(self, workflow: dict[str, Any], metadata: dict[str, Any], task_type: str = "image") -> Job:
         """
         Create a new job.
         
@@ -56,7 +56,7 @@ class JobService:
             logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
         return job
     
-    async def list_jobs(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+    async def list_jobs(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         """
         List jobs with pagination.
         
@@ -137,20 +137,20 @@ class JobService:
         logger.info("jobs_cleared", count=count)
         return count
     
-    def get_pending_jobs(self) -> List[Job]:
+    def get_pending_jobs(self) -> list[Job]:
         """Get all pending jobs in FIFO order."""
         return self.repo.get_pending()
     
-    def get_running_jobs(self) -> List[Job]:
+    def get_running_jobs(self) -> list[Job]:
         """Get all running/processing jobs."""
         active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
         return self.repo.get_by_statuses(active_states)
 
-    def get_pending_queue_items(self) -> List[JobQueueItem]:
+    def get_pending_queue_items(self) -> list[JobQueueItem]:
         """Get pending queue items (lightweight)."""
         return self.repo.get_queue_items([JobStatus.PENDING])
 
-    def get_running_queue_items(self) -> List[JobQueueItem]:
+    def get_running_queue_items(self) -> list[JobQueueItem]:
         """Get running/processing queue items (lightweight)."""
         active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
         return self.repo.get_queue_items(active_states)
@@ -180,11 +180,11 @@ class JobService:
         # Default estimate if not enough data
         return 30.0
     
-    def get_job_stats(self) -> Dict[str, int]:
+    def get_job_stats(self) -> dict[str, int]:
         """Get job counts by status."""
         return self.repo.count_by_status()
     
-    def get_job_stats_detailed(self, days: int = 7) -> Dict[str, Any]:
+    def get_job_stats_detailed(self, days: int = 7) -> dict[str, Any]:
         """
         Get comprehensive job statistics in a single optimized query.
         More efficient than multiple separate count/average queries.
@@ -229,7 +229,7 @@ class JobService:
         
         return stats
     
-    def _job_to_dict(self, job: Job) -> Dict[str, Any]:
+    def _job_to_dict(self, job: Job) -> dict[str, Any]:
         """Convert job to dictionary for API responses."""
         return {
             "id": job.id,

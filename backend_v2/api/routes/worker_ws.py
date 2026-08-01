@@ -13,15 +13,22 @@ Protocol:
 """
 
 import asyncio
-from typing import Dict, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from api.deps import get_session_context, get_job_service, get_provider_service
-from services.job_processing import finalize_persisted_job_outputs, normalize_external_outputs
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+
+from api.deps import (
+    get_job_service,
+    get_logger,
+    get_provider_service,
+    get_session_context,
+)
 from core.exceptions import NotFoundError
+from services.job_processing import (
+    finalize_persisted_job_outputs,
+    normalize_external_outputs,
+)
 from services.provider_client import ProviderCallError
-from core.entities import JobStatus
-from api.deps import get_logger
 
 logger = get_logger("worker_ws")
 
@@ -39,7 +46,7 @@ class ConnectedWorker:
         self.provider_id = provider_id
         self.connected_at = datetime.now(timezone.utc)
         self.last_heartbeat = datetime.now(timezone.utc)
-        self.current_job: Optional[str] = None
+        self.current_job: str | None = None
         self.jobs_completed: int = 0
     
     def to_dict(self) -> dict:
@@ -53,8 +60,8 @@ class ConnectedWorker:
 
 
 # Global registry of connected workers
-connected_workers: Dict[str, ConnectedWorker] = {}  # provider_id -> worker
-pending_job_futures: Dict[str, asyncio.Future] = {}
+connected_workers: dict[str, ConnectedWorker] = {}  # provider_id -> worker
+pending_job_futures: dict[str, asyncio.Future] = {}
 WORKER_HEARTBEAT_TIMEOUT_SECONDS = 90
 
 
@@ -65,7 +72,7 @@ def _is_socket_connected(worker: ConnectedWorker) -> bool:
     return getattr(state, "name", "").upper() == "CONNECTED"
 
 
-def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
+def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
     worker = connected_workers.get(provider_id)
     if not worker:
         return None
@@ -87,9 +94,9 @@ def _get_live_worker(provider_id: str) -> Optional[ConnectedWorker]:
     return worker
 
 
-def get_connected_workers() -> Dict[str, dict]:
+def get_connected_workers() -> dict[str, dict]:
     """Get info about all connected workers."""
-    workers: Dict[str, dict] = {}
+    workers: dict[str, dict] = {}
     for provider_id in list(connected_workers.keys()):
         worker = _get_live_worker(provider_id)
         if worker:

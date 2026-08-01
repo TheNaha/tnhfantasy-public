@@ -1,6 +1,6 @@
 """Tests for helper functions in api/routes/files.py"""
-import os
 import pytest
+
 from core.exceptions import ValidationError
 
 

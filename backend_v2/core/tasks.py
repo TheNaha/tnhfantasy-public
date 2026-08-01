@@ -1,5 +1,7 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional
+
 
 class UniversalTask(BaseModel):
     """
@@ -8,5 +10,5 @@ class UniversalTask(BaseModel):
     """
     task_type: str = Field(..., description="E.g., image, text, audio")
     intent: str = Field(..., description="E.g., generate, chat, transcribe")
-    payload: Dict[str, Any] = Field(default_factory=dict, description="The actual request data")
-    config: Optional[Dict[str, Any]] = Field(default=None, description="Execution overrides")
+    payload: dict[str, Any] = Field(default_factory=dict, description="The actual request data")
+    config: dict[str, Any] | None = Field(default=None, description="Execution overrides")

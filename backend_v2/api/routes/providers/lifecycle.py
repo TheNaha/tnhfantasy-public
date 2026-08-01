@@ -10,30 +10,33 @@
 #   PUT    /api/providers/load-balancing – Update LB strategy
 #   POST   /api/providers/{id}/reconcile – Trigger model sync
 #   GET/POST /api/providers/{id}/container/* – Container lifecycle management
-from typing import Dict, Any, Optional, List
-import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 import httpx
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
-from pydantic import BaseModel
+
+from api.deps import (
+    api_logger,
+    get_container_manager,
+    get_http_client,
+    get_model_repo_v2,
+    get_model_service_v2,
+    get_provider_lifecycle_service,
+    get_provider_service,
+    get_provider_status_service,
+)
+from core.exceptions import ComfyError, NotFoundError, ProviderError, ValidationError
+from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+from services.model_service import ModelServiceV2
+from services.provider_lifecycle_service import ProviderLifecycleService
+from services.provider_service import ProviderService
+from services.provider_status_service import (
+    ProviderStatusService,
+    invalidate_provider_status_caches,
+)
 
 from .crud import AddCustomProviderModelRequest
-
-from api.deps import get_session, get_provider_service, get_container_manager, get_model_repo_v2
-from core.events import Event, EventType, emit_provider_stats, event_bus
-from services.provider_service import ProviderService
-from api.deps import get_provider_lifecycle_service, get_provider_status_service, get_model_service_v2
-from services.provider_status_service import ProviderStatusService
-from services.provider_status_service import invalidate_provider_status_caches
-from services.provider_lifecycle_service import ProviderLifecycleService
-from services.model_service import ModelServiceV2
-from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-from core.exceptions import NotFoundError, ProviderError, ValidationError, ComfyError
-from api.deps import start_background_task
-from api.deps import get_http_client
-from api.deps import api_logger
-from config import get_worker_backend_url
 
 logger = api_logger()
 
@@ -66,10 +69,11 @@ def list_all_containers(container_manager = Depends(get_container_manager)):
 
 # Cache for batch container status (10 second TTL)
 from cachetools import TTLCache
+
 _container_status_cache = TTLCache(maxsize=1, ttl=10)
 
 
-def _invalidate_provider_runtime_caches(provider_id: Optional[str] = None) -> None:
+def _invalidate_provider_runtime_caches(provider_id: str | None = None) -> None:
     """Clear route-level and provider-status caches after runtime changes."""
     _container_status_cache.clear()
     invalidate_provider_status_caches(provider_id)
@@ -172,9 +176,10 @@ async def get_provider_live_metrics(
     service: ProviderService = Depends(get_provider_service)
 ):
     """Fetch live metrics directly from the remote provider container."""
-    from services.provider_runtime import resolve_provider_runtime
-    from api.deps import get_http_client
     import time
+
+    from api.deps import get_http_client
+    from services.provider_runtime import resolve_provider_runtime
     
     provider = await service.get_provider(provider_id)
     runtime = resolve_provider_runtime(provider)
@@ -246,12 +251,12 @@ async def get_provider_sync_status(
 @router.get("/{provider_id}/models")
 async def get_provider_models(
     provider_id: str, 
-    status: Optional[str] = None,
+    status: str | None = None,
     status_service: ProviderStatusService = Depends(get_provider_status_service)
 ):
     """Return provider models grouped by directory using the V2 schema."""
     sync_status = await get_provider_sync_status(provider_id, status_service)
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
 
     for model in sync_status["models"]:
         model_status = model["provider_status"]["status"]
@@ -367,7 +372,7 @@ async def setup_provider(
         status_code = 400 if "Setup requires" in detail else 500
         raise ComfyError(detail) from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise ComfyError(f"Failed to run provider setup: {str(exc)}") from exc
+        raise ComfyError(f"Failed to run provider setup: {exc!s}") from exc
 
 
 

@@ -6,10 +6,11 @@
 # The repository is session-scoped – callers should create a new instance
 # per request.  The LoadBalancingRepository is a separate class that manages
 # the singleton load-balancing configuration row.
-from sqlmodel import Session, select
-from typing import Optional, List, Dict, Any
+from typing import Any
 
-from core.entities import Provider, LoadBalancingConfig
+from sqlmodel import Session, select
+
+from core.entities import LoadBalancingConfig, Provider
 
 
 class ProviderRepository:
@@ -18,7 +19,7 @@ class ProviderRepository:
     def __init__(self, session: Session):
         self.session = session
     
-    def create(self, provider_data: Dict[str, Any]) -> Provider:
+    def create(self, provider_data: dict[str, Any]) -> Provider:
         """Create a new provider."""
         provider = Provider(**provider_data)
         self.session.add(provider)
@@ -26,26 +27,26 @@ class ProviderRepository:
         self.session.refresh(provider)
         return provider
     
-    def get(self, provider_id: str) -> Optional[Provider]:
+    def get(self, provider_id: str) -> Provider | None:
         """Get a provider by ID."""
         return self.session.get(Provider, provider_id)
     
-    def get_all(self) -> List[Provider]:
+    def get_all(self) -> list[Provider]:
         """Get all providers."""
         stmt = select(Provider)
         return list(self.session.exec(stmt).all())
     
-    def get_enabled(self) -> List[Provider]:
+    def get_enabled(self) -> list[Provider]:
         """Get all enabled providers."""
         stmt = select(Provider).where(Provider.enabled == True)
         return list(self.session.exec(stmt).all())
     
-    def get_by_type(self, provider_type: str) -> List[Provider]:
+    def get_by_type(self, provider_type: str) -> list[Provider]:
         """Get providers by type."""
         stmt = select(Provider).where(Provider.type == provider_type)
         return list(self.session.exec(stmt).all())
     
-    def update(self, provider_id: str, updates: Dict[str, Any]) -> Optional[Provider]:
+    def update(self, provider_id: str, updates: dict[str, Any]) -> Provider | None:
         """Update a provider."""
         provider = self.get(provider_id)
         if not provider:

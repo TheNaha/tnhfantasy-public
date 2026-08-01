@@ -16,9 +16,9 @@ from api.routes.worker_ws import (
     request_worker_job_cancel,
     worker_websocket,
 )
-from services.provider_client import ProviderCallError
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
+from services.provider_client import ProviderCallError
 
 
 class DummyWebSocket:

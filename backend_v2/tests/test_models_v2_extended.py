@@ -1,5 +1,4 @@
 """Extended tests for api/routes/models_v2.py"""
-import pytest
 
 
 class TestModelsV2Extended:

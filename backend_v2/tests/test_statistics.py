@@ -1,6 +1,6 @@
 # Statistics API Tests
-import pytest
 from unittest.mock import patch
+
 from services.gallery_indexer import gallery_indexer
 
 gallery_indexer.is_ready = True
@@ -30,7 +30,6 @@ class TestStatisticsEndpoints:
     def test_get_statistics_empty_output(self, mock_get_all, client):
         """Statistics returns zeros when no output images exist."""
         mock_get_all.return_value = []
-        import api.routes.statistics
         from infrastructure.cache import invalidate_cache
         invalidate_cache('stats')
 

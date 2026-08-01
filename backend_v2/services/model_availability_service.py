@@ -3,15 +3,14 @@
 Service to check if required models are available on providers.
 Used for pre-flight job validation and model-aware load balancing.
 """
-from typing import Dict, List, Any, Optional, Set, Tuple
 from dataclasses import dataclass, field
-from sqlmodel import Session, select
-from sqlalchemy import and_, or_
 
-from core.entities import ModelFile, ModelVersion, ModelV2, ProviderVersionStatus
-from core.entities import Provider
-from infrastructure.repositories import ProviderRepository
+from sqlalchemy import and_, or_
+from sqlmodel import Session, select
+
+from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
 from infrastructure.logging import model_logger
+from infrastructure.repositories import ProviderRepository
 
 logger = model_logger()
 
@@ -23,19 +22,19 @@ class AvailabilityResult:
     valid: bool = False
     
     # Provider IDs that have ALL required models ready
-    eligible_providers: List[str] = field(default_factory=list)
+    eligible_providers: list[str] = field(default_factory=list)
     
     # Missing models per provider: {provider_id: {directory: [filenames]}}
-    missing_models: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+    missing_models: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     
     # Models that are missing on ALL providers (globally unavailable)
-    global_missing: Dict[str, List[str]] = field(default_factory=dict)
+    global_missing: dict[str, list[str]] = field(default_factory=dict)
     
     # Whether downloads can be triggered (models exist in DB but not downloaded)
     can_trigger_download: bool = False
     
     # All required models for reference
-    required_models: Dict[str, List[str]] = field(default_factory=dict)
+    required_models: dict[str, list[str]] = field(default_factory=dict)
 
 
 class ModelAvailabilityService:
@@ -52,7 +51,7 @@ class ModelAvailabilityService:
     
     def check_availability(
         self,
-        required_models: Dict[str, List[str]]
+        required_models: dict[str, list[str]]
     ) -> AvailabilityResult:
         """
         Check if required models are available on any provider.
@@ -86,7 +85,7 @@ class ModelAvailabilityService:
         
         # Check each provider for all required models
         for provider_id in provider_ids:
-            missing_for_provider: Dict[str, List[str]] = {}
+            missing_for_provider: dict[str, list[str]] = {}
             
             for directory, filenames in required_models.items():
                 missing_files = []
@@ -108,7 +107,7 @@ class ModelAvailabilityService:
                 result.eligible_providers.append(provider_id)
         
         # Find globally missing models (not ready on ANY provider)
-        all_files_needed: Set[str] = set()
+        all_files_needed: set[str] = set()
         for filenames in required_models.values():
             all_files_needed.update(filenames)
         
@@ -136,8 +135,8 @@ class ModelAvailabilityService:
     
     def _get_file_provider_status(
         self,
-        required_models: Dict[str, List[str]]
-    ) -> Dict[Tuple[str, str], Dict[str, str]]:
+        required_models: dict[str, list[str]]
+    ) -> dict[tuple[str, str], dict[str, str]]:
         """
         Get provider status for each required file.
         
@@ -152,7 +151,7 @@ class ModelAvailabilityService:
         if not requested_pairs:
             return {}
 
-        result: Dict[Tuple[str, str], Dict[str, str]] = {}
+        result: dict[tuple[str, str], dict[str, str]] = {}
 
         file_filters = [
             and_(
@@ -172,8 +171,8 @@ class ModelAvailabilityService:
         )
         files = self.session.exec(stmt).all()
 
-        matching_file_ids: List[int] = []
-        file_id_to_key: Dict[int, Tuple[str, str]] = {}
+        matching_file_ids: list[int] = []
+        file_id_to_key: dict[int, tuple[str, str]] = {}
 
         for file, _version, model in files:
             key = (model.directory, file.storage_filename)
@@ -201,7 +200,7 @@ class ModelAvailabilityService:
     
     def _can_trigger_downloads(
         self,
-        global_missing: Dict[str, List[str]]
+        global_missing: dict[str, list[str]]
     ) -> bool:
         """
         Check if missing models exist in DB (can be downloaded).
@@ -233,8 +232,8 @@ class ModelAvailabilityService:
     
     def get_providers_with_models(
         self,
-        required_models: Dict[str, List[str]]
-    ) -> List[str]:
+        required_models: dict[str, list[str]]
+    ) -> list[str]:
         """
         Get list of provider IDs that have all required models.
         
@@ -252,8 +251,8 @@ class ModelAvailabilityService:
     def get_missing_models_for_provider(
         self,
         provider_id: str,
-        required_models: Dict[str, List[str]]
-    ) -> Dict[str, List[str]]:
+        required_models: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
         """
         Get missing models for a specific provider.
         

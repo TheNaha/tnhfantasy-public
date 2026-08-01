@@ -1,7 +1,18 @@
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock, ANY
-from api.routes.websocket import WebSocketManager, connect, disconnect, subscribe, unsubscribe, cancel_job, connected_clients
+
+from api.routes.websocket import (
+    WebSocketManager,
+    cancel_job,
+    connect,
+    connected_clients,
+    disconnect,
+    subscribe,
+    unsubscribe,
+)
 from core.events import Event, EventType
+
 
 @pytest.fixture
 def mock_sio():
@@ -83,6 +94,7 @@ async def test_cancel_job_missing_id(mock_sio):
     mock_sio.emit.assert_called_with('error', {'message': 'job_id required'}, room=sid)
 
 import asyncio
+
 
 @pytest.mark.asyncio
 @patch("services.job_queue.job_queue")

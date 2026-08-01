@@ -11,20 +11,23 @@ Features:
 - Integration with existing EventBus for event broadcasting
 """
 
-import socketio
 import asyncio
 import logging
 import os
-from typing import Dict, Set, Any
 from datetime import datetime, timezone
 
-from core.events import Event, EventType
-from api.deps import get_event_bus
-from config import settings
+import socketio
 
-from services.job_queue import job_queue
+from api.deps import (
+    get_event_bus,
+    get_http_client,
+    get_job_service,
+    get_provider_service,
+    get_session_context,
+)
+from config import settings
 from core.entities import JobStatus
-from api.deps import get_session_context, get_job_service, get_provider_service, get_http_client
+from services.job_queue import job_queue
 from services.provider_runtime import resolve_provider_runtime
 
 logger = logging.getLogger(__name__)
@@ -52,7 +55,7 @@ sio = socketio.AsyncServer(
 
 
 # Track connected clients and their subscriptions
-connected_clients: Dict[str, Set[str]] = {}  # sid -> set of rooms
+connected_clients: dict[str, set[str]] = {}  # sid -> set of rooms
 WS_BROADCAST_QUEUE_SIZE = max(int(os.getenv("COMFY_WS_BROADCAST_QUEUE_SIZE", "500")), 1)
 
 
@@ -256,7 +259,7 @@ async def cancel_job(sid, data):
     except Exception as e:
         logger.error(f"[WebSocket] Cancel job error: {e}")
         await sio.emit('error', {
-            'message': f'Failed to cancel job: {str(e)}',
+            'message': f'Failed to cancel job: {e!s}',
             'job_id': job_id
         }, room=sid)
 

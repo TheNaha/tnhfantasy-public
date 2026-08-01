@@ -2,7 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.provider_status_service import ProviderStatusService, invalidate_provider_status_caches
+from services.provider_status_service import (
+    ProviderStatusService,
+    invalidate_provider_status_caches,
+)
 
 
 def test_build_provider_status_card_fallback_preserves_runtime_metadata():

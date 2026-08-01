@@ -1,13 +1,15 @@
 """Tests for services/image_service.py"""
-import os
-import io
 import base64
+import io
+import os
 import tempfile
+from unittest.mock import patch
+
 import pytest
 from PIL import Image
-from unittest.mock import patch, AsyncMock, MagicMock
-from services.image_service import ImageService, get_image_service
+
 import services.image_service as image_service_module
+from services.image_service import ImageService, get_image_service
 
 
 @pytest.fixture

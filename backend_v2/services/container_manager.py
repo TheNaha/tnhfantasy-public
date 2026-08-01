@@ -2,13 +2,13 @@
 Container Lifecycle Manager
 Manages Docker containers for provider workers with isolated credentials.
 """
-import docker
+import asyncio
 import os
 import time
-import asyncio
-import threading
-from typing import Dict, Optional, List, Iterable, Tuple
+from collections.abc import Iterable
 from pathlib import Path
+
+import docker
 
 from config import get_worker_backend_url
 from infrastructure.http_client import get_http_client
@@ -48,7 +48,7 @@ class ContainerManager:
         # Try to connect to Podman first, fall back to Docker
         self.client = self._get_container_client()
         self.runtime = self._detect_runtime()
-        self.running_containers: Dict[str, docker.models.containers.Container] = {}
+        self.running_containers: dict[str, docker.models.containers.Container] = {}
         
         logger.info("container_runtime_detected", runtime=self.runtime)
     
@@ -149,9 +149,9 @@ class ContainerManager:
             logger.error("image_build_failed", provider_type=provider_type, error=str(e))
             raise
 
-    def build_worker_images(self, provider_types: Optional[Iterable[str]] = None) -> Dict[str, str]:
+    def build_worker_images(self, provider_types: Iterable[str] | None = None) -> dict[str, str]:
         """Build provider worker images and continue past individual failures."""
-        image_tags: Dict[str, str] = {}
+        image_tags: dict[str, str] = {}
         if provider_types:
             provider_list = list(provider_types)
         else:
@@ -170,8 +170,8 @@ class ContainerManager:
         provider_id: str,
         provider_type: str,
         port: int,
-        env_vars: Optional[Dict[str, str]] = None,
-        env_file: Optional[str] = None,
+        env_vars: dict[str, str] | None = None,
+        env_file: str | None = None,
         rebuild: bool = False
     ):
         """Start a provider worker container."""
@@ -273,12 +273,12 @@ class ContainerManager:
             logger.error("container_start_failed", provider_id=provider_id, error=str(e))
             raise
     
-    def _health_probe_targets(self, container: docker.models.containers.Container) -> List[Tuple[str, str]]:
+    def _health_probe_targets(self, container: docker.models.containers.Container) -> list[tuple[str, str]]:
         """Build health probe targets in order of reliability for current runtime."""
-        targets: List[Tuple[str, str]] = []
+        targets: list[tuple[str, str]] = []
         seen_urls = set()
 
-        def add_target(name: str, url: Optional[str]):
+        def add_target(name: str, url: str | None):
             if not url or url in seen_urls:
                 return
             seen_urls.add(url)
@@ -385,7 +385,7 @@ class ContainerManager:
         except Exception as e:
             return f"Error getting logs: {e}"
     
-    def list_containers(self) -> List[Dict]:
+    def list_containers(self) -> list[dict]:
         """List all running provider containers."""
         containers = self.client.containers.list(
             filters={"label": "comfy-provider=true"}
