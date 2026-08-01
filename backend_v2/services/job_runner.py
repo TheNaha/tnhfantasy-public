@@ -45,12 +45,14 @@ async def select_next_provider(
     exhausted_providers: set[str],
     preferred_provider_id: Optional[str],
     required_models: Optional[dict] = None,
+    task_type: str = "image",
 ) -> Optional[Provider]:
     """Select the next provider or fail the job when no providers remain."""
     provider = await load_balancer.get_next_provider(
         preferred_provider_id=preferred_provider_id,
         required_models=required_models,
         exclude_provider_ids=exhausted_providers,
+        task_type=task_type,
     )
 
     if provider:
@@ -238,6 +240,7 @@ async def execute_job(
                         exhausted_providers=exhausted_providers,
                         preferred_provider_id=preferred_provider_id,
                         required_models=required_models,
+                        task_type=job.task_type,
                     )
 
                     if not current_provider:
@@ -303,6 +306,8 @@ async def execute_job(
                             timeout=timeout,
                             use_snapshot=use_snapshot,
                             provider_id=current_provider.id,
+                            provider_type=current_provider.type,
+                            worker_type=current_provider.worker_type,
                         )
                     elif runtime.mode == "external_worker":
                         from api.routes.worker_ws import dispatch_job_to_worker

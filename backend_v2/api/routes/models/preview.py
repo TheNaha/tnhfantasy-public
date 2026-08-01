@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.get("/preview/{model_id}")
-async def get_model_preview_image(model_id: int, version_id: int = None, image_index: int = 0, width: int = None):
+async def get_model_preview_image(model_id: str, version_id: str = None, image_index: int = 0, width: int = None):
     if image_index < 0:
         raise ValidationError("image_index must be >= 0")
 

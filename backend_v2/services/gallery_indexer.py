@@ -44,21 +44,27 @@ class _GalleryEventHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         """Called when a new file is created in the watched directory tree."""
-        if not event.is_directory and event.src_path.lower().endswith('.png'):
+        ext = os.path.splitext(event.src_path)[1].lower()
+        if not event.is_directory and ext in ('.png', '.txt', '.md', '.json', '.wav', '.mp3'):
             if '/thumb/' not in event.src_path.replace('\\', '/'):
                 self.indexer.add_file(event.src_path)
 
     def on_deleted(self, event):
         """Called when a file is removed from the watched directory tree."""
-        if not event.is_directory and event.src_path.lower().endswith('.png'):
+        ext = os.path.splitext(event.src_path)[1].lower()
+        if not event.is_directory and ext in ('.png', '.txt', '.md', '.json', '.wav', '.mp3'):
             self.indexer.remove_file(event.src_path)
 
     def on_moved(self, event):
         """Called when a file is renamed/moved within the watched directory tree."""
         if not event.is_directory:
-            if event.src_path.lower().endswith('.png'):
+            src_ext = os.path.splitext(event.src_path)[1].lower()
+            dest_ext = os.path.splitext(event.dest_path)[1].lower()
+            valid_exts = ('.png', '.txt', '.md', '.json', '.wav', '.mp3')
+            
+            if src_ext in valid_exts:
                 self.indexer.remove_file(event.src_path)
-            if event.dest_path.lower().endswith('.png'):
+            if dest_ext in valid_exts:
                 if '/thumb/' not in event.dest_path.replace('\\', '/'):
                     self.indexer.add_file(event.dest_path)
 
@@ -228,7 +234,7 @@ class GalleryIndexer:
             name = os.path.relpath(filepath, self.output_dir).replace("\\", "/")
             
             # Skip non-relevant files
-            if name.endswith('.json') or name.endswith('.preview.png'):
+            if name.endswith('.preview.png'):
                 return None
             if '.thumb.' in name or '.medium.' in name:
                 return None
@@ -250,6 +256,14 @@ class GalleryIndexer:
                 
             base_name = os.path.basename(filepath)
             
+            # Determine type based on extension
+            ext = os.path.splitext(filepath)[1].lower()
+            file_type = "image"
+            if ext in ('.txt', '.md', '.json'):
+                file_type = "text"
+            elif ext in ('.wav', '.mp3'):
+                file_type = "audio"
+
             file_data = {
                 "name": base_name,
                 "relative_path": name,
@@ -258,10 +272,10 @@ class GalleryIndexer:
                 "date": generation_time,
                 "mtime": stat.st_mtime,
                 "modified_time": generation_time,
-                "type": "image",
+                "type": file_type,
                 "preview": f"/api/view/output/{name}",
-                "thumbnail": f"/api/thumbnail/medium/{name}",
-                "thumbnail_medium": f"/api/thumbnail/medium/{name}",
+                "thumbnail": f"/api/thumbnail/medium/{name}" if file_type == "image" else None,
+                "thumbnail_medium": f"/api/thumbnail/medium/{name}" if file_type == "image" else None,
                 "metadata": metadata
             }
             if blurhash:
@@ -288,7 +302,8 @@ class GalleryIndexer:
                 dirs.remove("thumb")
 
             for filename in files:
-                if not filename.lower().endswith(".png"):
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in ('.png', '.txt', '.md', '.json', '.wav', '.mp3'):
                     continue
 
                 filepath = os.path.join(root, filename)

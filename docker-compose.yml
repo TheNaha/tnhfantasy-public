@@ -1,7 +1,29 @@
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: tnhcomfy-db
+    environment:
+      - POSTGRES_USER=comfy
+      - POSTGRES_PASSWORD=comfy
+      - POSTGRES_DB=comfy
+    volumes:
+      - ./data/pgdata:/var/lib/postgresql/data
+    networks:
+      - tnhcomfy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comfy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   backend_v2:
     build: ./backend_v2
     container_name: tnhcomfy-backend
+    depends_on:
+      db:
+        condition: service_healthy
     user: "1000:1000"
     volumes:
       - ./data:/data
@@ -10,7 +32,7 @@ services:
     environment:
       - OUTPUT_DIR=/data/output
       - INPUT_DIR=/data/input
-      - COMFY_DATABASE_URL=sqlite:////data/db/comfy.db
+      - COMFY_DATABASE_URL=postgresql://comfy:comfy@db:5432/comfy
       - COMFY_PREVIEW_CACHE_DIR=/data/models/cache
       - COMFY_PREVIEW_PREFETCH_ENABLED=true
       - COMFY_UVICORN_RELOAD=0

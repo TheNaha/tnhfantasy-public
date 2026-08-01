@@ -73,43 +73,23 @@ async def list_prompts(
     Uses FTS5 for fast full-text search when query is provided.
     """
     try:
-        # Check if FTS5 table exists and use it for search
+        # Use simple ILIKE search for now until full text search is optimized
         if q and q.strip():
-            # Use FTS5 MATCH query for fast full-text search
-            search_query = q.strip()
-            # Escape FTS5 special chars and add prefix matching
-            search_term = search_query.replace('"', '""')
-            
-            fts_query = text("""
-                SELECT p.* FROM prompts p
-                JOIN prompts_fts ON p.id = prompts_fts.rowid
-                WHERE prompts_fts MATCH :search
-                ORDER BY rank
-                LIMIT :limit OFFSET :offset
-            """)
-            
-            try:
-                result = session.execute(
-                    fts_query, 
-                    {"search": f'"{search_term}"*', "limit": limit, "offset": offset}
+            search_query = f"%{q.strip()}%"
+            stmt = select(Prompt).where(
+                or_(
+                    Prompt.name.ilike(search_query),
+                    Prompt.text.ilike(search_query),
+                    Prompt.description.ilike(search_query),
                 )
-                prompts = [dict(row._mapping) for row in result]
-            except Exception:
-                # FTS5 table might not exist yet, fall back to LIKE search
-                stmt = select(Prompt).where(
-                    or_(
-                        Prompt.name.contains(search_query),
-                        Prompt.text.contains(search_query),
-                        Prompt.description.contains(search_query),
-                    )
-                )
-                if category:
-                    stmt = stmt.where(Prompt.category == category)
-                if favorite is not None:
-                    stmt = stmt.where(Prompt.favorite == favorite)
-                
-                stmt = stmt.order_by(Prompt.updated_at.desc()).limit(limit).offset(offset)
-                prompts = session.exec(stmt).all()
+            )
+            if category:
+                stmt = stmt.where(Prompt.category == category)
+            if favorite is not None:
+                stmt = stmt.where(Prompt.favorite == favorite)
+            
+            stmt = stmt.order_by(Prompt.updated_at.desc()).limit(limit).offset(offset)
+            prompts = session.exec(stmt).all()
         else:
             # No search query - simple listing with filters
             stmt = select(Prompt)
@@ -167,7 +147,7 @@ async def get_most_used(
 
 
 @router.get("/{prompt_id}")
-async def get_prompt(prompt_id: int, session: Session = Depends(get_session)):
+async def get_prompt(prompt_id: str, session: Session = Depends(get_session)):
     """Get a single prompt by ID."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
@@ -191,29 +171,11 @@ async def create_prompt(data: PromptCreate, session: Session = Depends(get_sessi
     session.add(prompt)
     session.commit()
     session.refresh(prompt)
-    
-    # Update FTS5 index
-    try:
-        session.execute(text("""
-            INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
-            VALUES (:id, :name, :text, :negative, :description, :tags)
-        """), {
-            "id": prompt.id,
-            "name": prompt.name,
-            "text": prompt.text,
-            "negative": prompt.negative or "",
-            "description": prompt.description or "",
-            "tags": ",".join(prompt.tags) if prompt.tags else ""
-        })
-        session.commit()
-    except Exception as e:
-        logger.warning("fts5_insert_failed", prompt_id=prompt.id, error=str(e))
-    
     return prompt
 
 
 @router.put("/{prompt_id}")
-async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = Depends(get_session)):
+async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = Depends(get_session)):
     """Update an existing prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
@@ -228,42 +190,15 @@ async def update_prompt(prompt_id: int, data: PromptUpdate, session: Session = D
     session.add(prompt)
     session.commit()
     session.refresh(prompt)
-    
-    # Update FTS5 index
-    try:
-        session.execute(text("""
-            UPDATE prompts_fts SET 
-                name = :name, text = :text, negative = :negative, 
-                description = :description, tags = :tags
-            WHERE rowid = :id
-        """), {
-            "id": prompt.id,
-            "name": prompt.name,
-            "text": prompt.text,
-            "negative": prompt.negative or "",
-            "description": prompt.description or "",
-            "tags": ",".join(prompt.tags) if prompt.tags else ""
-        })
-        session.commit()
-    except Exception as e:
-        logger.warning("fts5_update_failed", prompt_id=prompt.id, error=str(e))
-    
     return prompt
 
 
 @router.delete("/{prompt_id}")
-async def delete_prompt(prompt_id: int, session: Session = Depends(get_session)):
+async def delete_prompt(prompt_id: str, session: Session = Depends(get_session)):
     """Delete a prompt."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
         raise NotFoundError("Resource", "Prompt not found")
-    
-    # Delete from FTS5 first
-    try:
-        session.execute(text("DELETE FROM prompts_fts WHERE rowid = :id"), {"id": prompt_id})
-    except Exception as e:
-        logger.warning("fts5_delete_failed", prompt_id=prompt_id, error=str(e))
-    
     session.delete(prompt)
     session.commit()
     
@@ -271,7 +206,7 @@ async def delete_prompt(prompt_id: int, session: Session = Depends(get_session))
 
 
 @router.post("/{prompt_id}/use")
-async def increment_usage(prompt_id: int, session: Session = Depends(get_session)):
+async def increment_usage(prompt_id: str, session: Session = Depends(get_session)):
     """Increment usage count for a prompt (called when prompt is used)."""
     prompt = session.get(Prompt, prompt_id)
     if not prompt:
@@ -309,22 +244,6 @@ async def import_prompts(data: PromptBulkImport, session: Session = Depends(get_
     # Refresh to get IDs
     for prompt in imported:
         session.refresh(prompt)
-        # Add to FTS5
-        try:
-            session.execute(text("""
-                INSERT INTO prompts_fts(rowid, name, text, negative, description, tags)
-                VALUES (:id, :name, :text, :negative, :description, :tags)
-            """), {
-                "id": prompt.id,
-                "name": prompt.name,
-                "text": prompt.text,
-                "negative": prompt.negative or "",
-                "description": prompt.description or "",
-                "tags": ",".join(prompt.tags) if prompt.tags else ""
-            })
-        except Exception as e:
-            logger.warning("fts5_bulk_insert_failed", prompt_id=prompt.id, error=str(e))
-    
     session.commit()
     
     return {

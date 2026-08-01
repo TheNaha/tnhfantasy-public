@@ -545,6 +545,40 @@ def _migration_create_deleted_file_tombstones(conn) -> bool:
     return True
 
 
+def _migration_add_job_task_type(conn) -> bool:
+    """Ensure jobs table includes task_type column."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("jobs")}
+
+    if "task_type" not in columns:
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN task_type TEXT DEFAULT 'image'"))
+        logger.info("migration_column_added", table="jobs", column="task_type")
+
+    _verify_required_columns(conn, "jobs", {"task_type"})
+    return True
+
+def _migration_add_provider_worker_type(conn) -> bool:
+    """Ensure providers table includes worker_type column."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    if "providers" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("providers")}
+
+    if "worker_type" not in columns:
+        conn.execute(text("ALTER TABLE providers ADD COLUMN worker_type TEXT DEFAULT 'image'"))
+        logger.info("migration_column_added", table="providers", column="worker_type")
+
+    _verify_required_columns(conn, "providers", {"worker_type"})
+    return True
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -577,5 +611,15 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="006_deleted_file_tombstones",
             description="Create deleted_file_tombstones table for tracking deleted model files",
             apply_fn=_migration_create_deleted_file_tombstones,
+        ),
+        MigrationStep(
+            version="007_add_job_task_type",
+            description="Add task_type column to jobs table",
+            apply_fn=_migration_add_job_task_type,
+        ),
+        MigrationStep(
+            version="008_add_provider_worker_type",
+            description="Add worker_type column to providers table",
+            apply_fn=_migration_add_provider_worker_type,
         ),
     ]

@@ -147,3 +147,7 @@ def get_collection_repo(session: Session = Depends(get_session)):
 def get_prompt_repo(session: Session = Depends(get_session)):
     from infrastructure.repositories.prompt_repo import PromptRepository
     return PromptRepository(session)
+
+def get_embedding_service():
+    from services.embedding_service import get_embedding_service as get_service
+    return get_service()

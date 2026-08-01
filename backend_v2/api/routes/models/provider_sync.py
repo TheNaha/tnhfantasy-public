@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/{model_id}/provider-status")
 async def get_provider_statuses(
-    model_id: int,
+    model_id: str,
     session: Session = Depends(get_session)
 ):
     """Get provider download statuses for a model."""
@@ -29,7 +29,7 @@ async def get_provider_statuses(
 
 @router.put("/files/{file_id}/providers/{provider_id}/status")
 async def update_file_provider_status(
-    file_id: int,
+    file_id: str,
     provider_id: str,
     request: UpdateProviderStatusRequest,
     session: Session = Depends(get_session)

@@ -38,6 +38,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 class CreateJobRequest(BaseModel):
     workflow: dict
     metadata: dict = {}
+    task_type: str = "image"
 
 
 class ValidateWorkflowRequest(BaseModel):
@@ -107,6 +108,7 @@ async def create_job(
         job = await submission_service.create_and_enqueue_job(
             request.workflow,
             request.metadata,
+            task_type=request.task_type,
         )
         logger.info("job_enqueued", job_id=job.id)
         return submission_service.job_service._job_to_dict(job)

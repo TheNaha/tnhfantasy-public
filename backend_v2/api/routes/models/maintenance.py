@@ -104,7 +104,7 @@ def cleanup_orphan_models(session: Session = Depends(get_session)):
 
 @router.post("/{model_id}/check-dependencies")
 async def check_dependencies(
-    model_id: int,
+    model_id: str,
     session: Session = Depends(get_session)
 ):
     """
@@ -141,7 +141,7 @@ async def check_dependencies(
 
 @router.post("/{model_id}/resync")
 async def resync_model_from_civitai(
-    model_id: int,
+    model_id: str,
     session: Session = Depends(get_session)
 ):
     """

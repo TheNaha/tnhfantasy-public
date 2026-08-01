@@ -104,7 +104,7 @@ def import_collections(data: CollectionBulkImport, session: Session = Depends(ge
 
 @router.get("/{collection_id}")
 def get_collection(
-    collection_id: int, 
+    collection_id: str, 
     include_images: bool = Query(True),
     repo: CollectionRepository = Depends(get_collection_repo)
 ):
@@ -148,7 +148,7 @@ def create_collection(data: CollectionCreate, session: Session = Depends(get_ses
 
 @router.put("/{collection_id}")
 def update_collection(
-    collection_id: int, 
+    collection_id: str, 
     data: CollectionUpdate, 
     session: Session = Depends(get_session),
     repo: CollectionRepository = Depends(get_collection_repo)
@@ -171,7 +171,7 @@ def update_collection(
 
 
 @router.delete("/{collection_id}")
-def delete_collection(collection_id: int, session: Session = Depends(get_session), repo: CollectionRepository = Depends(get_collection_repo)):
+def delete_collection(collection_id: str, session: Session = Depends(get_session), repo: CollectionRepository = Depends(get_collection_repo)):
     """Delete a collection (images are NOT deleted, only the association)."""
     collection = repo.get_collection(collection_id)
     if not collection:
@@ -185,7 +185,7 @@ def delete_collection(collection_id: int, session: Session = Depends(get_session
 
 @router.post("/{collection_id}/images")
 def add_images_to_collection(
-    collection_id: int, 
+    collection_id: str, 
     data: AddImages, 
     session: Session = Depends(get_session),
     repo: CollectionRepository = Depends(get_collection_repo)
@@ -223,7 +223,7 @@ def add_images_to_collection(
 
 @router.delete("/{collection_id}/images")
 def remove_images_from_collection(
-    collection_id: int, 
+    collection_id: str, 
     data: AddImages, 
     session: Session = Depends(get_session),
     repo: CollectionRepository = Depends(get_collection_repo)

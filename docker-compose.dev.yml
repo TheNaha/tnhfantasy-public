@@ -17,6 +17,11 @@
 #   Backend:      http://localhost:8002              (uvicorn --reload)
 
 services:
+  # ─── Database ────────────────────────────────────────────
+  db:
+    ports:
+      - "5432:5432"
+
   # ─── Backend ─────────────────────────────────────────────
   backend_v2:
     environment:

@@ -34,6 +34,7 @@ class Job(SQLModel, table=True):
     )
     
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    task_type: str = Field(default="image")
     status: JobStatus = Field(default=JobStatus.PENDING)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -73,6 +74,7 @@ class Provider(SQLModel, table=True):
     
     id: str = Field(primary_key=True)  # e.g., "modal-primary", "modal-step"
     type: str = Field(default="modal")  # Provider type
+    worker_type: str = Field(default="image")  # e.g., image, llm, audio
     enabled: bool = Field(default=True)
     priority: int = Field(default=1)  # Lower = higher priority
     
@@ -125,7 +127,7 @@ class Prompt(SQLModel, table=True):
         Index('idx_prompt_favorite', 'favorite'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     text: str  # Positive prompt
     negative: Optional[str] = Field(default=None)
@@ -150,7 +152,7 @@ class Collection(SQLModel, table=True):
     """Image collection/album for organizing generated images."""
     __tablename__ = "collections"
     
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     color: str = Field(default="#3B82F6")
     description: Optional[str] = Field(default=None)
@@ -167,8 +169,8 @@ class CollectionImage(SQLModel, table=True):
         Index('idx_collection_image', 'collection_id', 'image_filename'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    collection_id: int = Field(foreign_key="collections.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    collection_id: str = Field(foreign_key="collections.id", index=True)
     image_filename: str = Field(index=True)  # References output filename
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -176,10 +178,11 @@ class CollectionImage(SQLModel, table=True):
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
 from sqlmodel import SQLModel, Field, Column, Relationship
-from sqlalchemy import JSON, Index, UniqueConstraint, Text
+from sqlalchemy import JSON, Index, UniqueConstraint, Text, BigInteger
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from datetime import datetime, timezone
 from enum import Enum
+from pgvector.sqlalchemy import Vector
 
 if TYPE_CHECKING:
     from typing import List as TypeList
@@ -224,7 +227,7 @@ class ModelV2(SQLModel, table=True):
         UniqueConstraint('civitai_model_id', name='uq_civitai_model_id'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     civitai_model_id: Optional[int] = Field(default=None, index=True)
     
     # Basic info
@@ -276,8 +279,8 @@ class ModelVersion(SQLModel, table=True):
         Index('idx_version_model', 'model_id'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    model_id: int = Field(foreign_key="models_v2.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    model_id: str = Field(foreign_key="models_v2.id", index=True)
     civitai_version_id: Optional[int] = Field(default=None, index=True)
     
     # Version info
@@ -320,8 +323,8 @@ class ModelFile(SQLModel, table=True):
         Index('idx_file_version', 'version_id'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    version_id: int = Field(foreign_key="model_versions.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    version_id: str = Field(foreign_key="model_versions.id", index=True)
     civitai_file_id: Optional[int] = Field(default=None, index=True)
     
     # File info
@@ -362,8 +365,8 @@ class ModelImage(SQLModel, table=True):
         Index('idx_image_version', 'version_id'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    version_id: int = Field(foreign_key="model_versions.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    version_id: str = Field(foreign_key="model_versions.id", index=True)
     
     # Image data
     url: str
@@ -401,14 +404,14 @@ class ProviderVersionStatus(SQLModel, table=True):
         Index('idx_provider_status_provider_id', 'provider_id', 'status'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    file_id: int = Field(foreign_key="model_files.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    file_id: str = Field(foreign_key="model_files.id", index=True)
     provider_id: Optional[str] = Field(default=None, index=True)
     
     # Status tracking
     status: str = Field(default="pending")  # pending, downloading, ready, failed
     storage_path: Optional[str] = None  # Actual path on provider storage
-    size_bytes: Optional[int] = None  # Actual size after download
+    size_bytes: Optional[int] = Field(default=None, sa_type=BigInteger)  # Actual size after download
     
     # Timestamps
     queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -438,8 +441,8 @@ class ModelTag(SQLModel, table=True):
         Index('idx_tag_search', 'tag'),
     )
     
-    id: Optional[int] = Field(default=None, primary_key=True)
-    model_id: int = Field(foreign_key="models_v2.id", index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    model_id: str = Field(foreign_key="models_v2.id", index=True)
     tag: str = Field(index=True)
     
     # Relationships
@@ -633,6 +636,94 @@ POPULAR_VAE_OPTIONS = {
 
 class DeletedFileTombstone(SQLModel, table=True):
     __tablename__ = "deleted_file_tombstones"
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     storage_path: str = Field(index=True, unique=True)
     deleted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ============================================================================
+# WORLD VAULT (ROLEPLAY & STORY)
+# ============================================================================
+
+class Character(SQLModel, table=True):
+    __tablename__ = "characters"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    personality: Optional[str] = Field(default=None, sa_column=Column(Text))
+    scenario: Optional[str] = Field(default=None, sa_column=Column(Text))
+    first_mes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    mes_example: Optional[str] = Field(default=None, sa_column=Column(Text))
+    creator_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    # Custom Extensions
+    visual_tags: List[str] = Field(default=[], sa_column=Column(JSON))
+    lora_triggers: List[str] = Field(default=[], sa_column=Column(JSON))
+    voice_profile: Optional[str] = Field(default=None)
+    
+    avatar_path: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Chat(SQLModel, table=True):
+    __tablename__ = "chats"
+    __table_args__ = (Index('idx_chat_type', 'chat_type'),)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    character_id: Optional[str] = Field(foreign_key="characters.id", default=None, index=True)
+    name: str = Field(default="New Chat")
+    chat_type: str = Field(default="roleplay")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class MessageRole(str, Enum):
+    USER = "user"
+    CHAR = "char"
+    SYSTEM = "system"
+    STORY = "story"
+
+class Message(SQLModel, table=True):
+    __tablename__ = "messages"
+    __table_args__ = (Index('idx_message_chat_id', 'chat_id'),)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    chat_id: str = Field(foreign_key="chats.id", index=True)
+    role: MessageRole
+    content: str = Field(sa_column=Column(Text))
+    image_path: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Lorebook(SQLModel, table=True):
+    __tablename__ = "lorebooks"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # Relationships
+    entries: List["LorebookEntry"] = Relationship(back_populates="lorebook")
+
+class LorebookEntry(SQLModel, table=True):
+    __tablename__ = "lorebook_entries"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    lorebook_id: str = Field(foreign_key="lorebooks.id", index=True)
+    
+    # Trigger words or keys for this entry
+    keys: List[str] = Field(default=[], sa_column=Column(JSON))
+    content: str = Field(sa_column=Column(Text))
+    
+    # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
+    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384)))
+    
+    lorebook: Optional["Lorebook"] = Relationship(back_populates="entries")
+
+class Scenario(SQLModel, table=True):
+    __tablename__ = "scenarios"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    prompt_template: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -135,8 +135,9 @@ class Settings(BaseSettings):
     reconciliation_interval: int = 120
 
     # Directories
-    output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../output"))
-    input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../input"))
+    # Introduce /{user_id}/ root partitions for multi-tenancy (hardcoded default_user for now)
+    output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../output/default_user"))
+    input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../input/default_user"))
 
     @model_validator(mode="before")
     @classmethod

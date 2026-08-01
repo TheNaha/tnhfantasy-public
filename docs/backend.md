@@ -4,7 +4,7 @@ The backend of TNHComfy (`tnhcomfy-backend`) is built with **FastAPI** (Python),
 
 ## Key Technologies
 - **FastAPI:** High-performance web framework for APIs.
-- **SQLite:** Lightweight local database for job tracking and state management (`backend_v2/data/db/comfy.db`).
+- **SQLite:** Lightweight local database for job tracking and state management (`backend_v2/data/comfy.db`).
 - **WebSockets:** Real-time bi-directional communication with the frontend for job status updates (Socket.IO).
 - **HTTPX:** Asynchronous HTTP client used for non-blocking requests to external providers.
 - **Structlog:** Structured logging for better debugging and observability.
@@ -17,7 +17,7 @@ The backend consists of several key modules:
 1. **API Routes (`backend_v2/api/routes`):** Defines the REST endpoints for jobs, models, providers, collections, generation, settings, statistics, and WebSockets.
 2. **API Infrastructure (`backend_v2/api/`):** App setup, dependency injection (`deps.py`), error handlers, job orchestration, job processing, lifecycle management, and provider client.
 3. **Services (`backend_v2/services/`):** Business logic including job queue, job service, load balancer, provider service, container manager, image service, model service, gallery indexer, and provider lifecycle management.
-4. **Core (`backend_v2/core/`):** Domain entities (`entities.py`, `entities_v2.py`), domain events (`events.py`), domain exceptions (`exceptions.py`), DTOs, and workflow parser.
+4. **Core (`backend_v2/core/`):** Domain entities (`entities.py`), domain events (`events.py`), domain exceptions (`exceptions.py`), DTOs, and workflow parser.
 5. **Infrastructure (`backend_v2/infrastructure/`):** Database setup, migrations (`migrations/`), HTTP client, image processor, logging, metrics, request dedup, scheduler, background tasks, cache, model settings, parsers, and repositories.
 6. **Provider Infrastructure (`backend_v2/infrastructure/providers/`):** Provider implementations (Modal, Beam), provider registry, NDJSON streaming parser, and provider configuration.
 

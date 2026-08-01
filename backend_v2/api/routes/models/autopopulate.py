@@ -46,7 +46,7 @@ async def get_autopopulate_pending(repo: ModelRepositoryV2 = Depends(get_model_r
 
 @router.get("/{model_id}/autopopulate-candidates")
 async def get_autopopulate_candidates(
-    model_id: int,
+    model_id: str,
     service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):
     """Return scored CivitAI search candidates for an auto-discovered model.
@@ -69,7 +69,7 @@ async def batch_get_autopopulate_candidates(
     import asyncio
     semaphore = asyncio.Semaphore(3)
     
-    async def fetch_one(model_id: int):
+    async def fetch_one(model_id: str):
         async with semaphore:
             try:
                 res = await service.search_civitai_candidates(str(model_id))
@@ -85,7 +85,7 @@ async def batch_get_autopopulate_candidates(
 
 @router.get("/{model_id}/autopopulate-search")
 async def search_autopopulate_candidates(
-    model_id: int,
+    model_id: str,
     query: str,
     types: Optional[str] = None,
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
@@ -128,7 +128,7 @@ async def search_autopopulate_candidates(
 
 @router.post("/{model_id}/autopopulate")
 async def autopopulate_model_details(
-    model_id: int, 
+    model_id: str, 
     request: Optional[AutopopulateRequest] = None,
     service: ModelCivitaiSyncService = Depends(get_model_civitai_sync_service)
 ):

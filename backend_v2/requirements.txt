@@ -4,6 +4,8 @@ uvicorn[standard]>=0.24.0
 
 # Database
 sqlmodel>=0.0.14
+psycopg2-binary>=2.9.9
+pgvector>=0.2.5
 aiosqlite>=0.19.0
 
 # Configuration
@@ -38,6 +40,10 @@ watchdog>=3.0.0
 
 # Structured Logging
 structlog>=23.2.0
+
+# LLM and Embeddings
+sentence-transformers>=2.2.2
+torch>=2.0.0 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Prometheus Metrics
 prometheus_client>=0.20.0

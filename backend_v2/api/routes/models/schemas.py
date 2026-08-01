@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class AddModelRequest(BaseModel):
     """Request to add a model with selected versions."""
     civitai_data: Dict[str, Any]  # Full CivitAI API response
-    selected_versions: List[Dict[str, Any]]  # [{version_id: int, is_default: bool}]
+    selected_versions: List[Dict[str, Any]]  # [{version_id: str, is_default: bool}]
 
 
 class UpdateProviderStatusRequest(BaseModel):
@@ -21,7 +21,7 @@ class UpdateProviderStatusRequest(BaseModel):
 
 class SetDefaultVersionRequest(BaseModel):
     """Request to set default version."""
-    version_id: int
+    version_id: str
 
 
 class CheckInstalledBatchRequest(BaseModel):

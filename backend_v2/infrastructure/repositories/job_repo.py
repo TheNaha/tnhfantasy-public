@@ -15,9 +15,10 @@ class JobRepository:
     def __init__(self, session: Session):
         self.session = session
     
-    def create(self, workflow: Dict[str, Any], metadata: Dict[str, Any]) -> Job:
+    def create(self, workflow: Dict[str, Any], metadata: Dict[str, Any], task_type: str = "image") -> Job:
         """Create a new job."""
         job = Job(
+            task_type=task_type,
             workflow=workflow,
             metadata_=metadata,
             status=JobStatus.PENDING

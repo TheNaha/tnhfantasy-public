@@ -24,7 +24,7 @@ class JobService:
         self.session = session
         self.repo = JobRepository(session)
     
-    async def create_job(self, workflow: Dict[str, Any], metadata: Dict[str, Any]) -> Job:
+    async def create_job(self, workflow: Dict[str, Any], metadata: Dict[str, Any], task_type: str = "image") -> Job:
         """
         Create a new job.
         
@@ -35,7 +35,7 @@ class JobService:
         Returns:
             Created job
         """
-        job = self.repo.create(workflow=workflow, metadata=metadata)
+        job = self.repo.create(workflow=workflow, metadata=metadata, task_type=task_type)
         
         logger.info("job_created", job_id=job.id)
         
@@ -233,6 +233,7 @@ class JobService:
         """Convert job to dictionary for API responses."""
         return {
             "id": job.id,
+            "task_type": job.task_type,
             "status": job.status.value,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "updated_at": job.updated_at.isoformat() if job.updated_at else None,

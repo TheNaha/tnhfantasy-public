@@ -24,7 +24,7 @@ class StubLoadBalancer:
         self.provider = provider
         self.calls = []
 
-    async def get_next_provider(self, preferred_provider_id=None, required_models=None, exclude_provider_ids=None):
+    async def get_next_provider(self, preferred_provider_id=None, required_models=None, exclude_provider_ids=None, task_type="image", **kwargs):
         self.calls.append((preferred_provider_id, required_models, exclude_provider_ids))
         return self.provider
 

@@ -18,6 +18,11 @@ def run_migrations(engine) -> None:
     Each migration is executed inside its own transaction boundary.
     """
     from sqlalchemy import inspect
+    
+    # If this is a fresh postgres database, create_all already sets up the schema.
+    # We skip these legacy SQLite migrations because they use SQLite-specific syntax (DATETIME, FTS5).
+    if engine.dialect.name == "postgresql":
+        return
 
     with engine.connect() as conn:
         inspector = inspect(engine)

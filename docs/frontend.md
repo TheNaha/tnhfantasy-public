@@ -16,13 +16,13 @@ As outlined in the `STATE_MANAGEMENT.md`, the frontend strictly separates client
 Zustand is used for things that don't need a server round-trip or are driven by real-time events.
 - **UI State:** Modal states, active tabs, sidebar toggles.
 - **Form State:** Draft inputs, temporary selections before submission.
-- **WebSocket State:** Real-time job updates via `jobStore`.
-- **Collection UI Cache:** Active collection, favorites, and lazily loaded collection images in `useStore`.
+- **Collection UI State:** Active collection selection in `useStore`.
 
 ### 2. React Query (Server State)
 React Query is used exclusively for fetching, caching, synchronizing, and updating server state.
 - **HTTP Data Fetching:** GET requests to API endpoints.
 - **Server State Caching:** Auto-caching with configurable stale times.
+- **WebSocket State:** Real-time job updates bridged into React Query cache via `useJobsRealtime`.
 - **Mutations:** POST/PUT/DELETE operations with automatic cache invalidation.
 - **Canonical Provider Data:** `useProvidersPageData` owns `/api/providers` and load-balancer data, and shares one realtime bridge across `Layout` and `Providers`.
 

@@ -46,7 +46,7 @@ def get_all_storage_paths(repo: ModelRepositoryV2 = Depends(get_model_repo_v2)):
 
 @router.get("/check-installed/{civitai_model_id}")
 def check_installed_versions(
-    civitai_model_id: int,
+    civitai_model_id: str,
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2)
 ):
     """
@@ -247,7 +247,7 @@ async def search_by_tag(
 
 @router.get("/{model_id}")
 async def get_model(
-    model_id: int,
+    model_id: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Get model with versions, files, and images."""
@@ -256,7 +256,7 @@ async def get_model(
 
 @router.delete("/{model_id}")
 async def delete_model(
-    model_id: int,
+    model_id: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Delete a model and all related data."""
@@ -270,7 +270,7 @@ async def delete_model(
 
 @router.get("/{model_id}/versions")
 async def get_versions(
-    model_id: int,
+    model_id: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Get all versions for a model."""
@@ -279,7 +279,7 @@ async def get_versions(
 
 @router.put("/{model_id}/default-version")
 async def set_default_version_modern(
-    model_id: int,
+    model_id: str,
     request: SetDefaultVersionRequest,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
@@ -292,7 +292,7 @@ async def set_default_version_modern(
 
 @router.put("/versions/{version_id}/toggle")
 async def toggle_version_enabled(
-    version_id: int,
+    version_id: str,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):
     """Toggle whether a version is enabled."""
@@ -304,7 +304,7 @@ async def toggle_version_enabled(
 
 @router.get("/{model_id}/generation-info")
 async def get_generation_info(
-    model_id: int,
+    model_id: str,
     version_id: Optional[int] = None,
     service: ModelServiceV2 = Depends(get_model_service_v2)
 ):

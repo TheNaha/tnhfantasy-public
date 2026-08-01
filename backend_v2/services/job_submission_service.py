@@ -61,6 +61,7 @@ class JobSubmissionService:
         metadata: Optional[Dict[str, Any]] = None,
         *,
         preferred_provider_id: Optional[str] = None,
+        task_type: str = "image",
     ):
         metadata = metadata or {}
         required_models, availability = self.validate_workflow(
@@ -77,7 +78,7 @@ class JobSubmissionService:
                 can_trigger_download=availability.can_trigger_download,
             )
 
-        job = await self.job_service.create_job(workflow, metadata)
+        job = await self.job_service.create_job(workflow, metadata, task_type=task_type)
         try:
             await job_queue.enqueue(job.id)
         except Exception as exc:

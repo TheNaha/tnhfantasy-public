@@ -325,6 +325,7 @@ class LoadBalancer:
         preferred_provider_id: Optional[str] = None,
         required_models: Optional[Dict[str, List[str]]] = None,
         exclude_provider_ids: Optional[Set[str]] = None,
+        task_type: str = "image",
     ) -> Optional[Provider]:
         """
         Get the next provider to handle a job.
@@ -337,6 +338,9 @@ class LoadBalancer:
             Provider or None if no providers available
         """
         providers = self.repo.get_enabled()
+        # Filter by worker_type matching the task_type
+        providers = [p for p in providers if p.worker_type == task_type]
+        
         excluded = exclude_provider_ids or set()
         if excluded:
             providers = [p for p in providers if p.id not in excluded]

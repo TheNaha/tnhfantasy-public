@@ -84,6 +84,8 @@ def create_db_and_tables() -> None:
     # Import V2 entities (normalized schema)
     from core.entities import (ModelFile, ModelImage, ModelTag, ModelV2,
                                   ModelVersion, ProviderVersionStatus, DeletedFileTombstone)
+    # Import World Vault entities
+    from core.entities import (Character, Chat, Message, Lorebook, LorebookEntry, Scenario)
 
     SQLModel.metadata.create_all(engine)
 
