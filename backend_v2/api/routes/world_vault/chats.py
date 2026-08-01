@@ -61,17 +61,23 @@ def get_chat(chat_id: str, session: Session = Depends(get_session)):
 
 @router.delete("/{chat_id}")
 def delete_chat(chat_id: str, session: Session = Depends(get_session)):
+    from sqlalchemy import delete as sql_delete
+
     chat = session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-    
-    messages = session.exec(select(Message).where(Message.chat_id == chat_id)).all()
-    for msg in messages:
-        session.delete(msg)
-        
+
+    # Issue a direct SQL DELETE for messages first so the FK constraint is
+    # satisfied before the chat row is removed.  The ORM unit-of-work can
+    # reorder session.delete() calls and execute the chat DELETE before the
+    # message DELETEs, causing an IntegrityError (messages_chat_id_fkey).
+    session.exec(sql_delete(Message).where(Message.chat_id == chat_id))
+    session.flush()   # commit the message deletes to the DB within the same txn
+
     session.delete(chat)
     session.commit()
     return {"message": "Chat deleted"}
+
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
 def list_messages(chat_id: str, session: Session = Depends(get_session)):

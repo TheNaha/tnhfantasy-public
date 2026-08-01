@@ -409,11 +409,11 @@ async def finalize_successful_job(
     else:
         outputs = []
 
-    is_chat_reply = job.task_type == 'text' and (
+    is_chat_reply = job.task_type == 'llm' and (
         final_result.get('type') == 'chat_reply'
         or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply")
     )
-    is_story_continue = job.task_type == 'text' and (
+    is_story_continue = job.task_type == 'llm' and (
         final_result.get('type') == 'story_continue'
         or (isinstance(job.workflow, dict) and job.workflow.get("type") == "story_continue")
     )
@@ -473,18 +473,29 @@ async def finalize_successful_job(
                             chapter.content += f"\n\n{assistant_content}\n\n"
                             session.add(chapter)
                             session.commit()
-                    msg = Message(role=MessageRole.STORY, content=assistant_content, chat_id=entity_id)
-                    session.add(msg)
-                    session.commit()
                     
             event_type_str = "chat_reply" if is_chat_reply else "story_continue"
-            await emit_job_event(EventType.JOB_COMPLETED, {
-                "id": job.id, 
-                "task_type": "text", 
-                "type": event_type_str,
-                "chat_id": entity_id, 
-                "content": assistant_content
-            })
+            if is_chat_reply:
+                await emit_job_event(EventType.JOB_COMPLETED, {
+                    "id": job.id, 
+                    "task_type": job.task_type, 
+                    "type": event_type_str,
+                    "metadata_": {"chat_id": entity_id, "type": event_type_str},
+                    "chat_id": entity_id, 
+                    "content": assistant_content
+                })
+            else:
+                story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
+                chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
+                await emit_job_event(EventType.JOB_COMPLETED, {
+                    "id": job.id,
+                    "task_type": job.task_type,
+                    "type": event_type_str,
+                    "metadata_": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
+                    "story_id": story_id,
+                    "chapter_id": chapter_id,
+                    "content": assistant_content
+                })
 
     # NEW: Handle Image jobs that belong to a chat
     if job.task_type == 'image' and job.metadata_ and job.metadata_.get("chat_id"):

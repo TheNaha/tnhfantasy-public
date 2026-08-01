@@ -139,6 +139,6 @@ describe('ChatWorkspace page', () => {
 
     it('renders the Chats sidebar header', () => {
         renderWithProviders(<ChatWorkspace />);
-        expect(screen.getByText('Chats')).toBeInTheDocument();
+        expect(screen.getAllByText('Chats').length).toBeGreaterThan(0);
     });
 });

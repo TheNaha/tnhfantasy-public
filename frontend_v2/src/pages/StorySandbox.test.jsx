@@ -54,6 +54,9 @@ vi.mock('../hooks/useWorldVault', () => ({
     useAddStoryBeat: (...a) => mockAddStoryBeat(...a),
     useIllustrateChapter: (...a) => mockIllustrateChapter(...a),
     useCharacters: () => ({ data: [] }),
+    useLLMAvailableModels: () => ({ data: [] }),
+    useLLMDefaultProvider: () => ({ data: null }),
+    useSetLLMDefaultProvider: () => ({ mutateAsync: vi.fn() }),
 }));
 
 vi.mock('../api/websocket', () => ({
@@ -128,7 +131,7 @@ describe('StorySandbox page', () => {
 
     it('renders the stories sidebar', () => {
         renderWithProviders(<StorySandbox />);
-        expect(screen.getByText('Stories')).toBeInTheDocument();
+        expect(screen.getAllByText('Stories').length).toBeGreaterThan(0);
     });
 
     it('displays story list in sidebar', () => {

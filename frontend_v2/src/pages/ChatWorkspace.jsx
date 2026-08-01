@@ -18,6 +18,7 @@ export default function ChatWorkspace() {
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const hasCreatedChatRef = useRef(false); // guard against double-fire on navigate
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
@@ -53,13 +54,17 @@ export default function ChatWorkspace() {
     // Handle character_id from navigation state (e.g. from Characters page "Chat" button)
     useEffect(() => {
         const characterId = location.state?.characterId;
-        if (characterId && !activeChatId) {
+        if (characterId && !activeChatId && !hasCreatedChatRef.current) {
+            hasCreatedChatRef.current = true; // prevent double-fire
             createChatMutation.mutate(
                 { name: 'New Chat', character_id: characterId },
                 {
                     onSuccess: (chat) => {
                         setActiveChatId(chat.id);
                         window.history.replaceState({}, document.title);
+                    },
+                    onError: () => {
+                        hasCreatedChatRef.current = false; // allow retry on failure
                     }
                 }
             );
@@ -75,7 +80,7 @@ export default function ChatWorkspace() {
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const job = event.data?.job || event;
-            const streamText = job.metadata_?.text || job.output?.text || job.progress_text;
+            const streamText = job.text || job.metadata_?.text || job.output?.text || job.progress_text;
             if (streamText && job.metadata_?.chat_id === activeChatId) {
                 updateStreamingJob(job.id, { text: streamText, status: job.status, chatId: activeChatId });
             }
@@ -227,6 +232,7 @@ export default function ChatWorkspace() {
     };
 
     const handleCreateChat = () => {
+        if (createChatMutation.isPending) return; // prevent double-click
         createChatMutation.mutate({ name: 'New Chat' }, {
             onSuccess: (chat) => {
                 setActiveChatId(chat.id);
