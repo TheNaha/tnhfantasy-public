@@ -107,7 +107,7 @@ services:
   provider-modal-zetsuke:
     build:
       context: ./provider_containers
-      dockerfile: modal_worker/Dockerfile
+      dockerfile: image_worker/Dockerfile
     container_name: comfy-provider-modal-zetsuke
     depends_on:
       backend_v2:
@@ -142,7 +142,7 @@ services:
   provider-modal-stepmania:
     build:
       context: ./provider_containers
-      dockerfile: modal_worker/Dockerfile
+      dockerfile: image_worker/Dockerfile
     container_name: comfy-provider-modal-stepmania
     depends_on:
       backend_v2:

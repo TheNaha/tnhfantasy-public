@@ -24,6 +24,7 @@ def build_beam_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) -> 
     env_vars: Dict[str, str] = {}
 
     # Core config
+    env_vars["ENGINE"] = "beam"
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
     from config import settings
@@ -131,7 +132,7 @@ BEAM_PROVIDER_CONFIG = ProviderTypeConfig(
     env_builder=build_beam_env_vars,
     
     # Worker image name
-    worker_image="comfy-provider-beam",
+    worker_image="comfy-provider-image-worker",
     
     # Default port for worker container
     default_port=8000,

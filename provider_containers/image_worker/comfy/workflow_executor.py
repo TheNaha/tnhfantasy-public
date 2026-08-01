@@ -7,6 +7,7 @@ import os
 import httpx
 import base64
 import uuid
+import urllib.parse
 from typing import Any, AsyncGenerator, Dict, List
 
 from provider_core.http_client import get_http_client
@@ -60,11 +61,14 @@ async def _queue_prompt(
     workflow_json: Dict[str, Any],
     client_id: str,
 ) -> tuple[str | None, Dict[str, Any] | None]:
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
+    endpoint = f"{server_address}/prompt"
     payload = {"prompt": workflow_json, "client_id": client_id}
 
     try:
         client = get_http_client()
-        response = await client.post(f"http://{server_address}/prompt", json=payload, timeout=10.0)
+        response = await client.post(endpoint, json=payload, timeout=10.0)
         response.raise_for_status()
         response_data = response.json()
     except httpx.HTTPStatusError as error:
@@ -89,9 +93,12 @@ async def _queue_prompt(
 
 
 async def _get_history(server_address: str, prompt_id: str) -> tuple[Dict[str, Any] | None, str | None]:
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
+    endpoint = f"{server_address}/history/{prompt_id}"
     try:
         client = get_http_client()
-        response = await client.get(f"http://{server_address}/history/{prompt_id}", timeout=10.0)
+        response = await client.get(endpoint, timeout=10.0)
         response.raise_for_status()
         history = response.json()
     except Exception as error:
@@ -159,6 +166,8 @@ async def _collect_images_via_view_api(
 ) -> List[Dict[str, Any]]:
     images_output: List[Dict[str, Any]] = []
 
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
     client = get_http_client()
     for node_output in history_data.get("outputs", {}).values():
         for image in node_output.get("images", []):
@@ -169,15 +178,10 @@ async def _collect_images_via_view_api(
             subfolder = image.get("subfolder") or ""
             folder_type = image.get("type", "output")
 
-            params = {
-                "filename": filename,
-                "subfolder": subfolder,
-                "type": folder_type,
-            }
-            view_url = f"http://{server_address}/view"
+            url = f"{server_address}/view?filename={urllib.parse.quote(filename)}&subfolder={urllib.parse.quote(subfolder)}&type={urllib.parse.quote(folder_type)}"
 
             try:
-                response = await client.get(view_url, params=params, timeout=view_timeout_seconds)
+                response = await client.get(url, timeout=view_timeout_seconds)
                 response.raise_for_status()
                 data = response.content
                 b64_data = base64.b64encode(data).decode('utf-8')
@@ -200,6 +204,7 @@ async def execute_comfy_workflow(
     workflow_json: Dict[str, Any],
     port: int = 8188,
     *,
+    comfy_api_url: str | None = None,
     image_fetch_mode: str = IMAGE_FETCH_FILESYSTEM,
     output_dir: str = "/root/comfy/ComfyUI/output",
     temp_dir: str = "/root/comfy/ComfyUI/temp",
@@ -214,9 +219,21 @@ async def execute_comfy_workflow(
     if image_fetch_mode not in {IMAGE_FETCH_FILESYSTEM, IMAGE_FETCH_VIEW_API}:
         raise ValueError(f"Unsupported image fetch mode: {image_fetch_mode}")
 
-    server_address = f"127.0.0.1:{port}"
     client_id = str(uuid.uuid4())
-    ws_url = f"ws://{server_address}/ws?clientId={client_id}"
+    if comfy_api_url:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(comfy_api_url)
+        # Handle ws:// vs wss:// based on http:// vs https://
+        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+        ws_url = f"{ws_scheme}://{parsed.netloc}/ws?clientId={client_id}"
+        # For HTTP endpoints (like /prompt or /history), _queue_prompt and _get_history
+        # currently take server_address as host:port and prepend http://.
+        # Let's pass the full base URL string if they support it, or modify them to support it.
+        # Actually, let's just make server_address the full base url and change how _queue_prompt uses it.
+        server_address = comfy_api_url
+    else:
+        server_address = f"http://127.0.0.1:{port}"
+        ws_url = f"ws://127.0.0.1:{port}/ws?clientId={client_id}"
 
     _log(logger, logging.INFO, f"Connecting to ComfyUI websocket: {ws_url}")
     websocket, websockets = await _connect_with_retry(

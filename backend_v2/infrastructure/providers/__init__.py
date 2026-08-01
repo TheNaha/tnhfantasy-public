@@ -9,6 +9,8 @@ from .runtime import get_provider_worker_base_url
 # Import provider configs to trigger auto-registration
 from . import modal_config  # noqa: F401 - Registers Modal provider type
 from . import beam_config   # noqa: F401 - Registers Beam provider type
+from . import direct_url_config  # noqa: F401 - Registers Direct URL provider type
+from . import openai_compat_config # noqa: F401 - Registers OpenAI Compat provider type
 
 def create_provider_client(provider_id: str, config: dict):
     provider_type = (config or {}).get("type")
@@ -26,8 +28,9 @@ __all__ = [
     "ModalProvider",
     "BeamProvider",
     "HttpFileProxy",
-    "clean_dict",
     "clean_registry_dict",
+    "DIRECT_URL_PROVIDER_CONFIG",
+    "OPENAI_COMPAT_PROVIDER_CONFIG",
     "create_provider_client",
     "get_provider_worker_base_url",
     "ProviderRegistry",

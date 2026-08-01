@@ -24,6 +24,7 @@ def build_modal_env_vars(credentials: Dict[str, Any], config: Dict[str, Any]) ->
     env_vars: Dict[str, str] = {}
 
     # Core config
+    env_vars["ENGINE"] = "modal"
     if config.get("id"):
         env_vars["PROVIDER_ID"] = config["id"]
     from config import settings
@@ -104,7 +105,7 @@ MODAL_PROVIDER_CONFIG = ProviderTypeConfig(
     env_builder=build_modal_env_vars,
     
     # Worker image name
-    worker_image="comfy-provider-modal",
+    worker_image="comfy-provider-image-worker",
     
     # Default port
     default_port=8000,

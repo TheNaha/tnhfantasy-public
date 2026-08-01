@@ -34,10 +34,10 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 
 ### Phase 5: The Universal Adapter (Workers)
 *Focus: Refactoring the provider architecture to support BYO Compute (Local URLs, Ollama) and LLMs.*
-- [ ] **Codebase Merger:** Consolidate `beam_worker` and `modal_worker` into a unified `image_worker`. Extract ComfyUI specific execution logic out of `provider_core` and strictly into `image_worker`.
-- [ ] **Provider Core:** Refactor `provider_core` to strictly handle Auth, Logging, State, and the Unified Streaming Protocol.
-- [ ] **Load Balancer Updates:** Update `services/load_balancer.py` to route jobs based on `task_type` mapping to `worker_type`.
-- [ ] **BYO Compute Logic:** Implement the `ENGINE` environment variable strategy (`ENGINE=modal`, `ENGINE=direct_url`) within the workers.
+- [x] **Codebase Merger:** Consolidate `beam_worker` and `modal_worker` into a unified `image_worker`. Extract ComfyUI specific execution logic out of `provider_core` and strictly into `image_worker`.
+- [x] **Provider Core:** Refactor `provider_core` to strictly handle Auth, Logging, State, and the Unified Streaming Protocol.
+- [x] **Load Balancer Updates:** Update `services/load_balancer.py` to route jobs based on `task_type` mapping to `worker_type`.
+- [x] **BYO Compute Logic:** Implement the `ENGINE` environment variable strategy (`ENGINE=modal`, `ENGINE=direct_url`) within the workers.
 - [ ] **LLM Integration (Hybrid Model):** Support both API-based LLMs (`openai_compat` for OpenRouter/Ollama) and Managed Weight LLMs (e.g., deploying vLLM to Modal where TNHComfy handles downloading and syncing the LLM weights).
 - [ ] **Streaming Protocol:** Build the streaming translator inside the workers (converting varying SSE/NDJSON formats into a single standard `TaskEvent` stream for the backend).
 

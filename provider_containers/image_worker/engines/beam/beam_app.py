@@ -35,7 +35,7 @@ from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
 )
-from provider_core.workflow_executor import (
+from image_worker.comfy.workflow_executor import (
     IMAGE_FETCH_VIEW_API,
     execute_comfy_workflow,
 )
@@ -353,7 +353,7 @@ async def list_models(request: Request):
     if not directory:
         raise HTTPException(status_code=400, detail="directory is required")
     
-    from provider_core.models_utils import list_models_with_metadata_internal
+    from image_worker.comfy.models_utils import list_models_with_metadata_internal
     files = await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
     
     return {"files": files}
