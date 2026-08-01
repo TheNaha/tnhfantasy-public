@@ -49,7 +49,21 @@ def _resolve_provider_core_local_path() -> Path:
     raise RuntimeError("provider_core source directory not found for modal image build")
 
 
+def _resolve_image_worker_local_path() -> Path:
+    """Resolve image_worker source path for Modal image packaging."""
+    candidates = [
+        Path(__file__).parent.parent.parent,
+        Path(__file__).parent.parent.parent.parent / "image_worker",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists() and (candidate / "comfy").exists():
+            return candidate
+
+    raise RuntimeError("image_worker source directory not found for modal image build")
+
 PROVIDER_CORE_LOCAL_PATH = _resolve_provider_core_local_path()
+IMAGE_WORKER_LOCAL_PATH = _resolve_image_worker_local_path()
 
 # =============================================================================
 # Per-Function Configuration from Environment (set during modal deploy)
@@ -107,6 +121,11 @@ image_base = (
     .add_local_dir(
         local_path=PROVIDER_CORE_LOCAL_PATH,
         remote_path="/root/provider_core",
+        copy=True,
+    )
+    .add_local_dir(
+        local_path=IMAGE_WORKER_LOCAL_PATH,
+        remote_path="/root/image_worker",
         copy=True,
     )
     # Install ComfyUI using comfy-cli
