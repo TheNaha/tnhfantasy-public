@@ -28,9 +28,9 @@ from typing import Any
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
-from infrastructure.logging import config_logger
+import structlog
 
-_cfg_logger = config_logger()
+_cfg_logger = structlog.get_logger().bind(logger_name="config")
 
 
 # ============================================================================

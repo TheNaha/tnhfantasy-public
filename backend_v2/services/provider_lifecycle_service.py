@@ -87,8 +87,12 @@ class ProviderLifecycleService:
         }
 
     def get_container_logs(self, provider_id: str, tail: int = 100) -> dict[str, Any]:
-        container_manager = self._require_container_manager()
-        logs = container_manager.get_container_logs(provider_id, tail=tail)
+        if not self.container_manager:
+            return {
+                "provider_id": provider_id,
+                "logs": "Container logs are unavailable (container manager not initialized). Please use 'docker compose logs' for local debugging.",
+            }
+        logs = self.container_manager.get_container_logs(provider_id, tail=tail)
         return {
             "provider_id": provider_id,
             "logs": logs,

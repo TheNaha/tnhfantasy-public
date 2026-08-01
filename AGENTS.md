@@ -7,7 +7,7 @@
 bash setup_jules.sh
 
 # Full stack (Docker)
-docker-compose up -d
+docker compose up -d
 
 # Backend only (from backend_v2/)
 pip install -r requirements.txt && uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
@@ -101,7 +101,7 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 - Container name for providers must be `comfy-provider-{PROVIDER_ID}` so the backend can detect them.
 - Backend runs as `user: "1000:1000"`.
 - Frontend file watching in Docker requires polling: `CHOKIDAR_USEPOLLING=true`.
-- `docker-compose up -d` starts backend, then frontend (depends_on with healthcheck), then providers.
+- `docker compose up -d` starts backend, then frontend (depends_on with healthcheck), then providers.
 
 ## Never
 

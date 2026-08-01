@@ -32,7 +32,7 @@ Use these entry points unless a task requires something else.
 bash setup_jules.sh
 
 # Full stack (Docker)
-docker-compose up -d
+docker compose up -d
 
 # Backend (from backend_v2/)
 pip install -r requirements.txt

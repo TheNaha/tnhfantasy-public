@@ -6,7 +6,7 @@ from sqlalchemy import MetaData, create_engine, insert, select, text
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("migration")
 
-sqlite_url = "sqlite:////data/comfy_backup.db"
+sqlite_url = "sqlite:////data/db/comfy.db"
 pg_url = "postgresql://comfy:comfy@db:5432/comfy"
 
 sqlite_engine = create_engine(sqlite_url)

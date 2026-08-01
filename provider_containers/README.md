@@ -104,7 +104,7 @@ cd provider_containers/modal_worker
 docker build -t comfy-provider-modal:latest .
 ```
 
-Or let the system build it automatically when using `docker-compose up -d`.
+Or let the system build it automatically when using `docker compose up -d`.
 
 ### 5. Start Backend
 
@@ -115,7 +115,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 
 Or use Docker Compose from the project root:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 The backend will automatically:

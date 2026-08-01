@@ -18,8 +18,8 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 ### Phase 3: Harden & Production-Readiness (Current)
 - [x] Codebase hardening: fix N+1 queries, missing endpoints, DI violations, unreachable code
 - [x] Frontend state management: migrate server data from Zustand to React Query
-- [ ] Provider container (Paused): fix protocol compliance, path handling, deletion logic
-- [ ] Infra: clean up tracked patch files, unify Docker Compose docs, remove old `docs/plan.md` (superseded by this file)
+- [x] Provider container (Paused): fix protocol compliance, path handling, deletion logic
+- [x] Infra: clean up tracked patch files, unify Docker Compose docs, remove old `docs/plan.md` (superseded by this file)
 
 ---
 
@@ -38,8 +38,8 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 - [x] **Provider Core:** Refactor `provider_core` to strictly handle Auth, Logging, State, and the Unified Streaming Protocol.
 - [x] **Load Balancer Updates:** Update `services/load_balancer.py` to route jobs based on `task_type` mapping to `worker_type`.
 - [x] **BYO Compute Logic:** Implement the `ENGINE` environment variable strategy (`ENGINE=modal`, `ENGINE=direct_url`) within the workers.
-- [ ] **LLM Integration (Hybrid Model):** Support both API-based LLMs (`openai_compat` for OpenRouter/Ollama) and Managed Weight LLMs (e.g., deploying vLLM to Modal where TNHComfy handles downloading and syncing the LLM weights).
-- [ ] **Streaming Protocol:** Build the streaming translator inside the workers (converting varying SSE/NDJSON formats into a single standard `TaskEvent` stream for the backend).
+- [x] **LLM Integration (Hybrid Model):** Support both API-based LLMs (`openai_compat` for OpenRouter/Ollama) and Managed Weight LLMs (e.g., deploying vLLM to Modal where TNHComfy handles downloading and syncing the LLM weights).
+- [x] **Streaming Protocol:** Build the streaming translator inside the workers (converting varying SSE/NDJSON formats into a single standard `TaskEvent` stream for the backend).
 
 ### Phase 6: The Roleplay Workspace (UI & Integration)
 *Focus: Building the frontend chat interface and connecting it to the Image Generator via Agentic Workflows.*
@@ -51,4 +51,4 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 
 ### Phase 7: The Story Sandbox & Future Frontiers
 *Focus: Completing the vision with the sandbox.*
-- [ ] **Story UI:** Build the Story Sandbox Workspace (AI Dungeon style interactive document editor).
+- [x] **Story UI:** Build the Story Sandbox Workspace (AI Dungeon style interactive document editor).

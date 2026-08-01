@@ -41,7 +41,7 @@ Runs the optimized, pre-built frontend and backend without hot-reloading.
 1. Ensure the `.env` file is properly configured.
 2. Run the following command from the root directory:
    ```bash
-   docker-compose up -d --build
+   docker compose up -d --build
    ```
 
 **Development Mode:**
@@ -67,7 +67,7 @@ The application should now be accessible.
 ### Stop the Application
 To gracefully shut down the application:
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ## Production Considerations
@@ -79,9 +79,9 @@ docker-compose down
 ## Logs
 To view the logs for the entire application:
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 To view logs for a specific service (e.g., backend):
 ```bash
-docker-compose logs -f backend_v2
+docker compose logs -f backend_v2
 ```
