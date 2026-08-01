@@ -40,6 +40,8 @@ const InstalledModels = lazy(() => import('./pages/InstalledModels'));
 const Statistics = lazy(() => import('./pages/Statistics'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Providers = lazy(() => import('./pages/Providers'));
+const Characters = lazy(() => import('./pages/Characters'));
+const ChatWorkspace = lazy(() => import('./pages/ChatWorkspace'));
 
 function AnimatedRoutes() {
     const location = useLocation();
@@ -51,6 +53,8 @@ function AnimatedRoutes() {
                 <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
                 <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />
                 <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
+                <Route path="/chat" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
+                <Route path="/characters" element={<ErrorBoundary><Characters /></ErrorBoundary>} />
                 <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
                 <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />
                 <Route path="/models" element={<Navigate to="/models/installed" replace />} />

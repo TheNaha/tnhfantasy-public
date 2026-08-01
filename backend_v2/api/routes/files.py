@@ -276,6 +276,7 @@ async def list_files_endpoint(
     model_type: Optional[str] = None,
     show_nsfw: bool = True,
     tags: Optional[str] = None,
+    workspace: Optional[str] = None,
     model_service = Depends(get_model_service_v2)
 ):
     """List files in a directory with pagination and search."""
@@ -285,7 +286,7 @@ async def list_files_endpoint(
         try:
             from services.gallery_indexer import gallery_indexer
             return await asyncio.to_thread(
-                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search
+                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search, workspace=workspace
             )
             
         except Exception as e:

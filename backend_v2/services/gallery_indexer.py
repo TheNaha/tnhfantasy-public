@@ -393,7 +393,7 @@ class GalleryIndexer:
                 return path
         return self.get_path_by_filename(os.path.basename(normalized))
                 
-    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None):
+    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None, workspace: Optional[str] = None):
         """
         Query the in-memory index with optional search, sort, and pagination.
 
@@ -415,6 +415,8 @@ class GalleryIndexer:
                     - "name_desc"  reverse alphabetical Z→A
             search: Optional string to filter results.  Matches against filename
                     and any string-valued metadata field (case-insensitive).
+            workspace: Optional workspace ID to filter images. If None or 'main',
+                       only images without a workspace are shown.
 
         Returns:
             Dict with:
@@ -438,18 +440,30 @@ class GalleryIndexer:
             else:
                 keys = self.sorted_keys_date_desc
                 
-            # 2. Filter if search provided
-            if search:
-                filtered_keys = []
-                for k in keys:
-                    file_data = self.files[k]
+            # Filter by workspace and search
+            filtered_keys = []
+            for k in keys:
+                file_data = self.files[k]
+                metadata = file_data.get('metadata', {})
+                file_workspace = metadata.get('workspace')
+                
+                # Workspace filtering
+                if workspace == "main" or workspace is None:
+                    if file_workspace is not None and file_workspace != "main":
+                        continue
+                else:
+                    if file_workspace != workspace:
+                        continue
+                
+                # Search filtering
+                if search:
                     search_lower = search.lower()
                     if search_lower in file_data['name'].lower():
                         filtered_keys.append(k)
                         continue
                         
                     found = False
-                    for val in file_data.get('metadata', {}).values():
+                    for val in metadata.values():
                         if isinstance(val, str) and search_lower in val.lower():
                             found = True
                             break
@@ -460,9 +474,11 @@ class GalleryIndexer:
                                     break
                         if found:
                             break
-                    if found:
-                        filtered_keys.append(k)
-                keys = filtered_keys
+                    if not found:
+                        continue
+                
+                filtered_keys.append(k)
+            keys = filtered_keys
                 
             # 3. Paginate
             total = len(keys)

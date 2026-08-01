@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export const useWorldVaultStore = create((set, get) => ({
+export const useWorldVaultStore = create((set) => ({
   activeChatId: null,
   activeCharacterId: null,
   activeScenarioId: null,
@@ -33,7 +33,7 @@ export const useWorldVaultStore = create((set, get) => ({
     contextBuilder: { ...state.contextBuilder, systemPromptOverride: prompt }
   })),
   
-  resetContext: () => set((state) => ({
+  resetContext: () => set(() => ({
     contextBuilder: {
       selectedLorebooks: [],
       systemPromptOverride: null,
