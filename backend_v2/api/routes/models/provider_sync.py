@@ -112,7 +112,7 @@ def get_model_cache(session: Session = Depends(get_session)):
 
 class BatchStatusUpdate(BaseModel):
     """Single item in batch status update."""
-    file_id: int | None = None  # Optional if storage_path provided
+    file_id: str | None = None  # Optional if storage_path provided
     status: str
     storage_path: str | None = None  # Can be used to lookup file_id
     size_bytes: int | None = None
@@ -133,10 +133,6 @@ async def batch_update_status(
     """
     Batch update provider statuses.
     More efficient than individual calls during reconciliation.
-    
-    Supports two lookup modes:
-    - By file_id (preferred, faster)
-    - By storage_path (used when file_id unknown, e.g., reporting missing files)
     """
     from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)
@@ -153,7 +149,6 @@ async def batch_update_status(
     
     updated = 0
     failed = 0
-    
     for update in request.updates:
         try:
             # Resolve file_id from storage_path if needed
@@ -175,8 +170,7 @@ async def batch_update_status(
             updated += 1
         except Exception as e:
             failed += 1
-            import logging
-            logging.error(f"Batch status update failed for file_id {file_id}: {e}")
+            logger.error(f"Batch status update failed for file_id {file_id}: {e}")
     
     return {"updated": updated, "failed": failed}
 

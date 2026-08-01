@@ -620,7 +620,7 @@ class ModelRepositoryV2:
     
     def get_provider_status(
         self, 
-        file_id: int, 
+        file_id: str, 
         provider_id: str
     ) -> ProviderVersionStatus | None:
         """Get provider status for a specific file."""
@@ -634,7 +634,7 @@ class ModelRepositoryV2:
 
     def get_provider_statuses_for_files(
         self,
-        file_ids: list[int],
+        file_ids: list[str],
         provider_id: str,
     ) -> dict[int, ProviderVersionStatus]:
         """Get provider statuses for many files in one query."""
@@ -652,7 +652,7 @@ class ModelRepositoryV2:
     
     def update_provider_status(
         self,
-        file_id: int,
+        file_id: str,
         provider_id: str,
         status: str,
         storage_path: str | None = None,

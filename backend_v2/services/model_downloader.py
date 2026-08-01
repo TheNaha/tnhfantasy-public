@@ -358,7 +358,7 @@ class ModelDownloader:
 
     async def update_provider_file_status(
         self,
-        file_id: int,
+        file_id: str,
         provider_id: str,
         status: str,
         storage_path: str | None = None,
