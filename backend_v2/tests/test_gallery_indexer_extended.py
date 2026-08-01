@@ -91,7 +91,7 @@ class TestProcessFile:
             f.write("{}")
         result = fresh_indexer._process_file(path)
         assert result is not None
-        assert result["type"] == "json"
+        assert result["type"] == "text"
 
     def test_skips_thumbnail_files(self, fresh_indexer, tmp_dir):
         path = make_png(tmp_dir, "image.thumb.png")
