@@ -173,8 +173,10 @@ async def batch_update_status(
                 size_bytes=update.size_bytes
             )
             updated += 1
-        except Exception:
+        except Exception as e:
             failed += 1
+            import logging
+            logging.error(f"Batch status update failed for file_id {file_id}: {e}")
     
     return {"updated": updated, "failed": failed}
 

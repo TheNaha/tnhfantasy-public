@@ -761,7 +761,7 @@ _reload_lock = asyncio.Lock()
 async def list_models_with_metadata(directory: str):
     async with _reload_lock:
         await vol.reload.aio()
-    return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
+        return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
 
 # ============================================
