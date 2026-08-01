@@ -48,18 +48,49 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 def list_messages(chat_id: str, session: Session = Depends(get_session)):
     return session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
 
+from pydantic import BaseModel
+from typing import Optional, List
+from core.entities import MessageRole
+
+class SendMessageRequest(BaseModel):
+    role: MessageRole
+    content: str
+    image_path: Optional[str] = None
+    lorebook_ids: Optional[List[str]] = None
+
+@router.patch("/{chat_id}", response_model=Chat)
+def update_chat(chat_id: str, data: dict, session: Session = Depends(get_session)):
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    allowed = {"name", "character_id"}
+    for key, value in data.items():
+        if key in allowed:
+            setattr(chat, key, value)
+    chat.updated_at = datetime.now(timezone.utc)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    return chat
+
 @router.post("/{chat_id}/messages")
-async def add_message(chat_id: str, message: Message, session: Session = Depends(get_session)):
+async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)):
     from core.entities import MessageRole
     from services.job_queue import job_queue
+    from services.context_builder import build_chat_context
     
     chat = session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
         
-    message.chat_id = chat_id
-    message.created_at = datetime.now(timezone.utc)
-    message.updated_at = message.created_at
+    message = Message(
+        chat_id=chat_id,
+        role=request.role,
+        content=request.content,
+        image_path=request.image_path,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
     
     session.add(message)
     session.commit()
@@ -68,33 +99,16 @@ async def add_message(chat_id: str, message: Message, session: Session = Depends
     job_id = None
     
     if message.role == MessageRole.USER:
-        # Build context from previous messages (excluding the just-saved user message)
         past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
-        context = []
-        for msg in past_messages:
-            if msg.id == message.id:
-                continue
-            role = "user" if msg.role == MessageRole.USER else "assistant"
-            context.append({"role": role, "content": msg.content})
-            
-        # Append the new user message
-        context.append({"role": "user", "content": message.content})
-
-        # Load character system prompt if character is linked to this chat
-        character_system_prompt = None
+        
+        character = None
         if chat.character_id:
             from core.entities import Character
             character = session.get(Character, chat.character_id)
-            if character and character.system_prompt:
-                character_system_prompt = character.system_prompt
-            elif character:
-                # Build a basic system prompt from character fields if no explicit one
-                parts = [f"You are {character.name}."]
-                if character.personality:
-                    parts.append(f"Personality: {character.personality}")
-                if character.scenario:
-                    parts.append(f"Scenario: {character.scenario}")
-                character_system_prompt = "\n".join(parts)
+            
+        system_prompt, context = build_chat_context(
+            session, past_messages, character=character, lorebook_ids=request.lorebook_ids
+        )
             
         try:
             job_service = get_job_service(session)
@@ -103,10 +117,10 @@ async def add_message(chat_id: str, message: Message, session: Session = Depends
                 workflow={
                     "messages": context,
                     "chat_id": chat_id,
-                    "character_system_prompt": character_system_prompt or None,
+                    "character_system_prompt": system_prompt or None,
                     "type": "chat_reply"
                 },
-                metadata={"chat_id": chat_id}
+                metadata={"chat_id": chat_id, "character_id": chat.character_id, "workspace": "roleplay"}
             )
             
             await job_queue.enqueue(job.id)

@@ -393,7 +393,7 @@ class GalleryIndexer:
                 return path
         return self.get_path_by_filename(os.path.basename(normalized))
                 
-    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None, workspace: Optional[str] = None):
+    def get_files(self, limit: int = 20, offset: int = 0, sort: str = "date_desc", search: Optional[str] = None, workspace: Optional[str] = None, character_id: Optional[str] = None, story_id: Optional[str] = None):
         """
         Query the in-memory index with optional search, sort, and pagination.
 
@@ -404,24 +404,6 @@ class GalleryIndexer:
         When called from an async context (e.g. FastAPI async route handlers),
         callers MUST wrap this call with ``await asyncio.to_thread(...)`` to
         avoid blocking the event loop.
-
-        Args:
-            limit:  Maximum number of file records to return (page size).
-            offset: Number of records to skip (for cursor-style pagination).
-            sort:   Sort order – one of:
-                    - "date_desc"  newest first (default)
-                    - "date_asc"   oldest first
-                    - "name_asc"   alphabetical A→Z
-                    - "name_desc"  reverse alphabetical Z→A
-            search: Optional string to filter results.  Matches against filename
-                    and any string-valued metadata field (case-insensitive).
-            workspace: Optional workspace ID to filter images. If None or 'main',
-                       only images without a workspace are shown.
-
-        Returns:
-            Dict with:
-                "files": list[dict]  – file records for the current page
-                "total": int         – total matching files (before pagination)
         """
         # Optional wait if not ready
         if not self.is_ready:
@@ -454,8 +436,13 @@ class GalleryIndexer:
                 else:
                     if file_workspace != workspace:
                         continue
+                        
+                if character_id and metadata.get('character_id') != character_id:
+                    continue
+                    
+                if story_id and metadata.get('story_id') != story_id:
+                    continue
                 
-                # Search filtering
                 if search:
                     search_lower = search.lower()
                     if search_lower in file_data['name'].lower():

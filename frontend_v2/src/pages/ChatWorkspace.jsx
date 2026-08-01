@@ -4,7 +4,7 @@ import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, Pan
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
-import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters } from '../hooks/useWorldVault';
+import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters, useRenameChat, getAvatarUrl } from '../hooks/useWorldVault';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
@@ -38,6 +38,7 @@ export default function ChatWorkspace() {
     const sendMessageMutation = useSendMessage();
     const createChatMutation = useCreateChat();
     const deleteChatMutation = useDeleteChat();
+    const renameChatMutation = useRenameChat();
 
     const { subscribe } = useWebSocket();
 
@@ -120,7 +121,7 @@ export default function ChatWorkspace() {
         try {
             const res = await sendMessageMutation.mutateAsync({
                 chatId: chatIdToUse,
-                message: { role: 'user', content: msgContent }
+                message: { role: 'user', content: msgContent, lorebook_ids: selectedLorebooks }
             });
             if (res.job_id) {
                 updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
@@ -172,8 +173,7 @@ export default function ChatWorkspace() {
     const finishRename = async () => {
         if (renamingChatId && renameValue.trim()) {
             try {
-                await api.put(`/api/v2/chats/${renamingChatId}`, { name: renameValue.trim() });
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+                await renameChatMutation.mutateAsync({ chatId: renamingChatId, name: renameValue.trim() });
                 toast.success('Chat renamed');
             } catch {
                 toast.error('Failed to rename chat');
@@ -243,8 +243,8 @@ export default function ChatWorkspace() {
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center overflow-hidden">
-                            {linkedCharacter?.avatar_path ? (
-                                <img src={linkedCharacter.avatar_path} alt="" className="w-full h-full object-cover" />
+                            {linkedCharacter?.has_avatar ? (
+                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                             ) : (
                                 <MessageSquare className="text-blue-400" size={20} />
                             )}
@@ -381,9 +381,9 @@ export default function ChatWorkspace() {
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Character</h4>
                                 {linkedCharacter ? (
                                     <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0">
-                                            {linkedCharacter.avatar_path ? (
-                                                <img src={linkedCharacter.avatar_path} alt="" className="w-full h-full rounded-full object-cover" />
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden">
+                                            {linkedCharacter.has_avatar ? (
+                                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                             ) : (
                                                 <MessageSquare size={14} className="text-blue-400" />
                                             )}

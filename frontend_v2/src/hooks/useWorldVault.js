@@ -100,6 +100,17 @@ export const useCreateChat = () => {
     });
 };
 
+export const useRenameChat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, name }) => api.patch(`/api/v2/chats/${chatId}`, { name }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
 export const useDeleteChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -147,6 +158,26 @@ export const useUpdateCharacter = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.id] });
+        }
+    });
+};
+
+export const getAvatarUrl = (characterId) => 
+    characterId ? `/api/v2/characters/${characterId}/avatar` : null;
+
+export const useUploadAvatar = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ characterId, file }) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            return api.post(`/api/v2/characters/${characterId}/avatar`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.characterId] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
         }
     });
 };
@@ -237,3 +268,28 @@ export const useUpdateChapter = () => {
         }
     });
 };
+
+// ============================================================================
+// AI / LLM Config
+// ============================================================================
+
+export const useLLMDefaultProvider = () => useQuery({
+    queryKey: ['llm', 'default-provider'],
+    queryFn: () => api.get('/api/v2/llm/default-provider'),
+    staleTime: 1000 * 60 * 5,
+});
+
+export const useSetLLMDefaultProvider = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (config) => api.put('/api/v2/llm/default-provider', config),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['llm'] })
+    });
+};
+
+export const useLLMAvailableModels = () => useQuery({
+    queryKey: ['llm', 'models'],
+    queryFn: () => api.get('/api/v2/llm/available-models'),
+    staleTime: 1000 * 60 * 5,
+});
+

@@ -152,7 +152,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
             "chapter_id": chapter_id,
             "type": "story_continue"
         },
-        metadata={"chat_id": story_id, "chapter_id": chapter_id}
+        metadata={"story_id": story_id, "chapter_id": chapter_id, "workspace": "story"}
     )
     
     await job_queue.enqueue(job.id)

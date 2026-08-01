@@ -47,7 +47,7 @@ def _ensure_schema_migrations_table(conn) -> None:
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version TEXT PRIMARY KEY,
             description TEXT NOT NULL,
-            applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            applied_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """))
 

@@ -44,6 +44,13 @@ const DEFAULT_SETTINGS = {
         autoRandomizeSeed: true,     // randomise seed before each generation
         redirectAfterGenerate: true, // navigate to dashboard after submitting a job
         redirectDelay: 1000          // delay before redirect (ms) – lets the user see the job appear
+    },
+    ai: {
+        defaultProviderId: null,  // null = auto-detect
+        defaultModelId: null,     // null = auto-detect  
+        lorebookInjectionMode: 'system_prompt',  // 'system_prompt' | 'messages'
+        temperature: 0.8,
+        maxContextTokens: 4096,
     }
 };
 

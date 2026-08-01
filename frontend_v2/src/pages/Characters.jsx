@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, getAvatarUrl } from '../hooks/useWorldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import EmptyState from '../components/EmptyState';
 import ConfirmationModal from '../components/ConfirmationModal';
@@ -49,6 +49,32 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
     const [saving, setSaving] = useState(false);
 
     const isEditing = !!character;
+    
+    const uploadAvatarMutation = useUploadAvatar();
+    const avatarInputRef = React.useRef(null);
+    const [previewUrl, setPreviewUrl] = useState(null);
+
+    const handleFileChange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        // Show preview immediately
+        const objectUrl = URL.createObjectURL(file);
+        setPreviewUrl(objectUrl);
+
+        if (isEditing) {
+            try {
+                await uploadAvatarMutation.mutateAsync({ characterId: character.id, file });
+                toast.success('Avatar uploaded successfully');
+            } catch {
+                toast.error('Failed to upload avatar');
+            }
+        } else {
+            // For new characters, we need to save the file and upload it after creation
+            // We'll store it in the form state temporarily
+            setForm(f => ({ ...f, _avatarFile: file }));
+        }
+    };
 
     const handleSave = async () => {
         if (!form.name.trim()) {
@@ -57,9 +83,21 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
         setSaving(true);
         try {
-            await onSave(form);
+            const result = await onSave(form);
+            const savedCharId = isEditing ? character.id : (result?.id || result?.data?.id);
+            
+            // Upload avatar if a file was selected during creation
+            if (!isEditing && form._avatarFile && savedCharId) {
+                try {
+                    await uploadAvatarMutation.mutateAsync({ characterId: savedCharId, file: form._avatarFile });
+                } catch (e) {
+                    console.error("Avatar upload failed after creation", e);
+                }
+            }
+            
             toast.success(isEditing ? 'Character updated' : 'Character created');
             onClose();
+            setPreviewUrl(null);
         } catch (err) {
             toast.error(err?.message || 'Failed to save character');
         } finally {
@@ -98,9 +136,23 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
 
                     <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
                         <div className="flex items-center gap-4">
-                            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0">
-                                <User size={28} className="text-gray-500" />
+                            <div 
+                                className="relative w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 cursor-pointer group overflow-hidden"
+                                onClick={() => avatarInputRef.current?.click()}
+                            >
+                                {previewUrl ? (
+                                    <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
+                                ) : (isEditing && character.has_avatar) ? (
+                                    <img src={getAvatarUrl(character.id)} alt="Avatar" className="w-full h-full object-cover" />
+                                ) : (
+                                    <User size={32} className="text-gray-500 group-hover:text-gray-300 transition-colors" />
+                                )}
+                                <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Upload size={20} className="text-white" />
+                                </div>
                             </div>
+                            <input type="file" ref={avatarInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+                            
                             <div className="flex-1">
                                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Name *</label>
                                 <input
@@ -281,11 +333,11 @@ export default function Characters() {
     }, [characters, searchQuery]);
 
     const handleSave = async (form) => {
-        const payload = { ...form };
+        const { _avatarFile, ...payload } = form;
         if (editingCharacter) {
-            await updateCharacter.mutateAsync({ id: editingCharacter.id, ...payload });
+            return await updateCharacter.mutateAsync({ id: editingCharacter.id, ...payload });
         } else {
-            await createCharacter.mutateAsync(payload);
+            return await createCharacter.mutateAsync(payload);
         }
     };
 

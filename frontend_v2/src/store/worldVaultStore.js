@@ -5,6 +5,7 @@ export const useWorldVaultStore = create((set) => ({
   activeCharacterId: null,
   activeScenarioId: null,
   activeStoryId: null,
+  activeChapterId: null,
   
   // UI state for Context Builder
   contextBuilder: {
@@ -17,6 +18,7 @@ export const useWorldVaultStore = create((set) => ({
   setActiveCharacter: (characterId) => set({ activeCharacterId: characterId }),
   setActiveScenario: (scenarioId) => set({ activeScenarioId: scenarioId }),
   setActiveStory: (storyId) => set({ activeStoryId: storyId }),
+  setActiveChapter: (chapterId) => set({ activeChapterId: chapterId }),
   
   toggleLorebook: (lorebookId) => set((state) => {
     const selected = state.contextBuilder.selectedLorebooks;

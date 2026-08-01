@@ -265,6 +265,29 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         return {"files": [], "total": 0}
 
 
+@router.get("/api/v2/gallery")
+async def get_v2_gallery(
+    limit: int = 20, 
+    offset: int = 0, 
+    sort: str = "date_desc", 
+    search: Optional[str] = None,
+    workspace: Optional[str] = None,
+    character_id: Optional[str] = None,
+    story_id: Optional[str] = None,
+    model_service = Depends(get_model_service_v2)
+):
+    return await list_files_endpoint(
+        directory="output",
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        search=search,
+        workspace=workspace,
+        character_id=character_id,
+        story_id=story_id,
+        model_service=model_service
+    )
+
 @router.get("/api/files")
 async def list_files_endpoint(
     directory: str = "output", 
@@ -277,6 +300,8 @@ async def list_files_endpoint(
     show_nsfw: bool = True,
     tags: Optional[str] = None,
     workspace: Optional[str] = None,
+    character_id: Optional[str] = None,
+    story_id: Optional[str] = None,
     model_service = Depends(get_model_service_v2)
 ):
     """List files in a directory with pagination and search."""
@@ -286,7 +311,7 @@ async def list_files_endpoint(
         try:
             from services.gallery_indexer import gallery_indexer
             return await asyncio.to_thread(
-                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search, workspace=workspace
+                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search, workspace=workspace, character_id=character_id, story_id=story_id
             )
             
         except Exception as e:

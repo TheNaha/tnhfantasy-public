@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server } from 'lucide-react';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
+import { useLLMDefaultProvider, useSetLLMDefaultProvider, useLLMAvailableModels } from '../hooks/useWorldVault';
+import React, { useEffect } from 'react';
 
 
 export default function Settings() {
@@ -47,6 +49,7 @@ export default function Settings() {
     };
 
     const tabs = [
+        { id: 'ai', label: 'AI / LLM', icon: Brain },
         { id: 'branding', label: 'Branding', icon: SettingsIcon },
         { id: 'ui', label: 'UI / UX', icon: SettingsIcon },
         { id: 'gallery', label: 'Gallery', icon: SettingsIcon },
@@ -107,6 +110,14 @@ export default function Settings() {
 
                     {/* Content Area */}
                     <div className="md:col-span-9 glass-panel rounded-3xl border border-white/5 shadow-2xl p-8 min-h-[60vh]">
+                        {activeTab === 'ai' && (
+                            <AISettings
+                                settings={settings.ai}
+                                onUpdate={(key, value) => handleUpdateSetting('ai', key, value)}
+                                onReset={() => handleResetCategory('ai')}
+                            />
+                        )}
+
                         {activeTab === 'branding' && (<BrandingSettings />)}
 
                         {activeTab === 'ui' && (
@@ -620,6 +631,123 @@ function SettingGroup({ title, description, children, action }) {
             </div>
             <div className="shrink-0">
                 {children}
+            </div>
+        </div>
+    );
+}
+
+// AI Settings Component
+function AISettings({ settings, onUpdate, onReset }) {
+    const { data: defaultProvider } = useLLMDefaultProvider();
+    const { data: availableModels } = useLLMAvailableModels();
+    const setProviderMutation = useSetLLMDefaultProvider();
+
+    const [providerId, setProviderId] = useState('');
+    const [modelId, setModelId] = useState('');
+
+    useEffect(() => {
+        if (defaultProvider) {
+            setProviderId(defaultProvider.provider_id || '');
+            setModelId(defaultProvider.model_id || '');
+        }
+    }, [defaultProvider]);
+
+    const handleSaveProvider = async () => {
+        try {
+            await setProviderMutation.mutateAsync({ provider_id: providerId, model_id: modelId });
+            toast.success('Default LLM provider updated');
+        } catch {
+            toast.error('Failed to update LLM provider');
+        }
+    };
+
+    return (
+        <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end pb-6 border-b border-white/5">
+                <h2 className="text-2xl font-bold tracking-wide text-white">AI / LLM Settings</h2>
+                <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
+                    <RotateCcw size={16} /> Reset
+                </button>
+            </div>
+
+            <div className="grid gap-6">
+                <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
+                    <div className="flex justify-between items-center mb-4">
+                        <div>
+                            <h3 className="font-bold text-white tracking-wide">Default LLM Provider</h3>
+                            <p className="text-sm font-medium text-gray-400 mt-1">Configure the default backend provider for chat and generation.</p>
+                        </div>
+                        <button onClick={handleSaveProvider} disabled={setProviderMutation.isPending} className="btn-primary px-4 py-2 flex items-center gap-2">
+                            <Save size={16} /> Save
+                        </button>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Provider</label>
+                            <select
+                                value={providerId}
+                                onChange={(e) => setProviderId(e.target.value)}
+                                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">Auto-detect</option>
+                                {availableModels && availableModels.map(m => (
+                                    <option key={m.id || m} value={m.id || m}>{m.name || m.id || m}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Model ID (Optional)</label>
+                            <input
+                                type="text"
+                                value={modelId}
+                                onChange={(e) => setModelId(e.target.value)}
+                                placeholder="Auto-detect"
+                                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <SettingGroup title="Max Context Tokens" description="Maximum tokens to keep in chat history">
+                    <div className="flex items-center gap-5">
+                        <input
+                            type="range"
+                            min="1024"
+                            max="32768"
+                            step="1024"
+                            value={settings.maxContextTokens}
+                            onChange={(e) => onUpdate('maxContextTokens', parseInt(e.target.value))}
+                            className="w-full md:w-64 accent-blue-500"
+                        />
+                        <span className="text-white font-bold text-sm w-20 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.maxContextTokens}</span>
+                    </div>
+                </SettingGroup>
+
+                <SettingGroup title="Temperature" description="Controls randomness (0.0 = deterministic, 2.0 = highly random)">
+                    <div className="flex items-center gap-5">
+                        <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={settings.temperature}
+                            onChange={(e) => onUpdate('temperature', parseFloat(e.target.value))}
+                            className="w-full md:w-64 accent-purple-500"
+                        />
+                        <span className="text-white font-bold text-sm w-16 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.temperature.toFixed(1)}</span>
+                    </div>
+                </SettingGroup>
+
+                <SettingGroup title="Lorebook Injection Mode" description="How lorebook entries are injected into context">
+                    <select
+                        value={settings.lorebookInjectionMode}
+                        onChange={(e) => onUpdate('lorebookInjectionMode', e.target.value)}
+                        className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="system_prompt">System Prompt</option>
+                        <option value="messages">Separate Messages</option>
+                    </select>
+                </SettingGroup>
             </div>
         </div>
     );
