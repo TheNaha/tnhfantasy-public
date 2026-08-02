@@ -344,7 +344,7 @@ async def list_files_endpoint(
                 )
                 
                 # Extract file info from default version
-                file_info = default_version.get("file", {}) if default_version else {}
+                file_info = (default_version.get("file") or {}) if default_version else {}
                 filename = file_info.get("filename", model.get("name", "unknown"))
                 size_kb = file_info.get("size_kb", 0)
                 
@@ -353,7 +353,7 @@ async def list_files_endpoint(
                 trained_words = default_version.get("trained_words", []) if default_version else []
                 
                 # Get preview image URL
-                preview_image = model.get("preview_image", {})
+                preview_image = model.get("preview_image") or {}
                 civitai_id = model.get("civitai_model_id")
                 preview_url = (
                     preview_image.get("url") if preview_image else None
@@ -362,7 +362,7 @@ async def list_files_endpoint(
                 )
                 
                 # Provider statuses
-                provider_statuses = model.get("provider_statuses", {})
+                provider_statuses = model.get("provider_statuses") or {}
                 
                 # Get images from default version
                 version_images = default_version.get("images", []) if default_version else []
