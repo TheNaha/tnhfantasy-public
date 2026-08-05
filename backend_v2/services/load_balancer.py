@@ -91,10 +91,14 @@ class LoadBalancerRuntimeState:
 
 # Global runtime state for the process
 _global_runtime_state = LoadBalancerRuntimeState()
+_llm_runtime_state = LoadBalancerRuntimeState()
 _load_state_lock = threading.Lock()
 
 def get_global_runtime_state() -> LoadBalancerRuntimeState:
     return _global_runtime_state
+
+def get_llm_runtime_state() -> LoadBalancerRuntimeState:
+    return _llm_runtime_state
 
 class LoadBalancer:
     """Load balances jobs across multiple serverless providers."""
@@ -155,6 +159,7 @@ class LoadBalancer:
         runtime_state: LoadBalancerRuntimeState | None = None,
         *,
         force: bool = False,
+        state_id: int = 1,
     ):
         """Load persisted state from database on startup."""
         state_store = runtime_state or _global_runtime_state
@@ -166,7 +171,7 @@ class LoadBalancer:
                 state_store.initializing = True
 
         try:
-            state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == 1)).first()
+            state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == state_id)).first()
 
             # Calculate actual running job counts from database.
             from core.entities import Job, JobStatus
@@ -204,13 +209,13 @@ class LoadBalancer:
             logger.warning("lb_state_load_failed", error=str(e))
     
     @classmethod
-    def save_state_to_db(cls, session: Session, runtime_state: LoadBalancerRuntimeState | None = None):
+    def save_state_to_db(cls, session: Session, runtime_state: LoadBalancerRuntimeState | None = None, state_id: int = 1):
         """Persist state to database."""
         snapshot = cls._get_state_snapshot(runtime_state)
         try:
-            state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == 1)).first()
+            state = session.exec(select(LoadBalancerState).where(LoadBalancerState.id == state_id)).first()
             if not state:
-                state = LoadBalancerState(id=1)
+                state = LoadBalancerState(id=state_id)
                 session.add(state)
 
             state.round_robin_index = snapshot["round_robin_index"]
@@ -235,9 +240,15 @@ class LoadBalancer:
                 state_store.provider_failures.pop(provider_id, None)
                 persist_needed = True
             if persist_needed:
-                cls.save_state_to_db(session, runtime_state=state_store)
+                # We can't know the exact state_id easily without storing it in state,
+                # but usually provider state removal is done per LB instance anyway.
+                # However, this classmethod is static, so we default to 1, or we just remove from both.
+                # For safety, let's just use save_state_to_db for both if we must, but the original
+                # code just called it. Since we lack state_id here, we'll try saving to both.
+                cls.save_state_to_db(session, runtime_state=_global_runtime_state, state_id=1)
+                cls.save_state_to_db(session, runtime_state=_llm_runtime_state, state_id=2)
     
-    def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: LoadBalancerRuntimeState | None = None):
+    def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: LoadBalancerRuntimeState | None = None, state_id: int = 1):
         """
         Initialize load balancer.
         
@@ -245,17 +256,19 @@ class LoadBalancer:
             session: Database session
             strategy: Load balancing strategy (round-robin, random, priority)
             runtime_state: Optional runtime state container for tests or isolated coordinators
+            state_id: Which persistent state record to use in the database.
         """
         self.session = session
         self.repo = ProviderRepository(session)
         self.strategy = strategy
+        self.state_id = state_id
         self.runtime_state = runtime_state or get_global_runtime_state()
 
         import sys
         self.health_check_enabled = not ("pytest" in sys.modules)
 
         # Load shared state once per process/runtime container.
-        LoadBalancer.load_state_from_db(session, self.runtime_state)
+        LoadBalancer.load_state_from_db(session, self.runtime_state, state_id=self.state_id)
     
     async def _check_provider_health(self, provider: Provider) -> bool:
         """Probe the container's status or health endpoint, caching the result for 5 seconds."""
@@ -505,7 +518,7 @@ class LoadBalancer:
             # Persist state periodically (every 5 jobs)
             total_jobs = sum(self.runtime_state.provider_job_counts.values())
             if total_jobs % 5 == 0:
-                LoadBalancer.save_state_to_db(self.session, self.runtime_state)
+                LoadBalancer.save_state_to_db(self.session, self.runtime_state, state_id=self.state_id)
     
     async def _round_robin(self, providers: list[Provider]) -> Provider:
         """Round-robin selection."""
@@ -629,7 +642,7 @@ class LoadBalancer:
                 self.runtime_state.provider_failures[provider_id] = 0
                 persist_needed = True
         if persist_needed:
-            LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state)
+            LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state, state_id=self.state_id)
     
     async def report_failure(self, provider_id: str):
         """Report job failure for a provider."""
@@ -640,7 +653,7 @@ class LoadBalancer:
             self.runtime_state.provider_failures[provider_id] += 1
             failures = self.runtime_state.provider_failures[provider_id]
         logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
-        LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state)
+        LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state, state_id=self.state_id)
     
     async def release_job(self, provider_id: str):
         """
@@ -656,7 +669,7 @@ class LoadBalancer:
                 )
                 active_jobs = self.runtime_state.provider_job_counts[provider_id]
                 if active_jobs != previous_count:
-                    LoadBalancer.save_state_to_db(self.session, self.runtime_state)
+                    LoadBalancer.save_state_to_db(self.session, self.runtime_state, state_id=self.state_id)
             else:
                 active_jobs = 0
 

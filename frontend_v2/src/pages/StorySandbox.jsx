@@ -228,7 +228,7 @@ export default function StorySandbox() {
                     setIsStreaming(true);
                     streamingRef.current = streamText;
                     // Show accumulated text in editor while generating
-                    setEditorContent((prev) => {
+                    setEditorContent(() => {
                         const baseContent = activeChapter?.content || '';
                         // Only append if the streaming text is not already in the content
                         return baseContent ? baseContent + '\n\n' + streamText : streamText;

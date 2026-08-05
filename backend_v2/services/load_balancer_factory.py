@@ -2,7 +2,12 @@
 from sqlmodel import Session
 
 from infrastructure.repositories import LoadBalancingRepository
-from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
+from services.load_balancer import (
+    LoadBalancer,
+    LoadBalancerRuntimeState,
+    get_global_runtime_state,
+    get_llm_runtime_state,
+)
 
 
 def get_load_balancing_strategy(session: Session, default: str = "round-robin") -> str:
@@ -14,12 +19,22 @@ def get_load_balancing_strategy(session: Session, default: str = "round-robin") 
 def create_load_balancer(
     session: Session,
     *,
+    task_type: str = "image",
     strategy: str | None = None,
     runtime_state: LoadBalancerRuntimeState | None = None,
 ) -> LoadBalancer:
     """Create a load balancer with either an explicit or persisted strategy."""
-    return LoadBalancer(
-        session,
-        strategy=strategy or get_load_balancing_strategy(session),
-        runtime_state=runtime_state,
-    )
+    if task_type == "llm":
+        return LoadBalancer(
+            session,
+            strategy=strategy or "priority",
+            runtime_state=runtime_state or get_llm_runtime_state(),
+            state_id=2
+        )
+    else:
+        return LoadBalancer(
+            session,
+            strategy=strategy or get_load_balancing_strategy(session),
+            runtime_state=runtime_state or get_global_runtime_state(),
+            state_id=1
+        )

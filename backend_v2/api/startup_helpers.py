@@ -19,8 +19,14 @@ def configure_worker_pool() -> None:
             provider_repo = ProviderRepository(session)
             enabled_providers = provider_repo.get_enabled()
 
-            image_providers = [p for p in enabled_providers if getattr(p, "worker_type", "image") != "llm"]
-            llm_providers = [p for p in enabled_providers if getattr(p, "worker_type", "image") == "llm"]
+            image_providers = []
+            llm_providers = []
+            for p in enabled_providers:
+                w_type = getattr(p, "worker_type", "image")
+                if w_type == "llm" or p.id.startswith("llm"):
+                    llm_providers.append(p)
+                else:
+                    image_providers.append(p)
 
             image_workers = max(1, len(image_providers))
             llm_workers = max(1, len(llm_providers))

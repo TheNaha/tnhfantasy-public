@@ -17,6 +17,14 @@ class UpdateChatRequest(BaseModel):
     persona_name: str | None = None
 
 
+class CreateChatRequest(BaseModel):
+    name: str = "New Chat"
+    character_id: str | None = None
+    chat_type: str = "roleplay"
+    persona_name: str | None = None
+    override_greeting: str | None = None
+
+
 class SendMessageRequest(BaseModel):
     role: MessageRole
     content: str
@@ -31,7 +39,13 @@ def list_chats(session: Session = Depends(get_session)):
     return session.exec(select(Chat).order_by(Chat.updated_at.desc())).all()
 
 @router.post("/", response_model=Chat)
-async def create_chat(chat: Chat, session: Session = Depends(get_session)):
+async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
+    chat = Chat(
+        name=req.name,
+        character_id=req.character_id,
+        chat_type=req.chat_type,
+        persona_name=req.persona_name
+    )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
     session.add(chat)
@@ -41,10 +55,11 @@ async def create_chat(chat: Chat, session: Session = Depends(get_session)):
     # If a character is assigned, inject their first_mes as the opening message
     if chat.character_id:
         character = session.get(Character, chat.character_id)
-        if character and character.first_mes:
+        if character and (req.override_greeting or character.first_mes):
             # Apply basic template variable substitution before persisting
+            raw_mes = req.override_greeting or character.first_mes
             first_mes = _substitute_tavern_vars(
-                character.first_mes,
+                raw_mes,
                 char=character.name or "",
                 user=chat.persona_name or chat.name or "User",
             )

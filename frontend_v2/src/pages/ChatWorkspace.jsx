@@ -34,19 +34,19 @@ const TavernMessage = memo(function TavernMessage({ content }) {
             {segments.map((seg, i) => {
                 if (seg.type === 'action') {
                     return (
-                        <em key={i} className="text-gray-400 not-italic opacity-80">
+                        <em key={i} className="text-gray-400 italic font-medium opacity-90 mx-0.5">
                             {seg.content}
                         </em>
                     );
                 }
                 if (seg.type === 'speech') {
                     return (
-                        <span key={i} className="text-gray-100">
-                            &ldquo;{seg.content}&rdquo;
+                        <span key={i} className="text-gray-100 font-medium tracking-wide">
+                            "{seg.content}"
                         </span>
                     );
                 }
-                return <span key={i}>{seg.content}</span>;
+                return <span key={i} className="text-gray-300">{seg.content}</span>;
             })}
         </span>
     );
@@ -105,13 +105,125 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
+// NewChatModal — shown to configure character/lorebooks before creating chat
+// ---------------------------------------------------------------------------
+function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
+    const [selectedCharacter, setSelectedCharacter] = useState('');
+    const [selectedLorebooks, setSelectedLorebooks] = useState([]);
+    const [chatName, setChatName] = useState('New Chat');
+    const [personaName, setPersonaName] = useState('');
+
+    const toggleLorebook = (id) => {
+        if (selectedLorebooks.includes(id)) {
+            setSelectedLorebooks(selectedLorebooks.filter(l => l !== id));
+        } else {
+            setSelectedLorebooks([...selectedLorebooks, id]);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+            <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-lg bg-gray-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+                    <h3 className="font-bold text-gray-100">Create New Chat</h3>
+                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                        <X size={18} />
+                    </button>
+                </div>
+                
+                <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
+                    {/* Chat Name */}
+                    <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Chat Name</label>
+                        <input
+                            type="text"
+                            value={chatName}
+                            onChange={(e) => setChatName(e.target.value)}
+                            className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-colors"
+                            placeholder="e.g. Tavern Encounter"
+                        />
+                    </div>
+                    
+                    {/* Persona Name */}
+                    <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Persona (Optional)</label>
+                        <input
+                            type="text"
+                            value={personaName}
+                            onChange={(e) => setPersonaName(e.target.value)}
+                            className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-colors"
+                            placeholder="e.g. Wanderer"
+                        />
+                    </div>
+
+                    {/* Character Selection */}
+                    <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Character (Optional)</label>
+                        <select
+                            value={selectedCharacter}
+                            onChange={(e) => setSelectedCharacter(e.target.value)}
+                            className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50 transition-colors appearance-none"
+                        >
+                            <option value="">No Character</option>
+                            {characters.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Lorebooks Selection */}
+                    {lorebooks.length > 0 && (
+                        <div className="space-y-2">
+                            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Context Lorebooks</label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {lorebooks.map(lb => {
+                                    const isActive = selectedLorebooks.includes(lb.id);
+                                    return (
+                                        <button
+                                            key={lb.id}
+                                            onClick={() => toggleLorebook(lb.id)}
+                                            className={`text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors border ${isActive ? "bg-blue-500/20 text-blue-300 border-blue-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border-transparent"}`}
+                                        >
+                                            {isActive ? <Check size={14} className="text-blue-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                            <span className="truncate">{lb.name}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 border-t border-white/5 bg-gray-900/60 shrink-0 flex justify-end gap-3">
+                    <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors">
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter || null, personaName: personaName.trim() || null, selectedLorebooks })}
+                        className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg"
+                    >
+                        Create
+                    </button>
+                </div>
+            </motion.div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // PersonaField — inline editable persona name in the context panel
 // ---------------------------------------------------------------------------
-function PersonaField({ chatId, currentPersona, onSave }) {
+function PersonaField({ currentPersona, onSave }) {
     const [editing, setEditing] = useState(false);
     const [value, setValue] = useState(currentPersona || '');
     const inputRef = useRef(null);
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     useEffect(() => { setValue(currentPersona || ''); }, [currentPersona]);
 
     const commit = () => {
@@ -174,6 +286,7 @@ export default function ChatWorkspace() {
     const [agenticMode, setAgenticMode] = useState(true);
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     const [greetingModal, setGreetingModal] = useState(null); // { character, overrideGreeting: fn }
+    const [showNewChatModal, setShowNewChatModal] = useState(false);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
@@ -332,7 +445,7 @@ export default function ChatWorkspace() {
                 updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
             }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
-        } catch (error) {
+        } catch {
             toast.error('Failed to send message');
         }
     }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings]);
@@ -403,19 +516,56 @@ export default function ChatWorkspace() {
         }
     };
 
-    const handleCreateChat = (characterId = null) => {
+    const handleCreateChat = () => {
+        setShowNewChatModal(true);
+    };
+
+    const confirmCreateChat = (config) => {
         if (createChatMutation.isPending) return;
-        createChatMutation.mutate(
-            { name: 'New Chat', ...(characterId ? { character_id: characterId } : {}) },
-            {
-                onSuccess: (chat) => {
+        setShowNewChatModal(false);
+        const { chatName, characterId, personaName, selectedLorebooks: newSelectedLorebooks } = config;
+        
+        const character = characterId ? characters.find(c => c.id === characterId) : null;
+        const hasMultipleGreetings = character && (character.alternate_greetings?.length > 0);
+
+        if (hasMultipleGreetings) {
+            // Show greeting picker before finishing chat creation
+            setGreetingModal({
+                character,
+                onCreate: async (selectedGreeting) => {
+                    setGreetingModal(null);
+                    const chat = await createChatMutation.mutateAsync({ 
+                        name: chatName, 
+                        character_id: characterId,
+                        persona_name: personaName,
+                        override_greeting: selectedGreeting 
+                    });
                     setActiveChatId(chat.id);
                     setMobileTab('chat');
+                    // Sync lorebooks to global state
+                    for (const lb of newSelectedLorebooks) {
+                        if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
+                    }
                     toast.success('New chat created');
-                },
-                onError: () => toast.error('Failed to create chat')
-            }
-        );
+                }
+            });
+        } else {
+            createChatMutation.mutate(
+                { name: chatName, character_id: characterId, persona_name: personaName },
+                {
+                    onSuccess: (chat) => {
+                        setActiveChatId(chat.id);
+                        setMobileTab('chat');
+                        // Sync lorebooks to global state
+                        for (const lb of newSelectedLorebooks) {
+                            if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
+                        }
+                        toast.success('New chat created');
+                    },
+                    onError: () => toast.error('Failed to create chat')
+                }
+            );
+        }
     };
 
     const handleAttachmentChange = async (e) => {
@@ -813,7 +963,6 @@ export default function ChatWorkspace() {
                             <User size={12} /> Your Persona
                         </h4>
                         <PersonaField
-                            chatId={activeChatId}
                             currentPersona={activeChat?.persona_name}
                             onSave={handlePersonaSave}
                         />
@@ -824,7 +973,14 @@ export default function ChatWorkspace() {
 
                     {/* Character */}
                     <div className="glass-panel p-4 rounded-xl border border-white/5">
-                        <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Character</h4>
+                        <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <User size={12} /> Character
+                            </h4>
+                            <a href="/characters" className="text-[9px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
+                                Manage
+                            </a>
+                        </div>
                         {linkedCharacter ? (
                             <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
                                 <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
@@ -847,9 +1003,14 @@ export default function ChatWorkspace() {
 
                     {/* Lorebooks */}
                     <div className="glass-panel p-4 rounded-xl border border-white/5">
-                        <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                            <BookOpen size={12} /> Lorebooks
-                        </h4>
+                        <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <BookOpen size={12} /> Lorebooks
+                            </h4>
+                            <a href="/characters" className="text-[9px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
+                                Manage
+                            </a>
+                        </div>
                         {lorebooks.length === 0 ? (
                             <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                                 No lorebooks available
@@ -947,6 +1108,14 @@ export default function ChatWorkspace() {
 
             {/* === MODALS === */}
             <AnimatePresence>
+                {showNewChatModal && (
+                    <NewChatModal
+                        characters={characters}
+                        lorebooks={lorebooks}
+                        onCreate={confirmCreateChat}
+                        onClose={() => setShowNewChatModal(false)}
+                    />
+                )}
                 {greetingModal && (
                     <GreetingPickerModal
                         character={greetingModal.character}

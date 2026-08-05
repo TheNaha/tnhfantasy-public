@@ -211,13 +211,14 @@ async def execute_job(
         try:
             job_service = JobService(session)
             provider_service = ProviderService(session)
-            load_balancer = create_load_balancer(session)
 
             try:
                 job = await job_service.get_job(job_id)
             except NotFoundError:
                 logger.warning("job_not_found", job_id=job_id)
                 return
+
+            load_balancer = create_load_balancer(session, task_type=job.task_type)
 
             if job.status != JobStatus.PENDING:
                 logger.debug("job_not_pending", job_id=job_id, status=job.status)
