@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import json
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -10,6 +12,19 @@ from core.events import wait_for_job_completion
 from services.job_queue import queue_manager
 
 router = APIRouter()
+
+
+def _get_default_llm_model() -> str:
+    """Read the user-selected LLM model from llm_config.json. Returns 'default' if not set."""
+    config_path = "/data/llm_config.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                data = json.load(f)
+                return data.get("model_id") or "default"
+        except Exception:
+            pass
+    return "default"
 
 
 class StoryContinueRequest(BaseModel):
@@ -187,7 +202,8 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
             "messages": messages,
             "story_id": story_id,
             "chapter_id": chapter_id,
-            "type": "story_continue"
+            "type": "story_continue",
+            "model": _get_default_llm_model(),
         },
         metadata={"story_id": story_id, "chapter_id": chapter_id, "workspace": "story"}
     )
@@ -232,57 +248,84 @@ async def illustrate_chapter(
 
     story = session.get(Story, story_id)
 
+    # Resolve checkpoint: story characters > fallback
+    checkpoint = "sd_xl_base_1.0.safetensors"
+    if story and story.character_ids:
+        from core.entities import Character
+        char = session.get(Character, story.character_ids[0])
+        if char and char.checkpoint:
+            checkpoint = char.checkpoint
+
     if data.image_prompt:
-        enriched_prompt = data.image_prompt
-    else:
-        system_prompt = (
-            "You are an AI art director for a story. Given the story chapter text, "
-            "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
-            "camera angle, subjects, mood) that captures the most vivid scene. "
-            "Return ONLY the prompt text."
+        # Provided prompt: queue image job directly (non-blocking)
+        from services.job_submission_service import JobSubmissionService
+        submission_service = JobSubmissionService(session)
+
+        image_workflow = _build_image_workflow(data.image_prompt, checkpoint)
+        img_job = await submission_service.create_and_enqueue_job(
+            workflow=image_workflow,
+            metadata={
+                "story_id": story_id,
+                "chapter_id": chapter_id,
+                "prompt": data.image_prompt,
+            }
         )
+        return {"job_id": img_job.id, "prompt": data.image_prompt}
 
-        if story and story.genre:
-            system_prompt += f"\nThe genre is {story.genre}."
+    # No provided prompt: fire an LLM job to generate one, store context for
+    # chaining into an image job when the LLM completes.
+    system_prompt = (
+        "You are an AI art director for a story. Given the story chapter text, "
+        "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, "
+        "camera angle, subjects, mood) that captures the most vivid scene. "
+        "Return ONLY the prompt text."
+    )
 
-        if story and story.lorebook_ids:
-            lorebooks_content = []
-            for lb_id in story.lorebook_ids:
-                lb = session.get(Lorebook, lb_id)
-                if lb:
-                    entries = session.exec(
-                        select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)
-                    ).all()
-                    if entries:
-                        lb_text = f"Lorebook: {lb.name}\n"
-                        for entry in entries:
-                            keys_str = ", ".join(entry.keys) if entry.keys else "General"
-                            lb_text += f"- [{keys_str}]: {entry.content}\n"
-                        lorebooks_content.append(lb_text)
-            if lorebooks_content:
-                system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
+    if story and story.genre:
+        system_prompt += f"\nThe genre is {story.genre}."
 
-        job_service = JobService(session)
-        prompt_job = await job_service.create_job(
-            task_type="llm",
-            workflow={
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
-                ]
-            },
-            metadata={"source": "story_illustrate_prompt"}
-        )
-        await queue_manager.enqueue(prompt_job.id, task_type="llm")
+    if story and story.lorebook_ids:
+        lorebooks_content = []
+        for lb_id in story.lorebook_ids:
+            lb = session.get(Lorebook, lb_id)
+            if lb:
+                entries = session.exec(
+                    select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)
+                ).all()
+                if entries:
+                    lb_text = f"Lorebook: {lb.name}\n"
+                    for entry in entries:
+                        keys_str = ", ".join(entry.keys) if entry.keys else "General"
+                        lb_text += f"- [{keys_str}]: {entry.content}\n"
+                    lorebooks_content.append(lb_text)
+        if lorebooks_content:
+            system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
 
-        enriched_prompt = "beautiful scenery, masterpiece, high quality, highly detailed"
-        status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)
-        if status_str == "completed" and output:
-            enriched_prompt = output.get("content", enriched_prompt)
+    job_service = JobService(session)
+    prompt_job = await job_service.create_job(
+        task_type="llm",
+        workflow={
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
+            ],
+            "model": _get_default_llm_model(),
+        },
+        metadata={
+            "source": "story_illustrate_prompt",
+            "story_id": story_id,
+            "chapter_id": chapter_id,
+            "scene_checkpoint": checkpoint,
+        }
+    )
+    await queue_manager.enqueue(prompt_job.id, task_type="llm")
 
-    submission_service = JobSubmissionService(session)
+    return {"job_id": prompt_job.id, "status": "queued", "message": "Illustration prompt generation started"}
 
-    image_workflow = {
+
+def _build_image_workflow(prompt: str, checkpoint: str) -> dict:
+    """Build a standard ComfyUI image workflow."""
+    return {
         "3": {
             "class_type": "KSampler",
             "inputs": {
@@ -294,7 +337,7 @@ async def illustrate_chapter(
         },
         "4": {
             "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}
+            "inputs": {"ckpt_name": checkpoint}
         },
         "5": {
             "class_type": "EmptyLatentImage",
@@ -302,7 +345,7 @@ async def illustrate_chapter(
         },
         "6": {
             "class_type": "CLIPTextEncode",
-            "inputs": {"text": enriched_prompt, "clip": ["4", 1]}
+            "inputs": {"text": prompt, "clip": ["4", 1]}
         },
         "7": {
             "class_type": "CLIPTextEncode",
@@ -320,14 +363,3 @@ async def illustrate_chapter(
             "inputs": {"filename_prefix": "ComfyUI", "images": ["8", 0]}
         }
     }
-
-    img_job = await submission_service.create_and_enqueue_job(
-        workflow=image_workflow,
-        metadata={
-            "story_id": story_id,
-            "chapter_id": chapter_id,
-            "prompt": enriched_prompt,
-        }
-    )
-
-    return {"job_id": img_job.id, "prompt": enriched_prompt}

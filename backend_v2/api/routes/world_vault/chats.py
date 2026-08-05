@@ -17,6 +17,7 @@ class UpdateChatRequest(BaseModel):
     persona_name: str | None = None
     story_time: str | None = None
     story_location: str | None = None
+    active_lorebook_ids: list[str] | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -27,6 +28,7 @@ class CreateChatRequest(BaseModel):
     override_greeting: str | None = None
     story_time: str | None = None
     story_location: str | None = None
+    active_lorebook_ids: list[str] = []
 
 
 class SendMessageRequest(BaseModel):
@@ -52,6 +54,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         persona_name=req.persona_name,
         story_time=req.story_time,
         story_location=req.story_location,
+        active_lorebook_ids=req.active_lorebook_ids or [],
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -156,6 +159,24 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     session.refresh(chat)
     return chat
 
+# ---------------------------------------------------------------------------
+# Helper: resolve default LLM model id from llm_config.json
+# ---------------------------------------------------------------------------
+def _get_default_llm_model() -> str:
+    """Read the user-selected LLM model from llm_config.json. Returns 'default' if not set."""
+    import json as _json
+    import os as _os
+    config_path = "/data/llm_config.json"
+    if _os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                data = _json.load(f)
+                return data.get("model_id") or "default"
+        except Exception:
+            pass
+    return "default"
+
+
 @router.post("/{chat_id}/messages")
 async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
     from services.context_builder import build_chat_context
@@ -206,6 +227,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 "chat_id": chat_id,
                 "character_system_prompt": system_prompt or None,
                 "type": "chat_reply",
+                "model": _get_default_llm_model(),
             }
             metadata: dict = {
                 "chat_id": chat_id,
@@ -284,6 +306,7 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
             "chat_id": chat_id,
             "character_system_prompt": suggest_prompt,
             "type": "suggest_reply",
+            "model": _get_default_llm_model(),
         }
         metadata: dict = {
             "chat_id": chat_id,
@@ -311,6 +334,7 @@ async def generate_scene(
 ):
     from services.job_service import JobService
     from services.job_submission_service import JobSubmissionService
+    from services.job_queue import queue_manager
     
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -321,6 +345,13 @@ async def generate_scene(
         raise HTTPException(status_code=400, detail="No messages in chat to base scene on")
         
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
+    
+    # Resolve checkpoint: character > user settings > fallback
+    checkpoint = "sd_xl_base_1.0.safetensors"
+    if chat.character_id:
+        character = session.get(Character, chat.character_id)
+        if character and character.checkpoint:
+            checkpoint = character.checkpoint
     
     system_prompt = (
         "You are an AI scene director. Read the following recent roleplay chat context and "
@@ -336,87 +367,13 @@ async def generate_scene(
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Context:\n{context_text}"}
-            ]
+            ],
+            "model": _get_default_llm_model(),
         },
-        metadata={"source": "scene_prompt"}
+        metadata={"source": "scene_prompt", "chat_id": chat_id, "scene_checkpoint": checkpoint}
     )
     await queue_manager.enqueue(prompt_job.id, task_type="llm")
     
-    enriched_prompt = "beautiful scenery, masterpiece, high quality, 1girl, highly detailed"
-    status_str, output = await wait_for_job_completion(prompt_job.id, timeout=120.0)
-    if status_str == "completed" and output:
-        enriched_prompt = output.get("content", enriched_prompt)
-        
-    submission_service = JobSubmissionService(session)
-    
-    image_workflow = {
-        "3": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": 0,
-                "steps": 20,
-                "cfg": 7,
-                "sampler_name": "euler",
-                "scheduler": "normal",
-                "denoise": 1,
-                "model": ["4", 0],
-                "positive": ["6", 0],
-                "negative": ["7", 0],
-                "latent_image": ["5", 0]
-            }
-        },
-        "4": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {
-                "ckpt_name": "sd_xl_base_1.0.safetensors"
-            }
-        },
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {
-                "batch_size": 1,
-                "width": 1024,
-                "height": 1024
-            }
-        },
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": enriched_prompt,
-                "clip": ["4", 1]
-            }
-        },
-        "7": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": "worst quality, low quality, bad anatomy, bad hands, missing fingers",
-                "clip": ["4", 1]
-            }
-        },
-        "8": {
-            "class_type": "VAEDecode",
-            "inputs": {
-                "samples": ["3", 0],
-                "vae": ["4", 2]
-            }
-        },
-        "9": {
-            "class_type": "SaveImage",
-            "inputs": {
-                "filename_prefix": "ComfyUI",
-                "images": ["8", 0]
-            }
-        }
-    }
-    
-    img_job = await submission_service.create_and_enqueue_job(
-        workflow=image_workflow,
-        metadata={
-            "chat_id": chat_id,
-            "character_id": chat.character_id,
-            "image_context": "*A photo of the scene was taken*",
-            "prompt": enriched_prompt
-        }
-    )
-    
-    return {"job_id": img_job.id, "prompt": enriched_prompt}
+    # Return immediately — the prompt LLM job will chain into the image job via orchestrator
+    # or the frontend can poll. We don't block the request here.
+    return {"job_id": prompt_job.id, "status": "queued", "message": "Scene generation started"}

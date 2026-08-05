@@ -38,11 +38,12 @@ def client_fixture(session: Session):
         return session
 
     app.dependency_overrides[get_session] = get_session_override
+    original_get_session = _infra_db.get_session
     _infra_db.get_session = get_session_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
-    _infra_db.get_session = None
+    _infra_db.get_session = original_get_session
 
 
 @pytest.fixture

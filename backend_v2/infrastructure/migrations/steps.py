@@ -677,6 +677,22 @@ def _migration_add_character_checkpoint_lora(conn) -> bool:
     return True
 
 
+def _migration_add_chat_active_lorebooks(conn) -> bool:
+    """Add active_lorebook_ids JSON column to chats table for per-chat lorebook persistence."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+
+    if "active_lorebook_ids" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN active_lorebook_ids JSON DEFAULT '[]'"))
+        logger.info("migration_column_added", table="chats", column="active_lorebook_ids")
+
+    _verify_required_columns(conn, "chats", {"active_lorebook_ids"})
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -749,5 +765,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="014_add_character_default_time_location",
             description="Add default_time and default_location columns to characters",
             apply_fn=_migration_add_character_default_time_location,
+        ),
+        MigrationStep(
+            version="015_add_chat_active_lorebooks",
+            description="Add active_lorebook_ids JSON column to chats for per-chat lorebook persistence",
+            apply_fn=_migration_add_chat_active_lorebooks,
         ),
     ]

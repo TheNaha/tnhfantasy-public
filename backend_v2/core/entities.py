@@ -687,6 +687,7 @@ class Chat(SQLModel, table=True):
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    active_lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))
 
 class MessageRole(str, Enum):
     USER = "user"

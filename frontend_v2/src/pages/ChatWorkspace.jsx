@@ -4,7 +4,7 @@ import {
     MessageSquare, Send, Image as ImageIcon, Settings,
     PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
-    User, X, ChevronRight, RotateCcw, Clock, MapPin
+    User, X, ChevronRight, RotateCcw, Clock, MapPin, Menu
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -405,7 +405,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
         )}>
             {msg.role !== 'user' && msg.role !== 'system' && (
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
-                    {linkedCharacter?.has_avatar
+                    {linkedCharacter?.avatar_path
                         ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                         : <MessageSquare className="text-blue-400" size={12} />
                     }
@@ -446,7 +446,8 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
 // Main Component
 // ---------------------------------------------------------------------------
 export default function ChatWorkspace() {
-    const [mobileTab, setMobileTab] = useState('chat');
+    const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
+    const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
@@ -473,9 +474,7 @@ export default function ChatWorkspace() {
     const updateStreamingJob = useWorldVaultStore(state => state.updateStreamingJob);
     const clearStreamingJob = useWorldVaultStore(state => state.clearStreamingJob);
     const streamingJobs = useWorldVaultStore(state => state.streamingJobs);
-    const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
-    const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
-
+    
     const suggestReplyMutation = useSuggestReply();
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
@@ -491,6 +490,9 @@ export default function ChatWorkspace() {
     const { data: messages = [] } = useMessages(activeChatId);
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
+
+    // Use activeChat's lorebooks instead of the store's global state
+    const selectedLorebooks = activeChat?.active_lorebook_ids || [];
 
     const sendMessageMutation = useSendMessage();
     const createChatMutation = useCreateChat();
@@ -544,67 +546,70 @@ export default function ChatWorkspace() {
     }, [chats, activeChatId, setActiveChatId]);
 
     useEffect(() => {
+        // Helper: extract job data from the WS envelope.
+        // Backend emits: { type, data: { job: {...} }, timestamp, sequence_number }
+        const getJob = (event) => event?.data?.job || {};
+
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const streamText = event.text || event.data?.text;
-            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
-            const eventId = event.id || event.data?.id;
-            
-            if (meta.is_suggestion || eventId === suggestJobIdRef.current) {
+            const job = getJob(event);
+            const streamText = job.text ?? job.message ?? null;
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const eventId = job.id ?? null;
+
+            // is_suggestion: check job_id ref first (more reliable), then metadata flag
+            const isSuggestion = eventId === suggestJobIdRef.current || !!meta.is_suggestion;
+            if (isSuggestion) {
                 if (streamText) setMessage(streamText);
                 return;
             }
-            
+
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
-            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
+            const eventChatId = meta.chat_id || existingJob?.chatId;
             if (streamText && eventChatId) {
-                updateStreamingJob(eventId, { text: streamText, status: 'running', chatId: eventChatId });
+                updateStreamingJob(eventId, { text: streamText, status: 'running', chatId: eventChatId, type: meta.workspace });
             }
         });
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
-            const eventId = event.id || event.data?.id;
-            
-            if (meta.is_suggestion || eventId === suggestJobIdRef.current) {
-                // In case stream failed or was too fast, grab the final text from the result payload
-                const finalResult = event.result || event.data?.result || event.data;
-                if (finalResult) {
-                    const outputText = finalResult.outputs?.[0]?.content || finalResult.text;
-                    if (outputText) setMessage(outputText);
-                }
+            const job = getJob(event);
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const eventId = job.id ?? null;
+
+            const isSuggestion = eventId === suggestJobIdRef.current || !!meta.is_suggestion;
+            if (isSuggestion) {
+                // Grab final text from outputs if streaming missed it
+                const outputText = job.outputs?.[0]?.content ?? null;
+                if (outputText) setMessage(outputText);
                 setSuggestJobId(null);
                 return;
             }
-            
+
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
-            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
-            
-            if (eventId) {
-                clearStreamingJob(eventId);
-            }
-            
+            const eventChatId = meta.chat_id || existingJob?.chatId;
+
+            if (eventId) clearStreamingJob(eventId);
+
             if (eventChatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
             }
-            
+
             if (eventChatId === activeChatId) {
-                const eventType = event.type || meta.type || event.data?.type;
-                if (eventType === 'chat_image') {
+                const jobType = meta.workspace || job.task_type;
+                if (jobType === 'image' || meta.image_context) {
                     toast.success('Image generated!', { icon: '🖼️' });
                 }
             }
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
-            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
-            const eventId = event.id || event.data?.id;
+            const job = getJob(event);
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const eventId = job.id ?? null;
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
-            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
-            
-            if (eventId) {
-                clearStreamingJob(eventId);
-            }
-            
+            const eventChatId = meta.chat_id || existingJob?.chatId;
+
+            if (eventId) clearStreamingJob(eventId);
+
             if (eventChatId === activeChatId) {
                 toast.error('AI response failed. Please try again.');
             }
@@ -787,6 +792,7 @@ export default function ChatWorkspace() {
             const resJob = await api.post('/api/jobs', {
                 task_type: 'llm',
                 workflow: {
+                    llm_model: settings?.llm?.defaultModel || null,
                     messages: [
                         { role: 'system', content: 'Generate a short, catchy title (max 5 words) for the following chat. Output ONLY the title, no quotes.' },
                         { role: 'user', content: chatHistory || 'A new conversation.' }
@@ -834,7 +840,8 @@ export default function ChatWorkspace() {
             character_id: characterId, 
             persona_name: personaName, 
             story_time: storyTime, 
-            story_location: storyLocation 
+            story_location: storyLocation,
+            active_lorebook_ids: newSelectedLorebooks
         };
 
         if (hasMultipleGreetings) {
@@ -847,10 +854,8 @@ export default function ChatWorkspace() {
                         override_greeting: selectedGreeting 
                     });
                     setActiveChatId(chat.id);
-                    setMobileTab('chat');
-                    for (const lb of newSelectedLorebooks) {
-                        if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
-                    }
+                    setLeftDrawerOpen(false);
+                    setRightDrawerOpen(false);
                     toast.success('New chat created');
                 }
             });
@@ -860,10 +865,8 @@ export default function ChatWorkspace() {
                 {
                     onSuccess: (chat) => {
                         setActiveChatId(chat.id);
-                        setMobileTab('chat');
-                        for (const lb of newSelectedLorebooks) {
-                            if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
-                        }
+                        setLeftDrawerOpen(false);
+                        setRightDrawerOpen(false);
                         toast.success('New chat created');
                     },
                     onError: () => toast.error('Failed to create chat')
@@ -923,23 +926,28 @@ export default function ChatWorkspace() {
 
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
-    const chatsSidebarVisible = mobileTab === 'chats';
-    const contextPanelVisible = mobileTab === 'context';
-    const chatVisible = mobileTab === 'chat';
-
     return (
         <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative"
+            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative overflow-hidden"
         >
+            {/* Mobile Backdrop for Left Drawer */}
+            <AnimatePresence>
+                {leftDrawerOpen && (
+                    <motion.div 
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-black/60 z-30 lg:hidden" 
+                        onClick={() => setLeftDrawerOpen(false)} 
+                    />
+                )}
+            </AnimatePresence>
+
             <div className={clsx(
-                "flex flex-col shrink-0 border-r border-white/5 bg-gray-900/70 transition-all duration-300",
-                "lg:w-64 lg:flex lg:static lg:translate-x-0",
-                chatsSidebarVisible
-                    ? "absolute inset-0 z-30 w-full flex"
-                    : "hidden lg:flex"
+                "flex flex-col shrink-0 border-r border-white/5 bg-gray-900/95 lg:bg-gray-900/70 transition-transform duration-300 ease-in-out absolute lg:static inset-y-0 left-0 z-40 lg:z-auto",
+                "w-72 lg:w-64",
+                leftDrawerOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
             )}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                     <h3 className="font-semibold text-gray-200 tracking-wide">Chats</h3>
@@ -988,7 +996,7 @@ export default function ChatWorkspace() {
                                         const c = characters.find(ch => ch.id === chat.character_id);
                                         return (
                                             <div className="w-6 h-6 rounded-full bg-gray-700/60 flex items-center justify-center shrink-0 overflow-hidden border border-white/5">
-                                                {c?.has_avatar
+                                                {c?.avatar_path
                                                     ? <img src={getAvatarUrl(c.id)} alt="" className="w-full h-full object-cover" />
                                                     : <MessageSquare size={10} className="text-gray-500" />
                                                 }
@@ -1007,14 +1015,14 @@ export default function ChatWorkspace() {
                 </div>
             </div>
 
-            <div className={clsx(
-                "flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative",
-                !chatVisible && "hidden lg:flex"
-            )}>
+            <div className="flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative">
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
+                    <button onClick={() => setLeftDrawerOpen(true)} className="lg:hidden p-2 -ml-2 text-gray-400 hover:text-white rounded-xl">
+                        <Menu size={20} />
+                    </button>
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
-                            {linkedCharacter?.has_avatar
+                            {linkedCharacter?.avatar_path
                                 ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                 : <MessageSquare className="text-blue-400" size={16} />
                             }
@@ -1053,9 +1061,9 @@ export default function ChatWorkspace() {
                         )}
                     </div>
                     <button
-                        onClick={() => setMobileTab(mobileTab === 'context' ? 'chat' : 'context')}
-                        className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
-                        title="Toggle Context Panel"
+                        onClick={() => setRightDrawerOpen(r => !r)}
+                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+                        title="Context & Settings"
                     >
                         <Settings size={18} />
                     </button>
@@ -1249,17 +1257,22 @@ export default function ChatWorkspace() {
                 </div>
             </div>
 
+            {/* Mobile Backdrop for Right Drawer */}
+            <AnimatePresence>
+                {rightDrawerOpen && (
+                    <motion.div 
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-black/60 z-30 lg:hidden" 
+                        onClick={() => setRightDrawerOpen(false)} 
+                    />
+                )}
+            </AnimatePresence>
+
             {/* === CONTEXT PANEL (Right) === */}
             <div className={clsx(
-                "flex-col border-l border-white/5 bg-gray-900/60 shrink-0 overflow-hidden",
-                // Desktop: shown when context tab active (reuse mobileTab for desktop toggle too)
-                "lg:w-80",
-                // Mobile: full-screen when context tab; hidden otherwise
-                contextPanelVisible
-                    ? "absolute inset-0 z-30 flex w-full"
-                    : "hidden lg:flex",
-                // On desktop, if context not selected, collapse
-                !contextPanelVisible && "lg:hidden"
+                "flex-col border-l border-white/5 bg-gray-900/95 lg:bg-gray-900/60 overflow-hidden shrink-0 transition-transform duration-300 ease-in-out absolute lg:static inset-y-0 right-0 z-40 lg:z-auto w-80",
+                rightDrawerOpen ? "translate-x-0 flex" : "translate-x-full lg:translate-x-0 hidden lg:flex",
+                !rightDrawerOpen && "lg:hidden"
             )}>
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                     <h3 className="font-semibold text-gray-200 flex items-center gap-2 text-sm">
@@ -1267,7 +1280,7 @@ export default function ChatWorkspace() {
                         Context &amp; Settings
                     </h3>
                     <button
-                        onClick={() => setMobileTab('chat')}
+                        onClick={() => setRightDrawerOpen(false)}
                         className="lg:hidden p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                     >
                         <X size={16} />
@@ -1333,7 +1346,7 @@ export default function ChatWorkspace() {
                                 title="View character details"
                             >
                                 <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden border border-white/10 group-hover:border-blue-500/30 transition-colors">
-                                    {linkedCharacter.has_avatar
+                                    {linkedCharacter.avatar_path
                                         ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                         : <MessageSquare size={14} className="text-blue-400" />
                                     }
@@ -1371,7 +1384,12 @@ export default function ChatWorkspace() {
                                     return (
                                         <button
                                             key={lb.id}
-                                            onClick={() => toggleLorebook(lb.id)}
+                                            onClick={() => {
+                                                const newLorebooks = isActive 
+                                                    ? selectedLorebooks.filter(id => id !== lb.id)
+                                                    : [...selectedLorebooks, lb.id];
+                                                handleChatUpdate({ active_lorebook_ids: newLorebooks });
+                                            }}
                                             className={clsx(
                                                 "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all",
                                                 isActive
@@ -1396,63 +1414,6 @@ export default function ChatWorkspace() {
                         )}
                     </div>
                 </div>
-            </div>
-
-            {/* === MOBILE BOTTOM TAB BAR === */}
-            <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-gray-950/95 backdrop-blur-xl border-t border-white/10 flex items-stretch h-[60px] safe-area-inset-bottom">
-                {/* Chats Tab */}
-                <button
-                    onClick={() => setMobileTab('chats')}
-                    className={clsx(
-                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
-                        mobileTab === 'chats'
-                            ? "text-blue-400"
-                            : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    <div className={clsx("p-1.5 rounded-xl transition-all", mobileTab === 'chats' ? "bg-blue-500/15" : "")}>
-                        <MessageSquare size={20} />
-                    </div>
-                    Chats
-                </button>
-
-                {/* Chat Tab (centre — primary) */}
-                <button
-                    onClick={() => setMobileTab('chat')}
-                    className={clsx(
-                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
-                        mobileTab === 'chat'
-                            ? "text-white"
-                            : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    <div className={clsx(
-                        "p-1.5 rounded-xl transition-all",
-                        mobileTab === 'chat' ? "bg-blue-600 shadow-[0_0_12px_rgba(37,99,235,0.4)]" : ""
-                    )}>
-                        {linkedCharacter?.has_avatar
-                            ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-5 h-5 rounded-full object-cover" />
-                            : <User size={20} className={mobileTab === 'chat' ? 'text-white' : ''} />
-                        }
-                    </div>
-                    Chat
-                </button>
-
-                {/* Context Tab */}
-                <button
-                    onClick={() => setMobileTab('context')}
-                    className={clsx(
-                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
-                        mobileTab === 'context'
-                            ? "text-blue-400"
-                            : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    <div className={clsx("p-1.5 rounded-xl transition-all", mobileTab === 'context' ? "bg-blue-500/15" : "")}>
-                        <BookOpen size={20} />
-                    </div>
-                    Context
-                </button>
             </div>
 
             {/* === MODALS === */}
