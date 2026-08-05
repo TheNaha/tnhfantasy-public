@@ -36,6 +36,7 @@ class SendMessageRequest(BaseModel):
     lorebook_ids: list[str] | None = None
     agentic: bool = False
     generator_checkpoint: str | None = None
+    no_reply: bool = False
 
 
 @router.get("/", response_model=list[Chat])
@@ -179,7 +180,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     
     job_id = None
     
-    if message.role == MessageRole.USER:
+    if message.role == MessageRole.USER and not request.no_reply:
         past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
         
         character = None
@@ -245,6 +246,63 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
     session.delete(message)
     session.commit()
     return {"message": "Message deleted"}
+
+@router.post("/{chat_id}/suggest")
+async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -> dict:
+    from services.context_builder import build_chat_context
+    from services.job_queue import queue_manager
+    
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+        
+    past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+    
+    character = None
+    if chat.character_id:
+        from core.entities import Character
+        character = session.get(Character, chat.character_id)
+        
+    # We want to guide the LLM to write exactly ONE action or spoken sentence FOR the user.
+    system_prompt, context = build_chat_context(
+        session, 
+        past_messages, 
+        character=character, 
+        lorebook_ids=None, 
+        persona_name=chat.persona_name,
+        story_time=chat.story_time,
+        story_location=chat.story_location
+    )
+    
+    # Override system prompt to explicitly act as the user
+    suggest_prompt = system_prompt + "\n\nCRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
+    
+    try:
+        job_service = get_job_service(session)
+        workflow: dict = {
+            "messages": context,
+            "chat_id": chat_id,
+            "character_system_prompt": suggest_prompt,
+            "type": "suggest_reply",
+        }
+        metadata: dict = {
+            "chat_id": chat_id,
+            "character_id": chat.character_id,
+            "workspace": "roleplay",
+            "is_suggestion": True
+        }
+
+        job = await job_service.create_job(
+            task_type="llm",
+            workflow=workflow,
+            metadata=metadata,
+        )
+        
+        await queue_manager.enqueue(job.id, task_type="llm")
+        return {"job_id": job.id}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{chat_id}/scene")
 async def generate_scene(

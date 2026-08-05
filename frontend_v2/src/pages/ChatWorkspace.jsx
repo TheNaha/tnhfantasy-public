@@ -13,7 +13,7 @@ import api from '../api/client';
 import {
     useMessages, useChats, useSendMessage, useChat,
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
-    useRenameChat, useUpdateChat, getAvatarUrl
+    useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply
 } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -22,6 +22,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { parseTavernMessage } from '../utils/tavernUtils';
 import { useSettings } from '../store/settingsStore';
+
+
+const COMMANDS = [
+    { cmd: '/silent', desc: 'Send silently without triggering AI reply', icon: '🤫', argPlaceholder: 'Message text...' },
+    { cmd: '/story', desc: 'Insert a narrative event', icon: '📖', argPlaceholder: 'Story text...' },
+    { cmd: '/puppet', desc: 'Speak as the character', icon: '🎭', argPlaceholder: 'Character speech...' },
+    { cmd: '/time', desc: 'Update story time', icon: '⏰', argPlaceholder: 'e.g. Midnight, +2 hours...' },
+    { cmd: '/location', desc: 'Update story location', icon: '📍', argPlaceholder: 'e.g. The Library...' },
+    { cmd: '/action', desc: 'Perform an action', icon: '🏃', argPlaceholder: 'Action description...' },
+    { cmd: '/suggest', desc: 'Auto-fill a suggested response', icon: '🪄', noArgs: true }
+];
 
 // ---------------------------------------------------------------------------
 // TavernMessage — renders narrative/dialogue with segment styling
@@ -417,6 +428,16 @@ export default function ChatWorkspace() {
     const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
     const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
 
+    const suggestReplyMutation = useSuggestReply();
+    const [suggestJobId, setSuggestJobId] = useState(null);
+    const suggestJobIdRef = useRef(null);
+    
+    const [activeCommand, setActiveCommand] = useState(null);
+    
+    useEffect(() => {
+        suggestJobIdRef.current = suggestJobId;
+    }, [suggestJobId]);
+
     const { data: chats, isLoading: isChatsLoading } = useChats();
     const { data: activeChat } = useChat(activeChatId);
     const { data: messages = [] } = useMessages(activeChatId);
@@ -476,10 +497,16 @@ export default function ChatWorkspace() {
 
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
+            const streamText = event.text || event.data?.text;
             const meta = event.metadata_ || event.metadata || {};
+            
+            if (meta.is_suggestion || event.id === suggestJobIdRef.current) {
+                if (streamText) setMessage(streamText);
+                return;
+            }
+            
             const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
             const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
-            const streamText = event.text || event.data?.text;
             if (streamText && eventChatId) {
                 updateStreamingJob(event.id, { text: streamText, status: 'running', chatId: eventChatId });
             }
@@ -487,6 +514,18 @@ export default function ChatWorkspace() {
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
             const meta = event.metadata_ || event.metadata || {};
+            
+            if (meta.is_suggestion || event.id === suggestJobIdRef.current) {
+                // In case stream failed or was too fast, grab the final text from the result payload
+                const finalResult = event.result || event.data?.result || event.data;
+                if (finalResult) {
+                    const outputText = finalResult.outputs?.[0]?.content || finalResult.text;
+                    if (outputText) setMessage(outputText);
+                }
+                setSuggestJobId(null);
+                return;
+            }
+            
             const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
             const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
             
@@ -535,7 +574,8 @@ export default function ChatWorkspace() {
     }, [message]);
 
     const handleSendMessage = useCallback(async () => {
-        if (!message.trim() && !pendingAttachment) return;
+        const msgContentRaw = message.trim();
+        if (!msgContentRaw && !pendingAttachment && !activeCommand?.noArgs) return;
 
         let chatIdToUse = activeChatId;
         if (!chatIdToUse) {
@@ -549,21 +589,70 @@ export default function ChatWorkspace() {
             }
         }
 
-        const msgContent = message.trim();
         setMessage('');
         const attachmentFilename = pendingAttachment?.filename || null;
         setPendingAttachment(null);
+        
+        const currentCommand = activeCommand;
+        setActiveCommand(null);
+        
+        let msgContent = msgContentRaw;
+        let role = 'user';
+        let noReply = false;
+        
+        if (currentCommand) {
+            const cmd = currentCommand.cmd;
+            const arg = msgContentRaw;
+            
+            if (cmd === '/silent') {
+                noReply = true;
+                msgContent = arg;
+                if (!msgContent && !attachmentFilename) { toast.error("Provide message text"); return; }
+            } else if (cmd === '/story') {
+                noReply = true;
+                role = 'story';
+                msgContent = arg;
+                if (!msgContent && !attachmentFilename) { toast.error("Provide story text"); return; }
+            } else if (cmd === '/puppet' || cmd === '/impersonate') {
+                noReply = true;
+                role = 'char';
+                msgContent = arg;
+                if (!msgContent && !attachmentFilename) { toast.error("Provide character text"); return; }
+            } else if (cmd === '/time' || cmd === '/fastforward') {
+                if (!arg) { toast.error("Provide a time"); return; }
+                try {
+                    await updateChatMutation.mutateAsync({ chatId: chatIdToUse, story_time: arg });
+                } catch { toast.error("Failed to update time"); }
+                return;
+            } else if (cmd === '/location') {
+                if (!arg) { toast.error("Provide a location"); return; }
+                try {
+                    await updateChatMutation.mutateAsync({ chatId: chatIdToUse, story_location: arg });
+                } catch { toast.error("Failed to update location"); }
+                return;
+            } else if (cmd === '/me' || cmd === '/action') {
+                msgContent = `*${arg}*`;
+                if (!arg && !attachmentFilename) { toast.error("Provide action text"); return; }
+            } else if (cmd === '/suggest') {
+                try {
+                    const res = await suggestReplyMutation.mutateAsync(chatIdToUse);
+                    if (res.job_id) { setSuggestJobId(res.job_id); }
+                } catch { toast.error("Failed to generate suggestion"); }
+                return;
+            }
+        }
 
         try {
             const res = await sendMessageMutation.mutateAsync({
                 chatId: chatIdToUse,
                 message: { 
-                    role: 'user', 
+                    role: role, 
                     content: msgContent, 
                     lorebook_ids: selectedLorebooks, 
                     image_path: attachmentFilename, 
                     agentic: agenticMode,
-                    generator_checkpoint: settings.generator?.defaultCheckpoint || null
+                    generator_checkpoint: settings.generator?.defaultCheckpoint || null,
+                    no_reply: noReply
                 }
             });
             if (res.job_id) {
@@ -573,16 +662,52 @@ export default function ChatWorkspace() {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
+
+    const handleSuggestClick = useCallback(async () => {
+        if (!activeChatId) return;
+        try {
+            setMessage('');
+            const res = await suggestReplyMutation.mutateAsync(activeChatId);
+            if (res.job_id) {
+                setSuggestJobId(res.job_id);
+            }
+        } catch {
+            toast.error("Failed to generate suggestion");
+        }
+    }, [activeChatId, suggestReplyMutation]);
+
+    const handleTextChange = (e) => {
+        const val = e.target.value;
+        if (!activeCommand && val.startsWith('/')) {
+            const spaceIdx = val.indexOf(' ');
+            if (spaceIdx !== -1) {
+                const cmdString = val.substring(0, spaceIdx).toLowerCase();
+                const matchedCmd = COMMANDS.find(c => c.cmd === cmdString);
+                if (matchedCmd && !matchedCmd.noArgs) {
+                    setActiveCommand(matchedCmd);
+                    setMessage(val.substring(spaceIdx + 1));
+                    return;
+                }
+            }
+        }
+        setMessage(val);
+    };
 
     const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Backspace' && message === '' && activeCommand) {
+            setMessage(activeCommand.cmd + ' ');
+            setActiveCommand(null);
+            e.preventDefault();
+            return;
+        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSendMessage();
         }
-    }, [handleSendMessage]);
+    }, [handleSendMessage, message, activeCommand]);
 
-    const canSend = (message.trim() || pendingAttachment) && !sendMessageMutation.isPending;
+    const canSend = (message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending;
 
     const handleGenerateScene = async () => {
         if (!activeChatId) return;
@@ -997,18 +1122,63 @@ export default function ChatWorkspace() {
                             </div>
                         )}
                         <div className="relative">
+                            {message.startsWith('/') && (
+                                <div className="absolute bottom-full left-0 mb-2 w-full max-w-sm bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
+                                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 bg-gray-800/40 uppercase tracking-wider border-b border-gray-700/50">Commands</div>
+                                    <div className="flex flex-col max-h-60 overflow-y-auto p-1">
+                                        {COMMANDS.filter(c => !activeCommand && c.cmd.startsWith(message.split(' ')[0].toLowerCase())).map((c, i) => (
+                                            <button
+                                                key={c.cmd}
+                                                onClick={() => {
+                                                    if (c.noArgs) {
+                                                        setMessage('');
+                                                        textareaRef.current?.blur();
+                                                        if (c.cmd === '/suggest') handleSuggestClick();
+                                                    } else {
+                                                        setActiveCommand(c);
+                                                        setMessage('');
+                                                        textareaRef.current?.focus();
+                                                    }
+                                                }}
+                                                className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left group"
+                                            >
+                                                <span className="text-lg opacity-80 group-hover:opacity-100 transition-opacity">{c.icon}</span>
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm font-medium text-gray-200">{c.cmd}</span>
+                                                    <span className="text-xs text-gray-400">{c.desc}</span>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAttachmentChange} className="hidden" />
-                            <textarea
-                                ref={textareaRef}
-                                value={message}
-                                onChange={e => setMessage(e.target.value)}
-                                onKeyDown={handleKeyDown}
-                                placeholder={activeChatId ? 'Type a message...' : 'Select a chat to start...'}
-                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-28 sm:pr-36 py-3.5 sm:py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-all resize-none shadow-inner text-sm"
-                                rows={1}
-                                style={{ minHeight: '52px', maxHeight: '200px' }}
-                                disabled={sendMessageMutation.isPending || !activeChatId}
-                            />
+                            
+                            {/* Input Container */}
+                            <div className="flex items-center w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-44 py-3.5 sm:py-4 transition-all shadow-inner focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30">
+                                
+                                {activeCommand && (
+                                    <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-lg text-sm font-medium mr-2 whitespace-nowrap select-none ml-2">
+                                        <span>{activeCommand.icon}</span>
+                                        {activeCommand.cmd}
+                                        <button onClick={() => { setActiveCommand(null); setMessage(activeCommand.cmd + ' ' + message); }} className="hover:text-white ml-1 opacity-60 hover:opacity-100 transition-opacity"><X size={14} /></button>
+                                    </div>
+                                )}
+                                
+                                <textarea
+                                    ref={textareaRef}
+                                    value={message}
+                                    onChange={handleTextChange}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder={activeCommand ? activeCommand.argPlaceholder : (activeChatId ? 'Type a message...' : 'Select a chat to start...')}
+                                    className="flex-1 bg-transparent text-gray-200 placeholder-gray-500 focus:outline-none resize-none text-sm self-center min-h-[20px] max-h-[200px]"
+                                    rows={1}
+                                    disabled={sendMessageMutation.isPending || !activeChatId}
+                                    style={{ overflowY: (textareaRef.current?.scrollHeight > 200) ? 'auto' : 'hidden' }}
+                                />
+                            </div>
+
+                            {/* Left Button */}
                             <button
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploading}
@@ -1017,44 +1187,64 @@ export default function ChatWorkspace() {
                             >
                                 {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
                             </button>
-                            {/* Generate scene */}
-                            <button
-                                onClick={handleGenerateScene}
-                                disabled={isGeneratingScene || !activeChatId}
-                                className="absolute right-20 sm:right-24 bottom-2.5 sm:bottom-3 p-1.5 sm:p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
-                                title="Generate Scene"
-                            >
-                                {isGeneratingScene ? <Loader2 size={18} className="animate-spin" /> : <ImageIcon size={18} />}
-                            </button>
-                            {/* Agentic mode */}
-                            <button
-                                onClick={() => setAgenticMode(!agenticMode)}
-                                className={clsx(
-                                    "absolute right-10 sm:right-12 bottom-2.5 sm:bottom-3 p-1.5 sm:p-2 transition-colors rounded-xl",
-                                    agenticMode
-                                        ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
-                                        : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
-                                )}
-                                title={agenticMode ? "Agentic ON" : "Agentic OFF"}
-                            >
-                                <Wand2 size={18} />
-                            </button>
-                            {/* Send */}
-                            <button
-                                onClick={handleSendMessage}
-                                disabled={!canSend}
-                                className={clsx(
-                                    "absolute right-2 sm:right-2 bottom-2 sm:bottom-2 p-2 transition-all rounded-xl",
-                                    canSend
-                                        ? "bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105"
-                                        : "bg-gray-800 text-gray-500 cursor-not-allowed"
-                                )}
-                            >
-                                {sendMessageMutation.isPending
-                                    ? <Loader2 size={16} className="animate-spin" />
-                                    : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
-                                }
-                            </button>
+
+                            {/* Right Buttons Group */}
+                            <div className="absolute right-2 sm:right-3 bottom-2.5 sm:bottom-3 flex items-center gap-1">
+                                {/* Generate scene */}
+                                <button
+                                    onClick={handleGenerateScene}
+                                    disabled={isGeneratingScene || !activeChatId}
+                                    className="p-1.5 sm:p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
+                                    title="Generate Scene"
+                                >
+                                    {isGeneratingScene ? <Loader2 size={18} className="animate-spin" /> : <ImageIcon size={18} />}
+                                </button>
+                                {/* Agentic mode */}
+                                <button
+                                    onClick={() => setAgenticMode(!agenticMode)}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-colors rounded-xl",
+                                        agenticMode
+                                            ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+                                            : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
+                                    )}
+                                    title={agenticMode ? "Agentic ON" : "Agentic OFF"}
+                                >
+                                    <Wand2 size={18} />
+                                </button>
+                                {/* Suggest */}
+                                <button
+                                    onClick={handleSuggestClick}
+                                    disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-all rounded-xl",
+                                        (suggestReplyMutation.isPending || suggestJobId)
+                                            ? "text-blue-400 bg-blue-500/10 cursor-not-allowed"
+                                            : (activeChatId ? "text-blue-400 hover:text-white hover:bg-blue-600/50" : "text-gray-600 cursor-not-allowed")
+                                    )}
+                                    title="Auto-suggest reply"
+                                >
+                                    {(suggestReplyMutation.isPending || suggestJobId) 
+                                        ? <Loader2 size={16} className="animate-spin" />
+                                        : <Sparkles size={16} />}
+                                </button>
+                                {/* Send */}
+                                <button
+                                    onClick={handleSendMessage}
+                                    disabled={!canSend}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-all rounded-xl",
+                                        canSend
+                                            ? "bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105"
+                                            : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                                    )}
+                                >
+                                    {sendMessageMutation.isPending
+                                        ? <Loader2 size={16} className="animate-spin" />
+                                        : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
+                                    }
+                                </button>
+                            </div>
                         </div>
                         <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-[10px] text-gray-600">
                             <span><kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Enter</kbd> to send · <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Shift+Enter</kbd> for newline</span>

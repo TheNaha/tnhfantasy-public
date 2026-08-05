@@ -109,7 +109,12 @@ export const useRenameChat = () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
         }
     });
+};export const useSuggestReply = () => {
+    return useMutation({
+        mutationFn: (chatId) => api.post(`/api/v2/chats/${chatId}/suggest`),
+    });
 };
+
 
 export const useUpdateChat = () => {
     const queryClient = useQueryClient();
