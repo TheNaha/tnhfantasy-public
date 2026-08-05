@@ -476,30 +476,47 @@ export default function ChatWorkspace() {
 
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const meta = event.metadata_ || {};
+            const meta = event.metadata_ || event.metadata || {};
+            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
+            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
             const streamText = event.text || event.data?.text;
-            if (streamText && meta.chat_id === activeChatId) {
-                updateStreamingJob(event.id, { text: streamText, status: 'running', chatId: activeChatId });
+            if (streamText && eventChatId) {
+                updateStreamingJob(event.id, { text: streamText, status: 'running', chatId: eventChatId });
             }
         });
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-            const meta = event.metadata_ || {};
-            if (meta.chat_id === activeChatId) {
+            const meta = event.metadata_ || event.metadata || {};
+            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
+            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
+            
+            if (event.id) {
+                clearStreamingJob(event.id);
+            }
+            
+            if (eventChatId) {
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
+            }
+            
+            if (eventChatId === activeChatId) {
                 const eventType = event.type || meta.type;
                 if (eventType === 'chat_image') {
                     toast.success('Image generated!', { icon: '🖼️' });
                 }
-                queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
-                if (event.id) clearStreamingJob(event.id);
             }
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
-            const meta = event.metadata_ || {};
-            if (meta.chat_id === activeChatId) {
+            const meta = event.metadata_ || event.metadata || {};
+            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
+            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
+            
+            if (event.id) {
+                clearStreamingJob(event.id);
+            }
+            
+            if (eventChatId === activeChatId) {
                 toast.error('AI response failed. Please try again.');
-                if (event.id) clearStreamingJob(event.id);
             }
         });
 
@@ -843,6 +860,21 @@ export default function ChatWorkspace() {
                                 {activeChat?.persona_name && ` · as ${activeChat.persona_name}`}
                             </p>
                         </div>
+                    </div>
+                    
+                    <div className="hidden md:flex items-center gap-2 mr-1 shrink-0">
+                        {activeChat?.story_time && (
+                            <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-[11px] font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Time">
+                                <Clock size={12} className="text-indigo-400/70" /> 
+                                <span className="max-w-[120px] truncate">{activeChat.story_time}</span>
+                            </div>
+                        )}
+                        {activeChat?.story_location && (
+                            <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-[11px] font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Location">
+                                <MapPin size={12} className="text-rose-400/70" /> 
+                                <span className="max-w-[160px] truncate">{activeChat.story_location}</span>
+                            </div>
+                        )}
                     </div>
                     <button
                         onClick={() => setMobileTab(mobileTab === 'context' ? 'chat' : 'context')}

@@ -257,7 +257,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         if (form.scenario) context += `Scenario: ${form.scenario}\n`;
         if (form.first_mes) context += `First Message: ${form.first_mes}\n`;
         
-        toast('Enriching profile... (This may take a minute)', { icon: '🤖' });
+        const tId = toast('Enriching profile... (This may take a minute)', { icon: '🤖' });
         try {
             const resJob = await api.post('/api/jobs', {
                 task_type: "llm",
@@ -273,7 +273,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                 for (let i = 0; i < 180; i++) {
                     const jobStatus = await api.get(`/api/jobs/${jobId}`);
                     if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        toast.dismiss(toastId);
+                        toast.dismiss(tId);
                         
                         const raw = jobStatus.outputs[0].content.trim();
                         console.log("LLM Raw Output:", raw);
@@ -308,7 +308,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     if (jobStatus.status === 'failed') break;
                     await new Promise(r => setTimeout(r, 1000));
                 }
-                toast.dismiss(toastId);
+                toast.dismiss(tId);
                 toast.error('Enrichment failed or timed out');
             };
             if (resJob.id) {
@@ -316,7 +316,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             }
         } catch (e) {
             console.error("Enrich profile error:", e);
-            toast.dismiss(toastId);
+            toast.dismiss(tId);
             toast.error('Failed to enrich profile');
         }
     };
