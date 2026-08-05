@@ -30,25 +30,29 @@ const TavernMessage = memo(function TavernMessage({ content }) {
     const segments = parseTavernMessage(content);
     if (!segments.length) return <span>{content}</span>;
     return (
-        <span>
+        <div className="flex flex-col gap-2.5 w-full">
             {segments.map((seg, i) => {
                 if (seg.type === 'action') {
                     return (
-                        <em key={i} className="text-gray-400 italic font-medium opacity-90 mx-0.5">
+                        <div key={i} className="text-gray-400 italic font-medium opacity-90 text-[13px] px-1 py-0.5 leading-relaxed">
                             {seg.content}
-                        </em>
+                        </div>
                     );
                 }
                 if (seg.type === 'speech') {
                     return (
-                        <span key={i} className="text-gray-100 font-medium tracking-wide">
+                        <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-800 border border-gray-700/50 text-gray-100 font-medium tracking-wide shadow-sm w-fit max-w-full break-words">
                             "{seg.content}"
-                        </span>
+                        </div>
                     );
                 }
-                return <span key={i} className="text-gray-300">{seg.content}</span>;
+                return (
+                    <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-800/40 border border-gray-700/30 text-gray-300 text-sm shadow-sm w-fit max-w-full break-words leading-relaxed">
+                        {seg.content}
+                    </div>
+                );
             })}
-        </span>
+        </div>
     );
 });
 
@@ -795,28 +799,39 @@ export default function ChatWorkspace() {
                                                 : msg.role === 'system' ? '✦ System'
                                                 : (linkedCharacter?.name || 'AI')}
                                         </div>
-                                        <div className={clsx(
-                                            "px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words",
-                                            msg.role === 'user'
-                                                ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm"
-                                                : msg.role === 'system'
-                                                ? "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic"
-                                                : "bg-gray-800/50 text-gray-200 border border-gray-700/40 rounded-tl-sm"
-                                        )}>
-                                            {msg.role === 'char' || msg.role === 'assistant'
-                                                ? <TavernMessage content={msg.content} />
-                                                : <span className="whitespace-pre-wrap">{msg.content}</span>
-                                            }
-                                            {msg.image_path && (
-                                                <div className="mt-3">
-                                                    <img
-                                                        src={`/api/files/${msg.image_path}`}
-                                                        alt="Attachment"
-                                                        className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg"
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
+                                        {/* Dynamic Message Rendering */}
+                                        {(msg.role === 'char' || msg.role === 'assistant') ? (
+                                            <div className="flex flex-col gap-2 w-full">
+                                                <TavernMessage content={msg.content} />
+                                                {msg.image_path && (
+                                                    <div className="mt-1">
+                                                        <img
+                                                            src={`/api/files/${msg.image_path}`}
+                                                            alt="Attachment"
+                                                            className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className={clsx(
+                                                "px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words",
+                                                msg.role === 'user'
+                                                    ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm"
+                                                    : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic"
+                                            )}>
+                                                <span className="whitespace-pre-wrap">{msg.content}</span>
+                                                {msg.image_path && (
+                                                    <div className="mt-3">
+                                                        <img
+                                                            src={`/api/files/${msg.image_path}`}
+                                                            alt="Attachment"
+                                                            className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
