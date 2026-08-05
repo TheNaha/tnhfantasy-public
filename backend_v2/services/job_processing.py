@@ -429,9 +429,15 @@ async def finalize_successful_job(
         if not assistant_content and final_result.get("text"):
              assistant_content = final_result.get("text")
              
-        entity_id = job.metadata_.get("chat_id") if job.metadata_ else None
-        if not entity_id:
-            entity_id = final_result.get("chat_id")
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not chat_id:
+            chat_id = final_result.get("chat_id")
+
+        story_id = job.metadata_.get("story_id") if job.metadata_ else None
+        if not story_id:
+            story_id = final_result.get("story_id")
+
+        entity_id = chat_id if is_chat_reply else story_id
 
         # --- Agentic tool-call handling ---
         if is_chat_reply and assistant_output.get("tool_calls"):

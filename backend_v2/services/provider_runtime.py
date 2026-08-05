@@ -174,15 +174,17 @@ async def monitor_provider_changes():
                         session = get_session_sync()
                         try:
                             repo = ProviderRepository(session)
-                            return len(repo.get_enabled())
+                            providers = repo.get_enabled()
+                            image_workers = sum(1 for p in providers if p.worker_type != "llm")
+                            llm_workers = sum(1 for p in providers if p.worker_type == "llm")
+                            return image_workers, llm_workers
                         finally:
                             session.close()
 
-                    enabled_count = await asyncio.to_thread(count_enabled_providers)
-                    target_workers = max(1, enabled_count)
+                    image_workers, llm_workers = await asyncio.to_thread(count_enabled_providers)
 
-                    if target_workers != job_queue.max_workers:
-                        await job_queue.resize(target_workers)
+                    if image_workers != job_queue.image.max_workers or llm_workers != job_queue.llm.max_workers:
+                        job_queue.resize(image_workers, llm_workers)
                 except Exception as exc:
                     logger.error("provider_monitor_error", error=str(exc))
     except asyncio.CancelledError:

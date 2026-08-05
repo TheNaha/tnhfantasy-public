@@ -89,17 +89,16 @@ class LoadBalancerRuntimeState:
 
 
 
-# Global runtime state for the process
-_global_runtime_state = LoadBalancerRuntimeState()
-_llm_runtime_state = LoadBalancerRuntimeState()
+_runtime_states: dict[int, LoadBalancerRuntimeState] = {}
 _load_state_lock = threading.Lock()
 
+def get_runtime_state(state_id: int = 1) -> LoadBalancerRuntimeState:
+    if state_id not in _runtime_states:
+        _runtime_states[state_id] = LoadBalancerRuntimeState()
+    return _runtime_states[state_id]
+
 def get_global_runtime_state() -> LoadBalancerRuntimeState:
-    return _global_runtime_state
-
-def get_llm_runtime_state() -> LoadBalancerRuntimeState:
-    return _llm_runtime_state
-
+    return get_runtime_state(1)
 class LoadBalancer:
     """Load balances jobs across multiple serverless providers."""
 
@@ -230,23 +229,23 @@ class LoadBalancer:
     @classmethod
     async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: LoadBalancerRuntimeState | None = None):
         """Remove a provider's job counts and failures when the provider is deleted."""
-        state_store = runtime_state or _global_runtime_state
-        async with state_store.get_lock():
-            persist_needed = False
-            if provider_id in state_store.provider_job_counts:
-                state_store.provider_job_counts.pop(provider_id, None)
-                persist_needed = True
-            if provider_id in state_store.provider_failures:
-                state_store.provider_failures.pop(provider_id, None)
-                persist_needed = True
-            if persist_needed:
-                # We can't know the exact state_id easily without storing it in state,
-                # but usually provider state removal is done per LB instance anyway.
-                # However, this classmethod is static, so we default to 1, or we just remove from both.
-                # For safety, let's just use save_state_to_db for both if we must, but the original
-                # code just called it. Since we lack state_id here, we'll try saving to both.
-                cls.save_state_to_db(session, runtime_state=_global_runtime_state, state_id=1)
-                cls.save_state_to_db(session, runtime_state=_llm_runtime_state, state_id=2)
+        state_store = runtime_state or get_global_runtime_state()
+        
+        # If runtime_state is provided explicitly, only clean that one up.
+        # Otherwise, clean up all known runtime states.
+        stores_to_clean = [(None, runtime_state)] if runtime_state else list(_runtime_states.items())
+        
+        for state_id, store in stores_to_clean:
+            async with store.get_lock():
+                persist_needed = False
+                if provider_id in store.provider_job_counts:
+                    store.provider_job_counts.pop(provider_id, None)
+                    persist_needed = True
+                if provider_id in store.provider_failures:
+                    store.provider_failures.pop(provider_id, None)
+                    persist_needed = True
+                if persist_needed and state_id is not None:
+                    cls.save_state_to_db(session, runtime_state=store, state_id=state_id)
     
     def __init__(self, session: Session, strategy: str = "round-robin", runtime_state: LoadBalancerRuntimeState | None = None, state_id: int = 1):
         """

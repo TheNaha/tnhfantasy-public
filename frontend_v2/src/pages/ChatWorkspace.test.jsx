@@ -52,6 +52,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useLorebooks: (...a) => mockLorebooks(...a),
     useChat: () => ({ data: null }),
     useDeleteMessage: () => ({ mutateAsync: vi.fn() }),
+    useSuggestReply: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     getAvatarUrl: () => '',
 }));
 

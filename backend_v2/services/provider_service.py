@@ -376,6 +376,7 @@ class ProviderService:
         return {
             "id": provider.id,
             "type": provider.type,
+            "worker_type": provider.worker_type,
             "enabled": provider.enabled,
             "priority": provider.priority,
             "runtime_config": runtime_config,

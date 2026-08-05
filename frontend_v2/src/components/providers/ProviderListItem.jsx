@@ -171,7 +171,7 @@ function ProviderListItem({
                         )}
                     </div>
                     <div className="flex items-center gap-2 text-xs font-medium text-gray-500">
-                        <span className="uppercase tracking-widest">{provider.type} provider</span>
+                        <span className="uppercase tracking-widest">{provider.worker_type === 'llm' ? 'LLM' : provider.type} provider</span>
                         {credentialSummary.account_label && (
                             <>
                                 <span className="text-gray-700">·</span>

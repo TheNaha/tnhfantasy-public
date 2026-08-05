@@ -395,6 +395,54 @@ function CharacterDetailsModal({ character, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
+// Memoized Message Item
+// ---------------------------------------------------------------------------
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat }) {
+    return (
+        <div className={clsx(
+            "flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%]",
+            msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
+        )}>
+            {msg.role !== 'user' && msg.role !== 'system' && (
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                    {linkedCharacter?.has_avatar
+                        ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                        : <MessageSquare className="text-blue-400" size={12} />
+                    }
+                </div>
+            )}
+            <div className="flex flex-col max-w-full">
+                <div className={clsx("text-[10px] mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
+                    {msg.role === 'user'
+                        ? (activeChat?.persona_name || 'You')
+                        : msg.role === 'system' ? '✦ System'
+                        : (linkedCharacter?.name || 'AI')}
+                </div>
+                {(msg.role === 'char' || msg.role === 'assistant') ? (
+                    <div className="flex flex-col gap-2 w-full">
+                        <TavernMessage content={msg.content} />
+                        {msg.image_path && (
+                            <div className="mt-1">
+                                <img src={`/api/files/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", msg.role === 'user' ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
+                        <span className="whitespace-pre-wrap">{msg.content}</span>
+                        {msg.image_path && (
+                            <div className="mt-3">
+                                <img src={`/api/files/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+});
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 export default function ChatWorkspace() {
@@ -487,7 +535,7 @@ export default function ChatWorkspace() {
                 );
             }
         }
-    }, [location.state?.characterId, characters]);
+    }, [location.state?.characterId, characters, activeChatId, createChatMutation, setActiveChatId]);
 
     useEffect(() => {
         if (chats?.length > 0 && !activeChatId) {
@@ -498,24 +546,26 @@ export default function ChatWorkspace() {
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const streamText = event.text || event.data?.text;
-            const meta = event.metadata_ || event.metadata || {};
+            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
+            const eventId = event.id || event.data?.id;
             
-            if (meta.is_suggestion || event.id === suggestJobIdRef.current) {
+            if (meta.is_suggestion || eventId === suggestJobIdRef.current) {
                 if (streamText) setMessage(streamText);
                 return;
             }
             
-            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
-            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
+            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
             if (streamText && eventChatId) {
-                updateStreamingJob(event.id, { text: streamText, status: 'running', chatId: eventChatId });
+                updateStreamingJob(eventId, { text: streamText, status: 'running', chatId: eventChatId });
             }
         });
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-            const meta = event.metadata_ || event.metadata || {};
+            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
+            const eventId = event.id || event.data?.id;
             
-            if (meta.is_suggestion || event.id === suggestJobIdRef.current) {
+            if (meta.is_suggestion || eventId === suggestJobIdRef.current) {
                 // In case stream failed or was too fast, grab the final text from the result payload
                 const finalResult = event.result || event.data?.result || event.data;
                 if (finalResult) {
@@ -526,11 +576,11 @@ export default function ChatWorkspace() {
                 return;
             }
             
-            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
-            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
+            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
             
-            if (event.id) {
-                clearStreamingJob(event.id);
+            if (eventId) {
+                clearStreamingJob(eventId);
             }
             
             if (eventChatId) {
@@ -538,7 +588,7 @@ export default function ChatWorkspace() {
             }
             
             if (eventChatId === activeChatId) {
-                const eventType = event.type || meta.type;
+                const eventType = event.type || meta.type || event.data?.type;
                 if (eventType === 'chat_image') {
                     toast.success('Image generated!', { icon: '🖼️' });
                 }
@@ -546,12 +596,13 @@ export default function ChatWorkspace() {
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
-            const meta = event.metadata_ || event.metadata || {};
-            const existingJob = useWorldVaultStore.getState().streamingJobs[event.id];
-            const eventChatId = meta.chat_id || event.chat_id || existingJob?.chatId;
+            const meta = event.metadata_ || event.metadata || event.data?.metadata_ || event.data?.metadata || {};
+            const eventId = event.id || event.data?.id;
+            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const eventChatId = meta.chat_id || event.chat_id || event.data?.chat_id || existingJob?.chatId;
             
-            if (event.id) {
-                clearStreamingJob(event.id);
+            if (eventId) {
+                clearStreamingJob(eventId);
             }
             
             if (eventChatId === activeChatId) {
@@ -1024,65 +1075,7 @@ export default function ChatWorkspace() {
                     ) : (
                         <>
                             {messages.map((msg, idx) => (
-                                <div
-                                    key={msg.id || idx}
-                                    className={clsx(
-                                        "flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%]",
-                                        msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
-                                    )}
-                                >
-                                    {msg.role !== 'user' && msg.role !== 'system' && (
-                                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
-                                            {linkedCharacter?.has_avatar
-                                                ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
-                                                : <MessageSquare className="text-blue-400" size={12} />
-                                            }
-                                        </div>
-                                    )}
-                                    <div className="flex flex-col max-w-full">
-                                        <div className={clsx(
-                                            "text-[10px] mb-1",
-                                            msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400"
-                                        )}>
-                                            {msg.role === 'user'
-                                                ? (activeChat?.persona_name || 'You')
-                                                : msg.role === 'system' ? '✦ System'
-                                                : (linkedCharacter?.name || 'AI')}
-                                        </div>
-                                        {(msg.role === 'char' || msg.role === 'assistant') ? (
-                                            <div className="flex flex-col gap-2 w-full">
-                                                <TavernMessage content={msg.content} />
-                                                {msg.image_path && (
-                                                    <div className="mt-1">
-                                                        <img
-                                                            src={`/api/files/${msg.image_path}`}
-                                                            alt="Attachment"
-                                                            className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg"
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div className={clsx(
-                                                "px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words",
-                                                msg.role === 'user'
-                                                    ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm"
-                                                    : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic"
-                                            )}>
-                                                <span className="whitespace-pre-wrap">{msg.content}</span>
-                                                {msg.image_path && (
-                                                    <div className="mt-3">
-                                                        <img
-                                                            src={`/api/files/${msg.image_path}`}
-                                                            alt="Attachment"
-                                                            className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg"
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                <MessageItem key={msg.id || idx} msg={msg} linkedCharacter={linkedCharacter} activeChat={activeChat} />
                             ))}
 
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
@@ -1126,7 +1119,7 @@ export default function ChatWorkspace() {
                                 <div className="absolute bottom-full left-0 mb-2 w-full max-w-sm bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
                                     <div className="px-3 py-2 text-xs font-semibold text-gray-400 bg-gray-800/40 uppercase tracking-wider border-b border-gray-700/50">Commands</div>
                                     <div className="flex flex-col max-h-60 overflow-y-auto p-1">
-                                        {COMMANDS.filter(c => !activeCommand && c.cmd.startsWith(message.split(' ')[0].toLowerCase())).map((c, i) => (
+                                        {COMMANDS.filter(c => !activeCommand && c.cmd.startsWith(message.split(' ')[0].toLowerCase())).map((c) => (
                                             <button
                                                 key={c.cmd}
                                                 onClick={() => {
@@ -1322,9 +1315,16 @@ export default function ChatWorkspace() {
                             <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                                 <User size={12} /> Character
                             </h4>
-                            <a href="/characters" className="text-[9px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition-colors">
-                                Manage
-                            </a>
+                            <select
+                                value={activeChat?.character_id || ''}
+                                onChange={(e) => handleChatUpdate({ character_id: e.target.value || null })}
+                                className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none"
+                            >
+                                <option value="">None</option>
+                                {characters.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                            </select>
                         </div>
                         {linkedCharacter ? (
                             <div 

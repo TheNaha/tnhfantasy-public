@@ -13,7 +13,7 @@ import ConfirmationModal from '../components/ConfirmationModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, isLoading }) {
+const StorySidebar = React.memo(function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, onDeleteStory, isLoading }) {
     const [creating, setCreating] = useState(false);
     const [newTitle, setNewTitle] = useState('');
 
@@ -82,9 +82,9 @@ function StorySidebar({ stories, activeStoryId, onSelectStory, onCreateStory, on
             </div>
         </div>
     );
-}
+});
 
-function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, onDeleteChapter, isLoading }) {
+const ChapterSidebar = React.memo(function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateChapter, onDeleteChapter, isLoading }) {
     const [creating, setCreating] = useState(false);
 
     const handleCreate = async () => {
@@ -139,7 +139,7 @@ function ChapterSidebar({ chapters, activeChapterId, onSelectChapter, onCreateCh
             </div>
         </div>
     );
-}
+});
 
 export default function StorySandbox() {
     const [isPanelOpen, setIsPanelOpen] = useState(true);
@@ -603,7 +603,7 @@ export default function StorySandbox() {
                                                     ref={textareaRef}
                                                     value={editorContent}
                                                     onChange={(e) => setEditorContent(e.target.value)}
-                                                    className="w-full h-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
+                                                    className="story-editor-input w-full h-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
                                                     placeholder="Begin your story here (Markdown supported)..."
                                                     disabled={isStreaming}
                                                 />

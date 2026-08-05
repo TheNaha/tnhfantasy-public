@@ -6,7 +6,7 @@ from services.load_balancer import (
     LoadBalancer,
     LoadBalancerRuntimeState,
     get_global_runtime_state,
-    get_llm_runtime_state,
+    get_runtime_state,
 )
 
 
@@ -28,7 +28,7 @@ def create_load_balancer(
         return LoadBalancer(
             session,
             strategy=strategy or "priority",
-            runtime_state=runtime_state or get_llm_runtime_state(),
+            runtime_state=runtime_state or get_runtime_state(2),
             state_id=2
         )
     else:
