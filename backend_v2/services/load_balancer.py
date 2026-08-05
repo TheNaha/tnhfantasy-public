@@ -122,7 +122,7 @@ class LoadBalancer:
     @classmethod
     def _get_state_snapshot(cls, runtime_state: LoadBalancerRuntimeState | None = None) -> dict[str, Any]:
         """Return a copy of current in-memory balancer state."""
-        snapshot = (runtime_state or _global_runtime_state).snapshot()
+        snapshot = (runtime_state or get_global_runtime_state()).snapshot()
         snapshot.pop("model_availability_cache", None)
         snapshot.pop("initialized", None)
         return snapshot
@@ -147,7 +147,11 @@ class LoadBalancer:
     @classmethod
     def reset_state(cls, runtime_state: LoadBalancerRuntimeState | None = None):
         """Reset in-memory state. Intended for tests and controlled startup flows."""
-        (runtime_state or _global_runtime_state).reset()
+        if runtime_state:
+            runtime_state.reset()
+        else:
+            for state in _runtime_states.values():
+                state.reset()
         _model_availability_cache.clear()
         _provider_health_cache.clear()
     
@@ -161,7 +165,7 @@ class LoadBalancer:
         state_id: int = 1,
     ):
         """Load persisted state from database on startup."""
-        state_store = runtime_state or _global_runtime_state
+        state_store = runtime_state or get_global_runtime_state()
 
         if not force:
             with _load_state_lock:

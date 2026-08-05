@@ -102,6 +102,7 @@ class ProviderService:
         return {
             "id": payload.get("id") or getattr(existing, "id", None),
             "type": provider_type,
+            "worker_type": payload.get("worker_type"),
             "enabled": payload.get("enabled", getattr(existing, "enabled", True)),
             "priority": payload.get("priority", getattr(existing, "priority", 1)),
             "credentials": clean_dict(payload.get("credentials", getattr(existing, "credentials", {}))),

@@ -65,7 +65,7 @@ async def test_startup_application_autostarts_providers_after_cleanup():
          patch("api.lifecycle.monitor_provider_changes", new_callable=AsyncMock), \
          patch("api.lifecycle.start_background_task", side_effect=start_background_task_side_effect), \
          patch("services.gallery_indexer.gallery_indexer.start"), \
-         patch("api.lifecycle.job_queue") as job_queue:
+         patch("api.lifecycle.queue_manager") as job_queue:
         recover_pending_jobs.return_value = None
         recover_post_processing_jobs.return_value = None
         job_queue.start = AsyncMock()
