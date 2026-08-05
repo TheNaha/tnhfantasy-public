@@ -19,11 +19,14 @@ const CHARACTER_FIELDS = [
     { key: 'mes_example', label: 'Message Examples', type: 'textarea', placeholder: 'Example messages showing how the character speaks...' },
     { key: 'system_prompt', label: 'System Prompt', type: 'textarea', placeholder: 'Custom system prompt (leave empty to auto-generate from fields above)...' },
     { key: 'creator_notes', label: 'Creator Notes', type: 'textarea', placeholder: 'Notes about this character...' },
+    { key: 'default_time', label: 'Default Story Time', type: 'text', placeholder: 'e.g. Night, Morning...' },
+    { key: 'default_location', label: 'Default Location', type: 'text', placeholder: 'e.g. Tavern, Castle...' },
 ];
 
 const DEFAULT_FORM = {
     name: '', description: '', personality: '', scenario: '',
     first_mes: '', mes_example: '', system_prompt: '', creator_notes: '',
+    default_time: '', default_location: '',
     visual_tags: [], lora_triggers: [], voice_profile: '',
 };
 
@@ -39,6 +42,8 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                 mes_example: character.mes_example || '',
                 system_prompt: character.system_prompt || '',
                 creator_notes: character.creator_notes || '',
+                default_time: character.default_time || '',
+                default_location: character.default_location || '',
                 visual_tags: character.visual_tags || [],
                 lora_triggers: character.lora_triggers || [],
                 voice_profile: character.voice_profile || '',
@@ -239,6 +244,73 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
     };
 
+    const handleEnrichProfile = async () => {
+        if (!form.name.trim() && !form.description.trim()) {
+            toast.error('Provide at least a name or description first!');
+            return;
+        }
+
+        const sysPrompt = settings.charGenEnrichPrompt;
+        let context = `Name: ${form.name}\n`;
+        if (form.description) context += `Description: ${form.description}\n`;
+        if (form.personality) context += `Personality: ${form.personality}\n`;
+        if (form.scenario) context += `Scenario: ${form.scenario}\n`;
+        if (form.first_mes) context += `First Message: ${form.first_mes}\n`;
+        
+        toast('Enriching profile... (This may take a minute)', { icon: '🤖' });
+        try {
+            const resJob = await api.post('/api/jobs', {
+                task_type: "llm",
+                workflow: {
+                    messages: [
+                        { role: "system", content: sysPrompt },
+                        { role: "user", content: context }
+                    ]
+                }
+            });
+            
+            const pollJob = async (jobId) => {
+                for (let i = 0; i < 45; i++) {
+                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
+                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
+                        try {
+                            const raw = jobStatus.outputs[0].content.trim();
+                            // Find JSON block if wrapped
+                            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                            if (jsonMatch) {
+                                const parsed = JSON.parse(jsonMatch[0]);
+                                setForm(f => ({
+                                    ...f,
+                                    description: parsed.description || f.description,
+                                    personality: parsed.personality || f.personality,
+                                    scenario: parsed.scenario || f.scenario,
+                                    first_mes: parsed.first_mes || f.first_mes,
+                                    mes_example: parsed.mes_example || f.mes_example,
+                                    default_time: parsed.default_time || f.default_time,
+                                    default_location: parsed.default_location || f.default_location
+                                }));
+                                toast.success('Profile Enriched!');
+                            } else {
+                                toast.error('Failed to find JSON in AI output');
+                            }
+                        } catch {
+                            toast.error('Failed to parse JSON output');
+                        }
+                        return;
+                    }
+                    if (jobStatus.status === 'failed') break;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                toast.error('Enrichment failed or timed out');
+            };
+            if (resJob.id) {
+                pollJob(resJob.id);
+            }
+        } catch {
+            toast.error('Failed to enrich profile');
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -254,6 +326,13 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/50 shrink-0">
                         <div className="flex items-center gap-3">
                             <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
+                            <button 
+                                onClick={handleEnrichProfile}
+                                className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-yellow-500/20 text-yellow-300 rounded-lg hover:bg-yellow-500/30 transition-colors border border-yellow-500/30"
+                                title="Auto-fill missing information using AI"
+                            >
+                                <Sparkles size={14} /> Enrich
+                            </button>
                         </div>
                         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
                     </div>

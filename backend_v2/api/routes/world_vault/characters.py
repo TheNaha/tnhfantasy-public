@@ -31,6 +31,10 @@ class CharacterUpdateRequest(BaseModel):
     lora_triggers: list[str] | None = None
     voice_profile: str | None = None
     alternate_greetings: list[str] | None = None
+    checkpoint: str | None = None
+    lora: str | None = None
+    default_time: str | None = None
+    default_location: str | None = None
 
 
 def _character_to_dict(character: Character) -> dict:

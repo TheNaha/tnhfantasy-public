@@ -113,6 +113,8 @@ def build_chat_context(
     injection_mode: str = "system_prompt",
     max_context_tokens: int = DEFAULT_MAX_TOKENS,
     persona_name: str | None = None,
+    story_time: str | None = None,
+    story_location: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -160,6 +162,15 @@ def build_chat_context(
             system_prompt = inject_lorebooks_into_system_prompt(
                 system_prompt, entries, injection_mode
             )
+
+    if story_time or story_location:
+        world_state_parts = []
+        if story_time:
+            world_state_parts.append(f"Current Story Time: {story_time}")
+        if story_location:
+            world_state_parts.append(f"Current Location: {story_location}")
+        
+        system_prompt += f"\n\n[World State]\n" + "\n".join(world_state_parts)
 
     msg_list = []
     for msg in messages:

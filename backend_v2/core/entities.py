@@ -658,13 +658,17 @@ class Character(SQLModel, table=True):
     system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     
     visual_tags: list[str] = Field(default=[], sa_column=Column(JSON))
-    lora_triggers: list[str] = Field(default=[], sa_column=Column(JSON))
-    voice_profile: str | None = Field(default=None)
-    alternate_greetings: list[str] = Field(default_factory=list, sa_column=Column(JSON))  # Multiple opening messages (SillyTavern V2 alt_greetings)
+    lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    voice_profile: str | None = Field(default=None) # Optional voice model profile
+    alternate_greetings: list[str] | None = Field(default=None, sa_column=Column(JSON))
     
-    # Associated Models
+    # Generation Settings
     checkpoint: str | None = Field(default=None)
     lora: str | None = Field(default=None)
+    
+    # World Context
+    default_time: str | None = Field(default=None)
+    default_location: str | None = Field(default=None)
     
     avatar_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -676,8 +680,11 @@ class Chat(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
     name: str = Field(default="New Chat")
-    chat_type: str = Field(default="roleplay")
-    persona_name: str | None = Field(default=None)  # User's persona name for this chat (used for {{user}} substitution)
+    chat_type: str = Field(default="chat") # "chat" or "story"
+    persona_name: str | None = Field(default=None) # Used for {{user}} substitutions
+    story_time: str | None = Field(default=None)
+    story_location: str | None = Field(default=None)
+    
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

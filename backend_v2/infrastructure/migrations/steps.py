@@ -597,6 +597,50 @@ def _migration_add_chat_persona_name(conn) -> bool:
     _verify_required_columns(conn, "chats", {"persona_name"})
     return True
 
+def _migration_add_chat_story_time_location(conn) -> bool:
+    """Add story_time and story_location columns to chats table."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    applied = False
+
+    if "story_time" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN story_time VARCHAR"))
+        logger.info("migration_column_added", table="chats", column="story_time")
+        applied = True
+
+    if "story_location" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN story_location VARCHAR"))
+        logger.info("migration_column_added", table="chats", column="story_location")
+        applied = True
+
+    _verify_required_columns(conn, "chats", {"story_time", "story_location"})
+    return applied
+
+def _migration_add_character_default_time_location(conn) -> bool:
+    """Add default_time and default_location columns to characters table."""
+    inspector = inspect(conn)
+    if "characters" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+    applied = False
+
+    if "default_time" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN default_time VARCHAR"))
+        logger.info("migration_column_added", table="characters", column="default_time")
+        applied = True
+
+    if "default_location" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN default_location VARCHAR"))
+        logger.info("migration_column_added", table="characters", column="default_location")
+        applied = True
+
+    _verify_required_columns(conn, "characters", {"default_time", "default_location"})
+    return applied
+
 def _migration_add_character_alternate_greetings(conn) -> bool:
     """Add alternate_greetings column to characters table."""
     inspector = inspect(conn)
@@ -695,5 +739,15 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="012_add_character_checkpoint_lora",
             description="Add checkpoint and lora columns to characters for agentic generation",
             apply_fn=_migration_add_character_checkpoint_lora,
+        ),
+        MigrationStep(
+            version="013_add_chat_story_time_location",
+            description="Add story_time and story_location columns to chats for story context",
+            apply_fn=_migration_add_chat_story_time_location,
+        ),
+        MigrationStep(
+            version="014_add_character_default_time_location",
+            description="Add default_time and default_location columns to characters",
+            apply_fn=_migration_add_character_default_time_location,
         ),
     ]

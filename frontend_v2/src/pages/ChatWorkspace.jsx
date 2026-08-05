@@ -3,8 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
     MessageSquare, Send, Image as ImageIcon, Settings,
     PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
-    Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2,
-    User, X, ChevronRight, RotateCcw
+    Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
+    User, X, ChevronRight, RotateCcw, Clock, MapPin
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -112,10 +112,51 @@ function GreetingPickerModal({ character, onSelect, onClose }) {
 // NewChatModal — shown to configure character/lorebooks before creating chat
 // ---------------------------------------------------------------------------
 function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
-    const [selectedCharacter, setSelectedCharacter] = useState('');
+    const [selectedCharacter, setSelectedCharacter] = useState(null);
     const [selectedLorebooks, setSelectedLorebooks] = useState([]);
     const [chatName, setChatName] = useState('New Chat');
     const [personaName, setPersonaName] = useState('');
+    const [storyTime, setStoryTime] = useState('');
+    const [storyLocation, setStoryLocation] = useState('');
+
+    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        if (selectedCharacter) {
+            setChatName(`Chat with ${selectedCharacter.name}`);
+            
+            // Basic heuristic to suggest time/location
+            const scenario = selectedCharacter.scenario || '';
+            
+            if (selectedCharacter.default_time) {
+                setStoryTime(selectedCharacter.default_time);
+            } else if (scenario.toLowerCase().includes('night') || scenario.toLowerCase().includes('evening')) {
+                setStoryTime('Night');
+            } else if (scenario.toLowerCase().includes('morning') || scenario.toLowerCase().includes('day')) {
+                setStoryTime('Morning');
+            } else {
+                setStoryTime('');
+            }
+            
+            if (selectedCharacter.default_location) {
+                setStoryLocation(selectedCharacter.default_location);
+            } else if (scenario.toLowerCase().includes('tavern')) {
+                setStoryLocation('Tavern');
+            } else if (scenario.toLowerCase().includes('castle')) {
+                setStoryLocation('Castle');
+            } else if (scenario.toLowerCase().includes('forest')) {
+                setStoryLocation('Forest');
+            } else if (scenario.toLowerCase().includes('city')) {
+                setStoryLocation('City');
+            } else {
+                setStoryLocation('');
+            }
+        } else {
+            setChatName('New Chat');
+            setStoryTime('');
+            setStoryLocation('');
+        }
+    }, [selectedCharacter]);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const toggleLorebook = (id) => {
         if (selectedLorebooks.includes(id)) {
@@ -165,12 +206,11 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
                         />
                     </div>
 
-                    {/* Character Selection */}
                     <div className="space-y-2">
                         <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Character (Optional)</label>
                         <select
-                            value={selectedCharacter}
-                            onChange={(e) => setSelectedCharacter(e.target.value)}
+                            value={selectedCharacter?.id || ''}
+                            onChange={(e) => setSelectedCharacter(characters.find(c => c.id === e.target.value) || null)}
                             className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50 transition-colors appearance-none"
                         >
                             <option value="">No Character</option>
@@ -179,8 +219,18 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
                             ))}
                         </select>
                     </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                         <div className="space-y-2">
+                            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Time</label>
+                            <input type="text" value={storyTime} onChange={(e) => setStoryTime(e.target.value)} className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200" placeholder="e.g. Day" />
+                         </div>
+                         <div className="space-y-2">
+                            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Location</label>
+                            <input type="text" value={storyLocation} onChange={(e) => setStoryLocation(e.target.value)} className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200" placeholder="e.g. Tavern" />
+                         </div>
+                    </div>
 
-                    {/* Lorebooks Selection */}
                     {lorebooks.length > 0 && (
                         <div className="space-y-2">
                             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Context Lorebooks</label>
@@ -208,7 +258,7 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
                         Cancel
                     </button>
                     <button 
-                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter || null, personaName: personaName.trim() || null, selectedLorebooks })}
+                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, storyTime, storyLocation, selectedLorebooks })}
                         className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg"
                     >
                         Create
@@ -220,54 +270,115 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// PersonaField — inline editable persona name in the context panel
+// ContextField — inline editable generic field in the context panel
 // ---------------------------------------------------------------------------
-function PersonaField({ currentPersona, onSave }) {
+function ContextField({ label, icon: Icon, value, placeholder, onSave }) {
     const [editing, setEditing] = useState(false);
-    const [value, setValue] = useState(currentPersona || '');
+    const [localValue, setLocalValue] = useState(value || '');
     const inputRef = useRef(null);
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    useEffect(() => { setValue(currentPersona || ''); }, [currentPersona]);
+    useEffect(() => { setLocalValue(value || ''); }, [value]);
 
     const commit = () => {
         setEditing(false);
-        const trimmed = value.trim();
-        if (trimmed !== currentPersona) {
+        const trimmed = localValue.trim();
+        if (trimmed !== (value || '')) {
             onSave(trimmed || null);
+        } else {
+            setLocalValue(value || '');
         }
     };
 
-    if (!editing) {
-        return (
-            <button
-                onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 0); }}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800/40 hover:bg-gray-800/70 border border-white/5 hover:border-blue-500/30 transition-all w-full text-left group"
-            >
-                <User size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors shrink-0" />
-                <span className={clsx("text-sm truncate flex-1", currentPersona ? "text-gray-200" : "text-gray-500 italic")}>
-                    {currentPersona || 'Set your persona name...'}
-                </span>
-                <Edit3 size={12} className="text-gray-600 group-hover:text-blue-400 transition-colors shrink-0" />
-            </button>
-        );
-    }
-
     return (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800/70 border border-blue-500/40">
-            <User size={14} className="text-blue-400 shrink-0" />
-            <input
-                ref={inputRef}
-                value={value}
-                onChange={e => setValue(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setValue(currentPersona || ''); } }}
-                onBlur={commit}
-                placeholder="Your persona name ({{user}})"
-                className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-500 focus:outline-none"
-            />
-            <button onClick={commit} className="p-1 text-blue-400 hover:text-blue-300 rounded transition-colors">
-                <Check size={14} />
-            </button>
+        <div className="glass-panel p-4 rounded-xl border border-white/5">
+            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <Icon size={12} /> {label}
+            </h4>
+            {editing ? (
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={localValue}
+                    onChange={e => setLocalValue(e.target.value)}
+                    onBlur={commit}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') commit();
+                        if (e.key === 'Escape') {
+                            setLocalValue(value || '');
+                            setEditing(false);
+                        }
+                    }}
+                    className="w-full bg-gray-950/50 border border-blue-500/50 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                />
+            ) : (
+                <div
+                    onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+                    className="group cursor-pointer rounded-lg px-3 py-1.5 -mx-3 hover:bg-white/5 transition-colors flex items-center justify-between"
+                >
+                    <span className={clsx("text-sm truncate", value ? "text-gray-200" : "text-gray-500 italic")}>
+                        {value || placeholder}
+                    </span>
+                    <Edit2 size={12} className="text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CharacterDetailsModal — shows character description/persona in chat
+// ---------------------------------------------------------------------------
+function CharacterDetailsModal({ character, onClose }) {
+    if (!character) return null;
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+            <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-2xl bg-gray-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+                    <h3 className="font-bold text-gray-100 flex items-center gap-2">
+                        <User size={16} className="text-blue-400" />
+                        {character.name}
+                    </h3>
+                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                        <X size={18} />
+                    </button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+                    {character.description && (
+                        <div>
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Description</h4>
+                            <div className="bg-gray-800/50 rounded-xl p-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                                {character.description}
+                            </div>
+                        </div>
+                    )}
+                    {character.personality && (
+                        <div>
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Personality</h4>
+                            <div className="bg-gray-800/50 rounded-xl p-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                                {character.personality}
+                            </div>
+                        </div>
+                    )}
+                    {character.scenario && (
+                        <div>
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Scenario</h4>
+                            <div className="bg-gray-800/50 rounded-xl p-4 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                                {character.scenario}
+                            </div>
+                        </div>
+                    )}
+                    {(!character.description && !character.personality && !character.scenario) && (
+                        <p className="text-gray-500 italic text-center py-4">No detailed information available.</p>
+                    )}
+                </div>
+            </motion.div>
         </div>
     );
 }
@@ -276,8 +387,6 @@ function PersonaField({ currentPersona, onSave }) {
 // Main Component
 // ---------------------------------------------------------------------------
 export default function ChatWorkspace() {
-    // ---- Tab state (mobile bottom nav) ----
-    // 'chats' | 'chat' | 'context'
     const [mobileTab, setMobileTab] = useState('chat');
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
@@ -289,8 +398,9 @@ export default function ChatWorkspace() {
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
-    const [greetingModal, setGreetingModal] = useState(null); // { character, overrideGreeting: fn }
+    const [greetingModal, setGreetingModal] = useState(null);
     const [showNewChatModal, setShowNewChatModal] = useState(false);
+    const [showCharacterDetails, setShowCharacterDetails] = useState(false);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
@@ -321,7 +431,6 @@ export default function ChatWorkspace() {
 
     const { subscribe } = useWebSocket();
 
-    // ---- Navigate with character_id ----
     useEffect(() => {
         const characterId = location.state?.characterId;
         if (characterId && !activeChatId && !hasCreatedChatRef.current) {
@@ -331,7 +440,6 @@ export default function ChatWorkspace() {
                 (character.alternate_greetings?.length > 0);
             
             if (hasMultipleGreetings) {
-                // Show greeting picker before creating chat
                 setGreetingModal({
                     character,
                     onCreate: async (selectedGreeting) => {
@@ -358,7 +466,7 @@ export default function ChatWorkspace() {
                 );
             }
         }
-    }, [location.state?.characterId, characters]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [location.state?.characterId, characters]);
 
     useEffect(() => {
         if (chats?.length > 0 && !activeChatId) {
@@ -366,7 +474,6 @@ export default function ChatWorkspace() {
         }
     }, [chats, activeChatId, setActiveChatId]);
 
-    // ---- WebSocket subscriptions ----
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const meta = event.metadata_ || {};
@@ -399,12 +506,10 @@ export default function ChatWorkspace() {
         return () => { unsubProgress(); unsubCompleted(); unsubError(); };
     }, [subscribe, activeChatId, updateStreamingJob, clearStreamingJob, queryClient]);
 
-    // ---- Auto-scroll ----
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, streamingJobs]);
 
-    // ---- Auto-resize textarea ----
     useEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
@@ -412,7 +517,6 @@ export default function ChatWorkspace() {
         }
     }, [message]);
 
-    // ---- Handlers ----
     const handleSendMessage = useCallback(async () => {
         if (!message.trim() && !pendingAttachment) return;
 
@@ -527,26 +631,30 @@ export default function ChatWorkspace() {
     const confirmCreateChat = (config) => {
         if (createChatMutation.isPending) return;
         setShowNewChatModal(false);
-        const { chatName, characterId, personaName, selectedLorebooks: newSelectedLorebooks } = config;
+        const { chatName, characterId, personaName, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
         
         const character = characterId ? characters.find(c => c.id === characterId) : null;
         const hasMultipleGreetings = character && (character.alternate_greetings?.length > 0);
 
+        const payload = { 
+            name: chatName, 
+            character_id: characterId, 
+            persona_name: personaName, 
+            story_time: storyTime, 
+            story_location: storyLocation 
+        };
+
         if (hasMultipleGreetings) {
-            // Show greeting picker before finishing chat creation
             setGreetingModal({
                 character,
                 onCreate: async (selectedGreeting) => {
                     setGreetingModal(null);
                     const chat = await createChatMutation.mutateAsync({ 
-                        name: chatName, 
-                        character_id: characterId,
-                        persona_name: personaName,
+                        ...payload,
                         override_greeting: selectedGreeting 
                     });
                     setActiveChatId(chat.id);
                     setMobileTab('chat');
-                    // Sync lorebooks to global state
                     for (const lb of newSelectedLorebooks) {
                         if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
                     }
@@ -555,12 +663,11 @@ export default function ChatWorkspace() {
             });
         } else {
             createChatMutation.mutate(
-                { name: chatName, character_id: characterId, persona_name: personaName },
+                payload,
                 {
                     onSuccess: (chat) => {
                         setActiveChatId(chat.id);
                         setMobileTab('chat');
-                        // Sync lorebooks to global state
                         for (const lb of newSelectedLorebooks) {
                             if (!selectedLorebooks.includes(lb)) toggleLorebook(lb);
                         }
@@ -616,16 +723,13 @@ export default function ChatWorkspace() {
         setRenamingChatId(null);
     };
 
-    const handlePersonaSave = async (personaName) => {
+    const handleChatUpdate = (updates) => {
         if (!activeChatId) return;
-        try {
-            await updateChatMutation.mutateAsync({ chatId: activeChatId, persona_name: personaName });
-        } catch { toast.error('Failed to save persona'); }
+        updateChatMutation.mutate({ chatId: activeChatId, data: updates });
     };
 
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
-    // ---- Derive sidebar visibility (desktop vs mobile) ----
     const chatsSidebarVisible = mobileTab === 'chats';
     const contextPanelVisible = mobileTab === 'context';
     const chatVisible = mobileTab === 'chat';
@@ -637,12 +741,9 @@ export default function ChatWorkspace() {
             exit={{ opacity: 0 }}
             className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative"
         >
-            {/* === CHATS SIDEBAR === */}
             <div className={clsx(
                 "flex flex-col shrink-0 border-r border-white/5 bg-gray-900/70 transition-all duration-300",
-                // Desktop: always visible, fixed width
                 "lg:w-64 lg:flex lg:static lg:translate-x-0",
-                // Mobile: full-screen takeover when chats tab active
                 chatsSidebarVisible
                     ? "absolute inset-0 z-30 w-full flex"
                     : "hidden lg:flex"
@@ -690,7 +791,6 @@ export default function ChatWorkspace() {
                                             : "text-gray-400 hover:bg-white/5 border border-transparent"
                                     )}
                                 >
-                                    {/* Character avatar mini */}
                                     {(() => {
                                         const c = characters.find(ch => ch.id === chat.character_id);
                                         return (
@@ -714,16 +814,12 @@ export default function ChatWorkspace() {
                 </div>
             </div>
 
-            {/* === CHAT AREA === */}
             <div className={clsx(
                 "flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative",
-                // On mobile, hide when not on 'chat' tab
                 !chatVisible && "hidden lg:flex"
             )}>
-                {/* Chat Header */}
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                        {/* Avatar */}
                         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
                             {linkedCharacter?.has_avatar
                                 ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
@@ -748,7 +844,6 @@ export default function ChatWorkspace() {
                             </p>
                         </div>
                     </div>
-                    {/* Desktop toggle for context panel */}
                     <button
                         onClick={() => setMobileTab(mobileTab === 'context' ? 'chat' : 'context')}
                         className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
@@ -758,7 +853,6 @@ export default function ChatWorkspace() {
                     </button>
                 </div>
 
-                {/* Messages */}
                 <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 custom-scrollbar flex flex-col">
                     {!activeChatId && messages.length === 0 ? (
                         <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50 gap-3">
@@ -780,7 +874,6 @@ export default function ChatWorkspace() {
                                         msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
                                     )}
                                 >
-                                    {/* Avatar for AI/char messages */}
                                     {msg.role !== 'user' && msg.role !== 'system' && (
                                         <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
                                             {linkedCharacter?.has_avatar
@@ -799,7 +892,6 @@ export default function ChatWorkspace() {
                                                 : msg.role === 'system' ? '✦ System'
                                                 : (linkedCharacter?.name || 'AI')}
                                         </div>
-                                        {/* Dynamic Message Rendering */}
                                         {(msg.role === 'char' || msg.role === 'assistant') ? (
                                             <div className="flex flex-col gap-2 w-full">
                                                 <TavernMessage content={msg.content} />
@@ -836,7 +928,6 @@ export default function ChatWorkspace() {
                                 </div>
                             ))}
 
-                            {/* Streaming jobs */}
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
                                 jobData.status === 'running' && jobData.chatId === activeChatId && (
                                     <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start gap-1">
@@ -862,10 +953,8 @@ export default function ChatWorkspace() {
                     )}
                 </div>
 
-                {/* Input Area */}
                 <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-16 lg:pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
                     <div className="max-w-4xl mx-auto">
-                        {/* Attachment preview */}
                         {pendingAttachment && (
                             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-sm text-blue-300">
                                 <ImageIcon size={13} className="shrink-0" />
@@ -888,7 +977,6 @@ export default function ChatWorkspace() {
                                 style={{ minHeight: '52px', maxHeight: '200px' }}
                                 disabled={sendMessageMutation.isPending || !activeChatId}
                             />
-                            {/* Attach */}
                             <button
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploading}
@@ -977,14 +1065,34 @@ export default function ChatWorkspace() {
                         <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
                             <User size={12} /> Your Persona
                         </h4>
-                        <PersonaField
-                            currentPersona={activeChat?.persona_name}
-                            onSave={handlePersonaSave}
+                        <ContextField
+                            label="Your Persona"
+                            icon={User}
+                            value={activeChat?.persona_name}
+                            placeholder="Default (User)"
+                            onSave={val => handleChatUpdate({ persona_name: val })}
                         />
                         <p className="text-[10px] text-gray-600 mt-2 px-1">
                             Sets <code className="text-gray-500">{'{{user}}'}</code> in character prompts.
                         </p>
                     </div>
+                    
+                    {/* World State */}
+                    <ContextField
+                        label="Story Time"
+                        icon={Clock}
+                        value={activeChat?.story_time}
+                        placeholder="Not set"
+                        onSave={val => handleChatUpdate({ story_time: val })}
+                    />
+                    
+                    <ContextField
+                        label="Location"
+                        icon={MapPin}
+                        value={activeChat?.story_location}
+                        placeholder="Not set"
+                        onSave={val => handleChatUpdate({ story_location: val })}
+                    />
 
                     {/* Character */}
                     <div className="glass-panel p-4 rounded-xl border border-white/5">
@@ -997,16 +1105,20 @@ export default function ChatWorkspace() {
                             </a>
                         </div>
                         {linkedCharacter ? (
-                            <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
+                            <div 
+                                className="flex items-center gap-3 p-2 bg-gray-800/30 hover:bg-gray-800/60 rounded-lg cursor-pointer transition-colors group"
+                                onClick={() => setShowCharacterDetails(true)}
+                                title="View character details"
+                            >
+                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden border border-white/10 group-hover:border-blue-500/30 transition-colors">
                                     {linkedCharacter.has_avatar
                                         ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                         : <MessageSquare size={14} className="text-blue-400" />
                                     }
                                 </div>
-                                <div className="min-w-0">
-                                    <p className="text-sm text-gray-200 truncate font-medium">{linkedCharacter.name}</p>
-                                    <p className="text-[10px] text-gray-500">Linked to this chat</p>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm text-gray-200 truncate font-medium group-hover:text-blue-100 transition-colors">{linkedCharacter.name}</p>
+                                    <p className="text-[10px] text-blue-400 mt-0.5 opacity-80 group-hover:opacity-100">View details</p>
                                 </div>
                             </div>
                         ) : (
@@ -1129,6 +1241,12 @@ export default function ChatWorkspace() {
                         lorebooks={lorebooks}
                         onCreate={confirmCreateChat}
                         onClose={() => setShowNewChatModal(false)}
+                    />
+                )}
+                {showCharacterDetails && (
+                    <CharacterDetailsModal
+                        character={linkedCharacter}
+                        onClose={() => setShowCharacterDetails(false)}
                     />
                 )}
                 {greetingModal && (

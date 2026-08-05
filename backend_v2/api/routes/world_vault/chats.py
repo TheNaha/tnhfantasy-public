@@ -15,6 +15,8 @@ class UpdateChatRequest(BaseModel):
     name: str | None = None
     character_id: str | None = None
     persona_name: str | None = None
+    story_time: str | None = None
+    story_location: str | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -23,6 +25,8 @@ class CreateChatRequest(BaseModel):
     chat_type: str = "roleplay"
     persona_name: str | None = None
     override_greeting: str | None = None
+    story_time: str | None = None
+    story_location: str | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -44,7 +48,9 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         name=req.name,
         character_id=req.character_id,
         chat_type=req.chat_type,
-        persona_name=req.persona_name
+        persona_name=req.persona_name,
+        story_time=req.story_time,
+        story_location=req.story_location,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -182,7 +188,13 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             character = session.get(Character, chat.character_id)
             
         system_prompt, context = build_chat_context(
-            session, past_messages, character=character, lorebook_ids=request.lorebook_ids, persona_name=chat.persona_name
+            session, 
+            past_messages, 
+            character=character, 
+            lorebook_ids=request.lorebook_ids, 
+            persona_name=chat.persona_name,
+            story_time=chat.story_time,
+            story_location=chat.story_location
         )
             
         try:
