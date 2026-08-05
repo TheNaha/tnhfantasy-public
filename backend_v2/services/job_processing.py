@@ -436,7 +436,7 @@ async def finalize_successful_job(
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
                 from services.orchestrator_service import process_tool_calls_and_chain
-                from services.job_queue import job_queue
+                from services.job_queue import queue_manager
 
                 chained = await process_tool_calls_and_chain(
                     job=job,
@@ -445,7 +445,7 @@ async def finalize_successful_job(
                     chat_id=entity_id,
                     character_id=metadata.get("character_id"),
                     job_service=job_service,
-                    enqueue_fn=job_queue.enqueue,
+                    enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
                 )
                 if chained:
                     await load_balancer.release_job(provider_id)

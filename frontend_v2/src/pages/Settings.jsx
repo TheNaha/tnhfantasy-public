@@ -556,8 +556,13 @@ function ModelsSettings({ settings, onUpdate, onReset }) {
     );
 }
 
+import { useModelDirectories } from '../hooks/useModelDirectories';
+
 // Generator Settings Component
 function GeneratorSettings({ settings, onUpdate, onReset }) {
+    const { modelsByKey, loading } = useModelDirectories([{ directory: 'checkpoints', key: 'checkpoints' }]);
+    const checkpoints = modelsByKey.checkpoints || [];
+    
     return (
         <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
@@ -568,6 +573,22 @@ function GeneratorSettings({ settings, onUpdate, onReset }) {
             </div>
 
             <div className="grid gap-6">
+                <SettingGroup title="Default Checkpoint" description="Default model used for agentic image generation">
+                    <select
+                        value={settings.defaultCheckpoint || ''}
+                        onChange={(e) => onUpdate('defaultCheckpoint', e.target.value)}
+                        className="w-full md:w-64 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                        disabled={loading}
+                    >
+                        <option value="">System Default (SDXL)</option>
+                        {checkpoints.map(model => (
+                            <option key={typeof model === 'string' ? model : model.filename} value={typeof model === 'string' ? model : model.filename}>
+                                {typeof model === 'string' ? model : model.name || model.filename}
+                            </option>
+                        ))}
+                    </select>
+                </SettingGroup>
+
                 <SettingGroup title="Auto-Randomize Seed" description="Automatically randomize seed after each generation">
                     <label className="flex items-center gap-4 cursor-pointer group">
                         <div className="relative">

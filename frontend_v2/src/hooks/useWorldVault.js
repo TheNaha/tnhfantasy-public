@@ -111,6 +111,17 @@ export const useRenameChat = () => {
     });
 };
 
+export const useUpdateChat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, ...data }) => api.patch(`/api/v2/chats/${chatId}`, data),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
 export const useDeleteChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -332,3 +343,8 @@ export const useLLMAvailableModels = () => useQuery({
     staleTime: 1000 * 60 * 5,
 });
 
+export const useLLMProviders = () => useQuery({
+    queryKey: ['llm', 'providers'],
+    queryFn: () => api.get('/api/v2/llm/providers'),
+    staleTime: 1000 * 60 * 5,
+});

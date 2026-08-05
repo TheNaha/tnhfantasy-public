@@ -112,6 +112,7 @@ def build_chat_context(
     lorebook_ids: list[str] = None,
     injection_mode: str = "system_prompt",
     max_context_tokens: int = DEFAULT_MAX_TOKENS,
+    persona_name: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -127,6 +128,26 @@ def build_chat_context(
         else:
             system_prompt = build_character_system_prompt(character)
 
+        # Apply SillyTavern template variable substitution
+        import re
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        _replacements = {
+            "char": character.name or "",
+            "user": persona_name or "User",
+            "time": now.strftime("%H:%M"),
+            "date": now.strftime("%Y-%m-%d"),
+        }
+
+        def _replace(m):
+            key = m.group(1).strip().lower()
+            if key.startswith("random::"):
+                import random
+                opts = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
+                return random.choice(opts) if opts else m.group(0)
+            return _replacements.get(key, m.group(0))
+
+        system_prompt = re.sub(r"\{\{([^}]+)\}\}", _replace, system_prompt)
     if lorebook_ids:
         entries = []
         for lb_id in lorebook_ids:
@@ -142,7 +163,16 @@ def build_chat_context(
 
     msg_list = []
     for msg in messages:
-        role = "user" if msg.role == MessageRole.USER else "assistant"
+        if msg.role == MessageRole.USER:
+            role = "user"
+        elif msg.role == MessageRole.CHAR:
+            role = "assistant"
+        elif msg.role == MessageRole.SYSTEM:
+            # System-injected messages (tool results, narration) go as system role
+            role = "system"
+        else:
+            # STORY role beats are internal narrative metadata — skip in LLM context
+            continue
         msg_list.append({"role": role, "content": msg.content})
 
     if system_prompt:

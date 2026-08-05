@@ -582,6 +582,57 @@ def _migration_add_collection_character_id(conn) -> bool:
     _verify_required_columns(conn, "collections", {"character_id"})
     return True
 
+def _migration_add_chat_persona_name(conn) -> bool:
+    """Add persona_name column to chats table."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+
+    if "persona_name" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN persona_name VARCHAR"))
+        logger.info("migration_column_added", table="chats", column="persona_name")
+
+    _verify_required_columns(conn, "chats", {"persona_name"})
+    return True
+
+def _migration_add_character_alternate_greetings(conn) -> bool:
+    """Add alternate_greetings column to characters table."""
+    inspector = inspect(conn)
+    if "characters" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+
+    if "alternate_greetings" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN alternate_greetings JSON DEFAULT '[]'"))
+        logger.info("migration_column_added", table="characters", column="alternate_greetings")
+
+    _verify_required_columns(conn, "characters", {"alternate_greetings"})
+    return True
+
+
+def _migration_add_character_checkpoint_lora(conn) -> bool:
+    """Add checkpoint and lora columns to characters table."""
+    inspector = inspect(conn)
+    if "characters" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+
+    if "checkpoint" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN checkpoint VARCHAR DEFAULT NULL"))
+        logger.info("migration_column_added", table="characters", column="checkpoint")
+
+    if "lora" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN lora VARCHAR DEFAULT NULL"))
+        logger.info("migration_column_added", table="characters", column="lora")
+
+    _verify_required_columns(conn, "characters", {"checkpoint", "lora"})
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -629,5 +680,20 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="009_add_collection_character_id",
             description="Add character_id column to collections for character-scoped galleries",
             apply_fn=_migration_add_collection_character_id,
+        ),
+        MigrationStep(
+            version="010_add_chat_persona_name",
+            description="Add persona_name column to chats for per-chat persona",
+            apply_fn=_migration_add_chat_persona_name,
+        ),
+        MigrationStep(
+            version="011_add_character_alternate_greetings",
+            description="Add alternate_greetings column to characters for SillyTavern multiple opening messages",
+            apply_fn=_migration_add_character_alternate_greetings,
+        ),
+        MigrationStep(
+            version="012_add_character_checkpoint_lora",
+            description="Add checkpoint and lora columns to characters for agentic generation",
+            apply_fn=_migration_add_character_checkpoint_lora,
         ),
     ]

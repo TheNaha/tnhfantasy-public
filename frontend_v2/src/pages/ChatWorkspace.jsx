@@ -1,33 +1,185 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Send, Image as ImageIcon, Settings, PanelRightClose, PanelRightOpen, Paperclip, MoreVertical, Sparkles, Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2, User } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+    MessageSquare, Send, Image as ImageIcon, Settings,
+    PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
+    Plus, Loader2, Trash2, Edit3, BookOpen, Check, Wand2,
+    User, X, ChevronRight, RotateCcw
+} from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
 import api from '../api/client';
-import { useMessages, useChats, useSendMessage, useChat, useCreateChat, useDeleteChat, useLorebooks, useCharacters, useRenameChat, getAvatarUrl } from '../hooks/useWorldVault';
+import {
+    useMessages, useChats, useSendMessage, useChat,
+    useCreateChat, useDeleteChat, useLorebooks, useCharacters,
+    useRenameChat, useUpdateChat, getAvatarUrl
+} from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import ConfirmationModal from '../components/ConfirmationModal';
+import { parseTavernMessage } from '../utils/tavernUtils';
+import { useSettings } from '../store/settingsStore';
 
+// ---------------------------------------------------------------------------
+// TavernMessage — renders narrative/dialogue with segment styling
+// ---------------------------------------------------------------------------
+const TavernMessage = memo(function TavernMessage({ content }) {
+    const segments = parseTavernMessage(content);
+    if (!segments.length) return <span>{content}</span>;
+    return (
+        <span>
+            {segments.map((seg, i) => {
+                if (seg.type === 'action') {
+                    return (
+                        <em key={i} className="text-gray-400 not-italic opacity-80">
+                            {seg.content}
+                        </em>
+                    );
+                }
+                if (seg.type === 'speech') {
+                    return (
+                        <span key={i} className="text-gray-100">
+                            &ldquo;{seg.content}&rdquo;
+                        </span>
+                    );
+                }
+                return <span key={i}>{seg.content}</span>;
+            })}
+        </span>
+    );
+});
+
+// ---------------------------------------------------------------------------
+// GreetingPickerModal — shown when a character has multiple first messages
+// ---------------------------------------------------------------------------
+function GreetingPickerModal({ character, onSelect, onClose }) {
+    const greetings = [
+        character.first_mes,
+        ...(character.alternate_greetings || [])
+    ].filter(Boolean);
+
+    if (greetings.length <= 1) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+            <motion.div
+                initial={{ y: '100%', opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: '100%', opacity: 0 }}
+                className="w-full max-w-lg bg-gray-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+            >
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+                    <div>
+                        <h3 className="font-bold text-gray-100">Choose Opening</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            {character.name} has {greetings.length} opening messages. Pick one to start the chat.
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                        <X size={18} />
+                    </button>
+                </div>
+                <div className="p-4 space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
+                    {greetings.map((greeting, idx) => (
+                        <button
+                            key={idx}
+                            onClick={() => onSelect(greeting)}
+                            className="w-full text-left p-4 rounded-xl bg-gray-800/50 border border-white/5 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all text-sm text-gray-300 group"
+                        >
+                            <div className="flex items-start gap-3">
+                                <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded shrink-0 mt-0.5">
+                                    {idx === 0 ? 'Default' : `Alt ${idx}`}
+                                </span>
+                                <p className="line-clamp-3 leading-relaxed">{greeting}</p>
+                                <ChevronRight size={16} className="text-gray-600 group-hover:text-blue-400 shrink-0 mt-0.5 transition-colors" />
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </motion.div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PersonaField — inline editable persona name in the context panel
+// ---------------------------------------------------------------------------
+function PersonaField({ chatId, currentPersona, onSave }) {
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(currentPersona || '');
+    const inputRef = useRef(null);
+
+    useEffect(() => { setValue(currentPersona || ''); }, [currentPersona]);
+
+    const commit = () => {
+        setEditing(false);
+        const trimmed = value.trim();
+        if (trimmed !== currentPersona) {
+            onSave(trimmed || null);
+        }
+    };
+
+    if (!editing) {
+        return (
+            <button
+                onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800/40 hover:bg-gray-800/70 border border-white/5 hover:border-blue-500/30 transition-all w-full text-left group"
+            >
+                <User size={14} className="text-gray-500 group-hover:text-blue-400 transition-colors shrink-0" />
+                <span className={clsx("text-sm truncate flex-1", currentPersona ? "text-gray-200" : "text-gray-500 italic")}>
+                    {currentPersona || 'Set your persona name...'}
+                </span>
+                <Edit3 size={12} className="text-gray-600 group-hover:text-blue-400 transition-colors shrink-0" />
+            </button>
+        );
+    }
+
+    return (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800/70 border border-blue-500/40">
+            <User size={14} className="text-blue-400 shrink-0" />
+            <input
+                ref={inputRef}
+                value={value}
+                onChange={e => setValue(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setValue(currentPersona || ''); } }}
+                onBlur={commit}
+                placeholder="Your persona name ({{user}})"
+                className="flex-1 bg-transparent text-sm text-gray-200 placeholder-gray-500 focus:outline-none"
+            />
+            <button onClick={commit} className="p-1 text-blue-400 hover:text-blue-300 rounded transition-colors">
+                <Check size={14} />
+            </button>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
 export default function ChatWorkspace() {
-    const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+    // ---- Tab state (mobile bottom nav) ----
+    // 'chats' | 'chat' | 'context'
+    const [mobileTab, setMobileTab] = useState('chat');
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
     const [deleteTarget, setDeleteTarget] = useState(null);
-    const hasCreatedChatRef = useRef(false); // guard against double-fire on navigate
+    const hasCreatedChatRef = useRef(false);
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+    const [greetingModal, setGreetingModal] = useState(null); // { character, overrideGreeting: fn }
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
+    const textareaRef = useRef(null);
     const location = useLocation();
+    
+    const settings = useSettings();
 
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
@@ -48,28 +200,48 @@ export default function ChatWorkspace() {
     const createChatMutation = useCreateChat();
     const deleteChatMutation = useDeleteChat();
     const renameChatMutation = useRenameChat();
+    const updateChatMutation = useUpdateChat();
 
     const { subscribe } = useWebSocket();
 
-    // Handle character_id from navigation state (e.g. from Characters page "Chat" button)
+    // ---- Navigate with character_id ----
     useEffect(() => {
         const characterId = location.state?.characterId;
         if (characterId && !activeChatId && !hasCreatedChatRef.current) {
-            hasCreatedChatRef.current = true; // prevent double-fire
-            createChatMutation.mutate(
-                { name: 'New Chat', character_id: characterId },
-                {
-                    onSuccess: (chat) => {
+            hasCreatedChatRef.current = true;
+            const character = characters.find(c => c.id === characterId);
+            const hasMultipleGreetings = character && 
+                (character.alternate_greetings?.length > 0);
+            
+            if (hasMultipleGreetings) {
+                // Show greeting picker before creating chat
+                setGreetingModal({
+                    character,
+                    onCreate: async (selectedGreeting) => {
+                        setGreetingModal(null);
+                        const chat = await createChatMutation.mutateAsync({ 
+                            name: 'New Chat', 
+                            character_id: characterId,
+                            _override_greeting: selectedGreeting 
+                        });
                         setActiveChatId(chat.id);
                         window.history.replaceState({}, document.title);
-                    },
-                    onError: () => {
-                        hasCreatedChatRef.current = false; // allow retry on failure
                     }
-                }
-            );
+                });
+            } else {
+                createChatMutation.mutate(
+                    { name: 'New Chat', character_id: characterId },
+                    {
+                        onSuccess: (chat) => {
+                            setActiveChatId(chat.id);
+                            window.history.replaceState({}, document.title);
+                        },
+                        onError: () => { hasCreatedChatRef.current = false; }
+                    }
+                );
+            }
         }
-    }, [location.state?.characterId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [location.state?.characterId, characters]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (chats?.length > 0 && !activeChatId) {
@@ -77,51 +249,56 @@ export default function ChatWorkspace() {
         }
     }, [chats, activeChatId, setActiveChatId]);
 
+    // ---- WebSocket subscriptions ----
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const job = event.data?.job || event;
-            const streamText = job.text || job.metadata_?.text || job.output?.text || job.progress_text;
-            if (streamText && job.metadata_?.chat_id === activeChatId) {
-                updateStreamingJob(job.id, { text: streamText, status: job.status, chatId: activeChatId });
+            const meta = event.metadata_ || {};
+            const streamText = event.text || event.data?.text;
+            if (streamText && meta.chat_id === activeChatId) {
+                updateStreamingJob(event.id, { text: streamText, status: 'running', chatId: activeChatId });
             }
         });
-        
+
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-            const job = event.data?.job || event;
-            if (job.metadata_?.chat_id === activeChatId) {
-                const eventType = job.type || job.metadata_?.type;
-                if (eventType === 'chat_image' || eventType === 'story_image') {
+            const meta = event.metadata_ || {};
+            if (meta.chat_id === activeChatId) {
+                const eventType = event.type || meta.type;
+                if (eventType === 'chat_image') {
                     toast.success('Image generated!', { icon: '🖼️' });
-                } else if (eventType === 'tool_execution') {
-                    toast.success('Tool executed: ' + (job.tool_name || 'unknown'), { icon: '🔧' });
                 }
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
-                if (job.id) clearStreamingJob(job.id);
+                if (event.id) clearStreamingJob(event.id);
             }
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
-            const job = event.data?.job || event;
-            if (job.metadata_?.chat_id === activeChatId) {
+            const meta = event.metadata_ || {};
+            if (meta.chat_id === activeChatId) {
                 toast.error('AI response failed. Please try again.');
-                if (job.id) clearStreamingJob(job.id);
+                if (event.id) clearStreamingJob(event.id);
             }
         });
 
-        return () => {
-            unsubProgress();
-            unsubCompleted();
-            unsubError();
-        };
+        return () => { unsubProgress(); unsubCompleted(); unsubError(); };
     }, [subscribe, activeChatId, updateStreamingJob, clearStreamingJob, queryClient]);
 
+    // ---- Auto-scroll ----
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, streamingJobs]);
 
-    const handleSendMessage = async () => {
+    // ---- Auto-resize textarea ----
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+        }
+    }, [message]);
+
+    // ---- Handlers ----
+    const handleSendMessage = useCallback(async () => {
         if (!message.trim() && !pendingAttachment) return;
-        
+
         let chatIdToUse = activeChatId;
         if (!chatIdToUse) {
             try {
@@ -142,7 +319,14 @@ export default function ChatWorkspace() {
         try {
             const res = await sendMessageMutation.mutateAsync({
                 chatId: chatIdToUse,
-                message: { role: 'user', content: msgContent, lorebook_ids: selectedLorebooks, image_path: attachmentFilename, agentic: agenticMode }
+                message: { 
+                    role: 'user', 
+                    content: msgContent, 
+                    lorebook_ids: selectedLorebooks, 
+                    image_path: attachmentFilename, 
+                    agentic: agenticMode,
+                    generator_checkpoint: settings.generator?.defaultCheckpoint || null
+                }
             });
             if (res.job_id) {
                 updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
@@ -150,112 +334,95 @@ export default function ChatWorkspace() {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
         } catch (error) {
             toast.error('Failed to send message');
-            console.error('Failed to send message:', error);
         }
-    };
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings]);
 
-    const handleKeyDown = (e) => {
+    const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSendMessage();
         }
-    };
+    }, [handleSendMessage]);
 
     const canSend = (message.trim() || pendingAttachment) && !sendMessageMutation.isPending;
 
     const handleGenerateScene = async () => {
         if (!activeChatId) return;
         setIsGeneratingScene(true);
-        toast.success('Generating scene... This may take a moment.', { icon: '📸' });
-        
+        toast.success('Generating scene...', { icon: '📸' });
         try {
-            const res = await fetch(`/api/world_vault/chats/${activeChatId}/scene`, {
-                method: 'POST'
-            });
-            if (!res.ok) throw new Error('Failed to generate scene');
+            const res = await fetch(`/api/world_vault/chats/${activeChatId}/scene`, { method: 'POST' });
+            if (!res.ok) throw new Error('Failed');
             const data = await res.json();
-            
             if (data.job_id) {
                 updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId });
             }
-        } catch (error) {
-            console.error('Generate scene error:', error);
+        } catch {
             toast.error('Failed to generate scene');
         } finally {
             setIsGeneratingScene(false);
         }
     };
 
-
     const triggerAutoTitle = async () => {
         if (!activeChatId) return;
         setIsGeneratingTitle(true);
         toast('Generating title...', { icon: '🤖' });
-        
         try {
             const chatHistory = messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
             const resJob = await api.post('/api/jobs', {
-                task_type: "llm",
+                task_type: 'llm',
                 workflow: {
                     messages: [
-                        { role: "system", content: "You are a helpful assistant. Generate a short, catchy title (max 5 words) for the following chat history. Output ONLY the title." },
-                        { role: "user", content: chatHistory || "A new conversation." }
+                        { role: 'system', content: 'Generate a short, catchy title (max 5 words) for the following chat. Output ONLY the title, no quotes.' },
+                        { role: 'user', content: chatHistory || 'A new conversation.' }
                     ]
                 }
             });
-            
-            const pollJob = async (jobId) => {
+            const poll = async (jobId) => {
                 for (let i = 0; i < 30; i++) {
-                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
-                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        const newTitle = jobStatus.outputs[0].content.replace(/["']/g, '');
+                    const s = await api.get(`/api/jobs/${jobId}`);
+                    if (s.status === 'completed' && s.outputs?.length > 0) {
+                        const newTitle = s.outputs[0].content.replace(/["']/g, '');
                         await renameChatMutation.mutateAsync({ chatId: activeChatId, name: newTitle });
                         toast.success('Title generated!');
                         setIsGeneratingTitle(false);
                         return;
                     }
-                    if (jobStatus.status === 'failed') break;
+                    if (s.status === 'failed') break;
                     await new Promise(r => setTimeout(r, 1000));
                 }
                 toast.error('Title generation failed');
                 setIsGeneratingTitle(false);
             };
-            if (resJob.id) {
-                pollJob(resJob.id);
-            } else {
-                setIsGeneratingTitle(false);
-            }
+            if (resJob.id) poll(resJob.id);
+            else setIsGeneratingTitle(false);
         } catch {
             toast.error('Failed to generate title');
             setIsGeneratingTitle(false);
         }
     };
 
-    const handleCreateChat = () => {
-        if (createChatMutation.isPending) return; // prevent double-click
-        createChatMutation.mutate({ name: 'New Chat' }, {
-            onSuccess: (chat) => {
-                setActiveChatId(chat.id);
-                toast.success('New chat created');
-            },
-            onError: () => toast.error('Failed to create chat')
-        });
-    };
-
-    const handleAttachmentClick = () => {
-        fileInputRef.current?.click();
+    const handleCreateChat = (characterId = null) => {
+        if (createChatMutation.isPending) return;
+        createChatMutation.mutate(
+            { name: 'New Chat', ...(characterId ? { character_id: characterId } : {}) },
+            {
+                onSuccess: (chat) => {
+                    setActiveChatId(chat.id);
+                    setMobileTab('chat');
+                    toast.success('New chat created');
+                },
+                onError: () => toast.error('Failed to create chat')
+            }
+        );
     };
 
     const handleAttachmentChange = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         e.target.value = '';
-
-        if (file.size > 20 * 1024 * 1024) {
-            toast.error('File too large (max 20MB)');
-            return;
-        }
-
+        if (file.size > 20 * 1024 * 1024) { toast.error('File too large (max 20MB)'); return; }
         setIsUploading(true);
         try {
             const formData = new FormData();
@@ -268,10 +435,6 @@ export default function ChatWorkspace() {
         } finally {
             setIsUploading(false);
         }
-    };
-
-    const removeAttachment = () => {
-        setPendingAttachment(null);
     };
 
     const handleDeleteChat = async () => {
@@ -289,389 +452,507 @@ export default function ChatWorkspace() {
         setDeleteTarget(null);
     };
 
-    const startRename = (chat) => {
-        setRenamingChatId(chat.id);
-        setRenameValue(chat.name || '');
-    };
-
+    const startRename = (chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); };
     const finishRename = async () => {
         if (renamingChatId && renameValue.trim()) {
             try {
                 await renameChatMutation.mutateAsync({ chatId: renamingChatId, name: renameValue.trim() });
-                toast.success('Chat renamed');
-            } catch {
-                toast.error('Failed to rename chat');
-            }
+            } catch { toast.error('Failed to rename'); }
         }
         setRenamingChatId(null);
     };
 
+    const handlePersonaSave = async (personaName) => {
+        if (!activeChatId) return;
+        try {
+            await updateChatMutation.mutateAsync({ chatId: activeChatId, persona_name: personaName });
+        } catch { toast.error('Failed to save persona'); }
+    };
+
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
+
+    // ---- Derive sidebar visibility (desktop vs mobile) ----
+    const chatsSidebarVisible = mobileTab === 'chats';
+    const contextPanelVisible = mobileTab === 'context';
+    const chatVisible = mobileTab === 'chat';
 
     return (
         <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8"
+            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative"
         >
-            {/* Chats Sidebar Overlay for Mobile */}
-            <AnimatePresence>
-                {isSidebarOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-40 bg-black/50 md:hidden"
-                        onClick={() => setIsSidebarOpen(false)}
-                    />
-                )}
-            </AnimatePresence>
-
-            {/* Sidebar for Chats */}
+            {/* === CHATS SIDEBAR === */}
             <div className={clsx(
-                "absolute md:static inset-y-0 left-0 z-50 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0 w-64 border-r border-white/5 bg-gray-900/60",
-                isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+                "flex flex-col shrink-0 border-r border-white/5 bg-gray-900/70 transition-all duration-300",
+                // Desktop: always visible, fixed width
+                "lg:w-64 lg:flex lg:static lg:translate-x-0",
+                // Mobile: full-screen takeover when chats tab active
+                chatsSidebarVisible
+                    ? "absolute inset-0 z-30 w-full flex"
+                    : "hidden lg:flex"
             )}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
-                    <h3 className="font-semibold text-gray-200">Chats</h3>
-                    <button onClick={handleCreateChat} className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+                    <h3 className="font-semibold text-gray-200 tracking-wide">Chats</h3>
+                    <button
+                        onClick={() => handleCreateChat()}
+                        className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                        title="New chat"
+                    >
                         <Plus size={18} />
                     </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+
+                <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
                     {isChatsLoading ? (
-                        <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" /></div>
-                    ) : (
-                        chats?.map(chat => (
-                            <div key={chat.id} className="relative group">
-                                {renamingChatId === chat.id ? (
-                                    <div className="flex items-center gap-1 px-1">
-                                        <input
-                                            autoFocus
-                                            value={renameValue}
-                                            onChange={e => setRenameValue(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter') finishRename(); if (e.key === 'Escape') setRenamingChatId(null); }}
-                                            onBlur={finishRename}
-                                            className="flex-1 bg-gray-800 border border-blue-500/50 rounded px-2 py-1 text-sm text-gray-200 focus:outline-none"
-                                        />
+                        <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" size={20} /></div>
+                    ) : chats?.length === 0 ? (
+                        <div className="text-center py-8 text-gray-600 text-sm px-4">
+                            <MessageSquare size={28} className="mx-auto mb-2 opacity-40" />
+                            <p>No chats yet</p>
+                            <p className="text-xs mt-1">Click + to create one</p>
+                        </div>
+                    ) : chats?.map(chat => (
+                        <div key={chat.id} className="relative group">
+                            {renamingChatId === chat.id ? (
+                                <div className="flex items-center gap-1 px-1">
+                                    <input
+                                        autoFocus
+                                        value={renameValue}
+                                        onChange={e => setRenameValue(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') finishRename(); if (e.key === 'Escape') setRenamingChatId(null); }}
+                                        onBlur={finishRename}
+                                        className="flex-1 bg-gray-800 border border-blue-500/50 rounded px-2 py-1 text-sm text-gray-200 focus:outline-none"
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => { setActiveChatId(chat.id); setMobileTab('chat'); }}
+                                    className={clsx(
+                                        "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5",
+                                        activeChatId === chat.id
+                                            ? "bg-blue-500/20 text-blue-300 border border-blue-500/20"
+                                            : "text-gray-400 hover:bg-white/5 border border-transparent"
+                                    )}
+                                >
+                                    {/* Character avatar mini */}
+                                    {(() => {
+                                        const c = characters.find(ch => ch.id === chat.character_id);
+                                        return (
+                                            <div className="w-6 h-6 rounded-full bg-gray-700/60 flex items-center justify-center shrink-0 overflow-hidden border border-white/5">
+                                                {c?.has_avatar
+                                                    ? <img src={getAvatarUrl(c.id)} alt="" className="w-full h-full object-cover" />
+                                                    : <MessageSquare size={10} className="text-gray-500" />
+                                                }
+                                            </div>
+                                        );
+                                    })()}
+                                    <span className="truncate flex-1">{chat.name || 'Unnamed Chat'}</span>
+                                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                        <button onClick={e => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
+                                        <button onClick={e => { e.stopPropagation(); setDeleteTarget(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
                                     </div>
-                                ) : (
-                                    <button
-                                        onClick={() => { setActiveChatId(chat.id); setIsSidebarOpen(false); }}
-                                        className={clsx(
-                                            "w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between",
-                                            activeChatId === chat.id ? "bg-blue-500/20 text-blue-300" : "text-gray-400 hover:bg-white/5"
-                                        )}
-                                    >
-                                        <span className="truncate">{chat.name || 'Unnamed Chat'}</span>
-                                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
-                                            <button onClick={(e) => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={12} /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); setDeleteTarget(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={12} /></button>
-                                        </div>
-                                    </button>
-                                )}
-                            </div>
-                        ))
-                    )}
+                                </button>
+                            )}
+                        </div>
+                    ))}
                 </div>
             </div>
 
-            {/* Left Panel: Chat Interface */}
-            <div className="flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative">
+            {/* === CHAT AREA === */}
+            <div className={clsx(
+                "flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative",
+                // On mobile, hide when not on 'chat' tab
+                !chatVisible && "hidden lg:flex"
+            )}>
                 {/* Chat Header */}
-                <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-4 lg:px-6 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
+                <div className="h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                        <div className="md:hidden">
-                            <button onClick={() => setIsSidebarOpen(true)} className="p-1.5 sm:p-2 text-gray-400 hover:text-white transition-colors">
-                                <MessageSquare size={20} />
-                            </button>
-                        </div>
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 hidden sm:flex">
-                            {linkedCharacter?.has_avatar ? (
-                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
-                            ) : (
-                                <MessageSquare className="text-blue-400" size={20} />
-                            )}
+                        {/* Avatar */}
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
+                            {linkedCharacter?.has_avatar
+                                ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                                : <MessageSquare className="text-blue-400" size={16} />
+                            }
                         </div>
                         <div className="min-w-0 flex-1">
-                            <h2 className="font-semibold text-gray-100 flex items-center gap-2">
+                            <h2 className="font-semibold text-gray-100 flex items-center gap-2 text-sm sm:text-base">
                                 <span className="truncate">{activeChat?.name || 'Roleplay Session'}</span>
-                                <button 
-                                    onClick={triggerAutoTitle} 
+                                <button
+                                    onClick={triggerAutoTitle}
                                     disabled={isGeneratingTitle}
-                                    className="ml-1 sm:ml-2 text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
-                                    title="Auto-generate chat title using AI"
+                                    className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded hover:bg-blue-500/20 transition-colors flex items-center gap-1 disabled:opacity-50 shrink-0"
                                 >
-                                    {isGeneratingTitle ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                                    <span className="hidden sm:inline">Auto Title</span>
+                                    {isGeneratingTitle ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
+                                    <span className="hidden sm:inline">Title</span>
                                 </button>
                             </h2>
-                            <p className="text-[10px] sm:text-xs text-gray-500 truncate min-w-0">
-                                {linkedCharacter ? `Playing as ${linkedCharacter.name}` : (activeChatId ? `Chat ID: ${activeChatId.slice(0, 8)}...` : 'No chat selected')}
+                            <p className="text-[10px] text-gray-500 truncate">
+                                {linkedCharacter ? `${linkedCharacter.name}` : (activeChatId ? 'No character' : 'Select a chat')}
+                                {activeChat?.persona_name && ` · as ${activeChat.persona_name}`}
                             </p>
                         </div>
                     </div>
-                    
-                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-                        <button 
-                            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-                            className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
-                            title="Toggle Context Panel"
-                        >
-                            {isRightPanelOpen ? <PanelRightClose size={20} /> : <PanelRightOpen size={20} />}
-                        </button>
-                    </div>
+                    {/* Desktop toggle for context panel */}
+                    <button
+                        onClick={() => setMobileTab(mobileTab === 'context' ? 'chat' : 'context')}
+                        className="p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-lg transition-colors hidden lg:flex"
+                        title="Toggle Context Panel"
+                    >
+                        <Settings size={18} />
+                    </button>
                 </div>
 
-                {/* Chat Messages Area */}
-                <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6 custom-scrollbar flex flex-col">
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 custom-scrollbar flex flex-col">
                     {!activeChatId && messages.length === 0 ? (
-                        <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50">
-                            <Sparkles className="w-12 h-12 text-blue-500 mb-4 opacity-50" />
-                            <h3 className="text-lg font-medium text-gray-300">Welcome to the Chat Workspace</h3>
-                            <p className="text-sm text-gray-500 max-w-md mt-2">
-                                Select or create a chat to begin. The AI can automatically generate images, audio, and tools during the conversation.
-                            </p>
+                        <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50 gap-3">
+                            <Sparkles className="w-10 h-10 text-blue-500 opacity-50" />
+                            <div>
+                                <h3 className="text-base font-medium text-gray-300">Chat Workspace</h3>
+                                <p className="text-sm text-gray-500 max-w-xs mt-1">
+                                    Select a chat or create a new one to begin your roleplay.
+                                </p>
+                            </div>
                         </div>
                     ) : (
                         <>
-                        {messages.map((msg, idx) => (
-                                <div key={msg.id || idx} className={clsx(
-                                    "flex gap-3 max-w-[85%]",
-                                    msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
-                                )}>
-                                    {/* Avatar bubble for char/ai messages */}
+                            {messages.map((msg, idx) => (
+                                <div
+                                    key={msg.id || idx}
+                                    className={clsx(
+                                        "flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%]",
+                                        msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
+                                    )}
+                                >
+                                    {/* Avatar for AI/char messages */}
                                     {msg.role !== 'user' && msg.role !== 'system' && (
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
-                                            {linkedCharacter?.has_avatar ? (
-                                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <MessageSquare className="text-blue-400" size={14} />
-                                            )}
+                                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                                            {linkedCharacter?.has_avatar
+                                                ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                                                : <MessageSquare className="text-blue-400" size={12} />
+                                            }
                                         </div>
                                     )}
-                                    <div className="flex flex-col">
+                                    <div className="flex flex-col max-w-full">
                                         <div className={clsx(
-                                            "text-xs mb-1",
+                                            "text-[10px] mb-1",
                                             msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400"
                                         )}>
-                                            {msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : (linkedCharacter?.name || 'AI')}
+                                            {msg.role === 'user'
+                                                ? (activeChat?.persona_name || 'You')
+                                                : msg.role === 'system' ? '✦ System'
+                                                : (linkedCharacter?.name || 'AI')}
                                         </div>
                                         <div className={clsx(
-                                            "p-4 rounded-2xl whitespace-pre-wrap text-sm",
+                                            "px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words",
                                             msg.role === 'user'
                                                 ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm"
                                                 : msg.role === 'system'
-                                                ? "bg-yellow-500/10 text-yellow-200 border border-yellow-500/20 rounded-tl-sm italic"
-                                                : "bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm"
+                                                ? "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic"
+                                                : "bg-gray-800/50 text-gray-200 border border-gray-700/40 rounded-tl-sm"
                                         )}>
-                                            {msg.content}
+                                            {msg.role === 'char' || msg.role === 'assistant'
+                                                ? <TavernMessage content={msg.content} />
+                                                : <span className="whitespace-pre-wrap">{msg.content}</span>
+                                            }
                                             {msg.image_path && (
                                                 <div className="mt-3">
-                                                    <img src={`/api/files/${msg.image_path}`} alt="Scene" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                                    <img
+                                                        src={`/api/files/${msg.image_path}`}
+                                                        alt="Attachment"
+                                                        className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg"
+                                                    />
                                                 </div>
                                             )}
                                         </div>
                                     </div>
                                 </div>
                             ))}
-                            
+
+                            {/* Streaming jobs */}
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
                                 jobData.status === 'running' && jobData.chatId === activeChatId && (
-                                    <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start">
-                                        <div className="text-xs text-blue-400 mb-1 ml-1 flex items-center gap-2">
-                                            {jobData.text?.includes('[Tool:') ? '🔧 Tool' : 'AI'} <Loader2 size={12} className="animate-spin" />
+                                    <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start gap-1">
+                                        <div className="text-[10px] text-blue-400 ml-1 flex items-center gap-1.5">
+                                            {linkedCharacter?.name || 'AI'} <Loader2 size={10} className="animate-spin" />
                                         </div>
-                                        <div className="p-4 rounded-2xl whitespace-pre-wrap text-sm bg-gray-800/40 text-gray-200 border border-gray-700/50 rounded-tl-sm">
-                                            {jobData.text ? jobData.text + "..." : (
-                                                <span className="flex items-center gap-2 text-purple-400">
+                                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
+                                            {jobData.text ? (
+                                                <span className="whitespace-pre-wrap">{jobData.text}<span className="inline-block w-1 h-4 bg-blue-400/70 animate-pulse ml-0.5 align-text-bottom rounded-sm" /></span>
+                                            ) : (
+                                                <span className="flex items-center gap-2 text-purple-400 text-sm">
                                                     <Wand2 size={14} className="animate-pulse" />
-                                                    Executing tools...
+                                                    Thinking...
                                                 </span>
                                             )}
                                         </div>
                                     </div>
                                 )
                             ))}
+
                             <div ref={messagesEndRef} />
                         </>
                     )}
                 </div>
 
-                {/* Chat Input Area */}
-                <div className="p-4 lg:p-6 pb-14 md:pb-6 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
+                {/* Input Area */}
+                <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-16 lg:pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
                     <div className="max-w-4xl mx-auto">
+                        {/* Attachment preview */}
                         {pendingAttachment && (
-                            <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-sm text-blue-300">
-                                <ImageIcon size={14} className="shrink-0" />
-                                <span className="truncate flex-1">{pendingAttachment.name}</span>
-                                <button onClick={removeAttachment} className="p-1 hover:text-red-400 transition-colors shrink-0">
-                                    <Trash2 size={14} />
+                            <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-sm text-blue-300">
+                                <ImageIcon size={13} className="shrink-0" />
+                                <span className="truncate flex-1 text-xs">{pendingAttachment.name}</span>
+                                <button onClick={() => setPendingAttachment(null)} className="p-1 hover:text-red-400 transition-colors shrink-0">
+                                    <X size={13} />
                                 </button>
                             </div>
                         )}
-                        <div className="relative group">
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={handleAttachmentChange}
-                                className="hidden"
-                            />
+                        <div className="relative">
+                            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAttachmentChange} className="hidden" />
                             <textarea
+                                ref={textareaRef}
                                 value={message}
-                                onChange={(e) => setMessage(e.target.value)}
+                                onChange={e => setMessage(e.target.value)}
                                 onKeyDown={handleKeyDown}
-                                placeholder="Type a message..."
-                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-12 pr-32 sm:pr-40 py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all resize-none shadow-inner text-sm sm:text-base"
+                                placeholder={activeChatId ? 'Type a message...' : 'Select a chat to start...'}
+                                className="w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-28 sm:pr-36 py-3.5 sm:py-4 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-all resize-none shadow-inner text-sm"
                                 rows={1}
-                                style={{ minHeight: '60px', maxHeight: '200px' }}
-                                disabled={sendMessageMutation.isPending}
+                                style={{ minHeight: '52px', maxHeight: '200px' }}
+                                disabled={sendMessageMutation.isPending || !activeChatId}
                             />
+                            {/* Attach */}
                             <button
-                                onClick={handleAttachmentClick}
+                                onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploading}
-                                className="absolute left-3 bottom-3 p-2 text-gray-400 hover:text-blue-400 transition-colors rounded-xl hover:bg-blue-500/10 disabled:opacity-50"
+                                className="absolute left-2 sm:left-3 bottom-2.5 sm:bottom-3 p-1.5 sm:p-2 text-gray-400 hover:text-blue-400 transition-colors rounded-xl hover:bg-blue-500/10 disabled:opacity-50"
                                 title="Attach image"
                             >
-                                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
+                                {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
                             </button>
-                            <button 
+                            {/* Generate scene */}
+                            <button
                                 onClick={handleGenerateScene}
                                 disabled={isGeneratingScene || !activeChatId}
-                                className="absolute right-12 bottom-3 p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
-                                title="Generate Scene Image"
-                                type="button"
+                                className="absolute right-20 sm:right-24 bottom-2.5 sm:bottom-3 p-1.5 sm:p-2 text-gray-400 hover:text-green-400 transition-colors rounded-xl hover:bg-green-500/10 disabled:opacity-50"
+                                title="Generate Scene"
                             >
-                                {isGeneratingScene ? <Loader2 size={20} className="animate-spin" /> : <ImageIcon size={20} />}
+                                {isGeneratingScene ? <Loader2 size={18} className="animate-spin" /> : <ImageIcon size={18} />}
                             </button>
-                            <button 
+                            {/* Agentic mode */}
+                            <button
                                 onClick={() => setAgenticMode(!agenticMode)}
                                 className={clsx(
-                                    "absolute right-24 bottom-3 p-2 transition-colors rounded-xl",
+                                    "absolute right-10 sm:right-12 bottom-2.5 sm:bottom-3 p-1.5 sm:p-2 transition-colors rounded-xl",
                                     agenticMode
                                         ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
                                         : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
                                 )}
-                                title={agenticMode ? "Agentic mode ON (AI can generate images)" : "Agentic mode OFF"}
-                                type="button"
+                                title={agenticMode ? "Agentic ON" : "Agentic OFF"}
                             >
-                                <Wand2 size={20} />
+                                <Wand2 size={18} />
                             </button>
-                            <button 
+                            {/* Send */}
+                            <button
                                 onClick={handleSendMessage}
                                 disabled={!canSend}
                                 className={clsx(
-                                    "absolute right-2 bottom-3 p-2 transition-all rounded-xl",
+                                    "absolute right-2 sm:right-2 bottom-2 sm:bottom-2 p-2 transition-all rounded-xl",
                                     canSend
-                                        ? "bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105" 
+                                        ? "bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)] hover:bg-blue-500 hover:scale-105"
                                         : "bg-gray-800 text-gray-500 cursor-not-allowed"
                                 )}
                             >
-                                {sendMessageMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />}
+                                {sendMessageMutation.isPending
+                                    ? <Loader2 size={16} className="animate-spin" />
+                                    : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
+                                }
                             </button>
                         </div>
-                    </div>
-                    <div className="max-w-4xl mx-auto mt-2 hidden sm:flex items-center justify-between px-2 text-[10px] text-gray-500">
-                        <span>Press <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700">Enter</kbd> to send</span>
+                        <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-[10px] text-gray-600">
+                            <span><kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Enter</kbd> to send · <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Shift+Enter</kbd> for newline</span>
+                            <span className={clsx("transition-colors", agenticMode ? "text-purple-400" : "text-gray-600")}>
+                                {agenticMode ? '⚡ Agentic' : 'Standard'}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Right Panel: Context */}
-            <AnimatePresence initial={false}>
-                {isRightPanelOpen && (
-                    <motion.div
-                        initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 360, opacity: 1 }}
-                        exit={{ width: 0, opacity: 0 }}
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className={clsx(
-                            "flex flex-col border-l border-white/5 bg-gray-900/95 overflow-hidden shrink-0",
-                            "absolute md:static inset-y-0 right-0 z-40 h-full max-w-full w-[360px] md:w-auto md:bg-gray-900/30"
-                        )}
+            {/* === CONTEXT PANEL (Right) === */}
+            <div className={clsx(
+                "flex-col border-l border-white/5 bg-gray-900/60 shrink-0 overflow-hidden",
+                // Desktop: shown when context tab active (reuse mobileTab for desktop toggle too)
+                "lg:w-80",
+                // Mobile: full-screen when context tab; hidden otherwise
+                contextPanelVisible
+                    ? "absolute inset-0 z-30 flex w-full"
+                    : "hidden lg:flex",
+                // On desktop, if context not selected, collapse
+                !contextPanelVisible && "lg:hidden"
+            )}>
+                <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
+                    <h3 className="font-semibold text-gray-200 flex items-center gap-2 text-sm">
+                        <Settings size={14} className="text-gray-400" />
+                        Context &amp; Settings
+                    </h3>
+                    <button
+                        onClick={() => setMobileTab('chat')}
+                        className="lg:hidden p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                     >
-                        {/* Mobile close button for right panel */}
-                        <div className="md:hidden absolute top-3 right-4 z-50">
-                            <button onClick={() => setIsRightPanelOpen(false)} className="p-2 bg-gray-800 rounded-full text-white">
-                                <PanelRightClose size={16} />
-                            </button>
-                        </div>
-                        <div className="h-16 border-b border-white/5 flex items-center px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
-                            <h3 className="font-semibold text-gray-200 flex items-center gap-2">
-                                <Settings size={16} className="text-gray-400" />
-                                Context & Generation
-                            </h3>
-                        </div>
-                        
-                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
-                            {/* Character Assignment */}
-                            <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Character</h4>
-                                {linkedCharacter ? (
-                                    <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden">
-                                            {linkedCharacter.has_avatar ? (
-                                                <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <MessageSquare size={14} className="text-blue-400" />
-                                            )}
-                                        </div>
-                                        <div className="min-w-0">
-                                            <p className="text-sm text-gray-200 truncate">{linkedCharacter.name}</p>
-                                            <p className="text-[10px] text-gray-500">Linked to this chat</p>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-gray-500 text-center py-2 border border-dashed border-gray-700/50 rounded-lg">
-                                        No character assigned
-                                    </p>
-                                )}
-                            </div>
+                        <X size={16} />
+                    </button>
+                </div>
 
-                            {/* Lorebooks */}
-                            <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <BookOpen size={14} /> Lorebooks
-                                </h4>
-                                {lorebooks.length === 0 ? (
-                                    <p className="text-sm text-gray-500 text-center py-4 border border-dashed border-gray-700/50 rounded-lg">
-                                        No lorebooks available
-                                    </p>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {lorebooks.map(lb => {
-                                            const isActive = selectedLorebooks.includes(lb.id);
-                                            return (
-                                                <button
-                                                    key={lb.id}
-                                                    onClick={() => toggleLorebook(lb.id)}
-                                                    className={clsx(
-                                                        "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
-                                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
-                                                    )}
-                                                >
-                                                    {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
-                                                    <div className="min-w-0">
-                                                        <p className="truncate font-medium">{lb.name}</p>
-                                                        {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
-                            </div>
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
+                    {/* Persona Name */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                            <User size={12} /> Your Persona
+                        </h4>
+                        <PersonaField
+                            chatId={activeChatId}
+                            currentPersona={activeChat?.persona_name}
+                            onSave={handlePersonaSave}
+                        />
+                        <p className="text-[10px] text-gray-600 mt-2 px-1">
+                            Sets <code className="text-gray-500">{'{{user}}'}</code> in character prompts.
+                        </p>
+                    </div>
 
-                            {/* Active context info */}
-                            {selectedLorebooks.length > 0 && (
-                                <div className="text-[11px] text-gray-500 px-1">
-                                    {selectedLorebooks.length} lorebook{selectedLorebooks.length !== 1 ? 's' : ''} active. Lorebook context is injected into the AI's system prompt.
+                    {/* Character */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Character</h4>
+                        {linkedCharacter ? (
+                            <div className="flex items-center gap-3 p-2 bg-gray-800/30 rounded-lg">
+                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
+                                    {linkedCharacter.has_avatar
+                                        ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                                        : <MessageSquare size={14} className="text-blue-400" />
+                                    }
                                 </div>
-                            )}
-                        </div>
-                    </motion.div>
+                                <div className="min-w-0">
+                                    <p className="text-sm text-gray-200 truncate font-medium">{linkedCharacter.name}</p>
+                                    <p className="text-[10px] text-gray-500">Linked to this chat</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                                No character assigned
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Lorebooks */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                            <BookOpen size={12} /> Lorebooks
+                        </h4>
+                        {lorebooks.length === 0 ? (
+                            <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                                No lorebooks available
+                            </p>
+                        ) : (
+                            <div className="space-y-1.5">
+                                {lorebooks.map(lb => {
+                                    const isActive = selectedLorebooks.includes(lb.id);
+                                    return (
+                                        <button
+                                            key={lb.id}
+                                            onClick={() => toggleLorebook(lb.id)}
+                                            className={clsx(
+                                                "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all",
+                                                isActive
+                                                    ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                                                    : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                            )}
+                                        >
+                                            {isActive
+                                                ? <Check size={13} className="text-indigo-400 shrink-0" />
+                                                : <div className="w-3 h-3 rounded border border-gray-600 shrink-0" />
+                                            }
+                                            <span className="truncate font-medium text-xs">{lb.name}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        {selectedLorebooks.length > 0 && (
+                            <p className="text-[10px] text-gray-500 mt-2 px-1">
+                                {selectedLorebooks.length} lorebook{selectedLorebooks.length !== 1 ? 's' : ''} active
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* === MOBILE BOTTOM TAB BAR === */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-gray-950/95 backdrop-blur-xl border-t border-white/10 flex items-stretch h-[60px] safe-area-inset-bottom">
+                {/* Chats Tab */}
+                <button
+                    onClick={() => setMobileTab('chats')}
+                    className={clsx(
+                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
+                        mobileTab === 'chats'
+                            ? "text-blue-400"
+                            : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <div className={clsx("p-1.5 rounded-xl transition-all", mobileTab === 'chats' ? "bg-blue-500/15" : "")}>
+                        <MessageSquare size={20} />
+                    </div>
+                    Chats
+                </button>
+
+                {/* Chat Tab (centre — primary) */}
+                <button
+                    onClick={() => setMobileTab('chat')}
+                    className={clsx(
+                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
+                        mobileTab === 'chat'
+                            ? "text-white"
+                            : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <div className={clsx(
+                        "p-1.5 rounded-xl transition-all",
+                        mobileTab === 'chat' ? "bg-blue-600 shadow-[0_0_12px_rgba(37,99,235,0.4)]" : ""
+                    )}>
+                        {linkedCharacter?.has_avatar
+                            ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-5 h-5 rounded-full object-cover" />
+                            : <User size={20} className={mobileTab === 'chat' ? 'text-white' : ''} />
+                        }
+                    </div>
+                    Chat
+                </button>
+
+                {/* Context Tab */}
+                <button
+                    onClick={() => setMobileTab('context')}
+                    className={clsx(
+                        "flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-all",
+                        mobileTab === 'context'
+                            ? "text-blue-400"
+                            : "text-gray-500 hover:text-gray-300"
+                    )}
+                >
+                    <div className={clsx("p-1.5 rounded-xl transition-all", mobileTab === 'context' ? "bg-blue-500/15" : "")}>
+                        <BookOpen size={20} />
+                    </div>
+                    Context
+                </button>
+            </div>
+
+            {/* === MODALS === */}
+            <AnimatePresence>
+                {greetingModal && (
+                    <GreetingPickerModal
+                        character={greetingModal.character}
+                        onSelect={greetingModal.onCreate}
+                        onClose={() => { setGreetingModal(null); hasCreatedChatRef.current = false; }}
+                    />
                 )}
             </AnimatePresence>
 
@@ -680,48 +961,10 @@ export default function ChatWorkspace() {
                 onClose={() => setDeleteTarget(null)}
                 onConfirm={handleDeleteChat}
                 title="Delete Chat"
-                message={`Are you sure you want to delete "${deleteTarget?.name || 'this chat'}"? All messages will be lost.`}
+                message={`Are you sure you want to delete "${deleteTarget?.name || 'this chat'}"? All messages will be permanently lost.`}
                 confirmText="Delete"
                 isDangerous
             />
-
-            {/* Mobile Bottom Tab Bar */}
-            <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-gray-900/95 backdrop-blur-md border-t border-white/10 flex items-center justify-around h-14">
-                <button
-                    onClick={() => { setIsSidebarOpen(true); setIsRightPanelOpen(false); }}
-                    className={clsx(
-                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
-                        isSidebarOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    <MessageSquare size={20} />
-                    <span>Chats</span>
-                </button>
-                <button
-                    onClick={() => { setIsSidebarOpen(false); setIsRightPanelOpen(false); }}
-                    className={clsx(
-                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
-                        !isSidebarOpen && !isRightPanelOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    {linkedCharacter?.has_avatar ? (
-                        <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-5 h-5 rounded-full object-cover" />
-                    ) : (
-                        <User size={20} />
-                    )}
-                    <span>Chat</span>
-                </button>
-                <button
-                    onClick={() => { setIsRightPanelOpen(true); setIsSidebarOpen(false); }}
-                    className={clsx(
-                        "flex flex-col items-center gap-0.5 text-[10px] font-medium px-4 py-2 rounded-lg transition-colors",
-                        isRightPanelOpen ? "text-blue-400" : "text-gray-500 hover:text-gray-300"
-                    )}
-                >
-                    <BookOpen size={20} />
-                    <span>Context</span>
-                </button>
-            </div>
         </motion.div>
     );
 }

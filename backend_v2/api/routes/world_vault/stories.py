@@ -185,7 +185,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         task_type="llm",
         workflow={
             "messages": messages,
-            "chat_id": story_id,
+            "story_id": story_id,
             "chapter_id": chapter_id,
             "type": "story_continue"
         },

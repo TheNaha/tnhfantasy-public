@@ -14,6 +14,7 @@ router = APIRouter()
 class UpdateChatRequest(BaseModel):
     name: str | None = None
     character_id: str | None = None
+    persona_name: str | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -22,6 +23,7 @@ class SendMessageRequest(BaseModel):
     image_path: str | None = None
     lorebook_ids: list[str] | None = None
     agentic: bool = False
+    generator_checkpoint: str | None = None
 
 
 @router.get("/", response_model=list[Chat])
@@ -40,10 +42,16 @@ async def create_chat(chat: Chat, session: Session = Depends(get_session)):
     if chat.character_id:
         character = session.get(Character, chat.character_id)
         if character and character.first_mes:
+            # Apply basic template variable substitution before persisting
+            first_mes = _substitute_tavern_vars(
+                character.first_mes,
+                char=character.name or "",
+                user=chat.persona_name or chat.name or "User",
+            )
             opening = Message(
                 chat_id=chat.id,
                 role=MessageRole.CHAR,
-                content=character.first_mes,
+                content=first_mes,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
@@ -51,6 +59,34 @@ async def create_chat(chat: Chat, session: Session = Depends(get_session)):
             session.commit()
 
     return chat
+
+
+def _substitute_tavern_vars(text: str, *, char: str = "", user: str = "User") -> str:
+    """Apply SillyTavern-compatible template variable substitution on the backend.
+    Handles {{char}}, {{user}} at minimum. Extend as needed."""
+    import re
+    from datetime import date as _date
+
+    now = datetime.now(timezone.utc)
+    replacements = {
+        "char": char,
+        "user": user,
+        "time": now.strftime("%H:%M"),
+        "date": now.strftime("%Y-%m-%d"),
+    }
+
+    def replace_match(m):
+        key = m.group(1).strip().lower()
+        # {{random::a::b}} — pick randomly
+        if key.startswith("random::"):
+            options = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
+            if options:
+                import random
+                return random.choice(options)
+            return m.group(0)
+        return replacements.get(key, m.group(0))
+
+    return re.sub(r"\{\{([^}]+)\}\}", replace_match, text)
 
 @router.get("/{chat_id}", response_model=Chat)
 def get_chat(chat_id: str, session: Session = Depends(get_session)):
@@ -131,7 +167,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             character = session.get(Character, chat.character_id)
             
         system_prompt, context = build_chat_context(
-            session, past_messages, character=character, lorebook_ids=request.lorebook_ids
+            session, past_messages, character=character, lorebook_ids=request.lorebook_ids, persona_name=chat.persona_name
         )
             
         try:
@@ -155,6 +191,9 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 metadata["agentic"] = True
                 metadata["orchestrator_depth"] = 0
                 metadata["original_messages"] = context
+
+            if request.generator_checkpoint:
+                metadata["generator_checkpoint"] = request.generator_checkpoint
 
             job = await job_service.create_job(
                 task_type="llm",

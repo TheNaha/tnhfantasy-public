@@ -20,20 +20,32 @@ class DefaultProviderResponse(BaseModel):
 
 @router.get("/default-provider", response_model=DefaultProviderResponse)
 def get_default_provider(session: Session = Depends(get_session)):
+    # Check for an explicit user-set override first
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
-            data = json.load(f)
-            if "provider_id" in data and "model_id" in data:
-                return DefaultProviderResponse(provider_id=data["provider_id"], model_id=data["model_id"])
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+                if "provider_id" in data and "model_id" in data:
+                    # Verify the stored provider still exists in DB
+                    provider_in_db = session.get(Provider, data["provider_id"])
+                    if provider_in_db and provider_in_db.enabled and provider_in_db.worker_type == "llm":
+                        return DefaultProviderResponse(provider_id=data["provider_id"], model_id=data["model_id"])
+        except Exception:
+            pass
                 
-    providers = session.exec(select(Provider).where(Provider.worker_type == "llm", Provider.enabled == True)).all()
+    # Auto-select from DB: prefer direct_url/local providers over others
+    providers = session.exec(
+        select(Provider).where(Provider.worker_type == "llm", Provider.enabled == True)
+    ).all()
+    
     if not providers:
         raise HTTPException(status_code=404, detail="No LLM providers available")
         
-    if len(providers) == 1:
-        selected = providers[0]
-    else:
-        selected = next((p for p in providers if p.type == "direct_url" or "local" in p.id.lower()), providers[0])
+    # Priority: explicitly local/direct_url type first, then first available
+    selected = (
+        next((p for p in providers if p.type in ("direct_url", "openai_compat") or "local" in p.id.lower()), None)
+        or providers[0]
+    )
         
     return DefaultProviderResponse(provider_id=selected.id, model_id="default")
 
@@ -103,4 +115,83 @@ async def get_available_models(session: Session = Depends(get_session)):
 
     # Fallback: return provider record itself as a selectable "model"
     return [{"id": "default", "name": f"{provider.id} (default)"}]
+
+
+class LLMProviderInfo(BaseModel):
+    provider_id: str
+    provider_type: str
+    enabled: bool
+    is_default: bool
+
+
+@router.get("/providers", response_model=list[LLMProviderInfo])
+def list_llm_providers(session: Session = Depends(get_session)):
+    """List all registered LLM providers."""
+    providers = session.exec(
+        select(Provider).where(Provider.worker_type == "llm")
+    ).all()
+
+    # Try to get default without raising
+    try:
+        default = get_default_provider(session)
+        default_id = default.provider_id
+    except HTTPException:
+        default_id = None
+
+    return [
+        LLMProviderInfo(
+            provider_id=p.id,
+            provider_type=p.type,
+            enabled=p.enabled,
+            is_default=p.id == default_id,
+        )
+        for p in providers
+    ]
+
+
+@router.post("/providers/{provider_id}/test")
+async def test_llm_provider(provider_id: str, session: Session = Depends(get_session)):
+    """Test connectivity to an LLM provider worker. Returns health status and available models."""
+    provider = session.get(Provider, provider_id)
+    if not provider or provider.worker_type != "llm":
+        raise HTTPException(status_code=404, detail="LLM provider not found")
+
+    runtime = resolve_provider_runtime(provider)
+    if not runtime.worker_url:
+        return {"healthy": False, "models": [], "error": "No worker URL configured for this provider"}
+
+    base_url = runtime.worker_url.rstrip("/")
+    models = []
+    error = None
+    healthy = False
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # Health check
+        try:
+            resp = await client.get(f"{base_url}/health")
+            healthy = resp.status_code == 200
+        except Exception as e:
+            error = f"Health check failed: {e}"
+
+        # Fetch models if healthy
+        if healthy:
+            for path in ("/v1/models", "/api/tags", "/models"):
+                try:
+                    resp = await client.get(f"{base_url}{path}")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if isinstance(data, dict) and "data" in data:
+                            models = [m.get("id", m.get("name", "?")) for m in data["data"]]
+                            break
+                        if isinstance(data, dict) and "models" in data:
+                            models = [m.get("name", m.get("model", "?")) for m in data["models"]]
+                            break
+                        if isinstance(data, list):
+                            models = [m.get("id", m.get("name", "?")) for m in data]
+                            break
+                except Exception:
+                    continue
+
+    return {"healthy": healthy, "models": models, "error": error, "worker_url": base_url}
+
 

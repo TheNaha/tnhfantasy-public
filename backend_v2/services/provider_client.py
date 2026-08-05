@@ -120,7 +120,6 @@ async def call_provider(
                                 chunk_type = data.get("type")
                                 
                                 if chunk_type == "progress":
-                                    msg = data.get("progress", 0)  # Wait, prompt says progress is 0, message is token text
                                     msg = data.get("message", "")
                                     full_content += msg
                                     await emit_job_event(EventType.JOB_PROGRESS, {
@@ -128,7 +127,12 @@ async def call_provider(
                                         "status": "generating",
                                         "stream_chunk": msg,
                                         "text": full_content,
-                                        "metadata_": {"chat_id": workflow.get("chat_id")}
+                                        "metadata_": {
+                                            "chat_id": workflow.get("chat_id"),
+                                            "story_id": workflow.get("story_id"),
+                                            "chapter_id": workflow.get("chapter_id"),
+                                            "type": workflow.get("type"),
+                                        }
                                     })
                                 elif chunk_type == "completed":
                                     return {

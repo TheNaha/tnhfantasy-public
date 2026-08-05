@@ -118,7 +118,33 @@ async def _tool_generate_image(
     session = get_session_sync()
     submission = JobSubmissionService(session)
 
-    workflow = _build_default_image_workflow(prompt, negative)
+    # 1. Start with system default checkpoint
+    import config as app_config
+    default_ckpt = app_config.get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
+    
+    ckpt_name = default_ckpt
+    lora_name = None
+    
+    # 2. Override with frontend user setting if provided via the parent LLM job metadata
+    if source_job_id:
+        from core.entities import Job
+        source_job = session.get(Job, source_job_id)
+        if source_job and getattr(source_job, "metadata_", None):
+            frontend_ckpt = source_job.metadata_.get("generator_checkpoint")
+            if frontend_ckpt:
+                ckpt_name = frontend_ckpt
+
+    # 3. Override with character's preferred models if set
+    if character_id:
+        from core.entities import Character
+        char = session.get(Character, character_id)
+        if char:
+            if char.checkpoint:
+                ckpt_name = char.checkpoint
+            if char.lora:
+                lora_name = char.lora
+
+    workflow = _build_default_image_workflow(prompt, negative, checkpoint=ckpt_name, lora=lora_name)
 
     metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image"}
     if chat_id:
@@ -166,9 +192,9 @@ async def _tool_generate_image(
     return {"status": "error", "error": "Image generation timed out (120s)"}
 
 
-def _build_default_image_workflow(prompt: str, negative: str) -> dict[str, Any]:
+def _build_default_image_workflow(prompt: str, negative: str, checkpoint: str = "sd_xl_base_1.0.safetensors", lora: str | None = None) -> dict[str, Any]:
     """Build a basic SDXL text-to-image workflow."""
-    return {
+    workflow = {
         "3": {
             "class_type": "KSampler",
             "inputs": {
@@ -178,7 +204,7 @@ def _build_default_image_workflow(prompt: str, negative: str) -> dict[str, Any]:
                 "sampler_name": "euler",
                 "scheduler": "normal",
                 "denoise": 1,
-                "model": ["4", 0],
+                "model": ["10", 0] if lora else ["4", 0],
                 "positive": ["6", 0],
                 "negative": ["7", 0],
                 "latent_image": ["5", 0],
@@ -186,7 +212,7 @@ def _build_default_image_workflow(prompt: str, negative: str) -> dict[str, Any]:
         },
         "4": {
             "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"},
+            "inputs": {"ckpt_name": checkpoint},
         },
         "5": {
             "class_type": "EmptyLatentImage",
@@ -209,6 +235,22 @@ def _build_default_image_workflow(prompt: str, negative: str) -> dict[str, Any]:
             "inputs": {"filename_prefix": "AgenticGen", "images": ["8", 0]},
         },
     }
+    
+    if lora:
+        workflow["10"] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "lora_name": lora,
+                "strength_model": 1.0,
+                "strength_clip": 1.0,
+                "model": ["4", 0],
+                "clip": ["4", 1]
+            }
+        }
+        workflow["6"]["inputs"]["clip"] = ["10", 1]
+        workflow["7"]["inputs"]["clip"] = ["10", 1]
+        
+    return workflow
 
 
 async def process_tool_calls_and_chain(
@@ -300,12 +342,13 @@ async def process_tool_calls_and_chain(
     }
 
     try:
+        from services.job_queue import queue_manager
         followup_job = await job_service.create_job(
-            task_type="text",
+            task_type="llm",
             workflow=followup_workflow,
             metadata=followup_metadata,
         )
-        await enqueue_fn(followup_job.id)
+        await queue_manager.enqueue(followup_job.id, task_type="llm")
         logger.info(
             "agentic_followup_enqueued",
             parent_job_id=job.id,

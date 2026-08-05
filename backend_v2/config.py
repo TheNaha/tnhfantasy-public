@@ -76,13 +76,10 @@ DEFAULT_CONFIG = {
         "cleanup_interval": 3600
     },
     "image_processing": {
-        # Thumbnail for grid/list views (feed cards and lightbox use full images)
         "thumbnail_sizes": {
-            "medium": 512  # Optimal size for grid thumbnails
+            "medium": 512
         },
         "thumbnail_format": "webp",
-        # High quality (90%) for best visual fidelity with smaller footprint
-        # WebP at 90% is ~60-70% smaller than PNG while maintaining quality
         "thumbnail_quality": 90,
         "thumbnail_directory": "thumb",
         "output_date_hierarchy": True,
@@ -90,8 +87,10 @@ DEFAULT_CONFIG = {
         "blurhash_components_x": 4,
         "blurhash_components_y": 3,
         "blurhash_resize_max": 400
+    },
+    "generator": {
+        "default_checkpoint": "sd_xl_base_1.0.safetensors"
     }
-
 }
 
 

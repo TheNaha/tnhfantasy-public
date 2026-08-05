@@ -30,6 +30,7 @@ class CharacterUpdateRequest(BaseModel):
     visual_tags: list[str] | None = None
     lora_triggers: list[str] | None = None
     voice_profile: str | None = None
+    alternate_greetings: list[str] | None = None
 
 
 def _character_to_dict(character: Character) -> dict:
@@ -146,8 +147,10 @@ def parse_character_card(png_bytes: bytes) -> dict:
 
     # Alternate greetings -> store as first_mes if first_mes is empty
     alt_greetings = data.get("alternate_greetings", [])
-    if isinstance(alt_greetings, list) and alt_greetings and not character["first_mes"]:
-        character["first_mes"] = alt_greetings[0]
+    character["alternate_greetings"] = alt_greetings if isinstance(alt_greetings, list) else []
+    
+    if character["alternate_greetings"] and not character["first_mes"]:
+        character["first_mes"] = character["alternate_greetings"][0]
 
     return {"character": character, "avatar_bytes": png_bytes}
 

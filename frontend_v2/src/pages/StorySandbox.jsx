@@ -216,21 +216,35 @@ export default function StorySandbox() {
     // WebSocket for streaming story continuation
     useEffect(() => {
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const job = event.data?.job || event;
-            if (job.metadata_?.story_id === activeStoryId && job.metadata_?.chapter_id === activeChapterId) {
-                const streamText = job.metadata_?.text || job.output?.text || job.progress_text;
+            // Backend emits: { id, status, stream_chunk, text, metadata_: { story_id, chapter_id, ... } }
+            const meta = event.metadata_ || event.data?.metadata_ || {};
+            const storyId = meta.story_id || event.story_id || event.data?.story_id;
+            const chapterId = meta.chapter_id || event.chapter_id || event.data?.chapter_id;
+            
+            if (storyId === activeStoryId && chapterId === activeChapterId) {
+                // Text is emitted at top level as `text` (the accumulated full text so far)
+                const streamText = event.text || event.data?.text;
                 if (streamText) {
                     setIsStreaming(true);
                     streamingRef.current = streamText;
-                    setEditorContent((activeChapter?.content || '') + '\n\n' + streamText);
+                    // Show accumulated text in editor while generating
+                    setEditorContent((prev) => {
+                        const baseContent = activeChapter?.content || '';
+                        // Only append if the streaming text is not already in the content
+                        return baseContent ? baseContent + '\n\n' + streamText : streamText;
+                    });
                 }
             }
         });
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
-            const job = event.data?.job || event;
-            if (job.metadata_?.story_id === activeStoryId && job.metadata_?.chapter_id === activeChapterId) {
-                if (job.type === 'story_image') {
+            const meta = event.metadata_ || event.data?.metadata_ || {};
+            const storyId = meta.story_id || event.story_id || event.data?.story_id;
+            const chapterId = meta.chapter_id || event.chapter_id || event.data?.chapter_id;
+            const eventType = event.type || event.data?.type;
+            
+            if (storyId === activeStoryId && chapterId === activeChapterId) {
+                if (eventType === 'story_image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
                     toast.success('Illustration complete');
@@ -238,8 +252,8 @@ export default function StorySandbox() {
                     setIsStreaming(false);
                     streamingRef.current = '';
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                    if (job.id) {
-                        useWorldVaultStore.getState().clearStreamingJob(job.id);
+                    if (event.id) {
+                        useWorldVaultStore.getState().clearStreamingJob(event.id);
                     }
                 }
             }

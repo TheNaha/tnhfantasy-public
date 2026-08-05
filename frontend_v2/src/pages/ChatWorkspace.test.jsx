@@ -38,6 +38,7 @@ const mockDeleteChat = vi.hoisted(() => vi.fn());
 const mockRenameChat = vi.hoisted(() => vi.fn());
 const mockCharacters = vi.hoisted(() => vi.fn());
 const mockLorebooks = vi.hoisted(() => vi.fn());
+const mockUpdateChat = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVault', () => ({
     useChats: (...a) => mockChats(...a),
@@ -46,6 +47,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useCreateChat: (...a) => mockCreateChat(...a),
     useDeleteChat: (...a) => mockDeleteChat(...a),
     useRenameChat: (...a) => mockRenameChat(...a),
+    useUpdateChat: (...a) => mockUpdateChat(...a),
     useCharacters: (...a) => mockCharacters(...a),
     useLorebooks: (...a) => mockLorebooks(...a),
     useChat: () => ({ data: null }),
@@ -134,7 +136,7 @@ describe('ChatWorkspace page', () => {
     it('shows empty messages area when no chat selected', () => {
         mockActiveChatId.mockReturnValue(null);
         renderWithProviders(<ChatWorkspace />);
-        expect(screen.getByText(/Select or create a chat to begin/)).toBeInTheDocument();
+        expect(screen.getByText(/Select a chat or create a new one to begin your roleplay/)).toBeInTheDocument();
     });
 
     it('renders the Chats sidebar header', () => {
