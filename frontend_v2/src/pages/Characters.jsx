@@ -250,7 +250,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             return;
         }
 
-        const sysPrompt = settings.charGenEnrichPrompt;
+        const sysPrompt = settings.charGenEnrichPrompt || 'You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: "description", "personality", "scenario", "first_mes", "mes_example", "default_time", "default_location". Do not include markdown code blocks, just raw JSON.';
         let context = `Name: ${form.name}\n`;
         if (form.description) context += `Description: ${form.description}\n`;
         if (form.personality) context += `Personality: ${form.personality}\n`;
@@ -270,15 +270,20 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             });
             
             const pollJob = async (jobId) => {
-                for (let i = 0; i < 45; i++) {
+                for (let i = 0; i < 180; i++) {
                     const jobStatus = await api.get(`/api/jobs/${jobId}`);
                     if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        try {
-                            const raw = jobStatus.outputs[0].content.trim();
-                            // Find JSON block if wrapped
-                            const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                            if (jsonMatch) {
+                        toast.dismiss(toastId);
+                        
+                        const raw = jobStatus.outputs[0].content.trim();
+                        console.log("LLM Raw Output:", raw);
+                        
+                        // Find JSON block
+                        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                            try {
                                 const parsed = JSON.parse(jsonMatch[0]);
+                                console.log("Parsed JSON:", parsed);
                                 setForm(f => ({
                                     ...f,
                                     description: parsed.description || f.description,
@@ -290,23 +295,28 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                                     default_location: parsed.default_location || f.default_location
                                 }));
                                 toast.success('Profile Enriched!');
-                            } else {
-                                toast.error('Failed to find JSON in AI output');
+                            } catch (e) {
+                                console.error("JSON parse failed:", e);
+                                toast.error('Failed to parse AI output');
                             }
-                        } catch {
-                            toast.error('Failed to parse JSON output');
+                        } else {
+                            console.error("No JSON block found in output");
+                            toast.error('Failed to find JSON in AI output');
                         }
                         return;
                     }
                     if (jobStatus.status === 'failed') break;
                     await new Promise(r => setTimeout(r, 1000));
                 }
+                toast.dismiss(toastId);
                 toast.error('Enrichment failed or timed out');
             };
             if (resJob.id) {
                 pollJob(resJob.id);
             }
-        } catch {
+        } catch (e) {
+            console.error("Enrich profile error:", e);
+            toast.dismiss(toastId);
             toast.error('Failed to enrich profile');
         }
     };
@@ -382,7 +392,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                             <div key={field.key}>
                                 <div className="flex items-center justify-between mb-1">
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</label>
-                                    {field.key !== 'creator_notes' && (
+                                    {field.key !== 'creator_notes' && field.key !== 'default_time' && field.key !== 'default_location' && (
                                         <button
                                             onClick={() => handleGenerateField(field.key)}
                                             className="px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-md text-[10px] font-bold uppercase tracking-wider hover:bg-indigo-500/20 transition-colors flex items-center gap-1"
@@ -392,13 +402,23 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                                         </button>
                                     )}
                                 </div>
-                                <textarea
-                                    value={form[field.key]}
-                                    onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
-                                    className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all resize-none"
-                                    rows={field.key === 'system_prompt' ? 3 : 4}
-                                    placeholder={field.placeholder}
-                                />
+                                {field.type === 'textarea' ? (
+                                    <textarea
+                                        value={form[field.key]}
+                                        onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
+                                        className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all resize-none"
+                                        rows={field.key === 'system_prompt' ? 3 : 4}
+                                        placeholder={field.placeholder}
+                                    />
+                                ) : (
+                                    <input
+                                        type="text"
+                                        value={form[field.key]}
+                                        onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
+                                        className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all"
+                                        placeholder={field.placeholder}
+                                    />
+                                )}
                             </div>
                         ))}
 

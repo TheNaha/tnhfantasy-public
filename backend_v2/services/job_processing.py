@@ -406,6 +406,8 @@ async def finalize_successful_job(
         outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
     elif "text" in final_result:
         outputs = await asyncio.to_thread(build_text_outputs, job, final_result["text"], provider_id)
+    elif "outputs" in final_result:
+        outputs = final_result["outputs"]
     else:
         outputs = []
 
