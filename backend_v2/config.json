@@ -52,6 +52,6 @@
     "blurhash_resize_max": 400
   },
   "generator": {
-    "default_checkpoint": "sd_xl_base_1.0.safetensors"
+    "default_checkpoint": "nova_anime_xl_il_v150_2553832.safetensors"
   }
 }
