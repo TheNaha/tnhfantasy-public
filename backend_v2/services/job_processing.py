@@ -859,67 +859,6 @@ async def finalize_successful_job(
             process_image_background_fn=process_image_background_fn,
         )
         return
-        generated_prompt = ""
-        if final_result.get("outputs") and isinstance(final_result["outputs"], list):
-            generated_prompt = (final_result["outputs"][0] or {}).get("content", "")
-        if not generated_prompt and final_result.get("text"):
-            generated_prompt = final_result["text"]
-        generated_prompt = generated_prompt.strip()
-
-        story_id   = job.metadata_.get("story_id")
-        chapter_id = job.metadata_.get("chapter_id")
-        checkpoint = job.metadata_.get("scene_checkpoint", "sd_xl_base_1.0.safetensors")
-
-        if generated_prompt and story_id and chapter_id:
-            logger.info(
-                "illustrate_prompt_chaining",
-                job_id=job_id,
-                story_id=story_id,
-                chapter_id=chapter_id,
-                prompt_preview=generated_prompt[:80],
-            )
-            try:
-                from sqlmodel import Session
-                from infrastructure.database import engine
-                from services.job_service import JobService
-                from services.job_queue import queue_manager
-                from api.routes.world_vault.stories import _build_image_workflow
-
-                with Session(engine) as _session:
-                    _job_service = JobService(_session)
-                    image_workflow = _build_image_workflow(generated_prompt, checkpoint)
-                    img_job = await _job_service.create_job(
-                        task_type="image",
-                        workflow=image_workflow,
-                        metadata={
-                            "story_id": story_id,
-                            "chapter_id": chapter_id,
-                            "prompt": generated_prompt,
-                            "source": "story_illustrate",
-                        },
-                    )
-                    await queue_manager.enqueue(img_job.id, task_type="image")
-                    logger.info("illustrate_image_job_queued", job_id=img_job.id, story_id=story_id)
-            except Exception as e:
-                logger.error("illustrate_chain_failed", job_id=job_id, error=str(e), exc_info=True)
-        else:
-            logger.warning(
-                "illustrate_prompt_empty",
-                job_id=job_id,
-                story_id=story_id,
-                chapter_id=chapter_id,
-            )
-
-        # Mark the LLM prompt-generation job done — no outputs to persist
-        await finalize_persisted_job_outputs(
-            job_service=job_service,
-            job_id=job_id,
-            outputs=[],
-            provider_id=provider_id,
-            load_balancer=load_balancer,
-            process_image_background_fn=None,
-        )
-        return
 
     if is_narrator:
         narrator_content = ""

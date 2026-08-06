@@ -844,8 +844,15 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
 // Main Component
 // ---------------------------------------------------------------------------
 function ContextSlider({ activeChat, onChange }) {
-    const [localVal, setLocalVal] = useState(activeChat?.max_context_tokens || 4096);
-    useEffect(() => { setLocalVal(activeChat?.max_context_tokens || 4096); }, [activeChat?.max_context_tokens]);
+    const serverVal = activeChat?.max_context_tokens || 4096;
+    const [localVal, setLocalVal] = useState(serverVal);
+    const [prevServerVal, setPrevServerVal] = useState(serverVal);
+
+    // Sync when the server value changes (e.g. different chat selected) without useEffect
+    if (serverVal !== prevServerVal) {
+        setPrevServerVal(serverVal);
+        setLocalVal(serverVal);
+    }
     
     return (
         <input
@@ -1478,6 +1485,8 @@ export default function ChatWorkspace() {
             exit={{ opacity: 0 }}
             className="flex flex-col h-[calc(var(--vh,1vh)*100-4rem)] relative overflow-hidden bg-gray-900"
         >
+            {/* === THREE-COLUMN ROW (fills remaining height above mobile tab bar) === */}
+            <div className="flex flex-1 flex-row min-h-0 overflow-hidden">
             <div className={clsx(
                 "flex-col shrink-0 border-b lg:border-r border-white/5 bg-gray-900 flex-1 lg:flex-none overflow-hidden",
                 "w-full lg:w-72",
@@ -1912,7 +1921,7 @@ export default function ChatWorkspace() {
                         Context &amp; Settings
                     </h3>
                     <button
-                        onClick={() => setRightDrawerOpen(false)}
+                        onClick={() => setMobileTab('chat')}
                         className="lg:hidden p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                     >
                         <X size={16} />
@@ -2244,6 +2253,7 @@ export default function ChatWorkspace() {
                     </div>
                 </div>
             </div>
+            </div>{/* === END THREE-COLUMN ROW === */}
 
             {/* === MODALS === */}
             <AnimatePresence>

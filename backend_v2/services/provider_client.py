@@ -97,76 +97,75 @@ async def call_llm_provider(
     import httpx
 
     # --- LLM ADAPTER ---
-    if worker_type == "llm":
-        async with get_streaming_client(timeout=timeout) as client:
-            try:
-                from core.events import EventType, emit_job_event
-                
-                async with client.stream(
-                    "POST",
-                    f"{worker_url}/inference",
-                    json={"workflow": workflow, "job_id": job_id, "timeout_seconds": timeout},
-                    timeout=timeout,
-                ) as response:
-                    if response.status_code == 200:
-                        await job_service.update_job(job_id, status=JobStatus.GENERATING, message="Generating text...")
-                        full_content = ""
-                        
-                        async for chunk in response.aiter_lines():
-                            if not chunk: continue
-                            try:
-                                data = json.loads(chunk)
-                                chunk_type = data.get("type")
-                                
-                                if chunk_type == "progress":
-                                    msg = data.get("message", "")
-                                    full_content += msg
-                                    await emit_job_event(EventType.JOB_PROGRESS, {
-                                        "id": job_id,
-                                        "status": "generating",
-                                        "stream_chunk": msg,
-                                        "text": full_content,
-                                        "metadata_": {
-                                            "chat_id": workflow.get("chat_id"),
-                                            "story_id": workflow.get("story_id"),
-                                            "chapter_id": workflow.get("chapter_id"),
-                                            "type": workflow.get("type"),
-                                        }
-                                    })
-                                elif chunk_type == "completed":
-                                    return {
-                                        "status": "success",
-                                        "type": "text",
-                                        "outputs": data.get("outputs", []),
-                                        "chat_id": workflow.get("chat_id")
+    async with get_streaming_client(timeout=timeout) as client:
+        try:
+            from core.events import EventType, emit_job_event
+            
+            async with client.stream(
+                "POST",
+                f"{worker_url}/inference",
+                json={"workflow": workflow, "job_id": job_id, "timeout_seconds": timeout},
+                timeout=timeout,
+            ) as response:
+                if response.status_code == 200:
+                    await job_service.update_job(job_id, status=JobStatus.GENERATING, message="Generating text...")
+                    full_content = ""
+                    
+                    async for chunk in response.aiter_lines():
+                        if not chunk: continue
+                        try:
+                            data = json.loads(chunk)
+                            chunk_type = data.get("type")
+                            
+                            if chunk_type == "progress":
+                                msg = data.get("message", "")
+                                full_content += msg
+                                await emit_job_event(EventType.JOB_PROGRESS, {
+                                    "id": job_id,
+                                    "status": "generating",
+                                    "stream_chunk": msg,
+                                    "text": full_content,
+                                    "metadata_": {
+                                        "chat_id": workflow.get("chat_id"),
+                                        "story_id": workflow.get("story_id"),
+                                        "chapter_id": workflow.get("chapter_id"),
+                                        "type": workflow.get("type"),
                                     }
-                                elif data.get("status") == "error":
-                                    raise ProviderCallError(
-                                        data.get("message", "Unknown error"),
-                                        provider_id=provider_id,
-                                        is_retryable=data.get("retryable", False)
-                                    )
-                            except json.JSONDecodeError:
-                                pass
-                                
-                        raise ProviderCallError(
-                            "No success response received from worker",
-                            provider_id=provider_id,
-                            is_retryable=True,
-                        )
-                        
-                    error_text = await response.aread()
+                                })
+                            elif chunk_type == "completed":
+                                return {
+                                    "status": "success",
+                                    "type": "text",
+                                    "outputs": data.get("outputs", []),
+                                    "chat_id": workflow.get("chat_id")
+                                }
+                            elif data.get("status") == "error":
+                                raise ProviderCallError(
+                                    data.get("message", "Unknown error"),
+                                    provider_id=provider_id,
+                                    is_retryable=data.get("retryable", False)
+                                )
+                        except json.JSONDecodeError:
+                            pass
+                            
                     raise ProviderCallError(
-                        f"LLM worker returned {response.status_code}: {error_text.decode()}",
+                        "No success response received from worker",
                         provider_id=provider_id,
-                        is_retryable=response.status_code >= 500,
+                        is_retryable=True,
                     )
-            except httpx.TimeoutException:
-                raise JobTimeoutError(f"Job timed out after {timeout}s")
-            except httpx.ConnectError as error:
-                raise ProviderCallError(f"Failed to connect to LLM worker: {error}", provider_id=provider_id, is_retryable=True)
-            except httpx.HTTPError as error:
-                raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
+                    
+                error_text = await response.aread()
+                raise ProviderCallError(
+                    f"LLM worker returned {response.status_code}: {error_text.decode()}",
+                    provider_id=provider_id,
+                    is_retryable=response.status_code >= 500,
+                )
+        except httpx.TimeoutException:
+            raise JobTimeoutError(f"Job timed out after {timeout}s")
+        except httpx.ConnectError as error:
+            raise ProviderCallError(f"Failed to connect to LLM worker: {error}", provider_id=provider_id, is_retryable=True)
+        except httpx.HTTPError as error:
+            raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
 
     # --- OLLAMA ADAPTER ---
     if provider_type == "ollama":
