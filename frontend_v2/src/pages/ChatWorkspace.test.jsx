@@ -61,6 +61,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useRegenerateReply: () => ({ mutateAsync: vi.fn() }),
     useChatJobs: () => ({ data: [] }),
     useCharacterCollection: () => ({ data: { images: [], image_count: 0 } }),
+    usePatchCharacter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     getAvatarUrl: () => '',
 }));
 

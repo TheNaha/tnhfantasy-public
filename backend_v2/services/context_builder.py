@@ -113,20 +113,40 @@ def build_system_prompt_sections(
     story_time: str | None = None,
     story_location: str | None = None,
     system_prompt_override: str | None = None,
+    append_system_prompt: str | None = None,
     include_roleplay_default: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
-    Each section: {"key", "label", "content", "source"} where source is one of
-    "override" | "character" | "config" | "lorebook" | "world_state".
-    Returns an empty list if no sections apply.
+
+    Priority / assembly order
+    ─────────────────────────
+    1. If ``system_prompt_override`` is set it REPLACES everything character-related
+       (char card + char.append_system_prompt) but the remaining blocks (lorebook,
+       world-state, roleplay_default) still apply unless also overridden.
+
+    2. Otherwise the character block is assembled in order:
+         a. character.system_prompt  (or auto-built from char fields)
+         b. character.append_system_prompt  (per-character extra instructions)
+
+    3. Per-chat append (``append_system_prompt`` arg — comes from chat.append_system_prompt)
+       is injected after the character block.
+
+    4. Global ``roleplay_default`` config block.
+
+    5. Lorebook entries (world information).
+
+    6. World-state (time / location).
+
+    Each section dict: {"key", "label", "content", "source"}
+    source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state"
     """
     sections: list[dict[str, Any]] = []
 
     if system_prompt_override:
         sections.append({
             "key": "override",
-            "label": "Chat override",
+            "label": "Per-chat override (replaces character prompt)",
             "content": system_prompt_override,
             "source": "override",
         })
@@ -139,6 +159,24 @@ def build_system_prompt_sections(
                 "content": char_prompt,
                 "source": "character",
             })
+        # Per-character append (applies to every chat using this character)
+        char_append = getattr(character, "append_system_prompt", None)
+        if char_append and char_append.strip():
+            sections.append({
+                "key": "char_append",
+                "label": f"Character extra — {character.name or character.id}",
+                "content": char_append.strip(),
+                "source": "char_append",
+            })
+
+    # Per-chat append (situational instructions for this chat only)
+    if append_system_prompt and append_system_prompt.strip():
+        sections.append({
+            "key": "chat_append",
+            "label": "Per-chat extra instructions",
+            "content": append_system_prompt.strip(),
+            "source": "chat_append",
+        })
 
     if include_roleplay_default:
         from config import get_system_prompt_blocks
@@ -146,7 +184,7 @@ def build_system_prompt_sections(
         if roleplay_default:
             sections.append({
                 "key": "roleplay_default",
-                "label": "Roleplay instructions",
+                "label": "Roleplay instructions (global)",
                 "content": roleplay_default,
                 "source": "config",
             })
@@ -171,8 +209,9 @@ def build_system_prompt_sections(
                 return random.choice(opts) if opts else m.group(0)
             return _replacements.get(key, m.group(0))
 
+        substitutable = {"character", "override", "char_append", "chat_append"}
         for section in sections:
-            if section["source"] in ("character", "override"):
+            if section["source"] in substitutable:
                 section["content"] = re.sub(r"\{\{([^}]+)\}\}", _replace, section["content"])
 
     if lorebook_ids:
@@ -219,14 +258,17 @@ def build_chat_context(
     story_time: str | None = None,
     story_location: str | None = None,
     system_prompt_override: str | None = None,
+    append_system_prompt: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
     Returns: (system_prompt, messages_list)
-    
+
     Args:
+        system_prompt_override: Replaces the character card entirely.
+        append_system_prompt:   Extra instructions injected after the character
+                                block (sourced from chat.append_system_prompt).
         max_context_tokens: Maximum token budget for the full context window.
-        system_prompt_override: Per-chat override that wins over character.system_prompt.
     """
     sections = build_system_prompt_sections(
         session,
@@ -236,6 +278,7 @@ def build_chat_context(
         story_time=story_time,
         story_location=story_location,
         system_prompt_override=system_prompt_override,
+        append_system_prompt=append_system_prompt,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 

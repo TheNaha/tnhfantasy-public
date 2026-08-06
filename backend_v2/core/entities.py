@@ -676,6 +676,10 @@ class Character(SQLModel, table=True):
     mes_example: str | None = Field(default=None, sa_column=Column(Text))
     creator_notes: str | None = Field(default=None, sa_column=Column(Text))
     system_prompt: str | None = Field(default=None, sa_column=Column(Text))
+    # Extra instructions appended after the character's main system prompt
+    # (applies to every chat that uses this character, unless the chat has its
+    # own system_prompt_override or append_system_prompt).
+    append_system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     
     visual_tags: list[str] = Field(default=[], sa_column=Column(JSON))
     lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSON))
@@ -707,7 +711,12 @@ class Chat(SQLModel, table=True):
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
     allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
     allow_narration: bool = Field(default=True) # Gates the agentic narrate_scene tool
-    system_prompt_override: str | None = Field(default=None) # Per-chat system prompt override (wins over character.system_prompt)
+    # Tiered system-prompt customisation:
+    #   system_prompt_override — replaces EVERYTHING (character prompt + all blocks).
+    #   append_system_prompt   — appended after the character block, before global roleplay_default.
+    # Priority: override > (character_prompt + char.append) > chat.append > roleplay_default
+    system_prompt_override: str | None = Field(default=None, sa_column=Column(Text))
+    append_system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -741,6 +741,32 @@ def _migration_add_narrator_system_prompt(conn) -> bool:
     return touched
 
 
+def _migration_add_character_append_system_prompt(conn) -> bool:
+    """Add append_system_prompt column to characters table."""
+    inspector = inspect(conn)
+    if "characters" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+    if "append_system_prompt" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN append_system_prompt TEXT DEFAULT NULL"))
+        logger.info("migration_column_added", table="characters", column="append_system_prompt")
+    _verify_required_columns(conn, "characters", {"append_system_prompt"})
+    return True
+
+
+def _migration_add_chat_append_system_prompt(conn) -> bool:
+    """Add append_system_prompt column to chats table."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "append_system_prompt" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN append_system_prompt TEXT DEFAULT NULL"))
+        logger.info("migration_column_added", table="chats", column="append_system_prompt")
+    _verify_required_columns(conn, "chats", {"append_system_prompt"})
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -828,5 +854,15 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="017_add_narrator_system_prompt",
             description="Add per-chat system prompt override, allow_narration flag, and message metadata column",
             apply_fn=_migration_add_narrator_system_prompt,
+        ),
+        MigrationStep(
+            version="018_add_character_append_system_prompt",
+            description="Add append_system_prompt column to characters for per-character extra instructions",
+            apply_fn=_migration_add_character_append_system_prompt,
+        ),
+        MigrationStep(
+            version="019_add_chat_append_system_prompt",
+            description="Add append_system_prompt column to chats for per-chat extra instructions",
+            apply_fn=_migration_add_chat_append_system_prompt,
         ),
     ]

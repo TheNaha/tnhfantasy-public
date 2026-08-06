@@ -22,6 +22,7 @@ class UpdateChatRequest(BaseModel):
     allow_image_generation: bool | None = None
     allow_narration: bool | None = None
     system_prompt_override: str | None = None
+    append_system_prompt: str | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -180,6 +181,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         story_time=chat.story_time,
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
+        append_system_prompt=chat.append_system_prompt,
     )
 
     system_prompt, context = build_chat_context(
@@ -191,6 +193,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         story_time=chat.story_time,
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
+        append_system_prompt=chat.append_system_prompt,
     )
 
     return {
@@ -198,6 +201,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         "character_id": chat.character_id,
         "system_prompt": system_prompt or "",
         "has_override": bool(chat.system_prompt_override),
+        "has_append": bool(chat.append_system_prompt),
         "message_count": len(context),
         "context_tokens": estimate_tokens("\n".join(m.get("content", "") for m in context)),
         "sections": sections,
@@ -299,6 +303,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             story_time=chat.story_time,
             story_location=chat.story_location,
             system_prompt_override=chat.system_prompt_override,
+            append_system_prompt=chat.append_system_prompt,
         )
             
         try:
@@ -541,6 +546,7 @@ async def regenerate_reply(
         story_time=chat.story_time,
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
+        append_system_prompt=chat.append_system_prompt,
     )
 
     workflow: dict = {
@@ -583,38 +589,90 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
         
-    past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+    past_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
     
     character = None
     if chat.character_id:
         from core.entities import Character
         character = session.get(Character, chat.character_id)
-        
-    # We want to guide the LLM to write exactly ONE action or spoken sentence FOR the user.
-    system_prompt, context = build_chat_context(
-        session, 
-        past_messages, 
-        character=character, 
-        lorebook_ids=None, 
+
+    # Build the conversation context WITHOUT the character system prompt —
+    # we don't want the LLM to think it IS the character when writing a user reply.
+    # Pass include_roleplay_default=False too so no roleplay instructions bleed in.
+    from services.context_builder import build_system_prompt_sections
+    from config import get_system_prompt_blocks
+
+    # Assemble a minimal world-state section so the suggestion is situationally aware
+    # (time, location, persona name) but never reads the character card.
+    world_sections = build_system_prompt_sections(
+        session,
+        character=None,               # deliberately exclude character identity
+        lorebook_ids=chat.active_lorebook_ids or None,
         persona_name=chat.persona_name,
         story_time=chat.story_time,
-        story_location=chat.story_location
+        story_location=chat.story_location,
+        include_roleplay_default=False,
     )
-    
-    # Override system prompt to explicitly act as the user
-    from config import get_system_prompt_blocks
+    world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
+
+    # Build the suggest instruction — configurable in Settings, with a safe default
     suggest_instruction = (
         (get_system_prompt_blocks() or {}).get("suggest_instruction")
-        or "CRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
+        or (
+            "CRITICAL INSTRUCTION: You are acting as {user}, the human user in this roleplay. "
+            "Based on the conversation so far, write ONE short, in-character response or action "
+            "that {user} would realistically say or do next. "
+            "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
+        )
     )
-    suggest_prompt = system_prompt + "\n\n" + suggest_instruction
-    
+    # Substitute {{user}} in the instruction itself
+    user_name = chat.persona_name or "User"
+    char_name = character.name if character else "the AI"
+    suggest_instruction = (
+        suggest_instruction
+        .replace("{user}", user_name)
+        .replace("{{user}}", user_name)
+        .replace("{char}", char_name)
+        .replace("{{char}}", char_name)
+    )
+
+    # The system prompt for suggest tells the LLM it's the USER, not the character.
+    # Include world context (lorebook/world-state) so suggestions are situationally grounded.
+    suggest_system = (
+        f"You are {user_name}, the human participant in the following roleplay conversation "
+        f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"
+        + (f"{world_context_str}\n\n" if world_context_str else "")
+        + suggest_instruction
+    )
+
+    # Get the conversation history — map char→user and user→assistant so the LLM
+    # sees itself as the user-side, not the character-side.
+    msg_list = []
+    for msg in past_messages:
+        meta = getattr(msg, "message_metadata", None) or {}
+        if meta.get("source") == "world_state":
+            continue
+        if msg.role == MessageRole.USER:
+            # From the LLM's perspective (acting as user), prior user messages are "assistant"
+            msg_list.append({"role": "assistant", "content": msg.content})
+        elif msg.role == MessageRole.CHAR:
+            # Character messages are the "user" turn (the party the LLM is responding to)
+            msg_list.append({"role": "user", "content": msg.content})
+        elif msg.role == MessageRole.SYSTEM and meta.get("source") not in ("narrator", "world_state"):
+            msg_list.append({"role": "user", "content": f"[{msg.content}]"})
+
+    # Prune to stay within context budget
+    from services.context_builder import prune_context
+    all_msgs = [{"role": "system", "content": suggest_system}] + msg_list
+    all_msgs = prune_context(all_msgs, suggest_system, [])
+
     try:
         job_service = get_job_service(session)
         workflow: dict = {
-            "messages": context,
+            "messages": all_msgs,
             "chat_id": chat_id,
-            "character_system_prompt": suggest_prompt,
             "type": "suggest_reply",
             "model": chat.llm_model or _get_default_llm_model(),
         }
@@ -622,7 +680,7 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
             "chat_id": chat_id,
             "character_id": chat.character_id,
             "workspace": "roleplay",
-            "is_suggestion": True
+            "is_suggestion": True,
         }
 
         job = await job_service.create_job(
@@ -630,7 +688,6 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
             workflow=workflow,
             metadata=metadata,
         )
-        
         await queue_manager.enqueue(job.id, task_type="llm")
         return {"job_id": job.id}
         
