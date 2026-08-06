@@ -738,10 +738,14 @@ export default function ChatWorkspace() {
     }, [messages, streamingJobs]);
 
     useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto';
-            textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
-        }
+        // Debounced resize — avoids layout thrashing on mobile with every keystroke
+        const timer = setTimeout(() => {
+            if (textareaRef.current) {
+                textareaRef.current.style.height = 'auto';
+                textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+            }
+        }, 150);
+        return () => clearTimeout(timer);
     }, [message]);
 
     const handleSendMessage = useCallback(async () => {

@@ -203,6 +203,7 @@ export default function Providers() {
                 config={lbConfig}
                 stats={lbStats}
                 onUpdateStrategy={handleUpdateLBStrategy}
+                providers={providers}
             />
 
             {/* ── Search + Filters ── */}

@@ -172,6 +172,11 @@ export default function StorySandbox() {
 
     const [activeChapterId, setActiveChapterId] = useState(null);
     const [isStreaming, setIsStreaming] = useState(false);
+    // Keep a ref in sync so WebSocket handlers can read the live value
+    // without being listed in effect deps (avoids re-registering on every render).
+    const isStreamingRef = useRef(false);
+    useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
@@ -205,6 +210,9 @@ export default function StorySandbox() {
 
     // Load chapter content into editor
     useEffect(() => {
+        // Guard: don't overwrite editor content while actively streaming
+        if (isStreamingRef.current) return;
+        
         if (activeChapter && loadedChapterIdRef.current !== activeChapterId) {
             loadedChapterIdRef.current = activeChapterId;
             // Wait for next tick to avoid synchronous cascading renders
@@ -231,10 +239,11 @@ export default function StorySandbox() {
                 if (streamText) {
                     setIsStreaming(true);
                     streamingRef.current = streamText;
-                    // Show accumulated text in editor while generating
+                    // Show accumulated text in editor while generating.
+                    // Use streamingBaseRef (set at generation start) to avoid
+                    // capturing the stale editorContent closure value.
                     setEditorContent(() => {
                         const baseContent = streamingBaseRef.current || '';
-                        // Only append if the streaming text is not already in the content
                         return baseContent ? baseContent + '\n\n' + streamText : streamText;
                     });
                 }
@@ -254,9 +263,30 @@ export default function StorySandbox() {
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
                     toast.success('Illustration complete');
                 } else {
-                    setIsStreaming(false);
+                    // Capture the final streamed content from the ref (always current)
+                    // before clearing streaming state, so the base is correct.
+                    const finalStreamedText = streamingRef.current;
                     streamingRef.current = '';
-                    streamingBaseRef.current = editorContent;
+
+                    // Turn off streaming FIRST so the chapter-load effect guard
+                    // (isStreamingRef) allows the incoming refetch to update state.
+                    setIsStreaming(false);
+
+                    // Update base to the complete streamed content so any subsequent
+                    // continuation appends from the right position.
+                    setEditorContent(prev => {
+                        const newBase = finalStreamedText
+                            ? (streamingBaseRef.current
+                                ? streamingBaseRef.current + '\n\n' + finalStreamedText
+                                : finalStreamedText)
+                            : prev;
+                        streamingBaseRef.current = newBase;
+                        return newBase;
+                    });
+
+                    // Invalidate chapter data from server — the chapter-load effect
+                    // will only overwrite editor content if the chapter ID changes,
+                    // so this is safe.
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
                     if (job.id) {
                         useWorldVaultStore.getState().clearStreamingJob(job.id);
@@ -287,14 +317,20 @@ export default function StorySandbox() {
             unsubCompleted();
             unsubFailed();
         };
-    }, [subscribe, activeStoryId, activeChapterId, queryClient, editorContent]);
+    // NOTE: editorContent intentionally excluded — we use refs for live values
+    // inside the WebSocket handlers to avoid stale closure overwrites.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [subscribe, activeStoryId, activeChapterId, queryClient]);
 
-    // Auto-resize textarea
+    // Auto-resize textarea — debounced to avoid layout thrashing on mobile
     useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto';
-            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-        }
+        const timer = setTimeout(() => {
+            if (textareaRef.current) {
+                textareaRef.current.style.height = 'auto';
+                textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+            }
+        }, 150);
+        return () => clearTimeout(timer);
     }, [editorContent]);
 
     const handleContinue = useCallback(async () => {
@@ -465,9 +501,10 @@ export default function StorySandbox() {
 
     return (
         <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
             className="flex h-[calc(var(--vh,1vh)*100-8rem)] lg:h-[calc(var(--vh,1vh)*100-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 bg-[#0B0E14]"
         >
             <div className={clsx(

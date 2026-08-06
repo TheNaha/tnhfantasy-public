@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, Network } from 'lucide-react';
+import { ChevronDown, Network, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const STRATEGIES = [
@@ -16,10 +16,37 @@ function humanizeStrategy(id) {
     return found ? found.label : id;
 }
 
-export default function LoadBalancerBar({ config, stats, onUpdateStrategy }) {
+/**
+ * LoadBalancerBar
+ *
+ * props:
+ *   config           — LB config object (null = hide bar)
+ *   stats            — LB stats object
+ *   onUpdateStrategy — callback(strategy)
+ *   providers        — optional full provider list; used to detect LLM-only pages
+ *                      so we can show an informational notice instead of the full bar
+ */
+export default function LoadBalancerBar({ config, stats, onUpdateStrategy, providers = [] }) {
     const [expanded, setExpanded] = useState(false);
 
     if (!config) return null;
+
+    // If every visible provider is an LLM worker, the load balancer doesn't apply.
+    // Show a compact informational banner instead of the full strategy picker.
+    const hasImageProviders = providers.some((p) => p.worker_type !== 'llm');
+    const hasLLMProviders   = providers.some((p) => p.worker_type === 'llm');
+
+    if (!hasImageProviders && hasLLMProviders) {
+        return (
+            <div className="mb-6 flex items-center gap-3 px-5 py-3.5 rounded-2xl border border-purple-500/15 bg-purple-500/5 text-sm text-purple-300/80">
+                <Brain size={16} className="shrink-0 text-purple-400/70" />
+                <span>
+                    Load balancing applies to <strong className="text-purple-200">Image Workers</strong> only.
+                    LLM workers use priority-ordered failover — configure priority in the provider settings.
+                </span>
+            </div>
+        );
+    }
 
     const activeCount = stats?.total_providers || 0;
     const strategy = config.strategy || 'round-robin';

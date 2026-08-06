@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
-import { useLLMDefaultProvider, useSetLLMDefaultProvider, useLLMAvailableModels } from '../hooks/useWorldVault';
+import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useEffect } from 'react';
 import api from '../api/client';
@@ -727,10 +727,9 @@ function SettingGroup({ title, description, children, action }) {
 
 // AI Settings Component
 function AISettings({ settings, onUpdate, onReset }) {
-    const { data: defaultProvider } = useLLMDefaultProvider();
-    const { data: availableModels } = useLLMAvailableModels();
     const { providers = [] } = useProvidersPageData();
-    const setProviderMutation = useSetLLMDefaultProvider();
+    const llmStatus = useLLMProviderStatus();
+    const setDefaultMutation = useSetLLMDefault();
     
     const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.id.startsWith('llm'));
 
@@ -738,17 +737,17 @@ function AISettings({ settings, onUpdate, onReset }) {
     const [modelId, setModelId] = useState('');
 
     useEffect(() => {
-        if (defaultProvider) {
+        if (llmStatus.defaultProvider) {
             setTimeout(() => {
-                setProviderId(defaultProvider.provider_id || '');
-                setModelId(defaultProvider.model_id || '');
+                setProviderId(llmStatus.defaultProvider.provider_id || '');
+                setModelId(llmStatus.defaultProvider.model_id || '');
             }, 0);
         }
-    }, [defaultProvider]);
+    }, [llmStatus.defaultProvider]);
 
     const handleSaveProvider = async () => {
         try {
-            await setProviderMutation.mutateAsync({ provider_id: providerId, model_id: modelId });
+            await setDefaultMutation.mutateAsync({ provider_id: providerId, model_id: modelId });
             toast.success('Default LLM provider updated');
         } catch {
             toast.error('Failed to update LLM provider');
@@ -765,14 +764,62 @@ function AISettings({ settings, onUpdate, onReset }) {
             </div>
 
             <div className="grid gap-6">
+                {/* LLM Worker Status Indicator */}
+                <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 className="font-bold text-white tracking-wide flex items-center gap-2">
+                                <Brain size={16} className="text-purple-400" />
+                                LLM Worker Status
+                            </h3>
+                            <p className="text-sm font-medium text-gray-400 mt-1">Live connection status and available models from LLM providers.</p>
+                        </div>
+                        {llmStatus.isLoading ? (
+                            <Loader2 size={18} className="animate-spin text-blue-400" />
+                        ) : llmStatus.isHealthy ? (
+                            <div className="flex items-center gap-2 text-green-400 text-sm font-bold">
+                                <CheckCircle size={16} />
+                                Connected
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 text-red-400 text-sm font-bold">
+                                <XCircle size={16} />
+                                Unavailable
+                            </div>
+                        )}
+                    </div>
+
+                    {llmStatus.enabledProviders.length === 0 ? (
+                        <div className="text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3">
+                            No LLM providers configured. Add one in the <strong>Providers</strong> page to enable chat and story generation.
+                        </div>
+                    ) : (
+                        <div className="grid gap-2">
+                            <div className="text-xs font-bold uppercase tracking-widest text-gray-500">
+                                Enabled Providers ({llmStatus.enabledProviders.length})
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {llmStatus.enabledProviders.map(p => (
+                                    <span key={p.provider_id} className="px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-bold flex items-center gap-1.5">
+                                        <Server size={10} />
+                                        {p.provider_id}
+                                        {p.is_default && <span className="text-[9px] bg-purple-400/20 px-1 py-0.5 rounded">DEFAULT</span>}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 <div className="p-6 border border-white/5 rounded-2xl bg-white/5 shadow-inner">
                     <div className="flex justify-between items-center mb-4">
                         <div>
                             <h3 className="font-bold text-white tracking-wide">Default LLM Provider</h3>
                             <p className="text-sm font-medium text-gray-400 mt-1">Configure the default backend provider for chat and generation.</p>
                         </div>
-                        <button onClick={handleSaveProvider} disabled={setProviderMutation.isPending} className="btn-primary px-4 py-2 flex items-center gap-2">
-                            <Save size={16} /> Save
+                        <button onClick={handleSaveProvider} disabled={setDefaultMutation.isPending} className="btn-primary px-4 py-2 flex items-center gap-2">
+                            {setDefaultMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                            Save
                         </button>
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
@@ -790,14 +837,18 @@ function AISettings({ settings, onUpdate, onReset }) {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Model ID (Optional)</label>
+                            <label className="block text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">
+                                Model ID (Optional)
+                                {llmStatus.isModelsLoading && <Loader2 size={10} className="inline ml-1 animate-spin" />}
+                            </label>
                             <select
                                 value={modelId}
                                 onChange={(e) => setModelId(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                                disabled={llmStatus.isModelsLoading}
                             >
                                 <option value="">Default Model</option>
-                                {availableModels && availableModels.map(m => (
+                                {llmStatus.availableModels && llmStatus.availableModels.map(m => (
                                     <option key={m.id || m} value={m.id || m}>{m.name || m.id || m}</option>
                                 ))}
                             </select>

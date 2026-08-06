@@ -22,6 +22,24 @@ function defaultDeployConfig(type) {
         };
     }
 
+    if (type === 'llm-openai-compat') {
+        return {
+            deploy_mode: 'manual',
+        };
+    }
+
+    if (type === 'llm-anthropic') {
+        return {
+            deploy_mode: 'manual',
+        };
+    }
+
+    if (type === 'llm-google') {
+        return {
+            deploy_mode: 'manual',
+        };
+    }
+
     return {
         deploy_mode: 'managed',
         app_name: 'comfy-modal-stack',
@@ -66,6 +84,25 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             return [
                 { key: 'endpoint_url', label: 'API Endpoint URL', type: 'text', placeholder: 'http://localhost:11434' },
                 { key: 'api_key', label: 'API Key (Optional)', type: 'password', placeholder: 'sk-...' },
+            ];
+        }
+
+        if (formData.type === 'llm-openai-compat') {
+            return [
+                { key: 'endpoint_url', label: 'API Base URL', type: 'text', placeholder: 'https://api.openai.com/v1' },
+                { key: 'api_key', label: 'API Key', type: 'password', placeholder: 'sk-...' },
+            ];
+        }
+
+        if (formData.type === 'llm-anthropic') {
+            return [
+                { key: 'api_key', label: 'Anthropic API Key', type: 'password', placeholder: 'sk-ant-...' },
+            ];
+        }
+
+        if (formData.type === 'llm-google') {
+            return [
+                { key: 'api_key', label: 'Google AI API Key', type: 'password', placeholder: 'AIza...' },
             ];
         }
 
@@ -206,10 +243,17 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                     onChange={(event) => handleTypeChange(event.target.value)}
                                     className={INPUT_CLASS}
                                 >
-                                    <option value="modal">Modal (ComfyUI)</option>
-                                    <option value="beam">Beam.cloud (ComfyUI)</option>
-                                    <option value="kaggle">Kaggle (ComfyUI)</option>
-                                    <option value="llm-local">Local LLM Worker</option>
+                                    <optgroup label="Image Workers">
+                                        <option value="modal">Modal (ComfyUI)</option>
+                                        <option value="beam">Beam.cloud (ComfyUI)</option>
+                                        <option value="kaggle">Kaggle (ComfyUI)</option>
+                                    </optgroup>
+                                    <optgroup label="LLM Workers">
+                                        <option value="llm-local">Local LLM Worker (Ollama / LM Studio)</option>
+                                        <option value="llm-openai-compat">OpenAI / OpenAI-Compatible API</option>
+                                        <option value="llm-anthropic">Anthropic (Claude)</option>
+                                        <option value="llm-google">Google AI (Gemini)</option>
+                                    </optgroup>
                                 </select>
                             </Field>
 
@@ -338,7 +382,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         placeholder="comfy-modal-stack"
                                     />
                                 </Field>
-                            ) : formData.type !== 'llm-local' ? (
+                            ) : formData.type === 'beam' ? (
                                 <Field label="GPU Type">
                                     <input
                                         type="text"
@@ -361,7 +405,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                         Enable experimental fast cold starts
                                     </label>
                                 </Field>
-                            ) : formData.type !== 'llm-local' ? (
+                            ) : formData.type === 'beam' ? (
                                 <>
                                     <Field label="GPU Endpoint URL">
                                         <input
