@@ -15,6 +15,7 @@ class UpdateChatRequest(BaseModel):
     name: str | None = None
     character_id: str | None = None
     persona_name: str | None = None
+    persona_description: str | None = None
     story_time: str | None = None
     story_location: str | None = None
     active_lorebook_ids: list[str] | None = None
@@ -23,6 +24,7 @@ class UpdateChatRequest(BaseModel):
     allow_narration: bool | None = None
     system_prompt_override: str | None = None
     append_system_prompt: str | None = None
+    max_context_tokens: int | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -178,6 +180,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         character=character,
         lorebook_ids=chat.active_lorebook_ids or None,
         persona_name=chat.persona_name,
+        persona_description=getattr(chat, "persona_description", None),
         story_time=chat.story_time,
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
@@ -194,6 +197,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
         append_system_prompt=chat.append_system_prompt,
+            persona_description=getattr(chat, "persona_description", None),
     )
 
     return {
@@ -235,6 +239,26 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
 # Helper: resolve default LLM model id from llm_config.json
 # ---------------------------------------------------------------------------
 from services.llm_config import get_default_llm_model as _get_default_llm_model
+
+# ---------------------------------------------------------------------------
+# Helper: resolve effective context window for a chat
+# ---------------------------------------------------------------------------
+_DEFAULT_CONTEXT_TOKENS = 4096
+
+def _resolve_context_tokens(chat) -> int:
+    """Return the effective max context tokens: per-chat → global setting → 4096."""
+    if chat.max_context_tokens and chat.max_context_tokens > 0:
+        return chat.max_context_tokens
+    try:
+        from config import get_config
+        cfg = get_config() or {}
+        ai_cfg = cfg.get("ai", {})
+        val = ai_cfg.get("maxContextTokens") or ai_cfg.get("max_context_tokens")
+        if val and int(val) > 0:
+            return int(val)
+    except Exception:
+        pass
+    return _DEFAULT_CONTEXT_TOKENS
 
 
 def _insert_world_state_marker(
@@ -304,6 +328,8 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             story_location=chat.story_location,
             system_prompt_override=chat.system_prompt_override,
             append_system_prompt=chat.append_system_prompt,
+            persona_description=getattr(chat, "persona_description", None),
+            max_context_tokens=_resolve_context_tokens(chat),
         )
             
         try:
@@ -426,6 +452,82 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
 class EditMessageRequest(BaseModel):
     content: str
 
+
+class SwipeRequest(BaseModel):
+    direction: str  # "left" | "right" | "select"
+    index: int | None = None  # used when direction == "select"
+
+
+@router.post("/{chat_id}/messages/{message_id}/swipe", response_model=Message)
+def swipe_message(
+    chat_id: str,
+    message_id: str,
+    data: SwipeRequest,
+    session: Session = Depends(get_session),
+):
+    """Navigate between alternate replies for a character message.
+
+    Alternates are stored in message_metadata:
+      {"alternates": ["text0", "text1", ...], "active_index": 0}
+
+    The message content is always kept in sync with the active alternate.
+    Swiping right moves to the next alternate (or wraps), left moves back.
+    Selecting by index picks a specific alternate directly.
+    """
+    message = session.get(Message, message_id)
+    if not message or message.chat_id != chat_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.role != MessageRole.CHAR:
+        raise HTTPException(status_code=400, detail="Only character messages support swipe")
+
+    meta = message.message_metadata or {}
+    alternates: list[str] = meta.get("alternates", [message.content])
+    if message.content not in alternates:
+        alternates.insert(0, message.content)
+    active_index: int = meta.get("active_index", 0)
+    n = len(alternates)
+
+    if data.direction == "right":
+        active_index = (active_index + 1) % n
+    elif data.direction == "left":
+        active_index = (active_index - 1) % n
+    elif data.direction == "select":
+        if data.index is None or data.index < 0 or data.index >= n:
+            raise HTTPException(status_code=400, detail=f"Invalid index {data.index} (0–{n-1})")
+        active_index = data.index
+    else:
+        raise HTTPException(status_code=400, detail="direction must be left | right | select")
+
+    message.content = alternates[active_index]
+    message.message_metadata = {**meta, "alternates": alternates, "active_index": active_index}
+    message.updated_at = datetime.now(timezone.utc)
+    session.add(message)
+    session.commit()
+    session.refresh(message)
+    return message
+
+class PinMessageRequest(BaseModel):
+    pinned: bool
+
+
+@router.patch("/{chat_id}/messages/{message_id}/pin", response_model=Message)
+def pin_message(
+    chat_id: str,
+    message_id: str,
+    data: PinMessageRequest,
+    session: Session = Depends(get_session),
+):
+    """Toggle the pinned state of a message. Pinned messages survive context pruning."""
+    message = session.get(Message, message_id)
+    if not message or message.chat_id != chat_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    message.pinned = data.pinned
+    message.updated_at = datetime.now(timezone.utc)
+    session.add(message)
+    session.commit()
+    session.refresh(message)
+    return message
+
 class RollbackRequest(BaseModel):
     message_id: str
 
@@ -547,6 +649,8 @@ async def regenerate_reply(
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
         append_system_prompt=chat.append_system_prompt,
+            persona_description=getattr(chat, "persona_description", None),
+        max_context_tokens=_resolve_context_tokens(chat),
     )
 
     workflow: dict = {
@@ -579,6 +683,96 @@ async def regenerate_reply(
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"job_id": job.id, "removed_messages": len(trailing)}
+
+class ImpersonateRequest(BaseModel):
+    hint: str = ""  # Optional direction for the impersonation
+
+
+@router.post("/{chat_id}/impersonate")
+async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = Depends(get_session)) -> dict:
+    """Generate a user-voice message and insert it as a USER turn, then trigger the char reply.
+
+    Unlike /suggest (which streams text into the input box), impersonation inserts
+    a completed user message directly and immediately fires the character's response.
+    The LLM writes *as the user*, not as the character.
+    """
+    from services.context_builder import build_system_prompt_sections, prune_context
+    from services.job_queue import queue_manager
+    from config import get_system_prompt_blocks
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    past_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+
+    character = None
+    if chat.character_id:
+        character = session.get(Character, chat.character_id)
+
+    user_name = chat.persona_name or "User"
+    char_name = character.name if character else "the AI"
+
+    # Build world-state context without character identity (same approach as suggest)
+    world_sections = build_system_prompt_sections(
+        session,
+        character=None,
+        lorebook_ids=chat.active_lorebook_ids or None,
+        persona_name=chat.persona_name,
+        story_time=chat.story_time,
+        story_location=chat.story_location,
+        include_roleplay_default=False,
+    )
+    world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
+
+    hint_clause = f" Specifically: {req.hint.strip()}." if req.hint.strip() else ""
+    imp_system = (
+        f"You are {user_name}, the human participant in this roleplay with {char_name}. "
+        f"Write ONE in-character message or action that {user_name} would realistically say or do next.{hint_clause} "
+        f"Output ONLY the raw message text — no labels, no quotes around the whole reply."
+        + (f"\n\n{world_context_str}" if world_context_str else "")
+    )
+
+    # Swap roles for the impersonation LLM call: char→user, user→assistant
+    msg_list = []
+    for msg in past_messages:
+        meta = getattr(msg, "message_metadata", None) or {}
+        if meta.get("source") == "world_state":
+            continue
+        if msg.role == MessageRole.USER:
+            msg_list.append({"role": "assistant", "content": msg.content})
+        elif msg.role == MessageRole.CHAR:
+            msg_list.append({"role": "user", "content": msg.content})
+        elif msg.role == MessageRole.SYSTEM and meta.get("source") not in ("narrator", "world_state"):
+            msg_list.append({"role": "user", "content": f"[{msg.content}]"})
+
+    all_msgs = [{"role": "system", "content": imp_system}] + msg_list
+    all_msgs = prune_context(all_msgs, imp_system, [], _resolve_context_tokens(chat))
+
+    try:
+        job_service = get_job_service(session)
+        imp_job = await job_service.create_job(
+            task_type="llm",
+            workflow={
+                "messages": all_msgs,
+                "chat_id": chat_id,
+                "type": "impersonate",
+                "model": chat.llm_model or _get_default_llm_model(),
+            },
+            metadata={
+                "chat_id": chat_id,
+                "workspace": "roleplay",
+                "is_impersonation": True,
+                "hint": req.hint,
+            },
+        )
+        await queue_manager.enqueue(imp_job.id, task_type="llm")
+        return {"job_id": imp_job.id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/{chat_id}/suggest")
 async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -> dict:

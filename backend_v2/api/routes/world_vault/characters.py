@@ -27,6 +27,8 @@ class CharacterUpdateRequest(BaseModel):
     mes_example: str | None = None
     creator_notes: str | None = None
     system_prompt: str | None = None
+    append_system_prompt: str | None = None
+    suggested_persona: str | None = None
     visual_tags: list[str] | None = None
     lora_triggers: list[str] | None = None
     voice_profile: str | None = None

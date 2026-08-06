@@ -4,8 +4,8 @@ import {
     MessageSquare, Send, Image as ImageIcon, Settings,
     PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
-    User, X, ChevronRight, RotateCcw, Clock, MapPin, Menu,
-    Pencil, Undo2, Activity, Brain
+    User, X, ChevronRight, ChevronLeft, RotateCcw, Clock, MapPin, Menu,
+    Pencil, Undo2, Activity, Brain, Download, Pin, PinOff, Ghost
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -17,7 +17,8 @@ import {
     useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply,
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
     useCharacterCollection, useEditMessage, useRollbackChat,
-    useRegenerateReply, useChatJobs, usePatchCharacter
+    useRegenerateReply, useChatJobs, usePatchCharacter,
+    useImpersonateMessage, usePinMessage, useSwipeMessage
 } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -402,11 +403,14 @@ function CharacterDetailsModal({ character, onClose }) {
 // ---------------------------------------------------------------------------
 // Memoized Message Item
 // ---------------------------------------------------------------------------
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback, onPin, onSwipe }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(msg.content);
 
     const meta = msg.message_metadata || {};
+    const alternates = meta.alternates || null;
+    const activeIndex = meta.active_index ?? 0;
+    const altCount = alternates ? alternates.length : 0;
     if (meta.source === 'world_state') {
         return (
             <div className="flex items-center gap-3 w-full max-w-full self-center my-1.5 select-none">
@@ -477,11 +481,33 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                 ) : (
                     <>
                         {(msg.role === 'char' || msg.role === 'assistant') ? (
-                            <div className="flex flex-col gap-2 w-full">
+                            <div className="flex flex-col gap-1.5 w-full">
                                 <TavernMessage content={msg.content} />
                                 {msg.image_path && (
                                     <div className="mt-1">
                                         <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                    </div>
+                                )}
+                                {/* Swipe controls — only shown when alternates exist */}
+                                {altCount > 1 && (
+                                    <div className="flex items-center gap-1.5 mt-0.5 select-none">
+                                        <button
+                                            onClick={() => onSwipe?.(msg.id, 'left')}
+                                            className="p-0.5 rounded text-gray-600 hover:text-blue-400 transition-colors"
+                                            title="Previous reply"
+                                        >
+                                            <ChevronLeft size={14} />
+                                        </button>
+                                        <span className="text-[10px] text-gray-600 font-mono tabular-nums">
+                                            {activeIndex + 1}/{altCount}
+                                        </span>
+                                        <button
+                                            onClick={() => onSwipe?.(msg.id, 'right')}
+                                            className="p-0.5 rounded text-gray-600 hover:text-blue-400 transition-colors"
+                                            title="Next reply"
+                                        >
+                                            <ChevronRight size={14} />
+                                        </button>
                                     </div>
                                 )}
                             </div>
@@ -529,6 +555,16 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 title="Rollback chat to here"
                             >
                                 <Undo2 size={11} />
+                            </button>
+                            <button
+                                onClick={() => onPin?.(msg.id, !!msg.pinned)}
+                                className={clsx(
+                                    "p-1 rounded-md hover:bg-white/5 transition-colors",
+                                    msg.pinned ? "text-amber-400 hover:text-amber-300" : "text-gray-500 hover:text-amber-400"
+                                )}
+                                title={msg.pinned ? "Unpin message" : "Pin message (preserved in context)"}
+                            >
+                                {msg.pinned ? <Pin size={11} /> : <PinOff size={11} />}
                             </button>
                         </div>
                     </>
@@ -864,6 +900,9 @@ export default function ChatWorkspace() {
     const rollbackMutation = useRollbackChat();
     const regenerateMutation = useRegenerateReply();
     const patchCharacterMutation = usePatchCharacter();
+    const impersonateMutation = useImpersonateMessage();
+    const pinMessageMutation = usePinMessage();
+    const swipeMessageMutation = useSwipeMessage();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
@@ -1330,6 +1369,78 @@ export default function ChatWorkspace() {
         } catch { toast.error('Failed to regenerate'); }
     };
 
+    const handleImpersonate = async (hint = '') => {
+        if (!activeChatId) return;
+        try {
+            const res = await impersonateMutation.mutateAsync({ chatId: activeChatId, hint });
+            if (res?.job_id) {
+                updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'impersonation' });
+                toast('Impersonating...', { icon: '👤' });
+            }
+        } catch { toast.error('Impersonation failed'); }
+    };
+
+    const handlePinMessage = async (msgId, currentlyPinned) => {
+        try {
+            await pinMessageMutation.mutateAsync({ chatId: activeChatId, msgId, pinned: !currentlyPinned });
+            toast.success(currentlyPinned ? 'Message unpinned' : 'Message pinned — won\'t be pruned from context');
+        } catch { toast.error('Failed to pin message'); }
+    };
+
+    const handleSwipe = async (msgId, direction, index) => {
+        try {
+            await swipeMessageMutation.mutateAsync({ chatId: activeChatId, msgId, direction, index });
+        } catch { toast.error('Swipe failed'); }
+    };
+
+    const handleExportChat = () => {
+        if (!messages.length) { toast.error('No messages to export'); return; }
+        const charName = linkedCharacter?.name || 'AI';
+        const userName = activeChat?.persona_name || 'You';
+        const chatName = activeChat?.name || 'Chat';
+
+        const ROLE_LABEL = {
+            user:   userName,
+            char:   charName,
+            system: '✦ System',
+        };
+
+        const lines = [
+            `# ${chatName}`,
+            linkedCharacter ? `**Character:** ${charName}` : null,
+            `**Exported:** ${new Date().toLocaleString()}`,
+            '',
+            '---',
+            '',
+        ].filter(Boolean);
+
+        for (const msg of messages) {
+            const meta = msg.message_metadata || {};
+            // Skip world-state UI dividers in the export
+            if (meta.source === 'world_state') {
+                const parts = [];
+                if (meta.location) parts.push(`📍 ${meta.location}`);
+                if (meta.time)     parts.push(`🕐 ${meta.time}`);
+                if (parts.length)  lines.push(`\n*— ${parts.join(' · ')} —*\n`);
+                continue;
+            }
+            const label = ROLE_LABEL[msg.role] ?? '✦ System';
+            lines.push(`**${label}:**`);
+            lines.push(msg.content);
+            if (msg.image_path) lines.push(`*[Image: ${msg.image_path}]*`);
+            lines.push('');
+        }
+
+        const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `${chatName.replace(/[^a-z0-9_\- ]/gi, '_')}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Chat exported as Markdown');
+    };
+
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
     return (
@@ -1467,6 +1578,14 @@ export default function ChatWorkspace() {
                         )}
                     </div>
                     <button
+                        onClick={handleExportChat}
+                        disabled={!activeChatId || !messages.length}
+                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="Export chat as Markdown"
+                    >
+                        <Download size={18} />
+                    </button>
+                    <button
                         onClick={() => setRightDrawerOpen(r => !r)}
                         className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                         title="Context & Settings"
@@ -1498,6 +1617,8 @@ export default function ChatWorkspace() {
                                     onEdit={handleEditMessage}
                                     onRegenerate={handleRegenerate}
                                     onRollback={handleRollback}
+                                    onPin={handlePinMessage}
+                                    onSwipe={handleSwipe}
                                 />
                             ))}
 
@@ -1536,22 +1657,36 @@ export default function ChatWorkspace() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start gap-1">
-                                            <div className="text-[10px] text-blue-400 ml-1 flex items-center gap-1.5">
-                                                {linkedCharacter?.name || 'AI'} <Loader2 size={10} className="animate-spin" />
-                                            </div>
-                                            <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
-                                                {jobData.text ? (
-                                                    <span className="whitespace-pre-wrap">{jobData.text}<span className="inline-block w-1 h-4 bg-blue-400/70 animate-pulse ml-0.5 align-text-bottom rounded-sm" /></span>
-                                                ) : (
-                                                    <span className="flex items-center gap-2 text-purple-400 text-sm">
-                                                        <Wand2 size={14} className="animate-pulse" />
-                                                        Thinking...
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )
+                        <div key={jobId} className="flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%] self-start flex-row">
+                            {/* Character avatar */}
+                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                                {linkedCharacter?.avatar_path
+                                    ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                                    : <MessageSquare className="text-blue-400" size={12} />
+                                }
+                            </div>
+                            <div className="flex flex-col max-w-full">
+                                {/* Speaker label */}
+                                <div className="text-[10px] mb-1 text-gray-400 flex items-center gap-1.5">
+                                    <span>{linkedCharacter?.name || 'AI'}</span>
+                                    <span className="inline-flex items-center gap-0.5 text-blue-400/70">
+                                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                                    </span>
+                                </div>
+                                <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
+                                    {jobData.text ? (
+                                        <TavernMessage content={jobData.text + '▍'} />
+                                    ) : (
+                                        <span className="flex items-center gap-2 text-gray-400 text-sm italic">
+                                            *{linkedCharacter?.name || 'AI'} is thinking...*
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )
                                 )
                             ))}
 
@@ -1675,6 +1810,22 @@ export default function ChatWorkspace() {
                                 >
                                     <BookOpen size={18} />
                                 </button>
+                                {/* Impersonate */}
+                                <button
+                                    onClick={() => handleImpersonate()}
+                                    disabled={!activeChatId || impersonateMutation.isPending}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-all rounded-xl",
+                                        impersonateMutation.isPending
+                                            ? "text-purple-400 bg-purple-500/10 cursor-not-allowed"
+                                            : (activeChatId ? "text-gray-400 hover:text-purple-400 hover:bg-purple-500/10" : "text-gray-600 cursor-not-allowed")
+                                    )}
+                                    title="Impersonate — AI writes your next message then triggers a reply"
+                                >
+                                    {impersonateMutation.isPending
+                                        ? <Loader2 size={16} className="animate-spin" />
+                                        : <Ghost size={16} />}
+                                </button>
                                 {/* Suggest */}
                                 <button
                                     onClick={handleSuggestClick}
@@ -1767,8 +1918,40 @@ export default function ChatWorkspace() {
                             placeholder="Default (User)"
                             onSave={val => handleChatUpdate({ persona_name: val })}
                         />
+                        {/* Persona description */}
+                        <div className="mt-3">
+                            <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                Description
+                            </label>
+                            <textarea
+                                key={`persona-desc-${activeChatId}`}
+                                defaultValue={activeChat?.persona_description || ''}
+                                onBlur={(e) => {
+                                    const val = e.target.value.trim() || null;
+                                    if (val !== (activeChat?.persona_description || null)) {
+                                        handleChatUpdate({ persona_description: val });
+                                    }
+                                }}
+                                placeholder={
+                                    linkedCharacter?.suggested_persona
+                                        ? `Suggested: ${linkedCharacter.suggested_persona.slice(0, 60)}…`
+                                        : 'Describe your character — who you are in this roleplay…'
+                                }
+                                rows={2}
+                                className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40 resize-none"
+                            />
+                            {linkedCharacter?.suggested_persona && !activeChat?.persona_description && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleChatUpdate({ persona_description: linkedCharacter.suggested_persona })}
+                                    className="mt-1 text-[9px] text-blue-400 hover:text-blue-300 transition-colors"
+                                >
+                                    Use {linkedCharacter.name}'s suggestion
+                                </button>
+                            )}
+                        </div>
                         <p className="text-[10px] text-gray-600 mt-2 px-1">
-                            Sets <code className="text-gray-500">{'{{user}}'}</code> in character prompts.
+                            Sets <code className="text-gray-500">{'{{user}}'}</code> and injects a persona block into the system prompt.
                         </p>
                     </div>
                     
@@ -1885,6 +2068,39 @@ export default function ChatWorkspace() {
                                     <option key={m.id} value={m.id}>{m.name}</option>
                                 ))}
                             </select>
+                        </div>
+
+                        {/* Context window size */}
+                        <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <p className="text-xs text-gray-300 font-medium">Context Window</p>
+                                <span className="text-[10px] text-gray-500 font-mono">
+                                    {activeChat?.max_context_tokens
+                                        ? `${(activeChat.max_context_tokens / 1024).toFixed(0)}k tokens`
+                                        : 'Global default'}
+                                </span>
+                            </div>
+                            <input
+                                type="range"
+                                min="2048"
+                                max="131072"
+                                step="2048"
+                                value={activeChat?.max_context_tokens || 4096}
+                                onChange={(e) => handleChatUpdate({ max_context_tokens: parseInt(e.target.value) })}
+                                className="w-full accent-blue-500"
+                                title="Max tokens sent to the LLM. Higher = remembers more but costs more."
+                            />
+                            <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                                <span>2k</span><span>32k</span><span>64k</span><span>128k</span>
+                            </div>
+                            {activeChat?.max_context_tokens && (
+                                <button
+                                    onClick={() => handleChatUpdate({ max_context_tokens: null })}
+                                    className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                                >
+                                    Reset to global default
+                                </button>
+                            )}
                         </div>
                         <div className="flex items-center justify-between">
                             <div>

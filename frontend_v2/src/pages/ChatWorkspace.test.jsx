@@ -62,6 +62,9 @@ vi.mock('../hooks/useWorldVault', () => ({
     useChatJobs: () => ({ data: [] }),
     useCharacterCollection: () => ({ data: { images: [], image_count: 0 } }),
     usePatchCharacter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useImpersonateMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    usePinMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useSwipeMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     getAvatarUrl: () => '',
 }));
 

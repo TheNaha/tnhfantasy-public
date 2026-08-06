@@ -767,6 +767,54 @@ def _migration_add_chat_append_system_prompt(conn) -> bool:
     return True
 
 
+def _migration_add_chat_max_context_tokens(conn) -> bool:
+    """Add max_context_tokens column to chats table for per-chat context window."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "max_context_tokens" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN max_context_tokens INTEGER DEFAULT NULL"))
+        logger.info("migration_column_added", table="chats", column="max_context_tokens")
+    _verify_required_columns(conn, "chats", {"max_context_tokens"})
+    return True
+
+
+def _migration_add_message_pinned(conn) -> bool:
+    """Add pinned boolean column to messages table."""
+    inspector = inspect(conn)
+    if "messages" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("messages")}
+    if "pinned" not in columns:
+        conn.execute(text("ALTER TABLE messages ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT FALSE"))
+        logger.info("migration_column_added", table="messages", column="pinned")
+    _verify_required_columns(conn, "messages", {"pinned"})
+    return True
+
+
+def _migration_add_persona_description(conn) -> bool:
+    """Add persona_description to chats and suggested_persona to characters."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    touched = False
+    if "chats" in table_names:
+        cols = {c["name"] for c in inspector.get_columns("chats")}
+        if "persona_description" not in cols:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN persona_description TEXT DEFAULT NULL"))
+            logger.info("migration_column_added", table="chats", column="persona_description")
+            touched = True
+        _verify_required_columns(conn, "chats", {"persona_description"})
+    if "characters" in table_names:
+        cols = {c["name"] for c in inspector.get_columns("characters")}
+        if "suggested_persona" not in cols:
+            conn.execute(text("ALTER TABLE characters ADD COLUMN suggested_persona TEXT DEFAULT NULL"))
+            logger.info("migration_column_added", table="characters", column="suggested_persona")
+            touched = True
+        _verify_required_columns(conn, "characters", {"suggested_persona"})
+    return touched
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -864,5 +912,20 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="019_add_chat_append_system_prompt",
             description="Add append_system_prompt column to chats for per-chat extra instructions",
             apply_fn=_migration_add_chat_append_system_prompt,
+        ),
+        MigrationStep(
+            version="020_add_chat_max_context_tokens",
+            description="Add max_context_tokens column to chats for per-chat context window size",
+            apply_fn=_migration_add_chat_max_context_tokens,
+        ),
+        MigrationStep(
+            version="021_add_message_pinned",
+            description="Add pinned boolean column to messages so important messages survive context pruning",
+            apply_fn=_migration_add_message_pinned,
+        ),
+        MigrationStep(
+            version="022_add_persona_description",
+            description="Add persona_description to chats and suggested_persona to characters",
+            apply_fn=_migration_add_persona_description,
         ),
     ]

@@ -430,7 +430,109 @@ async def finalize_successful_job(
         and isinstance(job.metadata_, dict)
         and job.metadata_.get("source") == "story_illustrate_prompt"
     )
-    if is_illustrate_prompt:
+
+    # ── Impersonation: LLM wrote a user-voice message → insert as USER turn ──
+    is_impersonation = (
+        job.task_type == 'llm'
+        and isinstance(job.metadata_, dict)
+        and job.metadata_.get("is_impersonation") is True
+    )
+    if is_impersonation:
+        imp_text = ""
+        if final_result.get("outputs") and isinstance(final_result["outputs"], list):
+            imp_text = (final_result["outputs"][0] or {}).get("content", "")
+        if not imp_text and final_result.get("text"):
+            imp_text = final_result["text"]
+        imp_text = imp_text.strip()
+
+        imp_chat_id = job.metadata_.get("chat_id")
+        if imp_chat_id and imp_text:
+            from sqlmodel import Session
+            from core.entities import Chat, Message, MessageRole
+            from infrastructure.database import engine
+            from services.context_builder import build_chat_context
+            from services.job_service import JobService
+            from services.job_queue import queue_manager
+            from api.routes.world_vault.chats import _get_default_llm_model, _resolve_context_tokens
+
+            with Session(engine) as _session:
+                # 1. Insert the generated text as a real USER message
+                try:
+                    _user_msg = Message(
+                        chat_id=imp_chat_id,
+                        role=MessageRole.USER,
+                        content=imp_text,
+                        message_metadata={"source": "impersonation"},
+                    )
+                    _session.add(_user_msg)
+                    _session.commit()
+                except Exception as e:
+                    _session.rollback()
+                    logger.warning("impersonate_insert_failed", job_id=job_id, error=str(e))
+
+                # 2. Fire the character's reply job
+                try:
+                    from core.entities import Character
+                    from sqlmodel import select
+
+                    _chat = _session.get(Chat, imp_chat_id)
+                    if _chat:
+                        _character = _session.get(Character, _chat.character_id) if _chat.character_id else None
+                        _past = _session.exec(
+                            select(Message)
+                            .where(Message.chat_id == imp_chat_id)
+                            .order_by(Message.created_at)
+                        ).all()
+                        _sp, _ctx = build_chat_context(
+                            _session,
+                            _past,
+                            character=_character,
+                            lorebook_ids=_chat.active_lorebook_ids or None,
+                            persona_name=_chat.persona_name,
+                            story_time=_chat.story_time,
+                            story_location=_chat.story_location,
+                            system_prompt_override=_chat.system_prompt_override,
+                            append_system_prompt=_chat.append_system_prompt,
+                            max_context_tokens=_resolve_context_tokens(_chat),
+                        )
+                        _reply_job_svc = JobService(_session)
+                        _reply_job = await _reply_job_svc.create_job(
+                            task_type="llm",
+                            workflow={
+                                "messages": _ctx,
+                                "chat_id": imp_chat_id,
+                                "character_system_prompt": _sp or None,
+                                "type": "chat_reply",
+                                "model": _chat.llm_model or _get_default_llm_model(),
+                            },
+                            metadata={
+                                "chat_id": imp_chat_id,
+                                "character_id": _chat.character_id,
+                                "workspace": "roleplay",
+                            },
+                        )
+                        await queue_manager.enqueue(_reply_job.id, task_type="llm")
+                        logger.info("impersonate_reply_enqueued", imp_job=job_id, reply_job=_reply_job.id)
+                except Exception as e:
+                    logger.error("impersonate_reply_failed", job_id=job_id, error=str(e), exc_info=True)
+
+        await emit_job_event(EventType.JOB_COMPLETED, {
+            "id": job.id,
+            "task_type": job.task_type,
+            "type": "impersonation",
+            "metadata": {"chat_id": imp_chat_id, "type": "impersonation"},
+            "chat_id": imp_chat_id,
+            "content": imp_text,
+        })
+        await finalize_persisted_job_outputs(
+            job_service=job_service,
+            job_id=job_id,
+            outputs=[],
+            provider_id=provider_id,
+            load_balancer=load_balancer,
+            process_image_background_fn=None,
+        )
+        return
         generated_prompt = ""
         if final_result.get("outputs") and isinstance(final_result["outputs"], list):
             generated_prompt = (final_result["outputs"][0] or {}).get("content", "")
@@ -622,9 +724,38 @@ async def finalize_successful_job(
             with Session(engine) as session:
                 try:
                     if is_chat_reply:
-                        msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=entity_id)
-                        session.add(msg)
-                        session.commit()
+                        # Check if the most recent char message can accept this as an alternate
+                        # (i.e. it was a recent regeneration rather than a genuinely new turn)
+                        from sqlmodel import select as _sel
+                        _last_char = session.exec(
+                            _sel(Message)
+                            .where(Message.chat_id == entity_id, Message.role == MessageRole.CHAR)
+                            .order_by(Message.created_at.desc())
+                            .limit(1)
+                        ).first()
+                        _meta = _last_char.message_metadata or {} if _last_char else {}
+                        _is_regen = job.metadata_.get("regenerated") if job.metadata_ else False
+
+                        if _is_regen and _last_char:
+                            # Append as a new alternate and auto-select it
+                            _MAX_ALTERNATES = 10
+                            alts: list[str] = _meta.get("alternates", [_last_char.content])
+                            if _last_char.content not in alts:
+                                alts.insert(0, _last_char.content)
+                            alts.append(assistant_content)
+                            if len(alts) > _MAX_ALTERNATES:
+                                alts = alts[-_MAX_ALTERNATES:]
+                            new_index = len(alts) - 1
+                            _last_char.content = assistant_content
+                            _last_char.message_metadata = {**_meta, "alternates": alts, "active_index": new_index}
+                            from datetime import datetime, timezone as _tz
+                            _last_char.updated_at = datetime.now(_tz.utc)
+                            session.add(_last_char)
+                            session.commit()
+                        else:
+                            msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=entity_id)
+                            session.add(msg)
+                            session.commit()
                     else:
                         chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
                         if chapter_id:

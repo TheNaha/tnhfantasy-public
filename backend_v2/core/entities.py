@@ -677,9 +677,9 @@ class Character(SQLModel, table=True):
     creator_notes: str | None = Field(default=None, sa_column=Column(Text))
     system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     # Extra instructions appended after the character's main system prompt
-    # (applies to every chat that uses this character, unless the chat has its
-    # own system_prompt_override or append_system_prompt).
     append_system_prompt: str | None = Field(default=None, sa_column=Column(Text))
+    # Suggested user persona when chatting with this character
+    suggested_persona: str | None = Field(default=None, sa_column=Column(Text))
     
     visual_tags: list[str] = Field(default=[], sa_column=Column(JSON))
     lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSON))
@@ -717,6 +717,10 @@ class Chat(SQLModel, table=True):
     # Priority: override > (character_prompt + char.append) > chat.append > roleplay_default
     system_prompt_override: str | None = Field(default=None, sa_column=Column(Text))
     append_system_prompt: str | None = Field(default=None, sa_column=Column(Text))
+    # Per-chat LLM context window in tokens (None → use global setting → 4096 fallback)
+    max_context_tokens: int | None = Field(default=None)
+    # Per-chat user persona description injected into the system prompt
+    persona_description: str | None = Field(default=None, sa_column=Column(Text))
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -737,6 +741,7 @@ class Message(SQLModel, table=True):
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
     message_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
+    pinned: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

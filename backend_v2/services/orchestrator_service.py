@@ -358,10 +358,35 @@ async def _tool_narrate_scene(
 
     character_system_prompt = source_meta.get("character_system_prompt")
     if not character_system_prompt and chat_id:
-        from core.entities import Chat
-        chat = session.get(Chat, chat_id)
-        if chat and chat.system_prompt_override:
-            character_system_prompt = chat.system_prompt_override
+        # Re-build the character system prompt fresh from DB so the narrator
+        # always has the full character identity even in deeply-chained agentic jobs.
+        try:
+            from infrastructure.database import get_session_sync as _gsync
+            from core.entities import Chat as _Chat, Character as _Char
+            from services.context_builder import build_system_prompt_sections
+            _s = _gsync()
+            try:
+                _chat = _s.get(_Chat, chat_id)
+                if _chat:
+                    _char = _s.get(_Char, _chat.character_id) if _chat.character_id else None
+                    _sections = build_system_prompt_sections(
+                        _s,
+                        character=_char,
+                        system_prompt_override=_chat.system_prompt_override,
+                        append_system_prompt=_chat.append_system_prompt,
+                        persona_name=_chat.persona_name,
+                        story_time=_chat.story_time,
+                        story_location=_chat.story_location,
+                        lorebook_ids=_chat.active_lorebook_ids or None,
+                        # Don't include roleplay_default in the narrator context —
+                        # the narrator has its own dedicated system prompt.
+                        include_roleplay_default=False,
+                    )
+                    character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
+            finally:
+                _s.close()
+        except Exception as _e:
+            logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
 
     workflow: dict[str, Any] = {
         "messages": messages,
