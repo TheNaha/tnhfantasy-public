@@ -121,6 +121,7 @@ export default function Layout({ children }) {
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
     const { data: branding } = useBranding();
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
+    const location = useLocation();
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -208,8 +209,16 @@ export default function Layout({ children }) {
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col min-w-0 lg:overflow-hidden pt-16 lg:pt-0 relative z-10">
-                
-                <main id="main-scroll-container" className="flex-1 lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8 relative z-10">
+                {/* Full-bleed routes (/chat, /story) get no padding so they fill edge-to-edge */}
+                <main
+                    id="main-scroll-container"
+                    className={clsx(
+                        "flex-1 relative z-10",
+                        /^\/(chat|story)/.test(location.pathname)
+                            ? "flex flex-col lg:overflow-hidden"
+                            : "lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8"
+                    )}
+                >
                     {children}
                 </main>
             </div>

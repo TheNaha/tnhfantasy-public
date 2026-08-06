@@ -1483,7 +1483,7 @@ export default function ChatWorkspace() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex flex-col h-[calc(var(--vh,1vh)*100-4rem)] relative overflow-hidden bg-gray-900"
+            className="flex flex-col h-full relative overflow-hidden bg-gray-900"
         >
             {/* === THREE-COLUMN ROW (fills remaining height above mobile tab bar) === */}
             <div className="flex flex-1 flex-row min-h-0 overflow-hidden">
