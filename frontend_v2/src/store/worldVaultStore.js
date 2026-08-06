@@ -34,9 +34,12 @@ export const useWorldVaultStore = create((set) => ({
   }),
   
   setSystemPrompt: (prompt) => set((state) => ({
-    contextBuilder: { ...state.contextBuilder, systemPromptOverride: prompt }
+    contextBuilder: {
+      ...state.contextBuilder,
+      systemPromptOverride: prompt,
+    }
   })),
-  
+
   resetContext: () => set(() => ({
     contextBuilder: {
       selectedLorebooks: [],

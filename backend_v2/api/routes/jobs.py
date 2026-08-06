@@ -243,6 +243,7 @@ async def retry_job(
     new_job = await submission_service.create_and_enqueue_job(
         original_job.workflow,
         original_job.metadata_,
+        task_type=original_job.task_type,
     )
     
     logger.info("job_retried", original_job_id=job_id, new_job_id=new_job.id)

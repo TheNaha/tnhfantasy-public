@@ -162,19 +162,7 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
 # ---------------------------------------------------------------------------
 # Helper: resolve default LLM model id from llm_config.json
 # ---------------------------------------------------------------------------
-def _get_default_llm_model() -> str:
-    """Read the user-selected LLM model from llm_config.json. Returns 'default' if not set."""
-    import json as _json
-    import os as _os
-    config_path = "/data/llm_config.json"
-    if _os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                data = _json.load(f)
-                return data.get("model_id") or "default"
-        except Exception:
-            pass
-    return "default"
+from services.llm_config import get_default_llm_model as _get_default_llm_model
 
 
 @router.post("/{chat_id}/messages")

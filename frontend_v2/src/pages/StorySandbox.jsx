@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useSetLLMDefaultProvider } from '../hooks/useWorldVault';
@@ -265,9 +265,27 @@ export default function StorySandbox() {
             }
         });
 
+        const unsubFailed = subscribe(EventTypes.JOB_FAILED, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const storyId = meta.story_id;
+            const chapterId = meta.chapter_id;
+
+            if (storyId === activeStoryId && chapterId === activeChapterId) {
+                setIsStreaming(false);
+                setIsIllustrating(false);
+                streamingRef.current = '';
+                toast.error('Job failed: ' + (job.error || 'Unknown error'));
+                if (job.id) {
+                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                }
+            }
+        });
+
         return () => {
             unsubProgress();
             unsubCompleted();
+            unsubFailed();
         };
     }, [subscribe, activeStoryId, activeChapterId, queryClient, editorContent]);
 
@@ -290,7 +308,7 @@ export default function StorySandbox() {
             toast.error('Failed to start story continuation');
             setIsStreaming(false);
         }
-    }, [activeStoryId, activeChapterId, isStreaming, continueChapter]);
+    }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent]);
 
     const handleAutoGenerateTitle = async () => {
         if (!activeStoryId || !activeChapterId) return;
@@ -450,8 +468,7 @@ export default function StorySandbox() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 bg-[#0B0E14]"
-        >
+            className="flex h-[calc(var(--vh,1vh)*100-8rem)] lg:h-[calc(var(--vh,1vh)*100-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 bg-[#0B0E14]"
         >
             <div className={clsx(
                 "md:static inset-y-0 left-0 z-50 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",
@@ -489,7 +506,6 @@ export default function StorySandbox() {
                     </div>
                 ) : (
                     <>
-                        <div className="flex-1 flex min-h-0 relative">
                         <div className="flex-1 flex min-h-0 relative">
                             <div className={clsx(
                                 "md:static inset-y-0 left-0 z-30 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",

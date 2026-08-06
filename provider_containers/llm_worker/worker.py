@@ -38,6 +38,8 @@ else:
     raise ValueError(f"Unknown ENGINE: {ENGINE}")
 
 
+_background_tasks: list = []
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup
@@ -48,21 +50,30 @@ async def lifespan(app: FastAPI):
 
     # Start auto-discovery for this provider
     if PROVIDER_ID:
-        asyncio.create_task(
-            auto_discovery_loop(
-                provider_id=PROVIDER_ID,
-                provider_type=ENGINE,
-                backend_url=BACKEND_URL,
-                interval_seconds=60,
-                worker_type="llm",
+        _background_tasks.append(
+            asyncio.create_task(
+                auto_discovery_loop(
+                    provider_id=PROVIDER_ID,
+                    provider_type=ENGINE,
+                    backend_url=BACKEND_URL,
+                    interval_seconds=60,
+                    worker_type="llm",
+                )
             )
         )
 
-    yield
-    # Teardown
-    logger.info("Shutting down LLM Worker")
-    if hasattr(client, "close"):
-        await client.close()
+    try:
+        yield
+    finally:
+        # Teardown
+        logger.info("Shutting down LLM Worker")
+        for task in _background_tasks:
+            task.cancel()
+        if _background_tasks:
+            await asyncio.gather(*_background_tasks, return_exceptions=True)
+        _background_tasks.clear()
+        if hasattr(client, "close"):
+            await client.close()
 
 
 app = FastAPI(title="Unified LLM Worker", lifespan=lifespan)

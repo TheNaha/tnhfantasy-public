@@ -8,7 +8,6 @@ Works as a post-completion processor inside job_processing.py:
   3. Repeat until plain text response (max depth enforced)
 """
 
-import asyncio
 import json
 import logging
 from typing import Any
@@ -106,7 +105,6 @@ async def _tool_generate_image(
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline and wait for completion."""
-    from core.entities import JobStatus
     from services.job_submission_service import JobSubmissionService
     from infrastructure.database import get_session_sync
 
@@ -163,33 +161,28 @@ async def _tool_generate_image(
         logger.error("tool_generate_image_failed", error=str(e))
         return {"status": "error", "error": str(e)}
 
-    for _ in range(120):
-        try:
-            from services.job_service import JobService
-            js = JobService(session)
-            job_status = await js.get_job(job.id)
-        except Exception:
-            await asyncio.sleep(1.0)
-            continue
+    try:
+        from core.events import wait_for_job_completion
+        final_status, output = await wait_for_job_completion(job.id, timeout=120.0)
+    except Exception as e:
+        logger.error("wait_for_job_completion_failed", error=str(e))
+        return {"status": "error", "error": f"Failed waiting for image job: {e}"}
 
-        if job_status.status == JobStatus.COMPLETED:
-            outputs = job_status.outputs or []
-            image_path = None
-            if outputs:
-                image_path = outputs[0].get("relative_path") or outputs[0].get("filename")
-            return {
-                "status": "success",
-                "image_path": image_path or f"Generated_{job.id[:8]}.png",
-                "prompt_used": prompt,
-                "job_id": job.id,
-            }
+    if final_status == "completed":
+        image_path = None
+        if output:
+            image_path = output.get("relative_path") or output.get("filename")
+        return {
+            "status": "success",
+            "image_path": image_path or f"Generated_{job.id[:8]}.png",
+            "prompt_used": prompt,
+            "job_id": job.id,
+        }
 
-        if job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-            return {"status": "error", "error": job_status.error or "Image generation failed"}
+    if final_status in ("failed", "cancelled"):
+        return {"status": "error", "error": f"Image generation {final_status}"}
 
-        await asyncio.sleep(1.0)
-
-    return {"status": "error", "error": "Image generation timed out (120s)"}
+    return {"status": "error", "error": f"Image generation ended with status: {final_status}"}
 
 
 def _build_default_image_workflow(prompt: str, negative: str, checkpoint: str = "sd_xl_base_1.0.safetensors", lora: str | None = None) -> dict[str, Any]:

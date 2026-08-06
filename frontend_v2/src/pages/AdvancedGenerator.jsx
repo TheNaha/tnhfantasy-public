@@ -80,7 +80,7 @@ export default function AdvancedGenerator() {
 
     return (
         <div className={`grid grid-cols-1 gap-6 transition-all ${showRunway || editorMode === 'json' ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
-            <div className="h-[calc(100vh-140px)] flex flex-col">
+            <div className="h-[calc(var(--vh,1vh)*100-140px)] flex flex-col">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <div className="flex items-center gap-4">
                     <h2 className="text-2xl font-bold">Advanced Workflow</h2>

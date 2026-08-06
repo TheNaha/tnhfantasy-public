@@ -27,7 +27,7 @@ from api.deps import (
 )
 from config import settings
 from core.entities import JobStatus
-from services.job_queue import job_queue
+from services.job_queue import queue_manager
 from services.provider_runtime import resolve_provider_runtime
 
 logger = logging.getLogger(__name__)
@@ -196,7 +196,7 @@ async def cancel_job(sid, data):
     
     try:
         # Check if job is active in queue
-        if job_queue.is_job_active(job_id):
+        if queue_manager.image.is_job_active(job_id) or queue_manager.llm.is_job_active(job_id):
             # Job is currently being processed - signal cancellation to worker
             async with get_session_context() as session:
                 job_service = get_job_service(session)

@@ -159,7 +159,7 @@ async def monitor_provider_changes():
     """Resize worker pool as provider availability changes."""
     from core.events import EventType, event_bus
     from infrastructure.repositories import ProviderRepository
-    from services.job_queue import job_queue
+    from services.job_queue import queue_manager
 
     logger.info("provider_monitor_start")
     subscription = event_bus.subscribe("provider")
@@ -183,8 +183,8 @@ async def monitor_provider_changes():
 
                     image_workers, llm_workers = await asyncio.to_thread(count_enabled_providers)
 
-                    if image_workers != job_queue.image.max_workers or llm_workers != job_queue.llm.max_workers:
-                        job_queue.resize(image_workers, llm_workers)
+                    if image_workers != queue_manager.image.max_workers or llm_workers != queue_manager.llm.max_workers:
+                        queue_manager.resize(image_workers, llm_workers)
                 except Exception as exc:
                     logger.error("provider_monitor_error", error=str(exc))
     except asyncio.CancelledError:

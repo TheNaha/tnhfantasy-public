@@ -931,7 +931,7 @@ export default function ChatWorkspace() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative overflow-hidden"
+            className="flex h-[calc(var(--vh,1vh)*100-8rem)] lg:h-[calc(var(--vh,1vh)*100-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative overflow-hidden"
         >
             {/* Mobile Backdrop for Left Drawer */}
             <AnimatePresence>
@@ -984,7 +984,7 @@ export default function ChatWorkspace() {
                                 </div>
                             ) : (
                                 <button
-                                    onClick={() => { setActiveChatId(chat.id); setMobileTab('chat'); }}
+                                    onClick={() => { setActiveChatId(chat.id); setLeftDrawerOpen(false); }}
                                     className={clsx(
                                         "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5",
                                         activeChatId === chat.id
@@ -1156,7 +1156,7 @@ export default function ChatWorkspace() {
                             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAttachmentChange} className="hidden" />
                             
                             {/* Input Container */}
-                            <div className="flex items-center w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-44 py-3.5 sm:py-4 transition-all shadow-inner focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30">
+                            <div className="flex items-center w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-20 sm:pr-44 py-3.5 sm:py-4 transition-all shadow-inner focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30">
                                 
                                 {activeCommand && (
                                     <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-lg text-sm font-medium mr-2 whitespace-nowrap select-none ml-2">

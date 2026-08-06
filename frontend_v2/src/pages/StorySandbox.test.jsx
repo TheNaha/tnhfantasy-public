@@ -9,17 +9,13 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 Element.prototype.scrollIntoView = vi.fn();
 
 const mockActiveStoryId = vi.hoisted(() => vi.fn(() => 'story-1'));
-const mockActiveChapterId = vi.hoisted(() => vi.fn(() => 'ch-1'));
 const mockSetActiveStory = vi.hoisted(() => vi.fn());
-const mockSetActiveChapter = vi.hoisted(() => vi.fn());
 
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
         sel({
             activeStoryId: mockActiveStoryId(),
-            activeChapterId: mockActiveChapterId(),
             setActiveStory: mockSetActiveStory,
-            setActiveChapter: mockSetActiveChapter,
             contextBuilder: { selectedLorebooks: [], systemPromptOverride: null, maxContextTokens: 4096 },
             selectedLorebooks: [],
             toggleLorebook: vi.fn(),

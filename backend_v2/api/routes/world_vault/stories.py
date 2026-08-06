@@ -1,6 +1,4 @@
 from datetime import datetime, timezone
-import json
-import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,17 +12,7 @@ from services.job_queue import queue_manager
 router = APIRouter()
 
 
-def _get_default_llm_model() -> str:
-    """Read the user-selected LLM model from llm_config.json. Returns 'default' if not set."""
-    config_path = "/data/llm_config.json"
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                data = json.load(f)
-                return data.get("model_id") or "default"
-        except Exception:
-            pass
-    return "default"
+from services.llm_config import get_default_llm_model as _get_default_llm_model
 
 
 class StoryContinueRequest(BaseModel):

@@ -488,7 +488,7 @@ async def finalize_successful_job(
                     "id": job.id, 
                     "task_type": job.task_type, 
                     "type": event_type_str,
-                    "metadata_": {"chat_id": entity_id, "type": event_type_str},
+                    "metadata": {"chat_id": entity_id, "type": event_type_str},
                     "chat_id": entity_id, 
                     "content": assistant_content
                 })
@@ -499,7 +499,7 @@ async def finalize_successful_job(
                     "id": job.id,
                     "task_type": job.task_type,
                     "type": event_type_str,
-                    "metadata_": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
+                    "metadata": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
                     "story_id": story_id,
                     "chapter_id": chapter_id,
                     "content": assistant_content

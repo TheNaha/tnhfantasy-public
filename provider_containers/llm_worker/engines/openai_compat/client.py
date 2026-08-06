@@ -58,13 +58,18 @@ class OpenAICompatProviderClient(BaseProviderClient):
         Execute an LLM generation workflow.
         Translates SSE streams from OpenAI format into unified TaskEvents (NDJSON).
         """
+        job_id = request.job_id
+
         async def stream():
             try:
+                if job_id:
+                    await self.job_tracker.start_job(job_id)
+
                 import httpx
                 workflow = request.workflow
                 messages = workflow.get("messages", [])
                 tools = workflow.get("tools")
-                model_id = workflow.get("model") or request.job_id or "default-model"
+                model_id = workflow.get("model") or job_id or "default-model"
 
                 payload = {
                     "model": model_id,
@@ -95,6 +100,13 @@ class OpenAICompatProviderClient(BaseProviderClient):
                             line = line.strip()
                             if not line or line == "data: [DONE]":
                                 continue
+
+                            if job_id and await self.job_tracker.is_cancelled(job_id):
+                                yield json.dumps({
+                                    "type": "completed",
+                                    "outputs": [{"role": "assistant", "content": full_content, "cancelled": True}],
+                                }) + "\n"
+                                return
 
                             if line.startswith("data: "):
                                 data_str = line[6:]
@@ -151,6 +163,9 @@ class OpenAICompatProviderClient(BaseProviderClient):
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
                 yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+            finally:
+                if job_id:
+                    await self.job_tracker.end_job(job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
