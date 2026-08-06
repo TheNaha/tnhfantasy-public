@@ -403,7 +403,7 @@ function CharacterDetailsModal({ character, onClose }) {
 // ---------------------------------------------------------------------------
 // Memoized Message Item
 // ---------------------------------------------------------------------------
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback, onPin, onSwipe }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback, onPin, onSwipe, onAvatarClick }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(msg.content);
 
@@ -417,16 +417,18 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                 <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-600/50 to-transparent" />
                 <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-800/70 border border-gray-700/50 text-[10px] text-gray-400 tracking-wide whitespace-nowrap">
                     {meta.location && (
-                        <span className="flex items-center gap-1">
+                        <span className="flex items-center gap-1.5">
                             <MapPin size={10} className="text-amber-400" />
-                            {meta.location}
+                            {meta.old_location && <span className="opacity-50">{meta.old_location} →</span>}
+                            <span className="font-medium text-amber-100/90">{meta.location}</span>
                         </span>
                     )}
                     {meta.location && meta.time && <span className="opacity-40">·</span>}
                     {meta.time && (
-                        <span className="flex items-center gap-1">
+                        <span className="flex items-center gap-1.5">
                             <Clock size={10} className="text-sky-400" />
-                            {meta.time}
+                            {meta.old_time && <span className="opacity-50">{meta.old_time} →</span>}
+                            <span className="font-medium text-sky-100/90">{meta.time}</span>
                         </span>
                     )}
                 </div>
@@ -448,12 +450,19 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
             msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
         )}>
             {msg.role !== 'user' && msg.role !== 'system' && (
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                <button 
+                    type="button"
+                    onClick={() => linkedCharacter?.avatar_path && onAvatarClick?.(getAvatarUrl(linkedCharacter.id))}
+                    className={clsx(
+                        "w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end",
+                        linkedCharacter?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
+                    )}
+                >
                     {linkedCharacter?.avatar_path
                         ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                         : <MessageSquare className="text-blue-400" size={12} />
                     }
-                </div>
+                </button>
             )}
             <div className="flex flex-col max-w-full">
                 <div className={clsx("text-[10px] mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
@@ -654,8 +663,8 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
 
     const TABS = [
         { id: 'preview', label: 'Preview' },
-        { id: 'override', label: 'Override', badge: hasOverride },
-        { id: 'append',  label: 'Append',   badge: hasChatAppend || hasCharAppend },
+        { id: 'override', label: 'Chat Prompt', badge: hasOverride },
+        { id: 'append',  label: 'Character Extra',   badge: hasChatAppend || hasCharAppend },
     ];
 
     return (
@@ -717,13 +726,11 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
                 </div>
             )}
 
-            {/* Override tab — replaces the character card entirely */}
             {activeTab === 'override' && (
                 <div className="space-y-2">
                     <p className="text-[10px] text-gray-500 leading-relaxed">
-                        <span className="text-orange-400 font-semibold">Override</span> replaces the character card and all append blocks.
-                        Only lorebook, world-state, and the global roleplay instructions are still appended.
-                        Leave empty to use the normal character prompt.
+                        <span className="text-orange-400 font-semibold">Chat System Prompt</span> is applied only to this chat.
+                        It is appended after the character's core instructions.
                     </p>
                     <textarea
                         value={overrideVal}
@@ -836,9 +843,29 @@ function SystemPromptPanel({ activeChat, linkedCharacter, systemPromptData, onCh
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
+function ContextSlider({ activeChat, onChange }) {
+    const [localVal, setLocalVal] = useState(activeChat?.max_context_tokens || 4096);
+    useEffect(() => { setLocalVal(activeChat?.max_context_tokens || 4096); }, [activeChat?.max_context_tokens]);
+    
+    return (
+        <input
+            type="range"
+            min="2048"
+            max="131072"
+            step="2048"
+            value={localVal}
+            onChange={(e) => setLocalVal(parseInt(e.target.value))}
+            onMouseUp={() => onChange(localVal)}
+            onTouchEnd={() => onChange(localVal)}
+            onKeyUp={(e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') onChange(localVal); }}
+            className="w-full accent-blue-500"
+            title="Max tokens sent to the LLM. Higher = remembers more but costs more."
+        />
+    );
+}
+
 export default function ChatWorkspace() {
-    const [leftDrawerOpen, setLeftDrawerOpen] = useState(false);
-    const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
+    const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context'
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
@@ -853,6 +880,9 @@ export default function ChatWorkspace() {
     const [greetingModal, setGreetingModal] = useState(null);
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [showCharacterDetails, setShowCharacterDetails] = useState(false);
+    const [showScenesModal, setShowScenesModal] = useState(false);
+    const [avatarModalSrc, setAvatarModalSrc] = useState(null);
+    const handleAvatarClick = useCallback((url) => setAvatarModalSrc(url), []);
     const [rollbackTarget, setRollbackTarget] = useState(null);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
@@ -1273,8 +1303,7 @@ export default function ChatWorkspace() {
                         override_greeting: selectedGreeting 
                     });
                     setActiveChatId(chat.id);
-                    setLeftDrawerOpen(false);
-                    setRightDrawerOpen(false);
+                    setMobileTab('chat');
                     toast.success('New chat created');
                 }
             });
@@ -1284,8 +1313,7 @@ export default function ChatWorkspace() {
                 {
                     onSuccess: (chat) => {
                         setActiveChatId(chat.id);
-                        setLeftDrawerOpen(false);
-                        setRightDrawerOpen(false);
+                        setMobileTab('chat');
                         toast.success('New chat created');
                     },
                     onError: () => toast.error('Failed to create chat')
@@ -1448,23 +1476,12 @@ export default function ChatWorkspace() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex h-[calc(var(--vh,1vh)*100-8rem)] lg:h-[calc(var(--vh,1vh)*100-4rem)] -mx-2 sm:-mx-4 lg:-mx-8 -my-3 sm:-my-4 lg:-my-8 relative overflow-hidden"
+            className="flex flex-col h-[calc(var(--vh,1vh)*100-4rem)] relative overflow-hidden bg-gray-900"
         >
-            {/* Mobile Backdrop for Left Drawer */}
-            <AnimatePresence>
-                {leftDrawerOpen && (
-                    <motion.div 
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="absolute inset-0 bg-black/60 z-30 lg:hidden" 
-                        onClick={() => setLeftDrawerOpen(false)} 
-                    />
-                )}
-            </AnimatePresence>
-
             <div className={clsx(
-                "flex flex-col shrink-0 border-r border-white/5 bg-gray-900/95 lg:bg-gray-900/70 transition-transform duration-300 ease-in-out absolute lg:static inset-y-0 left-0 z-40 lg:z-auto",
-                "w-72 lg:w-64",
-                leftDrawerOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+                "flex-col shrink-0 border-b lg:border-r border-white/5 bg-gray-900 flex-1 lg:flex-none overflow-hidden",
+                "w-full lg:w-72",
+                mobileTab === 'chats' ? "flex" : "hidden lg:flex"
             )}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                     <h3 className="font-semibold text-gray-200 tracking-wide">Chats</h3>
@@ -1501,7 +1518,7 @@ export default function ChatWorkspace() {
                                 </div>
                             ) : (
                                 <button
-                                    onClick={() => { setActiveChatId(chat.id); setLeftDrawerOpen(false); }}
+                                    onClick={() => { setActiveChatId(chat.id); setMobileTab('chat'); }}
                                     className={clsx(
                                         "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5",
                                         activeChatId === chat.id
@@ -1532,18 +1549,25 @@ export default function ChatWorkspace() {
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-w-0 bg-[#0B0E14] relative">
+            <div className={clsx(
+                "flex-col min-w-0 bg-[#0B0E14] relative flex-1 lg:flex-auto",
+                mobileTab === 'chat' ? "flex" : "hidden lg:flex"
+            )}>
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
-                    <button onClick={() => setLeftDrawerOpen(true)} className="lg:hidden p-2 -ml-2 text-gray-400 hover:text-white rounded-xl">
-                        <Menu size={20} />
-                    </button>
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
+                        <button 
+                            type="button"
+                            onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
+                            className={clsx(
+                                "w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden",
+                                linkedCharacter?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
+                            )}
+                        >
                             {linkedCharacter?.avatar_path
                                 ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                 : <MessageSquare className="text-blue-400" size={16} />
                             }
-                        </div>
+                        </button>
                         <div className="min-w-0 flex-1">
                             <h2 className="font-semibold text-gray-100 flex items-center gap-2 text-sm sm:text-base">
                                 <span className="truncate">{activeChat?.name || 'Roleplay Session'}</span>
@@ -1580,17 +1604,10 @@ export default function ChatWorkspace() {
                     <button
                         onClick={handleExportChat}
                         disabled={!activeChatId || !messages.length}
-                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed hidden lg:block"
                         title="Export chat as Markdown"
                     >
                         <Download size={18} />
-                    </button>
-                    <button
-                        onClick={() => setRightDrawerOpen(r => !r)}
-                        className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
-                        title="Context & Settings"
-                    >
-                        <Settings size={18} />
                     </button>
                 </div>
 
@@ -1619,6 +1636,7 @@ export default function ChatWorkspace() {
                                     onRollback={handleRollback}
                                     onPin={handlePinMessage}
                                     onSwipe={handleSwipe}
+                                    onAvatarClick={handleAvatarClick}
                                 />
                             ))}
 
@@ -1659,12 +1677,19 @@ export default function ChatWorkspace() {
                                     ) : (
                         <div key={jobId} className="flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%] self-start flex-row">
                             {/* Character avatar */}
-                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end">
+                            <button
+                                type="button"
+                                onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
+                                className={clsx(
+                                    "w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end",
+                                    linkedCharacter?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
+                                )}
+                            >
                                 {linkedCharacter?.avatar_path
                                     ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
                                     : <MessageSquare className="text-blue-400" size={12} />
                                 }
-                            </div>
+                            </button>
                             <div className="flex flex-col max-w-full">
                                 {/* Speaker label */}
                                 <div className="text-[10px] mb-1 text-gray-400 flex items-center gap-1.5">
@@ -1695,7 +1720,7 @@ export default function ChatWorkspace() {
                     )}
                 </div>
 
-                <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-16 lg:pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
+                <div className="px-3 sm:px-4 lg:px-6 py-3 sm:py-4 pb-4 border-t border-white/5 bg-gray-900/40 backdrop-blur-md shrink-0">
                     <div className="max-w-4xl mx-auto">
                         {pendingAttachment && (
                             <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-sm text-blue-300">
@@ -1875,22 +1900,11 @@ export default function ChatWorkspace() {
                 </div>
             </div>
 
-            {/* Mobile Backdrop for Right Drawer */}
-            <AnimatePresence>
-                {rightDrawerOpen && (
-                    <motion.div 
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="absolute inset-0 bg-black/60 z-30 lg:hidden" 
-                        onClick={() => setRightDrawerOpen(false)} 
-                    />
-                )}
-            </AnimatePresence>
-
             {/* === CONTEXT PANEL (Right) === */}
             <div className={clsx(
-                "flex-col border-l border-white/5 bg-gray-900/95 lg:bg-gray-900/60 overflow-hidden shrink-0 transition-transform duration-300 ease-in-out absolute lg:static inset-y-0 right-0 z-40 lg:z-auto w-80",
-                rightDrawerOpen ? "translate-x-0 flex" : "translate-x-full lg:translate-x-0 hidden lg:flex",
-                !rightDrawerOpen && "lg:hidden"
+                "flex-col shrink-0 border-l border-white/5 bg-gray-900 lg:bg-gray-900/70 flex-1 lg:flex-none overflow-hidden",
+                "w-full lg:w-72",
+                mobileTab === 'context' ? "flex" : "hidden lg:flex"
             )}>
                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                     <h3 className="font-semibold text-gray-200 flex items-center gap-2 text-sm">
@@ -2080,15 +2094,9 @@ export default function ChatWorkspace() {
                                         : 'Global default'}
                                 </span>
                             </div>
-                            <input
-                                type="range"
-                                min="2048"
-                                max="131072"
-                                step="2048"
-                                value={activeChat?.max_context_tokens || 4096}
-                                onChange={(e) => handleChatUpdate({ max_context_tokens: parseInt(e.target.value) })}
-                                className="w-full accent-blue-500"
-                                title="Max tokens sent to the LLM. Higher = remembers more but costs more."
+                            <ContextSlider
+                                activeChat={activeChat}
+                                onChange={(val) => handleChatUpdate({ max_context_tokens: val })}
                             />
                             <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
                                 <span>2k</span><span>32k</span><span>64k</span><span>128k</span>
@@ -2171,13 +2179,14 @@ export default function ChatWorkspace() {
                             </span>
                         </div>
                         {activeChat?.character_id ? (
-                            <SceneGallery
-                                title={`${linkedCharacter?.name || 'Character'} scenes`}
-                                images={chatCollection?.images || []}
-                                compact
-                            />
+                            <button
+                                onClick={() => setShowScenesModal(true)}
+                                className="w-full mt-3 py-2 text-xs font-medium bg-gray-800/50 hover:bg-gray-800 border border-white/5 hover:border-white/10 rounded-lg transition-colors text-gray-300"
+                            >
+                                View Scenes Gallery
+                            </button>
                         ) : (
-                            <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                            <p className="mt-3 text-xs text-gray-500 text-center py-2 border border-dashed border-gray-700/50 rounded-lg">
                                 Assign a character to see their scenes
                             </p>
                         )}
@@ -2280,6 +2289,73 @@ export default function ChatWorkspace() {
                 confirmText="Rollback"
                 isDangerous
             />
+
+            {showScenesModal && (
+                <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <motion.div
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.95, opacity: 0 }}
+                        className="w-full max-w-5xl bg-gray-900 border border-white/10 rounded-3xl shadow-2xl flex flex-col h-[85vh]"
+                    >
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+                            <h3 className="font-bold text-gray-100 flex items-center gap-2">
+                                <ImageIcon size={16} className="text-purple-400" />
+                                {linkedCharacter?.name || 'Character'} Scenes
+                            </h3>
+                            <button onClick={() => setShowScenesModal(false)} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                            <SceneGallery
+                                title={`${linkedCharacter?.name || 'Character'} scenes`}
+                                images={chatCollection?.images || []}
+                            />
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+            {avatarModalSrc && (
+                <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setAvatarModalSrc(null)}>
+                    <div className="flex items-center justify-between w-full absolute top-0 left-0 right-0 px-4 py-3">
+                        <span className="text-xs text-gray-400">{linkedCharacter?.name || 'Avatar'}</span>
+                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setAvatarModalSrc(null)}>
+                            <X size={18} />
+                        </button>
+                    </div>
+                    <img
+                        src={avatarModalSrc}
+                        alt="Avatar"
+                        className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                </div>
+            )}
+            {/* Mobile Tab Bar */}
+            <div className="lg:hidden shrink-0 flex items-center justify-around bg-gray-900 border-t border-white/5 p-2 pb-safe z-50">
+                <button 
+                    onClick={() => setMobileTab('chats')}
+                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'chats' ? "text-blue-400" : "text-gray-500 hover:text-gray-300")}
+                >
+                    <MessageSquare size={20} />
+                    <span className="text-[10px] font-medium">Chats</span>
+                </button>
+                <button 
+                    onClick={() => setMobileTab('chat')}
+                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'chat' ? "text-purple-400" : "text-gray-500 hover:text-gray-300")}
+                >
+                    <Activity size={20} />
+                    <span className="text-[10px] font-medium">Roleplay</span>
+                </button>
+                <button 
+                    onClick={() => setMobileTab('context')}
+                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'context' ? "text-amber-400" : "text-gray-500 hover:text-gray-300")}
+                >
+                    <Settings size={20} />
+                    <span className="text-[10px] font-medium">Context</span>
+                </button>
+            </div>
         </motion.div>
     );
 }

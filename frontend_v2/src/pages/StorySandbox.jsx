@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -151,10 +152,18 @@ export default function StorySandbox() {
     const loadedChapterIdRef = useRef(null);
 
     const queryClient = useQueryClient();
-    const activeStoryId = useWorldVaultStore(state => state.activeStoryId);
-    const setActiveStory = useWorldVaultStore(state => state.setActiveStory);
+    const { storyId: urlStoryId, chapterId: urlChapterId } = useParams();
+    const navigate = useNavigate();
+    const activeStoryId = urlStoryId || null;
+    const activeChapterId = urlChapterId || null;
+
+    const setGlobalActiveStory = useWorldVaultStore(state => state.setActiveStory);
     const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
     const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
+
+    useEffect(() => {
+        if (activeStoryId) setGlobalActiveStory(activeStoryId);
+    }, [activeStoryId, setGlobalActiveStory]);
 
     const { data: stories = [], isLoading: storiesLoading } = useStories();
     const { data: activeStory } = useStory(activeStoryId);
@@ -170,7 +179,6 @@ export default function StorySandbox() {
     const updateChapter = useUpdateChapter();
     const illustrateChapter = useIllustrateChapter();
 
-    const [activeChapterId, setActiveChapterId] = useState(null);
     const [isStreaming, setIsStreaming] = useState(false);
     // Keep a ref in sync so WebSocket handlers can read the live value
     // without being listed in effect deps (avoids re-registering on every render).
@@ -196,17 +204,17 @@ export default function StorySandbox() {
     // Auto-select first story
     useEffect(() => {
         if (stories?.length > 0 && !activeStoryId) {
-            setActiveStory(stories[0].id);
+            navigate(`/story/${stories[0].id}`, { replace: true });
         }
-    }, [stories, activeStoryId, setActiveStory]);
+    }, [stories, activeStoryId, navigate]);
 
     // Auto-select first chapter
     useEffect(() => {
-        if (chapters?.length > 0 && !activeChapterId) {
+        if (chapters?.length > 0 && activeStoryId && !activeChapterId) {
             // Wait for next tick to avoid synchronous cascading renders
-            setTimeout(() => setActiveChapterId(chapters[0].id), 0);
+            setTimeout(() => navigate(`/story/${activeStoryId}/chapter/${chapters[0].id}`, { replace: true }), 0);
         }
-    }, [chapters, activeChapterId]);
+    }, [chapters, activeStoryId, activeChapterId, navigate]);
 
     // Load chapter content into editor
     useEffect(() => {
@@ -429,8 +437,11 @@ export default function StorySandbox() {
             await deleteStory.mutateAsync(deleteConfirm.id);
             if (activeStoryId === deleteConfirm.id) {
                 const remaining = stories.filter(s => s.id !== deleteConfirm.id);
-                setActiveStory(remaining[0]?.id || null);
-                setActiveChapterId(null);
+                if (remaining.length > 0) {
+                    navigate(`/story/${remaining[0].id}`);
+                } else {
+                    navigate('/story');
+                }
             }
             toast.success('Story deleted');
         } catch {
@@ -445,7 +456,11 @@ export default function StorySandbox() {
             await deleteChapter.mutateAsync({ storyId: activeStoryId, chapterId });
             if (activeChapterId === chapterId) {
                 const remaining = chapters.filter(ch => ch.id !== chapterId);
-                setActiveChapterId(remaining[0]?.id || null);
+                if (remaining.length > 0) {
+                    navigate(`/story/${activeStoryId}/chapter/${remaining[0].id}`);
+                } else {
+                    navigate(`/story/${activeStoryId}`);
+                }
             }
             toast.success('Chapter deleted');
         } catch {
@@ -514,7 +529,7 @@ export default function StorySandbox() {
                 <StorySidebar
                     stories={stories}
                     activeStoryId={activeStoryId}
-                    onSelectStory={(id) => { setActiveStory(id); setActiveChapterId(null); setMobileTab('write'); }}
+                    onSelectStory={(id) => { navigate(`/story/${id}`); setMobileTab('write'); }}
                     onCreateStory={handleCreateStory}
                     onDeleteStory={handleDeleteStory}
                     isLoading={storiesLoading}
@@ -551,7 +566,7 @@ export default function StorySandbox() {
                                 <ChapterSidebar
                                     chapters={chapters}
                                     activeChapterId={activeChapterId}
-                                    onSelectChapter={(id) => { setActiveChapterId(id); setMobileTab('write'); }}
+                                    onSelectChapter={(id) => { navigate(`/story/${activeStoryId}/chapter/${id}`); setMobileTab('write'); }}
                                     onCreateChapter={handleCreateChapter}
                                     onDeleteChapter={handleDeleteChapter}
                                     isLoading={chaptersLoading}

@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from core.entities import JobStatus
-from services.provider_client import JobCancelledError, ProviderCallError, call_provider
+from services.provider_client import JobCancelledError, ProviderCallError, call_image_provider
 
 
 class FakeResponse:
@@ -79,7 +79,7 @@ def build_provider_core_error_payload(message: str, *, retryable: bool = False):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
+async def test_call_image_provider_uses_error_field_and_retryable(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -90,7 +90,7 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-1",
@@ -107,7 +107,7 @@ async def test_call_provider_uses_error_field_and_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_uses_details_message_field(monkeypatch):
+async def test_call_image_provider_uses_details_message_field(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -118,7 +118,7 @@ async def test_call_provider_uses_details_message_field(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-details",
@@ -135,7 +135,7 @@ async def test_call_provider_uses_details_message_field(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monkeypatch):
+async def test_call_image_provider_tolerates_malformed_lines_and_chunk_boundaries(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\nnot-json\n{"status":"executing","node":"1"}\n{"st',
@@ -145,7 +145,7 @@ async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monk
     install_streaming_client(monkeypatch, response)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
-    result = await call_provider(
+    result = await call_image_provider(
         worker_url="http://worker",
         workflow={"nodes": {"1": {}}},
         job_id="job-2",
@@ -160,7 +160,7 @@ async def test_call_provider_tolerates_malformed_lines_and_chunk_boundaries(monk
 
 
 @pytest.mark.asyncio
-async def test_call_provider_parses_success_without_trailing_newline(monkeypatch):
+async def test_call_image_provider_parses_success_without_trailing_newline(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -170,7 +170,7 @@ async def test_call_provider_parses_success_without_trailing_newline(monkeypatch
     install_streaming_client(monkeypatch, response)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
-    result = await call_provider(
+    result = await call_image_provider(
         worker_url="http://worker",
         workflow={"nodes": {}},
         job_id="job-tail-success",
@@ -186,7 +186,7 @@ async def test_call_provider_parses_success_without_trailing_newline(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_call_provider_formats_http_error_payload(monkeypatch):
+async def test_call_image_provider_formats_http_error_payload(monkeypatch):
     response = FakeResponse(
         status_code=502,
         body=b'{"message":"upstream unavailable"}',
@@ -195,7 +195,7 @@ async def test_call_provider_formats_http_error_payload(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-3",
@@ -212,7 +212,7 @@ async def test_call_provider_formats_http_error_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_invalid_success_payload_is_retryable(monkeypatch):
+async def test_call_image_provider_invalid_success_payload_is_retryable(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -223,7 +223,7 @@ async def test_call_provider_invalid_success_payload_is_retryable(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-invalid-success",
@@ -240,7 +240,7 @@ async def test_call_provider_invalid_success_payload_is_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_raises_job_cancelled_error(monkeypatch):
+async def test_call_image_provider_raises_job_cancelled_error(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -251,7 +251,7 @@ async def test_call_provider_raises_job_cancelled_error(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(JobCancelledError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-cancelled",
@@ -267,7 +267,7 @@ async def test_call_provider_raises_job_cancelled_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
+async def test_call_image_provider_local_protocol_error_is_non_retryable(monkeypatch):
     class RaisingClient:
         async def __aenter__(self):
             return self
@@ -286,7 +286,7 @@ async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-proto",
@@ -302,7 +302,7 @@ async def test_call_provider_local_protocol_error_is_non_retryable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_accepts_modal_base64_success_payload(monkeypatch):
+async def test_call_image_provider_accepts_modal_base64_success_payload(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -312,7 +312,7 @@ async def test_call_provider_accepts_modal_base64_success_payload(monkeypatch):
     install_streaming_client(monkeypatch, response)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
-    result = await call_provider(
+    result = await call_image_provider(
         worker_url="http://worker",
         workflow={"nodes": {}},
         job_id="job-modal-success",
@@ -329,7 +329,7 @@ async def test_call_provider_accepts_modal_base64_success_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_handles_provider_core_error_payload(monkeypatch):
+async def test_call_image_provider_handles_provider_core_error_payload(monkeypatch):
     payload = build_provider_core_error_payload("provider-core failure", retryable=True)
     response = FakeResponse(
         chunks=[
@@ -341,7 +341,7 @@ async def test_call_provider_handles_provider_core_error_payload(monkeypatch):
     job_service = SimpleNamespace(update_job=AsyncMock())
 
     with pytest.raises(ProviderCallError) as exc_info:
-        await call_provider(
+        await call_image_provider(
             worker_url="http://worker",
             workflow={"nodes": {}},
             job_id="job-provider-core-error",
@@ -358,7 +358,7 @@ async def test_call_provider_handles_provider_core_error_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_provider_sends_timeout_seconds_and_canonical_inference_path(monkeypatch):
+async def test_call_image_provider_sends_timeout_seconds_and_canonical_inference_path(monkeypatch):
     response = FakeResponse(
         chunks=[
             b'{"status":"queued"}\n',
@@ -369,7 +369,7 @@ async def test_call_provider_sends_timeout_seconds_and_canonical_inference_path(
     install_streaming_client(monkeypatch, response, capture=capture)
     job_service = SimpleNamespace(update_job=AsyncMock())
 
-    result = await call_provider(
+    result = await call_image_provider(
         worker_url="http://worker-timeout-test",
         workflow={"nodes": {}},
         job_id="job-timeout-payload",

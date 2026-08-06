@@ -79,20 +79,19 @@ def validate_success_payload(update: dict) -> None:
                 )
 
 
-async def call_provider(
+
+
+async def call_llm_provider(
     worker_url: str,
     workflow: dict,
     job_id: str,
     job_service,
-    total_nodes: int,
     timeout: float,
-    use_snapshot: bool = False,
     provider_id: str = "",
     provider_type: str = "modal",
-    worker_type: str = "image",
 ) -> dict:
     """
-    Call the provider worker with the workflow.
+    Call the LLM provider worker with the workflow.
     Returns the final result on success, raises ProviderCallError on failure.
     """
     import httpx
@@ -226,6 +225,21 @@ async def call_provider(
             except httpx.HTTPError as error:
                 raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
 
+async def call_image_provider(
+    worker_url: str,
+    workflow: dict,
+    job_id: str,
+    job_service,
+    total_nodes: int,
+    timeout: float,
+    use_snapshot: bool = False,
+    provider_id: str = "",
+) -> dict:
+    """
+    Call the image provider worker with the workflow.
+    Returns the final result on success, raises ProviderCallError on failure.
+    """
+    import httpx
     # --- DEFAULT COMFYUI ADAPTER ---
     async with get_streaming_client(timeout=timeout) as client:
         try:

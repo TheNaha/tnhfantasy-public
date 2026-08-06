@@ -221,8 +221,10 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     changed_state = {}
     if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
         changed_state["time"] = update_fields["story_time"]
+        changed_state["old_time"] = chat.story_time
     if "story_location" in update_fields and update_fields["story_location"] != chat.story_location:
         changed_state["location"] = update_fields["story_location"]
+        changed_state["old_location"] = chat.story_location
     for key, value in update_fields.items():
         setattr(chat, key, value)
     chat.updated_at = datetime.now(timezone.utc)

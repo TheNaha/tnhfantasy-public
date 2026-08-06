@@ -390,27 +390,16 @@ async def finalize_persisted_job_outputs(
     )
 
 
-async def finalize_successful_job(
+async def _finalize_llm_job(
     *,
     job,
     job_id: str,
     job_service,
     load_balancer,
     provider_id: str,
-    final_result: dict[str, Any],
-    process_image_background_fn: Callable[[str, str], Any],
+    final_result: dict,
+    outputs: list,
 ) -> None:
-    """Finalize a successful provider result and schedule image post-processing."""
-    if "images" in final_result:
-        images = final_result.get("images", [])
-        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
-    elif "text" in final_result:
-        outputs = await asyncio.to_thread(build_text_outputs, job, final_result["text"], provider_id)
-    elif "outputs" in final_result:
-        outputs = final_result["outputs"]
-    else:
-        outputs = []
-
     is_chat_reply = job.task_type == 'llm' and (
         final_result.get('type') == 'chat_reply'
         or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply")
@@ -531,6 +520,343 @@ async def finalize_successful_job(
             provider_id=provider_id,
             load_balancer=load_balancer,
             process_image_background_fn=None,
+        )
+        return
+        generated_prompt = ""
+        if final_result.get("outputs") and isinstance(final_result["outputs"], list):
+            generated_prompt = (final_result["outputs"][0] or {}).get("content", "")
+        if not generated_prompt and final_result.get("text"):
+            generated_prompt = final_result["text"]
+        generated_prompt = generated_prompt.strip()
+
+        story_id   = job.metadata_.get("story_id")
+        chapter_id = job.metadata_.get("chapter_id")
+        checkpoint = job.metadata_.get("scene_checkpoint", "sd_xl_base_1.0.safetensors")
+
+        if generated_prompt and story_id and chapter_id:
+            logger.info(
+                "illustrate_prompt_chaining",
+                job_id=job_id,
+                story_id=story_id,
+                chapter_id=chapter_id,
+                prompt_preview=generated_prompt[:80],
+            )
+            try:
+                from sqlmodel import Session
+                from infrastructure.database import engine
+                from services.job_service import JobService
+                from services.job_queue import queue_manager
+                from api.routes.world_vault.stories import _build_image_workflow
+
+                with Session(engine) as _session:
+                    _job_service = JobService(_session)
+                    image_workflow = _build_image_workflow(generated_prompt, checkpoint)
+                    img_job = await _job_service.create_job(
+                        task_type="image",
+                        workflow=image_workflow,
+                        metadata={
+                            "story_id": story_id,
+                            "chapter_id": chapter_id,
+                            "prompt": generated_prompt,
+                            "source": "story_illustrate",
+                        },
+                    )
+                    await queue_manager.enqueue(img_job.id, task_type="image")
+                    logger.info("illustrate_image_job_queued", job_id=img_job.id, story_id=story_id)
+            except Exception as e:
+                logger.error("illustrate_chain_failed", job_id=job_id, error=str(e), exc_info=True)
+        else:
+            logger.warning(
+                "illustrate_prompt_empty",
+                job_id=job_id,
+                story_id=story_id,
+                chapter_id=chapter_id,
+            )
+
+        # Mark the LLM prompt-generation job done — no outputs to persist
+        await finalize_persisted_job_outputs(
+            job_service=job_service,
+            job_id=job_id,
+            outputs=[],
+            provider_id=provider_id,
+            load_balancer=load_balancer,
+            process_image_background_fn=None,
+        )
+        return
+
+    if is_narrator:
+        narrator_content = ""
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            narrator_content = (final_result.get("outputs")[0] or {}).get("content", "")
+        if not narrator_content and final_result.get("text"):
+            narrator_content = final_result.get("text")
+
+        narrator_chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not narrator_chat_id:
+            narrator_chat_id = final_result.get("chat_id")
+
+        if narrator_chat_id and narrator_content:
+            from sqlmodel import Session
+
+            from core.entities import Message, MessageRole
+            from infrastructure.database import engine
+
+            with Session(engine) as session:
+                try:
+                    msg = Message(
+                        role=MessageRole.SYSTEM,
+                        content=narrator_content,
+                        chat_id=narrator_chat_id,
+                        message_metadata={"source": "narrator"},
+                    )
+                    session.add(msg)
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(
+                        "finalize_persistence_skipped_chat_deleted",
+                        job_id=job.id, error=str(e),
+                    )
+
+            await emit_job_event(EventType.JOB_COMPLETED, {
+                "id": job.id,
+                "task_type": job.task_type,
+                "type": "narrator",
+                "metadata": {"chat_id": narrator_chat_id, "type": "narrator", "source": "narrator"},
+                "chat_id": narrator_chat_id,
+                "content": narrator_content,
+            })
+    elif is_chat_reply or is_story_continue:
+        assistant_content = ""
+        assistant_output: dict[str, Any] = {}
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            assistant_output = final_result.get("outputs")[0]
+            assistant_content = assistant_output.get("content", "")
+        if not assistant_content and final_result.get("text"):
+             assistant_content = final_result.get("text")
+             
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not chat_id:
+            chat_id = final_result.get("chat_id")
+
+        story_id = job.metadata_.get("story_id") if job.metadata_ else None
+        if not story_id:
+            story_id = final_result.get("story_id")
+
+        entity_id = chat_id if is_chat_reply else story_id
+
+        # --- Agentic tool-call handling ---
+        if is_chat_reply and assistant_output.get("tool_calls"):
+            metadata = job.metadata_ or {}
+            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
+                # Per-chat gates: allow_image_generation gates generate_image,
+                # allow_narration gates narrate_scene.
+                image_generation_allowed = True
+                narration_allowed = True
+                if entity_id:
+                    from sqlmodel import Session
+                    from core.entities import Chat
+                    from infrastructure.database import engine
+                    with Session(engine) as session:
+                        chat = session.get(Chat, entity_id)
+                        if chat:
+                            image_generation_allowed = bool(chat.allow_image_generation)
+                            narration_allowed = bool(chat.allow_narration)
+
+                allowed_tools = set()
+                if image_generation_allowed:
+                    allowed_tools.add("generate_image")
+                if narration_allowed:
+                    allowed_tools.add("narrate_scene")
+                # Harmless side-effect tool: keeps story metadata in sync with the story.
+                allowed_tools.add("update_world_state")
+
+                if allowed_tools:
+                    from services.orchestrator_service import process_tool_calls_and_chain
+                    from services.job_queue import queue_manager
+
+                    chained = await process_tool_calls_and_chain(
+                        job=job,
+                        assistant_output=assistant_output,
+                        final_result=final_result,
+                        chat_id=entity_id,
+                        character_id=metadata.get("character_id"),
+                        job_service=job_service,
+                        enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
+                        allowed_tools=allowed_tools,
+                    )
+                    if chained:
+                        await load_balancer.release_job(provider_id)
+                        # Mark the parent job terminal so the frontend clears its
+                        # streaming bubble; the follow-up emits its own completion.
+                        try:
+                            from core.entities import JobStatus
+                            await job_service.update_job(
+                                job.id,
+                                status=JobStatus.COMPLETED,
+                                outputs=outputs or [],
+                                progress=100,
+                                overall_progress=100,
+                                provider_id=provider_id,
+                            )
+                        except Exception as e:
+                            logger.error("agentic_parent_finalize_failed", job_id=job.id, error=str(e))
+                        return
+            # If depth exceeded or not agentic, fall through to normal finalization
+            
+        if entity_id and assistant_content:
+            from sqlmodel import Session
+
+            from core.entities import Message, MessageRole
+            from infrastructure.database import engine
+            
+            with Session(engine) as session:
+                try:
+                    if is_chat_reply:
+                        # Check if the most recent char message can accept this as an alternate
+                        # (i.e. it was a recent regeneration rather than a genuinely new turn)
+                        from sqlmodel import select as _sel
+                        _last_char = session.exec(
+                            _sel(Message)
+                            .where(Message.chat_id == entity_id, Message.role == MessageRole.CHAR)
+                            .order_by(Message.created_at.desc())
+                            .limit(1)
+                        ).first()
+                        _meta = _last_char.message_metadata or {} if _last_char else {}
+                        _is_regen = job.metadata_.get("regenerated") if job.metadata_ else False
+
+                        if _is_regen and _last_char:
+                            # Append as a new alternate and auto-select it
+                            _MAX_ALTERNATES = 10
+                            alts: list[str] = _meta.get("alternates", [_last_char.content])
+                            if _last_char.content not in alts:
+                                alts.insert(0, _last_char.content)
+                            alts.append(assistant_content)
+                            if len(alts) > _MAX_ALTERNATES:
+                                alts = alts[-_MAX_ALTERNATES:]
+                            new_index = len(alts) - 1
+                            _last_char.content = assistant_content
+                            _last_char.message_metadata = {**_meta, "alternates": alts, "active_index": new_index}
+                            from datetime import datetime, timezone as _tz
+                            _last_char.updated_at = datetime.now(_tz.utc)
+                            session.add(_last_char)
+                            session.commit()
+                        else:
+                            msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=entity_id)
+                            session.add(msg)
+                            session.commit()
+                    else:
+                        chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
+                        if chapter_id:
+                            from core.entities import StoryBeatRole, StoryChapter
+                            chapter = session.get(StoryChapter, chapter_id)
+                            if chapter:
+                                chapter.beats.append({"role": StoryBeatRole.NARRATOR, "content": assistant_content})
+                                chapter.content += f"\n\n{assistant_content}\n\n"
+                                session.add(chapter)
+                                session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(
+                        "finalize_persistence_skipped_chat_deleted",
+                        job_id=job.id, error=str(e),
+                    )
+                    
+            event_type_str = "chat_reply" if is_chat_reply else "story_continue"
+            if is_chat_reply:
+                await emit_job_event(EventType.JOB_COMPLETED, {
+                    "id": job.id, 
+                    "task_type": job.task_type, 
+                    "type": event_type_str,
+                    "metadata": {"chat_id": entity_id, "type": event_type_str},
+                    "chat_id": entity_id, 
+                    "content": assistant_content
+                })
+            else:
+                story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
+                chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
+                await emit_job_event(EventType.JOB_COMPLETED, {
+                    "id": job.id,
+                    "task_type": job.task_type,
+                    "type": event_type_str,
+                    "metadata": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
+                    "story_id": story_id,
+                    "chapter_id": chapter_id,
+                    "content": assistant_content
+                })
+
+
+    await finalize_persisted_job_outputs(
+        job_service=job_service,
+        job_id=job_id,
+        outputs=outputs,
+        provider_id=provider_id,
+        load_balancer=load_balancer,
+        process_image_background_fn=None,
+    )
+
+
+async def _finalize_image_job(
+    *,
+    job,
+    job_id: str,
+    job_service,
+    load_balancer,
+    provider_id: str,
+    outputs: list,
+    process_image_background_fn,
+) -> None:
+
+    await finalize_persisted_job_outputs(
+        job_service=job_service,
+        job_id=job_id,
+        outputs=outputs,
+        provider_id=provider_id,
+        load_balancer=load_balancer,
+        process_image_background_fn=process_image_background_fn,
+    )
+
+
+async def finalize_successful_job(
+    *,
+    job,
+    job_id: str,
+    job_service,
+    load_balancer,
+    provider_id: str,
+    final_result: dict[str, Any],
+    process_image_background_fn: Callable[[str, str], Any],
+) -> None:
+    """Finalize a successful provider result and schedule image post-processing."""
+    if "images" in final_result:
+        images = final_result.get("images", [])
+        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
+    elif "text" in final_result:
+        outputs = await asyncio.to_thread(build_text_outputs, job, final_result["text"], provider_id)
+    elif "outputs" in final_result:
+        outputs = final_result["outputs"]
+    else:
+        outputs = []
+
+    if job.task_type == 'llm':
+        await _finalize_llm_job(
+            job=job,
+            job_id=job_id,
+            job_service=job_service,
+            load_balancer=load_balancer,
+            provider_id=provider_id,
+            final_result=final_result,
+            outputs=outputs,
+        )
+    else:
+        await _finalize_image_job(
+            job=job,
+            job_id=job_id,
+            job_service=job_service,
+            load_balancer=load_balancer,
+            provider_id=provider_id,
+            outputs=outputs,
+            process_image_background_fn=process_image_background_fn,
         )
         return
         generated_prompt = ""

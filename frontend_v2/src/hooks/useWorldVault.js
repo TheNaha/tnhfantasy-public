@@ -131,7 +131,38 @@ export const useUpdateChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, ...data }) => api.patch(`/api/v2/chats/${chatId}`, data),
-        onSuccess: (_, variables) => {
+        onMutate: async (variables) => {
+            const { chatId, ...data } = variables;
+            await queryClient.cancelQueries({ queryKey: ['world_vault', 'chats', chatId] });
+            const previousChat = queryClient.getQueryData(['world_vault', 'chats', chatId]);
+            
+            if (previousChat) {
+                queryClient.setQueryData(['world_vault', 'chats', chatId], {
+                    ...previousChat,
+                    ...data
+                });
+            }
+            
+            // Also optimistically update the list
+            await queryClient.cancelQueries({ queryKey: ['world_vault', 'chats'] });
+            const previousChats = queryClient.getQueryData(['world_vault', 'chats']);
+            if (previousChats) {
+                queryClient.setQueryData(['world_vault', 'chats'], 
+                    previousChats.map(c => c.id === chatId ? { ...c, ...data } : c)
+                );
+            }
+            
+            return { previousChat, previousChats };
+        },
+        onError: (err, variables, context) => {
+            if (context?.previousChat) {
+                queryClient.setQueryData(['world_vault', 'chats', variables.chatId], context.previousChat);
+            }
+            if (context?.previousChats) {
+                queryClient.setQueryData(['world_vault', 'chats'], context.previousChats);
+            }
+        },
+        onSettled: (data, error, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
         }

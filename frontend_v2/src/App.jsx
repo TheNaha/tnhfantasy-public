@@ -56,6 +56,8 @@ function AnimatedRoutes() {
                 <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
                 <Route path="/chat" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
                 <Route path="/story" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                <Route path="/story/:storyId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                <Route path="/story/:storyId/chapter/:chapterId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
                 <Route path="/characters" element={<ErrorBoundary><Characters /></ErrorBoundary>} />
                 <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
                 <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />

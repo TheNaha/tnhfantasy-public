@@ -43,7 +43,7 @@ from config import (
 # Structured logging - use structlog for consistent output
 from infrastructure.logging import get_logger
 from services.job_runner import execute_job
-from services.provider_client import call_provider as _call_provider
+from services.provider_client import call_image_provider as _call_image_provider, call_llm_provider as _call_llm_provider
 
 # Logger for this module
 logger = get_logger("main")
@@ -77,7 +77,8 @@ async def process_job(job_id: str, preferred_provider_id: str | None = None):
         job_id,
         preferred_provider_id=preferred_provider_id,
         session_context_manager=get_session_context,
-        call_provider_fn=_call_provider,
+        call_image_provider_fn=_call_image_provider,
+        call_llm_provider_fn=_call_llm_provider,
         process_image_background_fn=_process_image_background,
         get_timeout_fn=get_job_timeout,
         get_max_retries_fn=get_job_max_retries,

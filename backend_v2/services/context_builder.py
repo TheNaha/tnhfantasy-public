@@ -218,14 +218,7 @@ def build_system_prompt_sections(
     """
     sections: list[dict[str, Any]] = []
 
-    if system_prompt_override:
-        sections.append({
-            "key": "override",
-            "label": "Per-chat override (replaces character prompt)",
-            "content": system_prompt_override,
-            "source": "override",
-        })
-    elif character:
+    if character:
         char_prompt = character.system_prompt or build_character_system_prompt(character)
         if char_prompt:
             sections.append({
@@ -244,7 +237,15 @@ def build_system_prompt_sections(
                 "source": "char_append",
             })
 
-    # Per-chat append (situational instructions for this chat only)
+    if system_prompt_override and system_prompt_override.strip():
+        sections.append({
+            "key": "chat_prompt",
+            "label": "Chat System Prompt",
+            "content": system_prompt_override.strip(),
+            "source": "override",
+        })
+
+    # Per-chat append (legacy / extra instructions for this chat only)
     if append_system_prompt and append_system_prompt.strip():
         sections.append({
             "key": "chat_append",

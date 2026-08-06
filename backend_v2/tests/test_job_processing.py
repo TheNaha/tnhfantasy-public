@@ -104,7 +104,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         assert kwargs["worker_url"] == "http://tnhcomfy-provider-2:8000"
         return {"images": []}
 
@@ -124,7 +124,7 @@ async def test_process_job_falls_back_when_provider_missing_container_config(ses
         )
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.resolve_provider_runtime", fake_resolve_provider_runtime)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
@@ -151,14 +151,14 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         worker_url = kwargs["worker_url"]
         if worker_url == "http://tnhcomfy-provider-1:8000":
             raise ProviderCallError("bad workflow", provider_id="provider-1", is_retryable=False)
         return {"images": []}
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
 
@@ -190,7 +190,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
     image.save(buf, format="PNG")
     encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         return {
             "images": [
                 {
@@ -205,7 +205,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
         return None
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
     monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: ".")
@@ -245,7 +245,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
     job_id = job.id
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         await kwargs["job_service"].update_job(
             kwargs["job_id"],
             status=JobStatus.CANCELLED,
@@ -254,7 +254,7 @@ async def test_process_job_respects_cancelled_status_before_finalize(session: Se
         return {"images": []}
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
     await process_job(job_id)
@@ -274,14 +274,14 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         raise JobTimeoutError("timed out")
 
     mock_http_client = AsyncMock()
     mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
@@ -342,7 +342,7 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
     job = await job_service.create_job(workflow=sample_workflow, metadata={})
     call_attempts = []
 
-    async def fake_call_provider(**kwargs):
+    async def fake_call_image_provider(**kwargs):
         provider_id = kwargs["provider_id"]
         call_attempts.append(provider_id)
         raise ProviderCallError(f"{provider_id} hard failure", provider_id=provider_id, is_retryable=False)
@@ -351,7 +351,7 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
     mock_http_client.post = AsyncMock(return_value=SimpleNamespace(status_code=200))
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main._call_provider", fake_call_provider)
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))

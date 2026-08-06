@@ -13,14 +13,14 @@ from provider_core.router import attach_provider_routes
 
 from core.entities import Provider
 from services.load_balancer import LoadBalancer
-from services.provider_client import ProviderCallError, call_provider
+from services.provider_client import ProviderCallError, call_image_provider
 
 
 # -----------------------------------------------------------------------------
 # 1. Test Provider Call Error retryable flag extraction
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_call_provider_extracts_retryable_from_non_200():
+async def test_call_image_provider_extracts_retryable_from_non_200():
     # Mock httpx response and client
     mock_response = MagicMock()
     mock_response.status_code = 400
@@ -41,7 +41,7 @@ async def test_call_provider_extracts_retryable_from_non_200():
     
     with patch("services.provider_client.get_streaming_client", return_value=mock_client_ctx):
         with pytest.raises(ProviderCallError) as exc_info:
-            await call_provider(
+            await call_image_provider(
                 worker_url="http://mock-worker",
                 workflow={},
                 job_id="job-123",
@@ -56,7 +56,7 @@ async def test_call_provider_extracts_retryable_from_non_200():
     mock_response.aread = AsyncMock(return_value=b'{"message": "InvalidWorkflow", "retryable": false}')
     with patch("services.provider_client.get_streaming_client", return_value=mock_client_ctx):
         with pytest.raises(ProviderCallError) as exc_info:
-            await call_provider(
+            await call_image_provider(
                 worker_url="http://mock-worker",
                 workflow={},
                 job_id="job-123",
