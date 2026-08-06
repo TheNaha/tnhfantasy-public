@@ -105,6 +105,109 @@ def prune_context(
     return system_msgs + non_system_msgs
 
 
+def build_system_prompt_sections(
+    session: Session,
+    character=None,
+    lorebook_ids: list[str] = None,
+    persona_name: str | None = None,
+    story_time: str | None = None,
+    story_location: str | None = None,
+    system_prompt_override: str | None = None,
+    include_roleplay_default: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    Build the ordered list of system-prompt sections that make up a chat context.
+    Each section: {"key", "label", "content", "source"} where source is one of
+    "override" | "character" | "config" | "lorebook" | "world_state".
+    Returns an empty list if no sections apply.
+    """
+    sections: list[dict[str, Any]] = []
+
+    if system_prompt_override:
+        sections.append({
+            "key": "override",
+            "label": "Chat override",
+            "content": system_prompt_override,
+            "source": "override",
+        })
+    elif character:
+        char_prompt = character.system_prompt or build_character_system_prompt(character)
+        if char_prompt:
+            sections.append({
+                "key": "character",
+                "label": f"Character — {character.name or character.id}",
+                "content": char_prompt,
+                "source": "character",
+            })
+
+    if include_roleplay_default:
+        from config import get_system_prompt_blocks
+        roleplay_default = (get_system_prompt_blocks() or {}).get("roleplay_default", "")
+        if roleplay_default:
+            sections.append({
+                "key": "roleplay_default",
+                "label": "Roleplay instructions",
+                "content": roleplay_default,
+                "source": "config",
+            })
+
+    if sections:
+        # Apply SillyTavern template variable substitution to character/override blocks
+        import re
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        _replacements = {
+            "char": (character.name if character else "") or "",
+            "user": persona_name or "User",
+            "time": now.strftime("%H:%M"),
+            "date": now.strftime("%Y-%m-%d"),
+        }
+
+        def _replace(m):
+            key = m.group(1).strip().lower()
+            if key.startswith("random::"):
+                import random
+                opts = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
+                return random.choice(opts) if opts else m.group(0)
+            return _replacements.get(key, m.group(0))
+
+        for section in sections:
+            if section["source"] in ("character", "override"):
+                section["content"] = re.sub(r"\{\{([^}]+)\}\}", _replace, section["content"])
+
+    if lorebook_ids:
+        entries = []
+        for lb_id in lorebook_ids:
+            lb_entries = session.exec(
+                select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
+            ).all()
+            entries.extend([{"content": e.content, "keys": e.keys} for e in lb_entries])
+
+        if entries:
+            lore_block = "\n".join(f"- {e['content']}" for e in entries)
+            sections.append({
+                "key": "lorebook",
+                "label": f"World information ({len(entries)} entries)",
+                "content": f"[World Information]\n{lore_block}",
+                "source": "lorebook",
+            })
+
+    if story_time or story_location:
+        world_state_parts = []
+        if story_time:
+            world_state_parts.append(f"Current Story Time: {story_time}")
+        if story_location:
+            world_state_parts.append(f"Current Location: {story_location}")
+        sections.append({
+            "key": "world_state",
+            "label": "World state",
+            "content": "\n".join(world_state_parts),
+            "source": "world_state",
+        })
+
+    return sections
+
+
 def build_chat_context(
     session: Session,
     messages: list,
@@ -125,60 +228,24 @@ def build_chat_context(
         max_context_tokens: Maximum token budget for the full context window.
         system_prompt_override: Per-chat override that wins over character.system_prompt.
     """
-    system_prompt = ""
-    if system_prompt_override:
-        system_prompt = system_prompt_override
-    elif character:
-        if character.system_prompt:
-            system_prompt = character.system_prompt
-        else:
-            system_prompt = build_character_system_prompt(character)
-
-    if system_prompt:
-        # Apply SillyTavern template variable substitution
-        import re
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        _replacements = {
-            "char": (character.name if character else "") or "",
-            "user": persona_name or "User",
-            "time": now.strftime("%H:%M"),
-            "date": now.strftime("%Y-%m-%d"),
-        }
-
-        def _replace(m):
-            key = m.group(1).strip().lower()
-            if key.startswith("random::"):
-                import random
-                opts = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
-                return random.choice(opts) if opts else m.group(0)
-            return _replacements.get(key, m.group(0))
-
-        system_prompt = re.sub(r"\{\{([^}]+)\}\}", _replace, system_prompt)
-    if lorebook_ids:
-        entries = []
-        for lb_id in lorebook_ids:
-            lb_entries = session.exec(
-                select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
-            ).all()
-            entries.extend([{"content": e.content, "keys": e.keys} for e in lb_entries])
-
-        if entries:
-            system_prompt = inject_lorebooks_into_system_prompt(
-                system_prompt, entries, injection_mode
-            )
-
-    if story_time or story_location:
-        world_state_parts = []
-        if story_time:
-            world_state_parts.append(f"Current Story Time: {story_time}")
-        if story_location:
-            world_state_parts.append(f"Current Location: {story_location}")
-        
-        system_prompt += f"\n\n[World State]\n" + "\n".join(world_state_parts)
+    sections = build_system_prompt_sections(
+        session,
+        character=character,
+        lorebook_ids=lorebook_ids,
+        persona_name=persona_name,
+        story_time=story_time,
+        story_location=story_location,
+        system_prompt_override=system_prompt_override,
+    )
+    system_prompt = "\n\n".join(s["content"] for s in sections)
 
     msg_list = []
     for msg in messages:
+        meta = getattr(msg, "message_metadata", None) or {}
+        if meta.get("source") == "world_state":
+            # World-state divider markers are UI-only — world state lives in the
+            # system prompt's [World State] section, so skip them in LLM context.
+            continue
         if msg.role == MessageRole.USER:
             role = "user"
         elif msg.role == MessageRole.CHAR:

@@ -56,6 +56,10 @@ vi.mock('../hooks/useWorldVault', () => ({
     useLLMAvailableModels: () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }),
     useLLMDefaultProvider: () => ({ data: { provider_id: 'llm-local', model_id: 'default' } }),
     useChatSystemPrompt: () => ({ data: { system_prompt: 'test system prompt', has_override: false } }),
+    useEditMessage: () => ({ mutateAsync: vi.fn() }),
+    useRollbackChat: () => ({ mutateAsync: vi.fn() }),
+    useRegenerateReply: () => ({ mutateAsync: vi.fn() }),
+    useChatJobs: () => ({ data: [] }),
     useCharacterCollection: () => ({ data: { images: [], image_count: 0 } }),
     getAvatarUrl: () => '',
 }));

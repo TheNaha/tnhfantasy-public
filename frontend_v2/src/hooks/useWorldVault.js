@@ -168,6 +168,53 @@ export const useDeleteMessage = () => {
     });
 };
 
+export const useEditMessage = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, msgId, content }) =>
+            api.patch(`/api/v2/chats/${chatId}/messages/${msgId}`, { content }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+        }
+    });
+};
+
+export const useRollbackChat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, messageId }) =>
+            api.post(`/api/v2/chats/${chatId}/rollback`, { message_id: messageId }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
+export const useRegenerateReply = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, messageId }) =>
+            api.post(`/api/v2/chats/${chatId}/regenerate`, messageId ? { message_id: messageId } : {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+        }
+    });
+};
+
+export const useChatJobs = (chatId) => {
+    return useQuery({
+        queryKey: ['world_vault', 'chats', chatId, 'jobs'],
+        queryFn: () => {
+            if (!chatId) return [];
+            return api.get(`/api/v2/chats/${chatId}/jobs`);
+        },
+        enabled: !!chatId,
+        refetchInterval: 5000,
+        refetchIntervalInBackground: false
+    });
+};
+
 export const useCreateCharacter = () => {
     const queryClient = useQueryClient();
     return useMutation({

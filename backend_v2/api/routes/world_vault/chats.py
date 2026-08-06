@@ -87,6 +87,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
             )
             session.add(opening)
             session.commit()
+            session.refresh(chat)
 
     return chat
 
@@ -152,8 +153,12 @@ def list_messages(chat_id: str, session: Session = Depends(get_session)):
 
 @router.get("/{chat_id}/system-prompt")
 def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
-    """Return the assembled system prompt (and context size) used for this chat."""
-    from services.context_builder import build_chat_context, estimate_tokens
+    """Return the assembled system prompt (with per-section breakdown) for this chat."""
+    from services.context_builder import (
+        build_chat_context,
+        build_system_prompt_sections,
+        estimate_tokens,
+    )
 
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -166,6 +171,16 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
     character = None
     if chat.character_id:
         character = session.get(Character, chat.character_id)
+
+    sections = build_system_prompt_sections(
+        session,
+        character=character,
+        lorebook_ids=chat.active_lorebook_ids or None,
+        persona_name=chat.persona_name,
+        story_time=chat.story_time,
+        story_location=chat.story_location,
+        system_prompt_override=chat.system_prompt_override,
+    )
 
     system_prompt, context = build_chat_context(
         session,
@@ -185,6 +200,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         "has_override": bool(chat.system_prompt_override),
         "message_count": len(context),
         "context_tokens": estimate_tokens("\n".join(m.get("content", "") for m in context)),
+        "sections": sections,
     }
 
 
@@ -194,18 +210,52 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     update_fields = data.model_dump(exclude_unset=True)
+    changed_state = {}
+    if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
+        changed_state["time"] = update_fields["story_time"]
+    if "story_location" in update_fields and update_fields["story_location"] != chat.story_location:
+        changed_state["location"] = update_fields["story_location"]
     for key, value in update_fields.items():
         setattr(chat, key, value)
     chat.updated_at = datetime.now(timezone.utc)
     session.add(chat)
     session.commit()
     session.refresh(chat)
+
+    if changed_state:
+        _insert_world_state_marker(session, chat_id, changed_state)
+
     return chat
 
 # ---------------------------------------------------------------------------
 # Helper: resolve default LLM model id from llm_config.json
 # ---------------------------------------------------------------------------
 from services.llm_config import get_default_llm_model as _get_default_llm_model
+
+
+def _insert_world_state_marker(
+    session: Session,
+    chat_id: str,
+    changed: dict,
+) -> None:
+    """Insert a UI-only world-state divider marker message after a time/location change."""
+    parts = []
+    if changed.get("location"):
+        parts.append(f"Location: {changed['location']}")
+    if changed.get("time"):
+        parts.append(f"Time: {changed['time']}")
+    if not parts:
+        return
+    marker = Message(
+        chat_id=chat_id,
+        role=MessageRole.SYSTEM,
+        content="\n".join(parts),
+        message_metadata={"source": "world_state", **changed},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    session.add(marker)
+    session.commit()
 
 
 @router.post("/{chat_id}/messages")
@@ -255,11 +305,14 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             job_service = get_job_service(session)
 
             if request.narrate:
+                from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
+
+                narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
                 workflow: dict = {
                     "messages": [
-                        {"role": "system", "content": NARRATOR_SYSTEM_PROMPT},
+                        {"role": "system", "content": narrator_prompt},
                         *context,
                         {"role": "user", "content": f"[Narration request] {message.content}"},
                     ],
@@ -322,6 +375,205 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
     session.commit()
     return {"message": "Message deleted"}
 
+@router.get("/{chat_id}/jobs")
+def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
+    """Recent jobs (LLM + image) assigned to this chat, newest first."""
+    from core.entities import Job, JobStatus
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    recent = session.exec(
+        select(Job)
+        .where(Job.status.in_([JobStatus.PENDING, JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED,
+                               JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING,
+                               JobStatus.COMPLETED, JobStatus.FAILED]))
+        .order_by(Job.created_at.desc())
+        .limit(300)
+    ).all()
+
+    chat_jobs = []
+    for job in recent:
+        meta = job.metadata_ or {}
+        if meta.get("chat_id") != chat_id:
+            continue
+        workflow = job.workflow or {}
+        job_type = meta.get("type") or workflow.get("type") or meta.get("source") or job.task_type
+        chat_jobs.append({
+            "id": job.id,
+            "task_type": job.task_type,
+            "type": job_type,
+            "status": job.status.value,
+            "progress": job.progress,
+            "overall_progress": job.overall_progress,
+            "message": job.message,
+            "error": job.error,
+            "provider_id": job.provider_id,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "agentic": bool(meta.get("agentic")),
+            "depth": meta.get("orchestrator_depth"),
+            "parent_job_id": meta.get("parent_job_id"),
+        })
+    return chat_jobs[:30]
+
+class EditMessageRequest(BaseModel):
+    content: str
+
+class RollbackRequest(BaseModel):
+    message_id: str
+
+class RegenerateRequest(BaseModel):
+    message_id: str | None = None
+
+@router.patch("/{chat_id}/messages/{message_id}", response_model=Message)
+def edit_message(
+    chat_id: str,
+    message_id: str,
+    data: EditMessageRequest,
+    session: Session = Depends(get_session),
+):
+    message = session.get(Message, message_id)
+    if not message or message.chat_id != chat_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if message.role not in (MessageRole.USER, MessageRole.CHAR):
+        raise HTTPException(status_code=400, detail="Only user and character messages can be edited")
+    message.content = data.content
+    message.updated_at = datetime.now(timezone.utc)
+    session.add(message)
+    session.commit()
+    session.refresh(message)
+    return message
+
+@router.post("/{chat_id}/rollback")
+def rollback_chat(
+    chat_id: str,
+    req: RollbackRequest,
+    session: Session = Depends(get_session),
+):
+    """Delete the target message and everything after it (undo mistakes)."""
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    anchor = session.get(Message, req.message_id)
+    if not anchor or anchor.chat_id != chat_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    all_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+
+    to_delete = [m for m in all_messages if m.created_at >= anchor.created_at]
+    for m in to_delete:
+        session.delete(m)
+    session.commit()
+    return {"deleted": len(to_delete), "kept": len(all_messages) - len(to_delete)}
+
+@router.post("/{chat_id}/regenerate")
+async def regenerate_reply(
+    chat_id: str,
+    req: RegenerateRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Re-run the last user message: delete every message after it, then dispatch
+    a fresh reply job mirroring the previous job's agentic settings.
+    """
+    from core.entities import Job, JobStatus
+    from services.context_builder import build_chat_context
+    from services.job_queue import queue_manager
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    all_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+
+    anchor = None
+    if req.message_id:
+        anchor = session.get(Message, req.message_id)
+        if not anchor or anchor.chat_id != chat_id:
+            raise HTTPException(status_code=404, detail="Message not found")
+    else:
+        for m in reversed(all_messages):
+            if m.role == MessageRole.USER:
+                anchor = m
+                break
+
+    if not anchor:
+        raise HTTPException(status_code=400, detail="No user message to regenerate")
+
+    anchor_index = next(i for i, m in enumerate(all_messages) if m.id == anchor.id)
+    trailing = all_messages[anchor_index + 1:]
+    for m in trailing:
+        session.delete(m)
+    session.commit()
+
+    # Mirror the previous chat_reply job's agentic settings if available.
+    prev_agentic = False
+    prev_checkpoint = None
+    recent_jobs = session.exec(
+        select(Job).where(Job.task_type == "llm").order_by(Job.created_at.desc()).limit(200)
+    ).all()
+    for job in recent_jobs:
+        meta = job.metadata_ or {}
+        wf = job.workflow or {}
+        if meta.get("chat_id") == chat_id and (wf.get("type") or meta.get("type")) == "chat_reply":
+            prev_agentic = bool(meta.get("agentic"))
+            prev_checkpoint = meta.get("generator_checkpoint")
+            break
+
+    remaining = [m for m in all_messages[: anchor_index + 1]]
+    character = None
+    if chat.character_id:
+        character = session.get(Character, chat.character_id)
+
+    system_prompt, context = build_chat_context(
+        session,
+        remaining,
+        character=character,
+        lorebook_ids=chat.active_lorebook_ids or None,
+        persona_name=chat.persona_name,
+        story_time=chat.story_time,
+        story_location=chat.story_location,
+        system_prompt_override=chat.system_prompt_override,
+    )
+
+    workflow: dict = {
+        "messages": context,
+        "chat_id": chat_id,
+        "character_system_prompt": system_prompt or None,
+        "type": "chat_reply",
+        "model": chat.llm_model or _get_default_llm_model(),
+    }
+    metadata: dict = {
+        "chat_id": chat_id,
+        "character_id": chat.character_id,
+        "workspace": "roleplay",
+        "regenerated": True,
+    }
+    if prev_agentic:
+        from services.orchestrator_service import AGENTIC_TOOLS
+        workflow["tools"] = AGENTIC_TOOLS
+        metadata["agentic"] = True
+        metadata["orchestrator_depth"] = 0
+        metadata["original_messages"] = context
+    if prev_checkpoint:
+        metadata["generator_checkpoint"] = prev_checkpoint
+
+    job_service = get_job_service(session)
+    try:
+        job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+        await queue_manager.enqueue(job.id, task_type="llm")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"job_id": job.id, "removed_messages": len(trailing)}
+
 @router.post("/{chat_id}/suggest")
 async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -> dict:
     from services.context_builder import build_chat_context
@@ -350,7 +602,12 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
     )
     
     # Override system prompt to explicitly act as the user
-    suggest_prompt = system_prompt + "\n\nCRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
+    from config import get_system_prompt_blocks
+    suggest_instruction = (
+        (get_system_prompt_blocks() or {}).get("suggest_instruction")
+        or "CRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
+    )
+    suggest_prompt = system_prompt + "\n\n" + suggest_instruction
     
     try:
         job_service = get_job_service(session)

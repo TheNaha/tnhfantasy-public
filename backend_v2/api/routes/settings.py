@@ -335,6 +335,36 @@ async def update_settings(updates: SettingsUpdate) -> dict[str, Any]:
         raise ComfyError(str(e))
 
 
+SYSTEM_PROMPT_BLOCK_KEYS = {"roleplay_default", "narrator", "suggest_instruction"}
+
+class SystemPromptsRequest(BaseModel):
+    """Update the configurable system-prompt blocks."""
+    blocks: dict[str, str]
+
+@router.get("/system-prompts")
+async def get_system_prompts() -> dict[str, Any]:
+    """Return all configurable system-prompt blocks (roleplay, narrator, suggest)."""
+    return {"blocks": app_config.get_system_prompt_blocks()}
+
+@router.put("/system-prompts")
+async def update_system_prompts(request: SystemPromptsRequest) -> dict[str, Any]:
+    """Persist edited system-prompt blocks to config.json."""
+    try:
+        current = app_config.get_system_prompt_blocks()
+        updates = {}
+        for key, value in request.blocks.items():
+            if key not in SYSTEM_PROMPT_BLOCK_KEYS:
+                continue
+            stripped = (value or "").strip()
+            if stripped:
+                updates[key] = stripped
+        merged = {**current, **updates}
+        app_config.update_config({"system_prompts": merged}, persist=True)
+        return {"status": "success", "blocks": merged}
+    except Exception as e:
+        raise ComfyError(str(e))
+
+
 @router.post("/reset")
 async def reset_settings() -> dict[str, Any]:
     """

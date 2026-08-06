@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
@@ -8,7 +9,73 @@ import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMDefaultProvider, useSetLLMDefaultProvider, useLLMAvailableModels } from '../hooks/useWorldVault';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useEffect } from 'react';
+import api from '../api/client';
 
+
+function SystemPromptsEditor() {
+    const queryClient = useQueryClient();
+    const { data: blocksData, isLoading } = useQuery({
+        queryKey: ['system_prompts_blocks'],
+        queryFn: () => api.get('/api/settings/system-prompts'),
+        staleTime: 30000,
+    });
+    const [draft, setDraft] = useState({});
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (blocksData?.blocks) setDraft({ ...blocksData.blocks });
+    }, [blocksData]);
+
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            await api.put('/api/settings/system-prompts', { blocks: draft });
+            toast.success('System prompts updated');
+            queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
+        } catch {
+            toast.error('Failed to save system prompts');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const fields = [
+        { key: 'roleplay_default', label: 'Roleplay Default', desc: 'Default instructions used in every chat reply (before character prompt). Clear to disable.' },
+        { key: 'narrator', label: 'Narrator Prompt', desc: 'Prompt used for narration scenes (narrate_scene tool and /narrate mode).' },
+        { key: 'suggest_instruction', label: 'Suggest Instruction', desc: 'Instructions appended when suggesting user replies (/suggest).' },
+    ];
+
+    if (isLoading) return <div className="text-xs text-gray-500">Loading prompts…</div>;
+
+    return (
+        <SettingGroup title="System Prompt Blocks" description="These blocks make up the assembled prompt. The Roleplay Default applies to all chat replies. Edit and save to update config.json directly.">
+            <div className="space-y-4">
+                {fields.map(f => (
+                    <div key={f.key}>
+                        <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">{f.label}</label>
+                        <p className="text-[10px] text-gray-600 mb-1">{f.desc}</p>
+                        <textarea
+                            value={draft[f.key] || ''}
+                            onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                            rows={4}
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-blue-500 resize-y min-h-[60px] font-sans"
+                        />
+                    </div>
+                ))}
+            </div>
+            <div className="mt-3 flex justify-end">
+                <button
+                    onClick={handleSave}
+                    disabled={saving || isLoading}
+                    className="btn-primary px-4 py-2 text-xs flex items-center gap-2"
+                >
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    Save prompts
+                </button>
+            </div>
+        </SettingGroup>
+    );
+}
 
 export default function Settings() {
     const settings = useSettings();
@@ -852,6 +919,9 @@ function AISettings({ settings, onUpdate, onReset }) {
                         <option value="messages">Separate Messages</option>
                     </select>
                 </SettingGroup>
+
+                {/* System Prompt Blocks (config-driven) */}
+                <SystemPromptsEditor />
             </div>
         </div>
     );

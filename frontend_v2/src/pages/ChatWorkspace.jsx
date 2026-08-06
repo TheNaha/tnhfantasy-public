@@ -4,7 +4,8 @@ import {
     MessageSquare, Send, Image as ImageIcon, Settings,
     PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
-    User, X, ChevronRight, RotateCcw, Clock, MapPin, Menu
+    User, X, ChevronRight, RotateCcw, Clock, MapPin, Menu,
+    Pencil, Undo2, Activity, Brain
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -15,7 +16,8 @@ import {
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
     useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply,
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
-    useCharacterCollection
+    useCharacterCollection, useEditMessage, useRollbackChat,
+    useRegenerateReply, useChatJobs
 } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -400,10 +402,45 @@ function CharacterDetailsModal({ character, onClose }) {
 // ---------------------------------------------------------------------------
 // Memoized Message Item
 // ---------------------------------------------------------------------------
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback }) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(msg.content);
+
+    const meta = msg.message_metadata || {};
+    if (meta.source === 'world_state') {
+        return (
+            <div className="flex items-center gap-3 w-full max-w-full self-center my-1.5 select-none">
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-600/50 to-transparent" />
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-800/70 border border-gray-700/50 text-[10px] text-gray-400 tracking-wide whitespace-nowrap">
+                    {meta.location && (
+                        <span className="flex items-center gap-1">
+                            <MapPin size={10} className="text-amber-400" />
+                            {meta.location}
+                        </span>
+                    )}
+                    {meta.location && meta.time && <span className="opacity-40">·</span>}
+                    {meta.time && (
+                        <span className="flex items-center gap-1">
+                            <Clock size={10} className="text-sky-400" />
+                            {meta.time}
+                        </span>
+                    )}
+                </div>
+                <div className="flex-1 h-px bg-gradient-to-r from-gray-600/50 via-transparent to-transparent" />
+            </div>
+        );
+    }
+
+    const saveEdit = () => {
+        const trimmed = draft.trim();
+        if (!trimmed) return;
+        onEdit?.(msg.id, trimmed);
+        setEditing(false);
+    };
+
     return (
         <div className={clsx(
-            "flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%]",
+            "flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%] group/message",
             msg.role === 'user' ? "self-end flex-row-reverse" : "self-start flex-row"
         )}>
             {msg.role !== 'user' && msg.role !== 'system' && (
@@ -419,36 +456,82 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     {msg.role === 'user'
                         ? (activeChat?.persona_name || 'You')
                         : msg.role === 'system'
-                            ? (msg.message_metadata?.source === 'narrator' ? '✦ Narrator' : '✦ System')
+                            ? (meta.source === 'narrator' ? '✦ Narrator' : '✦ System')
                         : (linkedCharacter?.name || 'AI')}
                 </div>
-                {(msg.role === 'char' || msg.role === 'assistant') ? (
-                    <div className="flex flex-col gap-2 w-full">
-                        <TavernMessage content={msg.content} />
-                        {msg.image_path && (
-                            <div className="mt-1">
-                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
-                            </div>
-                        )}
-                    </div>
-                ) : msg.role === 'user' ? (
-                    <div className="px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm">
-                        <TavernMessage content={msg.content} />
-                        {msg.image_path && (
-                            <div className="mt-3">
-                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
-                            </div>
-                        )}
+                {editing ? (
+                    <div className="flex flex-col gap-2">
+                        <textarea
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            rows={3}
+                            className="px-3 py-2 rounded-2xl text-sm bg-gray-900/80 border border-blue-500/40 text-gray-200 focus:outline-none resize-none"
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-xl text-xs text-gray-400 hover:bg-white/5 transition-colors">Cancel</button>
+                            <button onClick={saveEdit} className="px-3 py-1.5 rounded-xl text-xs bg-blue-600/30 text-blue-300 border border-blue-500/30 hover:bg-blue-600/50 transition-colors flex items-center gap-1">
+                                <Check size={12} /> Save
+                            </button>
+                        </div>
                     </div>
                 ) : (
-                    <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", msg.message_metadata?.source === 'narrator' ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
-                        <span className="whitespace-pre-wrap">{msg.content}</span>
-                        {msg.image_path && (
-                            <div className="mt-3">
-                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                    <>
+                        {(msg.role === 'char' || msg.role === 'assistant') ? (
+                            <div className="flex flex-col gap-2 w-full">
+                                <TavernMessage content={msg.content} />
+                                {msg.image_path && (
+                                    <div className="mt-1">
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                    </div>
+                                )}
+                            </div>
+                        ) : msg.role === 'user' ? (
+                            <div className="px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm">
+                                <TavernMessage content={msg.content} />
+                                {msg.image_path && (
+                                    <div className="mt-3">
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", meta.source === 'narrator' ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
+                                <span className="whitespace-pre-wrap">{msg.content}</span>
+                                {msg.image_path && (
+                                    <div className="mt-3">
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                    </div>
+                                )}
                             </div>
                         )}
-                    </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity mt-0.5">
+                            {(msg.role === 'user' || msg.role === 'char') && (
+                                <button
+                                    onClick={() => { setDraft(msg.content); setEditing(true); }}
+                                    className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                    title="Edit message"
+                                >
+                                    <Pencil size={11} />
+                                </button>
+                            )}
+                            {(canRegenerate || msg.role === 'user') && (
+                                <button
+                                    onClick={() => onRegenerate?.(msg.id)}
+                                    className="p-1 rounded-md text-gray-500 hover:text-green-400 hover:bg-white/5 transition-colors"
+                                    title="Regenerate from here"
+                                >
+                                    <RotateCcw size={11} />
+                                </button>
+                            )}
+                            <button
+                                onClick={() => onRollback?.(msg.id)}
+                                className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
+                                title="Rollback chat to here"
+                            >
+                                <Undo2 size={11} />
+                            </button>
+                        </div>
+                    </>
                 )}
             </div>
         </div>
@@ -475,6 +558,7 @@ export default function ChatWorkspace() {
     const [greetingModal, setGreetingModal] = useState(null);
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [showCharacterDetails, setShowCharacterDetails] = useState(false);
+    const [rollbackTarget, setRollbackTarget] = useState(null);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
@@ -517,6 +601,10 @@ export default function ChatWorkspace() {
     const deleteChatMutation = useDeleteChat();
     const renameChatMutation = useRenameChat();
     const updateChatMutation = useUpdateChat();
+    const editMessageMutation = useEditMessage();
+    const rollbackMutation = useRollbackChat();
+    const regenerateMutation = useRegenerateReply();
+    const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
 
@@ -584,7 +672,14 @@ export default function ChatWorkspace() {
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
             const eventChatId = meta.chat_id || existingJob?.chatId;
             if (streamText && eventChatId) {
-                updateStreamingJob(eventId, { text: streamText, status: 'running', chatId: eventChatId, type: meta.workspace });
+                updateStreamingJob(eventId, {
+                    text: streamText,
+                    status: 'running',
+                    chatId: eventChatId,
+                    type: meta.workspace,
+                    taskType: job.task_type ?? null,
+                    progress: job.overall_progress ?? job.progress ?? null
+                });
             }
         });
 
@@ -609,6 +704,8 @@ export default function ChatWorkspace() {
 
             if (eventChatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
+                // Story time/location may have changed via update_world_state — refresh chat.
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId] });
             }
 
             if (eventChatId === activeChatId) {
@@ -943,6 +1040,32 @@ export default function ChatWorkspace() {
         updateChatMutation.mutate({ chatId: activeChatId, ...updates });
     };
 
+    const handleEditMessage = async (msgId, content) => {
+        if (!content.trim()) return;
+        try {
+            await editMessageMutation.mutateAsync({ chatId: activeChatId, msgId, content });
+            toast.success('Message updated');
+        } catch { toast.error('Failed to update message'); }
+    };
+
+    const handleRollback = (msgId) => setRollbackTarget(msgId);
+
+    const confirmRollback = async () => {
+        if (!rollbackTarget) return;
+        try {
+            await rollbackMutation.mutateAsync({ chatId: activeChatId, messageId: rollbackTarget });
+            toast.success('Chat rolled back');
+        } catch { toast.error('Failed to rollback'); }
+        setRollbackTarget(null);
+    };
+
+    const handleRegenerate = async (msgId) => {
+        try {
+            const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
+            if (res?.job_id) updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
+        } catch { toast.error('Failed to regenerate'); }
+    };
+
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
 
     return (
@@ -1102,26 +1225,69 @@ export default function ChatWorkspace() {
                     ) : (
                         <>
                             {messages.map((msg, idx) => (
-                                <MessageItem key={msg.id || idx} msg={msg} linkedCharacter={linkedCharacter} activeChat={activeChat} />
+                                <MessageItem
+                                    key={msg.id || idx}
+                                    msg={msg}
+                                    linkedCharacter={linkedCharacter}
+                                    activeChat={activeChat}
+                                    canRegenerate={idx === messages.length - 1}
+                                    onEdit={handleEditMessage}
+                                    onRegenerate={handleRegenerate}
+                                    onRollback={handleRollback}
+                                />
                             ))}
 
                             {Object.entries(streamingJobs).map(([jobId, jobData]) => (
                                 jobData.status === 'running' && jobData.chatId === activeChatId && (
-                                    <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start gap-1">
-                                        <div className="text-[10px] text-blue-400 ml-1 flex items-center gap-1.5">
-                                            {linkedCharacter?.name || 'AI'} <Loader2 size={10} className="animate-spin" />
+                                    jobData.taskType === 'image' || jobData.type === 'image' ? (
+                                        <div key={jobId} className="self-start w-full max-w-[85%] sm:max-w-md">
+                                            <div className="text-[10px] text-green-400 ml-1 flex items-center gap-1.5 mb-1">
+                                                <ImageIcon size={10} /> Generating scene image
+                                            </div>
+                                            <div className="rounded-2xl border border-gray-700/40 bg-gray-900/60 p-3 overflow-hidden shadow-inner">
+                                                <div className="flex gap-3">
+                                                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl bg-gray-800 animate-pulse shimmer" />
+                                                    <div className="flex-1 space-y-2 py-1">
+                                                        <div className="h-2.5 w-3/4 rounded bg-gray-800 animate-pulse" />
+                                                        <div className="h-2.5 w-1/2 rounded bg-gray-800 animate-pulse" />
+                                                        <div className="h-2.5 w-2/3 rounded bg-gray-800 animate-pulse" />
+                                                        {jobData.progress != null ? (
+                                                            <div className="pt-2">
+                                                                <div className="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
+                                                                    <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all" style={{ width: `${jobData.progress}%` }} />
+                                                                </div>
+                                                                <div className="text-[10px] text-green-400/80 mt-1 flex items-center gap-1">
+                                                                    <Loader2 size={10} className="animate-spin" />
+                                                                    Rendering {jobData.progress}%
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="pt-2 text-[10px] text-purple-400 flex items-center gap-1">
+                                                                <Wand2 size={10} className="animate-pulse" />
+                                                                Preparing generation...
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
-                                            {jobData.text ? (
-                                                <span className="whitespace-pre-wrap">{jobData.text}<span className="inline-block w-1 h-4 bg-blue-400/70 animate-pulse ml-0.5 align-text-bottom rounded-sm" /></span>
-                                            ) : (
-                                                <span className="flex items-center gap-2 text-purple-400 text-sm">
-                                                    <Wand2 size={14} className="animate-pulse" />
-                                                    Thinking...
-                                                </span>
-                                            )}
+                                    ) : (
+                                        <div key={jobId} className="flex flex-col max-w-[85%] self-start items-start gap-1">
+                                            <div className="text-[10px] text-blue-400 ml-1 flex items-center gap-1.5">
+                                                {linkedCharacter?.name || 'AI'} <Loader2 size={10} className="animate-spin" />
+                                            </div>
+                                            <div className="px-4 py-3 rounded-2xl rounded-tl-sm text-sm bg-gray-800/50 text-gray-200 border border-gray-700/40 leading-relaxed">
+                                                {jobData.text ? (
+                                                    <span className="whitespace-pre-wrap">{jobData.text}<span className="inline-block w-1 h-4 bg-blue-400/70 animate-pulse ml-0.5 align-text-bottom rounded-sm" /></span>
+                                                ) : (
+                                                    <span className="flex items-center gap-2 text-purple-400 text-sm">
+                                                        <Wand2 size={14} className="animate-pulse" />
+                                                        Thinking...
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )
                                 )
                             ))}
 
@@ -1359,6 +1525,43 @@ export default function ChatWorkspace() {
                         onSave={val => handleChatUpdate({ story_location: val })}
                     />
 
+                    {/* Chat Jobs (LLM + image progress for this chat) */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Activity size={12} /> Jobs
+                            </h4>
+                            <span className="text-[9px] text-gray-600">{chatJobs?.length || 0} total</span>
+                        </div>
+                        {!chatJobs?.length ? (
+                            <p className="text-xs text-gray-600">No jobs tracked for this chat yet.</p>
+                        ) : (
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar">
+                                {chatJobs.slice(0, 10).map((job) => {
+                                    const isRunning = job.status === 'generating' || job.status === 'pre_generation' || job.status === 'post_processing';
+                                    const isImage = job.task_type === 'image' || job.type === 'image' || job.type === 'agentic_image';
+                                    const isFailed = job.status === 'failed';
+                                    const isComplete = job.status === 'completed';
+                                    return (
+                                        <div key={job.id} className={clsx(
+                                            "flex items-center gap-2 px-2.5 py-2 rounded-lg text-[10px] border",
+                                            isFailed ? "bg-red-500/5 border-red-500/15 text-red-300" :
+                                            isComplete ? (isImage ? "bg-emerald-500/5 border-emerald-500/15 text-emerald-300" : "bg-blue-500/5 border-blue-500/15 text-blue-300") :
+                                            isRunning ? "bg-amber-500/5 border-amber-500/15 text-amber-300" : "bg-gray-800/30 border-gray-700/30 text-gray-400"
+                                        )}>
+                                            <span className={clsx("w-1.5 h-1.5 rounded-full shrink-0", isFailed ? "bg-red-400" : isComplete ? (isImage ? "bg-emerald-400" : "bg-blue-400") : isRunning ? "bg-amber-400 animate-pulse" : "bg-gray-600")} />
+                                            <span className="truncate flex-1 font-medium">{isImage ? (job.type === 'agentic_image' ? 'Image generation' : 'Image job') : 'LLM reply'}</span>
+                                            <span className="text-[9px] text-gray-500 shrink-0">{isFailed ? 'Failed' : isComplete ? 'Done' : isRunning ? 'Active' : job.status}</span>
+                                            {isRunning && job.overall_progress != null && (
+                                                <span className="text-[9px] text-amber-300/80 shrink-0">{Math.round(job.overall_progress)}%</span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
                     {/* Character */}
                     <div className="glass-panel p-4 rounded-xl border border-white/5">
                         <div className="flex items-center justify-between mb-3">
@@ -1480,15 +1683,29 @@ export default function ChatWorkspace() {
                             ) : null}
                         </div>
                         <p className="text-[10px] text-gray-600 mb-2">
-                            {activeChat?.system_prompt_override
-                                ? 'This chat uses its own override (takes priority over the character prompt).'
-                                : 'Assembled from the character prompt. Override to take priority per-chat.'}
+                            {systemPromptData?.has_override
+                                ? 'This chat uses a per-chat override (takes priority over the character prompt).'
+                                : 'Assembled from character prompt + configurable blocks.'}
                         </p>
-                        <div className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg bg-gray-900/60 border border-white/5 p-2.5 mb-2">
-                            <pre className="text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap font-sans">
-                                {systemPromptData?.system_prompt || 'Select a character to see the assembled system prompt…'}
+                        {systemPromptData?.sections?.length ? (
+                            <div className="space-y-2 mb-2">
+                                {systemPromptData.sections.map((sec, i) => (
+                                    <div key={i} className="rounded-lg bg-gray-900/50 border border-white/5 overflow-hidden">
+                                        <div className="text-[9px] font-semibold text-gray-500 px-2.5 py-1 bg-gray-800/30 uppercase tracking-wider border-b border-white/5 flex items-center gap-1.5">
+                                            <span className={clsx("w-1 h-1 rounded-full", sec.source === 'override' ? 'bg-orange-400' : sec.source === 'character' ? 'bg-blue-400' : sec.source === 'config' ? 'bg-emerald-400' : sec.source === 'world_state' ? 'bg-violet-400' : 'bg-amber-400')} />
+                                            {sec.label}
+                                        </div>
+                                        <div className="max-h-20 overflow-y-auto px-2.5 py-2 text-[10px] leading-relaxed text-gray-300 whitespace-pre-wrap">
+                                            {sec.content || '—'}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <pre className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg bg-gray-900/60 border border-white/5 p-2.5 mb-2 text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap font-sans">
+                                {systemPromptData?.system_prompt || 'No sections available.'}
                             </pre>
-                        </div>
+                        )}
                         <div className="flex items-center gap-2">
                             <textarea
                                 defaultValue={activeChat?.system_prompt_override || ''}
@@ -1614,6 +1831,16 @@ export default function ChatWorkspace() {
                 title="Delete Chat"
                 message={`Are you sure you want to delete "${deleteTarget?.name || 'this chat'}"? All messages will be permanently lost.`}
                 confirmText="Delete"
+                isDangerous
+            />
+
+            <ConfirmationModal
+                isOpen={!!rollbackTarget}
+                onClose={() => setRollbackTarget(null)}
+                onConfirm={confirmRollback}
+                title="Rollback chat"
+                message="This will delete this message and everything after it. The LLM reply will regenerate from the remaining message."
+                confirmText="Rollback"
                 isDangerous
             />
         </motion.div>

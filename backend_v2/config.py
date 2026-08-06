@@ -90,6 +90,11 @@ DEFAULT_CONFIG = {
     },
     "generator": {
         "default_checkpoint": "sd_xl_base_1.0.safetensors"
+    },
+    "system_prompts": {
+        "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.",
+        "narrator": "You are the narrator of an interactive roleplay story. Your job is to describe the world around the conversation: the environment, the passage of time, off-screen events, and transitions between scenes. Decide whether the story needs: continuing the dialogue, adding background information, or cutting to a new scene. Write 2-5 evocative sentences in third person, past tense. Do not speak dialogue and do not act as the character.",
+        "suggest_instruction": "CRITICAL INSTRUCTION: You must act as the USER (the person talking to the character). Based on the context, write a single short action or sentence the USER is likely to say or do next. Output ONLY the raw text without wrapping it in quotes or labels."
     }
 }
 
@@ -508,6 +513,17 @@ def get_job_retry_max_delay(task_type: str = "image") -> float:
 def get_llm_failover_stagger_delay() -> float:
     """Get the stagger delay (seconds) between LLM provider failover attempts."""
     return _job_config("llm").get("stagger_delay", 2.0)
+
+
+def get_system_prompt_blocks() -> dict:
+    """Get configurable system prompt blocks (roleplay_default, narrator, ...).
+    File config wins per-key; DEFAULT_CONFIG fills the rest."""
+    configured = get_config().get("system_prompts", {}) or {}
+    defaults = DEFAULT_CONFIG.get("system_prompts", {}) or {}
+    merged = dict(defaults)
+    if isinstance(configured, dict):
+        merged.update({k: v for k, v in configured.items() if isinstance(v, str) and v.strip()})
+    return merged
 
 
 # Model sync settings

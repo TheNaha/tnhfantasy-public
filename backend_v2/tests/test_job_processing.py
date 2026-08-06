@@ -372,3 +372,64 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
     assert provider_stats["provider-2"]["failures"] >= 1
 
     LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_finalize_tolerates_deleted_chat(session: Session, monkeypatch):
+    """A job whose chat was deleted mid-generation must still complete and emit
+    JOB_COMPLETED instead of crashing on the FK violation (b10/b11 regression)."""
+    from sqlalchemy import event as sa_event
+    from sqlmodel import SQLModel, create_engine
+    from sqlmodel.pool import StaticPool
+
+    from services.job_processing import finalize_successful_job
+
+    fk_engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @sa_event.listens_for(fk_engine, "connect")
+    def _enable_fk(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
+    SQLModel.metadata.create_all(fk_engine)
+    monkeypatch.setattr("infrastructure.database.engine", fk_engine)
+
+    job_service = JobService(session)
+    job = await job_service.create_job(
+        workflow={"messages": [{"role": "user", "content": "hi"}], "type": "chat_reply"},
+        metadata={"chat_id": "00000000-0000-0000-0000-000000000000"},
+        task_type="llm",
+    )
+
+    emitted = []
+
+    async def fake_emit(event_type, data=None, **_kwargs):
+        emitted.append((event_type, data))
+
+    monkeypatch.setattr("services.job_processing.emit_job_event", fake_emit)
+
+    await finalize_successful_job(
+        job=job,
+        job_id=job.id,
+        job_service=job_service,
+        load_balancer=SimpleNamespace(
+            report_success=AsyncMock(),
+            release_job=AsyncMock(),
+        ),
+        provider_id="provider-1",
+        final_result={
+            "type": "chat_reply",
+            "outputs": [{"role": "assistant", "content": "hello there"}],
+        },
+        process_image_background_fn=AsyncMock(),
+    )
+
+    assert emitted, "JOB_COMPLETED must still be emitted when the chat was deleted"
+    assert emitted[0][0].value == "job.completed"
+    assert emitted[0][1].get("type") == "chat_reply"
+    assert emitted[0][1].get("chat_id") == "00000000-0000-0000-0000-000000000000"

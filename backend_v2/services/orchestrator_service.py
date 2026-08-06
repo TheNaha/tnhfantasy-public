@@ -86,6 +86,33 @@ AGENTIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_world_state",
+            "description": (
+                "Update the current story context (time and/or location) when the scene "
+                "changes: characters move to another place, the time of day shifts, or a "
+                "time skip happens. This keeps the chat's Story Time and Location metadata "
+                "in sync with the story. Call it alongside or before narrate_scene when "
+                "the world state actually changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "time": {
+                        "type": "string",
+                        "description": "The new story time, e.g. 'Midnight', 'Next morning', '+3 hours'. Omit if unchanged.",
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "The new story location, e.g. 'The campus library', 'A quiet café downtown'. Omit if unchanged.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -196,7 +223,84 @@ async def execute_tool(
             source_job_id=source_job_id,
         )
 
+    if name == "update_world_state":
+        return _tool_update_world_state(
+            args,
+            chat_id=chat_id,
+            source_job_id=source_job_id,
+        )
+
     return {"status": "error", "error": f"Unknown tool: {name}"}
+
+
+def _tool_update_world_state(
+    args: dict[str, Any],
+    *,
+    chat_id: str | None = None,
+    source_job_id: str | None = None,
+) -> dict[str, Any]:
+    """Synchronously update a chat's story_time / story_location (side-effect tool)."""
+    from infrastructure.database import get_session_sync
+    from core.entities import Chat, Message, MessageRole
+
+    time_value = (args.get("time") or "").strip()
+    location_value = (args.get("location") or "").strip()
+
+    if not time_value and not location_value:
+        return {"status": "error", "error": "Provide at least one of 'time' or 'location'."}
+    if not chat_id:
+        return {"status": "error", "error": "No chat_id available to update world state."}
+
+    session = get_session_sync()
+    try:
+        chat = session.get(Chat, chat_id)
+        if not chat:
+            return {"status": "error", "error": f"Chat {chat_id} not found."}
+        updated = {}
+        if time_value:
+            chat.story_time = time_value
+            updated["time"] = time_value
+        if location_value:
+            chat.story_location = location_value
+            updated["location"] = location_value
+        session.add(chat)
+        session.commit()
+
+        # Insert a UI-only world-state divider marker so the chat shows the scene split.
+        try:
+            from datetime import datetime, timezone
+            parts = []
+            if updated.get("location"):
+                parts.append(f"Location: {updated['location']}")
+            if updated.get("time"):
+                parts.append(f"Time: {updated['time']}")
+            marker = Message(
+                chat_id=chat_id,
+                role=MessageRole.SYSTEM,
+                content="\n".join(parts),
+                message_metadata={"source": "world_state", **updated},
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            session.add(marker)
+            session.commit()
+        except Exception as marker_exc:  # pragma: no cover
+            session.rollback()
+            logger.warning("tool_update_world_state_marker_failed", chat_id=chat_id, error=str(marker_exc))
+
+        logger.info(
+            "tool_update_world_state",
+            chat_id=chat_id,
+            job_id=source_job_id,
+            updated=updated,
+        )
+        return {"status": "success", "updated": updated}
+    except Exception as exc:  # pragma: no cover
+        session.rollback()
+        logger.error("tool_update_world_state_failed", chat_id=chat_id, error=str(exc))
+        return {"status": "error", "error": f"Failed to update world state: {exc}"}
+    finally:
+        session.close()
 
 
 async def _tool_narrate_scene(
@@ -214,9 +318,12 @@ async def _tool_narrate_scene(
 
     logger.info("tool_narrate_scene", chat_id=chat_id, direction=scene_direction[:80])
 
+    from config import get_system_prompt_blocks
+    narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
+
     session = get_session_sync()
 
-    messages: list[dict[str, Any]] = [{"role": "system", "content": NARRATOR_SYSTEM_PROMPT}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": narrator_prompt}]
 
     source_context: list[dict[str, Any]] = []
     source_meta: dict[str, Any] = {}
