@@ -162,7 +162,7 @@ class GoogleProviderClient(BaseProviderClient):
             return {"files": [{"path": m, "name": m} for m in fallback]}
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        return build_error_response("Model deletion not applicable for LLM workers.", retryable=False, code=404)
 
     async def get_file(self, path: str):
         from fastapi import HTTPException
@@ -185,6 +185,16 @@ class GoogleProviderClient(BaseProviderClient):
 
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}
+
+    
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        """LLM workers don't store model files locally — cheap response, no upstream calls."""
+        return {
+            "provider_id": self.provider_id,
+            "total": 0,
+            "by_directory": {},
+            "message": "LLM workers do not manage local model files.",
+        }
 
     async def run_reconciliation(self) -> Dict[str, Any]:
         return build_status_response("success", "Not applicable", provider=self.provider_id)

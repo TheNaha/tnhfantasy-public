@@ -37,6 +37,7 @@ from config import (
     get_job_retry_base_delay,
     get_job_retry_max_delay,
     get_job_timeout,
+    get_llm_failover_stagger_delay,
 )
 
 # Structured logging - use structlog for consistent output
@@ -82,6 +83,7 @@ async def process_job(job_id: str, preferred_provider_id: str | None = None):
         get_max_retries_fn=get_job_max_retries,
         get_retry_base_delay_fn=get_job_retry_base_delay,
         get_retry_max_delay_fn=get_job_retry_max_delay,
+        get_stagger_delay_fn=get_llm_failover_stagger_delay,
     )
 
 

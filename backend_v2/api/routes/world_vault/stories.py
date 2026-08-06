@@ -55,7 +55,7 @@ def update_story(story_id: str, story_update: Story, session: Session = Depends(
     
     update_data = story_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
-        if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids']:
+        if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model']:
             setattr(story, key, value)
             
     story.updated_at = datetime.now(timezone.utc)
@@ -140,6 +140,8 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
+
+    story = session.get(Story, story_id)
         
     prompt = data.prompt
     if prompt:
@@ -191,7 +193,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
             "story_id": story_id,
             "chapter_id": chapter_id,
             "type": "story_continue",
-            "model": _get_default_llm_model(),
+            "model": (story.llm_model if story else None) or _get_default_llm_model(),
         },
         metadata={"story_id": story_id, "chapter_id": chapter_id, "workspace": "story"}
     )
@@ -297,7 +299,7 @@ async def illustrate_chapter(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
             ],
-            "model": _get_default_llm_model(),
+            "model": (story.llm_model if story else None) or _get_default_llm_model(),
         },
         metadata={
             "source": "story_illustrate_prompt",

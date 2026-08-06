@@ -693,6 +693,29 @@ def _migration_add_chat_active_lorebooks(conn) -> bool:
     return True
 
 
+def _migration_add_llm_settings(conn) -> bool:
+    """Add per-chat/story LLM model override and allow_image_generation flag."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    touched = False
+    for table, cols in (
+        ("chats", {"llm_model", "allow_image_generation"}),
+        ("stories", {"llm_model"}),
+    ):
+        if table not in table_names:
+            continue
+        existing = {col["name"] for col in inspector.get_columns(table)}
+        if "llm_model" not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN llm_model VARCHAR DEFAULT NULL"))
+            logger.info("migration_column_added", table=table, column="llm_model")
+        if table == "chats" and "allow_image_generation" not in existing:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN allow_image_generation BOOLEAN DEFAULT TRUE"))
+            logger.info("migration_column_added", table="chats", column="allow_image_generation")
+        _verify_required_columns(conn, table, cols)
+        touched = True
+    return touched
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -770,5 +793,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="015_add_chat_active_lorebooks",
             description="Add active_lorebook_ids JSON column to chats for per-chat lorebook persistence",
             apply_fn=_migration_add_chat_active_lorebooks,
+        ),
+        MigrationStep(
+            version="016_add_llm_settings",
+            description="Add per-chat/story LLM model override and allow_image_generation flag",
+            apply_fn=_migration_add_llm_settings,
         ),
     ]

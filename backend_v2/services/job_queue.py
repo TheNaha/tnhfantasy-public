@@ -381,9 +381,25 @@ class QueueManager:
         logger.info("queue_manager_stopped")
 
     def resize(self, image_workers: int, llm_workers: int) -> None:
-        """Resize both queues synchronously (size is applied on next start)."""
+        """Resize both queues.
+
+        Pre-start (during startup_helpers.configure_worker_pool): updates
+        max_workers so ``start()`` spawns the right number of workers.
+
+        Post-start (provider changes at runtime): spawns async resize tasks
+        that actually add/remove worker coroutines.
+        """
         self.image.max_workers = max(1, image_workers)
         self.llm.max_workers = max(1, llm_workers)
+
+        for queue, count in ((self.image, image_workers), (self.llm, llm_workers)):
+            if not queue._running:
+                continue
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                continue
+            asyncio.create_task(queue.resize(count))
 
     async def recover_pending_jobs(self, job_service) -> tuple:
         """Recover pending jobs, routing each to the correct queue by task_type."""

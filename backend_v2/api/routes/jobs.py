@@ -147,13 +147,15 @@ def get_active_jobs(service: JobService = Depends(get_job_service)):
     running = service.get_running_jobs()
     
     jobs_data = []
+    per_type_position = {}
     
     for job in running:
         jobs_data.append(service._job_to_dict(job))
         
-    for i, job in enumerate(pending):
+    for job in pending:
         job_dict = service._job_to_dict(job)
-        job_dict["queue_position"] = i + 1
+        per_type_position[job.task_type] = per_type_position.get(job.task_type, 0) + 1
+        job_dict["queue_position"] = per_type_position[job.task_type]
         jobs_data.append(job_dict)
         
     return {"jobs": jobs_data}
@@ -164,46 +166,62 @@ def get_queue_status(service: JobService = Depends(get_job_service)):
     """
     Get queue status with ETA estimates.
     Returns pending and running jobs with estimated completion times.
+    ETAs are computed per task_type so LLM jobs (seconds) don't pollute
+    image job (minutes) estimates.
     """
-    
+
     pending = service.get_pending_queue_items()
     running = service.get_running_queue_items()
-    avg_duration = service.get_average_duration()
-    
-    # Build queue items with ETA
-    queue = []
-    cumulative_time = 0
-    
-    # Add running jobs first (ETA based on progress)
+    running_by_type = {}
+    pending_by_type = {}
     for job in running:
+        running_by_type.setdefault(job.task_type, []).append(job)
+    for job in pending:
+        pending_by_type.setdefault(job.task_type, []).append(job)
+
+    avg_durations = {
+        task_type: service.get_average_duration(task_type=task_type)
+        for task_type in set(list(running_by_type.keys()) + list(pending_by_type.keys()))
+    }
+
+    # Build queue items with ETA (per task_type)
+    queue = []
+    cumulative_by_type = {}
+
+    for job in running:
+        avg_duration = avg_durations.get(job.task_type, 30.0)
         remaining = avg_duration * (1 - (job.overall_progress / 100)) if job.overall_progress else avg_duration
         queue.append({
             "id": job.id,
+            "task_type": job.task_type,
             "status": "generating",
             "position": 0,
             "progress": job.overall_progress,
             "eta_seconds": remaining,
             "prompt": job.metadata_.get("prompt", "")[:50] if job.metadata_ else "",
         })
-        cumulative_time = remaining
-    
-    # Add pending jobs with cumulative ETA
-    for i, job in enumerate(pending):
-        eta = cumulative_time + avg_duration
+        cumulative_by_type[job.task_type] = remaining
+
+    # Add pending jobs with cumulative ETA (per task_type)
+    for job in pending:
+        avg_duration = avg_durations.get(job.task_type, 30.0)
+        cumulative = cumulative_by_type.get(job.task_type, 0)
+        eta = cumulative + avg_duration
         queue.append({
             "id": job.id,
+            "task_type": job.task_type,
             "status": "pending",
-            "position": i + 1,
+            "position": pending_by_type[job.task_type].index(job) + 1,
             "progress": 0,
             "eta_seconds": eta,
             "prompt": job.metadata_.get("prompt", "")[:50] if job.metadata_ else "",
         })
-        cumulative_time += avg_duration
-    
+        cumulative_by_type[job.task_type] = eta
+
     return {
         "queue": queue,
-        "avg_duration_seconds": avg_duration,
-        "has_history": avg_duration != 30.0,  # False if using default
+        "avg_duration_seconds": avg_durations,
+        "has_history": any(v != 30.0 for v in avg_durations.values()),
         "total_pending": len(pending),
         "total_running": len(running),
     }

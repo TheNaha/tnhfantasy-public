@@ -443,21 +443,31 @@ async def finalize_successful_job(
         if is_chat_reply and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
-                from services.orchestrator_service import process_tool_calls_and_chain
-                from services.job_queue import queue_manager
+                # Per-chat gate: allow_image_generation=False disables the generate_image tool
+                image_generation_allowed = True
+                if entity_id:
+                    from sqlmodel import Session
+                    from core.entities import Chat
+                    from infrastructure.database import engine
+                    with Session(engine) as session:
+                        chat = session.get(Chat, entity_id)
+                        image_generation_allowed = bool(chat.allow_image_generation) if chat else True
+                if image_generation_allowed:
+                    from services.orchestrator_service import process_tool_calls_and_chain
+                    from services.job_queue import queue_manager
 
-                chained = await process_tool_calls_and_chain(
-                    job=job,
-                    assistant_output=assistant_output,
-                    final_result=final_result,
-                    chat_id=entity_id,
-                    character_id=metadata.get("character_id"),
-                    job_service=job_service,
-                    enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
-                )
-                if chained:
-                    await load_balancer.release_job(provider_id)
-                    return
+                    chained = await process_tool_calls_and_chain(
+                        job=job,
+                        assistant_output=assistant_output,
+                        final_result=final_result,
+                        chat_id=entity_id,
+                        character_id=metadata.get("character_id"),
+                        job_service=job_service,
+                        enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
+                    )
+                    if chained:
+                        await load_balancer.release_job(provider_id)
+                        return
             # If depth exceeded or not agentic, fall through to normal finalization
             
         if entity_id and assistant_content:

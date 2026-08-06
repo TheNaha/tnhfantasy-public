@@ -25,7 +25,7 @@ class OpenAICompatProvider(ServerlessProvider):
         self.api_base = self.config.get("api_base", "http://localhost:11434/v1")
         self.api_key = self.config.get("api_key", "")
     
-    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    async def run_inference(self, workflow: dict[str, Any], job_id: str = "", timeout_seconds: int = 180) -> AsyncIterator[dict[str, Any]]:
         """
         Run LLM generation via worker container.
         """
@@ -33,8 +33,16 @@ class OpenAICompatProvider(ServerlessProvider):
         
         url = f"{self.worker_url}/inference"
         
-        async with get_streaming_client(timeout=120.0) as client:
-            async with client.stream("POST", url, json={"workflow": workflow}) as response:
+        async with get_streaming_client(timeout=timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                url,
+                json={
+                    "workflow": workflow,
+                    "job_id": job_id,
+                    "timeout_seconds": timeout_seconds,
+                },
+            ) as response:
                 if response.status_code != 200:
                     yield {"status": "error", "error": f"Worker returned {response.status_code}"}
                     return

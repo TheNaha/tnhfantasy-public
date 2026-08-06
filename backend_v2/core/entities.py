@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from sqlalchemy import JSON, Index
 from sqlmodel import Column, Field, SQLModel
+from pydantic import field_validator
 
 
 class JobStatus(str, Enum):
@@ -19,6 +20,11 @@ class JobStatus(str, Enum):
     POST_PROCESSING = "post-processing"
     FAILED = "failed"
     CANCELLED = "cancelled"  # User-initiated cancellation
+
+
+# Canonical worker/task type vocabulary. Anything else is rejected so
+# ad-hoc values (e.g. "text") can't silently fall into the image queue.
+VALID_TASK_TYPES = {"image", "llm"}
 
 
 class Job(SQLModel, table=True):
@@ -39,6 +45,13 @@ class Job(SQLModel, table=True):
     status: JobStatus = Field(default=JobStatus.PENDING)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str) -> str:
+        if value not in VALID_TASK_TYPES:
+            raise ValueError(f"task_type must be one of {sorted(VALID_TASK_TYPES)}, got {value!r}")
+        return value
     
     # Timing for ETA calculation
     started_at: datetime | None = Field(default=None)  # When job started processing
@@ -78,6 +91,13 @@ class Provider(SQLModel, table=True):
     worker_type: str = Field(default="image")  # e.g., image, llm, audio
     enabled: bool = Field(default=True)
     priority: int = Field(default=1)  # Lower = higher priority
+
+    @field_validator("worker_type")
+    @classmethod
+    def _validate_worker_type(cls, value: str) -> str:
+        if value not in VALID_TASK_TYPES:
+            raise ValueError(f"worker_type must be one of {sorted(VALID_TASK_TYPES)}, got {value!r}")
+        return value
     
     # Credentials (stored securely, used for container env vars)
     credentials: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
@@ -684,6 +704,8 @@ class Chat(SQLModel, table=True):
     persona_name: str | None = Field(default=None) # Used for {{user}} substitutions
     story_time: str | None = Field(default=None)
     story_location: str | None = Field(default=None)
+    llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
+    allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -751,6 +773,7 @@ class Story(SQLModel, table=True):
     character_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # protagonist characters
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
     scenario_id: str | None = Field(default=None)  # base scenario
+    llm_model: str | None = Field(default=None)  # Per-story LLM model override
     # Story state
     is_archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

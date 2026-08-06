@@ -53,6 +53,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useChat: () => ({ data: null }),
     useDeleteMessage: () => ({ mutateAsync: vi.fn() }),
     useSuggestReply: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useLLMAvailableModels: () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }),
+    useLLMDefaultProvider: () => ({ data: { provider_id: 'llm-local', model_id: 'default' } }),
     getAvatarUrl: () => '',
 }));
 

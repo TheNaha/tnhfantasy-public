@@ -29,6 +29,20 @@ from services.provider_utils import (
 
 logger = provider_logger()
 
+# Provider types that are always LLM workers regardless of id/name.
+LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama"}
+
+
+def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | None = None) -> str:
+    """Infer worker_type, preferring explicit value, then known LLM provider types, then id/type prefixes."""
+    if explicit and explicit != "image":
+        return explicit
+    if str(provider_type).lower() in LLM_PROVIDER_TYPES:
+        return "llm"
+    if str(provider_id).lower().startswith("llm") or str(provider_type).lower().startswith("llm"):
+        return "llm"
+    return "image"
+
 
 class ProviderService:
     """
@@ -50,15 +64,9 @@ class ProviderService:
         worker_type = payload.get("worker_type")
         if not worker_type:
             worker_type = getattr(existing, "worker_type", None)
-        
-        if not worker_type or worker_type == "image":
-            if provider_id and str(provider_id).startswith("llm"):
-                worker_type = "llm"
-            elif provider_type and str(provider_type).startswith("llm"):
-                worker_type = "llm"
-            else:
-                worker_type = "image"
-                
+
+        worker_type = _infer_worker_type(provider_id, provider_type, worker_type)
+
         payload["worker_type"] = worker_type
         existing_config = clean_dict(getattr(existing, "config", None))
         merged_config = clean_dict(existing_config)

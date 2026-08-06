@@ -474,25 +474,40 @@ def _normalize_worker_backend_url(url: str | None) -> str:
     return candidate
 
 
-def get_job_timeout() -> int:
+def _job_config(task_type: str = "image") -> dict:
+    """Return the effective jobs config for a task_type, merging a type-specific
+    override block (e.g. ``jobs.llm``) over the top-level defaults."""
+    config = dict(get_config()["jobs"])
+    base = {k: v for k, v in config.items() if k not in ("image", "llm")}
+    if task_type in config and isinstance(config[task_type], dict):
+        base.update(config[task_type])
+    return base
+
+
+def get_job_timeout(task_type: str = "image") -> int:
     """Get job timeout in seconds. Prefers env var (settings), falls back to file config."""
     # Use Pydantic settings if explicitly set via env var, else use file config for runtime updates
-    return settings.job_timeout if _env_var_is_set("JOB_TIMEOUT") else get_config()["jobs"]["timeout"]
+    return settings.job_timeout if _env_var_is_set("JOB_TIMEOUT") else _job_config(task_type)["timeout"]
 
 
-def get_job_max_retries() -> int:
+def get_job_max_retries(task_type: str = "image") -> int:
     """Get maximum number of job retries. Prefers env var, falls back to file config."""
-    return settings.job_max_retries if _env_var_is_set("JOB_MAX_RETRIES") else get_config()["jobs"]["max_retries"]
+    return settings.job_max_retries if _env_var_is_set("JOB_MAX_RETRIES") else _job_config(task_type)["max_retries"]
 
 
-def get_job_retry_base_delay() -> float:
+def get_job_retry_base_delay(task_type: str = "image") -> float:
     """Get base delay for exponential backoff in seconds. Prefers env var, falls back to file config."""
-    return settings.job_retry_base_delay if _env_var_is_set("JOB_RETRY_BASE_DELAY") else get_config()["jobs"]["retry_base_delay"]
+    return settings.job_retry_base_delay if _env_var_is_set("JOB_RETRY_BASE_DELAY") else _job_config(task_type)["retry_base_delay"]
 
 
-def get_job_retry_max_delay() -> float:
+def get_job_retry_max_delay(task_type: str = "image") -> float:
     """Get maximum delay for exponential backoff in seconds. Prefers env var, falls back to file config."""
-    return settings.job_retry_max_delay if _env_var_is_set("JOB_RETRY_MAX_DELAY") else get_config()["jobs"]["retry_max_delay"]
+    return settings.job_retry_max_delay if _env_var_is_set("JOB_RETRY_MAX_DELAY") else _job_config(task_type)["retry_max_delay"]
+
+
+def get_llm_failover_stagger_delay() -> float:
+    """Get the stagger delay (seconds) between LLM provider failover attempts."""
+    return _job_config("llm").get("stagger_delay", 2.0)
 
 
 # Model sync settings

@@ -44,7 +44,12 @@ class JobRepository:
         pending_subq = (
             select(
                 Job.id,
-                func.row_number().over(order_by=[Job.created_at, Job.id]).label("queue_position")
+                func.row_number()
+                .over(
+                    order_by=[Job.created_at, Job.id],
+                    partition_by=[Job.task_type],
+                )
+                .label("queue_position")
             )
             .where(Job.status == JobStatus.PENDING)
             .subquery()
@@ -89,7 +94,8 @@ class JobRepository:
                 Job.status,
                 Job.created_at,
                 Job.overall_progress,
-                Job.metadata_
+                Job.metadata_,
+                Job.task_type,
             )
             .where(Job.status.in_(statuses))
             .order_by(Job.created_at)
@@ -103,7 +109,8 @@ class JobRepository:
                 status=row[1],
                 created_at=row[2],
                 overall_progress=row[3],
-                metadata_=row[4] or {}
+                metadata_=row[4] or {},
+                task_type=row[5] or "image",
             )
             for row in rows
         ]

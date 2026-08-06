@@ -16,3 +16,4 @@ class JobQueueItem(BaseModel):
     created_at: datetime
     overall_progress: float = 0.0
     metadata_: dict[str, Any] = {}
+    task_type: str = "image"

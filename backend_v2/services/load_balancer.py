@@ -363,6 +363,25 @@ class LoadBalancer:
         
         if not providers:
             return None
+
+        # LLM failover routing: priority-ordered selection with NO health probing
+        # and NO container cold-start. LLM workers are API endpoints (OpenAI-compat
+        # etc.), not ComfyUI containers, so the warm/cold machinery does not apply.
+        # Fallback to the next priority provider is handled by job_runner with a
+        # stagger delay between attempts.
+        if task_type == "llm":
+            if preferred_provider_id:
+                provider = self.repo.get(preferred_provider_id)
+                if provider and provider.enabled and provider.id not in excluded:
+                    await self._track_job(provider.id)
+                    return provider
+            ordered = sorted(providers, key=lambda p: (p.priority, p.id))
+            for provider in ordered:
+                if provider.id in excluded:
+                    continue
+                await self._track_job(provider.id)
+                return provider
+            return None
         
         # Filter by model availability if required
         if required_models:

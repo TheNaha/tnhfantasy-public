@@ -18,6 +18,8 @@ class UpdateChatRequest(BaseModel):
     story_time: str | None = None
     story_location: str | None = None
     active_lorebook_ids: list[str] | None = None
+    llm_model: str | None = None
+    allow_image_generation: bool | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -215,7 +217,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 "chat_id": chat_id,
                 "character_system_prompt": system_prompt or None,
                 "type": "chat_reply",
-                "model": _get_default_llm_model(),
+                "model": chat.llm_model or _get_default_llm_model(),
             }
             metadata: dict = {
                 "chat_id": chat_id,
@@ -294,7 +296,7 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
             "chat_id": chat_id,
             "character_system_prompt": suggest_prompt,
             "type": "suggest_reply",
-            "model": _get_default_llm_model(),
+            "model": chat.llm_model or _get_default_llm_model(),
         }
         metadata: dict = {
             "chat_id": chat_id,
@@ -356,7 +358,7 @@ async def generate_scene(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Context:\n{context_text}"}
             ],
-            "model": _get_default_llm_model(),
+            "model": chat.llm_model or _get_default_llm_model(),
         },
         metadata={"source": "scene_prompt", "chat_id": chat_id, "scene_checkpoint": checkpoint}
     )

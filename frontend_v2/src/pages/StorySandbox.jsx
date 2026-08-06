@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useSetLLMDefaultProvider } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider } from '../hooks/useWorldVault';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
@@ -182,7 +182,7 @@ export default function StorySandbox() {
 
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
-    const setLlmConfig = useSetLLMDefaultProvider();
+    const updateStory = useUpdateStory();
 
     const { subscribe } = useWebSocket();
 
@@ -249,7 +249,7 @@ export default function StorySandbox() {
             const eventType = job.task_type || meta.workspace;
             
             if (storyId === activeStoryId && chapterId === activeChapterId) {
-                if (eventType === 'image' || meta.source === 'story_illustrate_prompt') {
+                if (eventType === 'image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
                     toast.success('Illustration complete');
@@ -318,7 +318,7 @@ export default function StorySandbox() {
             const resJob = await api.post('/api/jobs', {
                 task_type: "llm",
                 workflow: {
-                    llm_model: defaultLlmConfig?.model || null,
+                    model: defaultLlmConfig?.model_id || null,
                     messages: [
                         { role: "system", content: "You are an expert author. Analyze the following story chapter and generate a short, catchy title (max 5 words). Output ONLY the title, no quotes or prefix." },
                         { role: "user", content: editorContent.substring(0, 2000) || "A new beginning." }
@@ -791,19 +791,19 @@ export default function StorySandbox() {
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Text Model</label>
                                     <select
                                         className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50"
-                                        value={defaultLlmConfig?.model_id || 'default'}
+                                        value={activeStory?.llm_model || 'default'}
                                         onChange={(e) => {
-                                            if (defaultLlmConfig?.provider_id) {
-                                                setLlmConfig.mutate({ provider_id: defaultLlmConfig.provider_id, model_id: e.target.value });
+                                            if (activeStoryId) {
+                                                updateStory.mutate({ id: activeStoryId, llm_model: e.target.value === 'default' ? null : e.target.value });
                                             }
                                         }}
                                     >
-                                        <option value="default">Provider Default</option>
+                                        <option value="default">Provider Default ({defaultLlmConfig?.model_id || 'default'})</option>
                                         {llmModels.map(m => (
                                             <option key={m.id} value={m.id}>{m.name || m.id}</option>
                                         ))}
                                     </select>
-                                    <p className="text-[10px] text-gray-500 mt-1">Changes the active model for continuation and titles.</p>
+                                    <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
                                 </div>
                             </div>
                             <div className="glass-panel p-4 rounded-xl border border-white/5">

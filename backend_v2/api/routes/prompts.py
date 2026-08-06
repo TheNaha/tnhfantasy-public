@@ -272,9 +272,9 @@ async def magic_prompt(
     """
     Enriches a simple prompt into a highly detailed ComfyUI prompt using the LLM worker.
     """
-    import asyncio
-
     from core.entities import JobStatus
+    from core.events import wait_for_job_completion
+    from services.job_queue import queue_manager
     from services.job_service import JobService
     
     job_service = JobService(session)
@@ -296,24 +296,21 @@ async def magic_prompt(
     }
     
     job = await job_service.create_job(
-        task_type="text",
+        task_type="llm",
         workflow=workflow,
         metadata={"source": "magic_prompt"}
     )
     
-    # Poll for completion (timeout after 30s)
-    max_retries = 30
-    for _ in range(max_retries):
-        job_status = await job_service.get_job(job.id)
-        if job_status.status == JobStatus.COMPLETED:
-            outputs = job_status.outputs or []
-            if outputs and len(outputs) > 0:
-                enriched_text = outputs[0].get("content", "")
+    await queue_manager.enqueue(job.id, task_type="llm")
+    
+    # Wait for the LLM job to complete (enqueue + event-bus wait, no busy polling)
+    status, output = await wait_for_job_completion(job.id, timeout=60.0)
+    
+    if status == JobStatus.COMPLETED.value or status == "job.completed":
+        if output:
+            enriched_text = output.get("content") or output.get("text") or ""
+            if enriched_text and enriched_text.strip():
                 return {"enriched_prompt": enriched_text.strip()}
-            return {"enriched_prompt": request.prompt}
-        elif job_status.status in (JobStatus.FAILED, JobStatus.CANCELLED):
-            raise ComfyError(f"Magic prompt failed: {job_status.error}")
-            
-        await asyncio.sleep(1.0)
-        
-    raise ComfyError("Magic prompt timed out")
+        return {"enriched_prompt": request.prompt}
+    
+    raise ComfyError(f"Magic prompt failed: {status}")

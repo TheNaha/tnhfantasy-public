@@ -427,6 +427,7 @@ class ProviderStatusService:
         return {
             "id": base_payload.get("id"),
             "type": base_payload.get("type"),
+            "worker_type": base_payload.get("worker_type"),
             "enabled": base_payload.get("enabled", True),
             "priority": base_payload.get("priority"),
             "runtime_config": base_payload.get("runtime_config"),

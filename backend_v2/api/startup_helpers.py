@@ -23,7 +23,7 @@ def configure_worker_pool() -> None:
             llm_providers = []
             for p in enabled_providers:
                 w_type = getattr(p, "worker_type", "image")
-                if w_type == "llm" or p.id.startswith("llm"):
+                if w_type == "llm":
                     llm_providers.append(p)
                 else:
                     image_providers.append(p)

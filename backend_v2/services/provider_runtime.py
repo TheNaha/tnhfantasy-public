@@ -34,11 +34,12 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     provider_config = getattr(provider, "config", None) or {}
 
     if container_config:
-        container_name = container_config.get("container_name", f"comfy-provider-{provider_id}")
+        container_name = container_config.get("container_name", f"tnhcomfy-{provider_id}")
         connected = False
         healthy = None
         status = "unknown"
         docker_available = False
+        found = False
         try:
             from api.deps import get_container_manager
 
@@ -53,6 +54,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                         container = None
 
                 if container is not None:
+                    found = True
                     try:
                         container.reload()
                     except Exception:
@@ -64,7 +66,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         except Exception as exc:
             logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
 
-        if docker_available:
+        if docker_available and found:
             return ProviderRuntimeTarget(
                 provider_id=provider_id,
                 mode="container_http",
@@ -76,7 +78,9 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                 status=status,
                 healthy=healthy,
             )
-        # Docker not available — fall through to discovery / worker_ws checks
+        # Container not found (or Docker unavailable) — fall through to
+        # worker_ws / discovery_url checks so healthy discovered workers
+        # are reachable instead of being pinned to an unreachable name.
 
     if is_worker_connected(provider_id):
         return ProviderRuntimeTarget(
@@ -132,6 +136,10 @@ async def run_reconciliation_for_all_providers():
 
             runtime = resolve_provider_runtime(SimpleNamespace(**provider))
             if runtime.mode not in ("container_http", "discovery"):
+                continue
+
+            # LLM workers have no filesystem to reconcile — skip them.
+            if provider.get("worker_type", "image") == "llm":
                 continue
 
             provider_id = provider.get("id")

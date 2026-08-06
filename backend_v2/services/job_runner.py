@@ -205,6 +205,7 @@ async def execute_job(
     get_max_retries_fn,
     get_retry_base_delay_fn,
     get_retry_max_delay_fn,
+    get_stagger_delay_fn=None,
 ):
     """Execute a queued job against providers with retry and fallback handling."""
     async with session_context_manager() as session:
@@ -224,10 +225,12 @@ async def execute_job(
                 logger.debug("job_not_pending", job_id=job_id, status=job.status)
                 return
 
-            timeout = get_timeout_fn()
-            max_retries = get_max_retries_fn()
-            base_delay = get_retry_base_delay_fn()
-            max_delay = get_retry_max_delay_fn()
+            task_type = job.task_type
+            timeout = get_timeout_fn(task_type)
+            max_retries = get_max_retries_fn(task_type)
+            base_delay = get_retry_base_delay_fn(task_type)
+            max_delay = get_retry_max_delay_fn(task_type)
+            stagger_delay = get_stagger_delay_fn() if get_stagger_delay_fn else 0.0
 
             exhausted_providers = set()
             current_provider = None
@@ -236,6 +239,16 @@ async def execute_job(
 
             while True:
                 if current_provider is None or current_provider.id in exhausted_providers:
+                    if exhausted_providers and stagger_delay > 0:
+                        logger.info(
+                            "failover_stagger",
+                            job_id=job_id,
+                            task_type=task_type,
+                            delay=stagger_delay,
+                            tried=list(exhausted_providers),
+                        )
+                        await asyncio.sleep(stagger_delay)
+
                     current_provider = await select_next_provider(
                         load_balancer=load_balancer,
                         job_service=job_service,
@@ -243,7 +256,7 @@ async def execute_job(
                         exhausted_providers=exhausted_providers,
                         preferred_provider_id=preferred_provider_id,
                         required_models=required_models,
-                        task_type=job.task_type,
+                        task_type=task_type,
                     )
 
                     if not current_provider:

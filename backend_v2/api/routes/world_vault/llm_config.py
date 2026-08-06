@@ -64,8 +64,9 @@ def set_default_provider(request: UpdateProviderRequest):
 async def get_available_models(session: Session = Depends(get_session)):
     """Return models available from the default LLM provider.
 
-    Tries the OpenAI-compat `/v1/models` endpoint first (Ollama, LM Studio, etc.),
-    falls back to listing providers as model identities if the endpoint fails.
+    Queries the provider worker's `/list-models` endpoint, which proxies the
+    upstream model list per engine (OpenAI-compat `/models`, Anthropic, Gemini)
+    with engine-specific fallbacks.
     """
     try:
         default = get_default_provider(session)
@@ -83,35 +84,28 @@ async def get_available_models(session: Session = Depends(get_session)):
     base_url = runtime.worker_url.rstrip("/")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # Try OpenAI-compat /v1/models (Ollama, LM Studio, etc.)
-        for path in ("/v1/models", "/api/tags", "/models"):
-            try:
-                resp = await client.get(f"{base_url}{path}")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # OpenAI-compat: {"object": "list", "data": [...]}
-                    if isinstance(data, dict) and "data" in data:
-                        return [
-                            {"id": m.get("id", m.get("name", "unknown")),
-                             "name": m.get("id", m.get("name", "unknown"))}
-                            for m in data["data"]
-                        ]
-                    # Ollama /api/tags: {"models": [{"name": "llama3:latest", ...}]}
-                    if isinstance(data, dict) and "models" in data:
-                        return [
-                            {"id": m.get("name", m.get("model", "unknown")),
-                             "name": m.get("name", m.get("model", "unknown"))}
-                            for m in data["models"]
-                        ]
-                    # Bare list
-                    if isinstance(data, list):
-                        return [
-                            {"id": m.get("id", m.get("name", "unknown")),
-                             "name": m.get("id", m.get("name", "unknown"))}
-                            for m in data
-                        ]
-            except Exception:
-                continue
+        try:
+            resp = await client.get(f"{base_url}/list-models")
+            if resp.status_code == 200:
+                data = resp.json()
+                files = []
+                if isinstance(data, dict):
+                    files = data.get("files") or data.get("models") or []
+                    if isinstance(files, dict):
+                        files = files.get("files", [])
+                if isinstance(files, list):
+                    models = []
+                    for m in files:
+                        if isinstance(m, str):
+                            models.append({"id": m, "name": m})
+                        elif isinstance(m, dict):
+                            model_id = m.get("id") or m.get("path") or m.get("name")
+                            if model_id:
+                                models.append({"id": model_id, "name": m.get("name") or model_id})
+                    if models:
+                        return models
+        except Exception:
+            pass
 
     # Fallback: return provider record itself as a selectable "model"
     return [{"id": "default", "name": f"{provider.id} (default)"}]
@@ -175,22 +169,20 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
 
         # Fetch models if healthy
         if healthy:
-            for path in ("/v1/models", "/api/tags", "/models"):
-                try:
-                    resp = await client.get(f"{base_url}{path}")
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if isinstance(data, dict) and "data" in data:
-                            models = [m.get("id", m.get("name", "?")) for m in data["data"]]
-                            break
-                        if isinstance(data, dict) and "models" in data:
-                            models = [m.get("name", m.get("model", "?")) for m in data["models"]]
-                            break
-                        if isinstance(data, list):
-                            models = [m.get("id", m.get("name", "?")) for m in data]
-                            break
-                except Exception:
-                    continue
+            try:
+                resp = await client.get(f"{base_url}/list-models")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    files = data.get("files", []) if isinstance(data, dict) else []
+                    if isinstance(files, list):
+                        models = [
+                            m.get("id") or m.get("path") or m.get("name", "?")
+                            for m in files if isinstance(m, dict)
+                        ]
+                        if not models:
+                            models = [m for m in files if isinstance(m, str)]
+            except Exception:
+                pass
 
     return {"healthy": healthy, "models": models, "error": error, "worker_url": base_url}
 

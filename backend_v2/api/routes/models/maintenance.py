@@ -361,6 +361,11 @@ async def backfill_provider_statuses(
         if runtime.mode not in ("container_http", "discovery"):
             continue
 
+        # LLM workers don't manage image model files; querying them wastes
+        # upstream API calls (one per image directory).
+        if getattr(provider, "worker_type", "image") == "llm":
+            continue
+
         worker_url = runtime.worker_url
         
         results["providers_checked"] += 1

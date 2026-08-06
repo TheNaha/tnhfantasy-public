@@ -160,7 +160,7 @@ async def test_process_job_falls_back_after_non_retryable_provider_error(session
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
-    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
 
     await process_job(job.id)
 
@@ -282,7 +282,7 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 
@@ -314,7 +314,7 @@ async def test_process_job_timeout_signals_external_worker_cancel(session: Sessi
     request_cancel = AsyncMock(return_value=True)
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
-    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("api.routes.worker_ws.dispatch_job_to_worker", fake_dispatch_job_to_worker)
     monkeypatch.setattr("api.routes.worker_ws.request_worker_job_cancel", request_cancel)
     monkeypatch.setattr(
@@ -352,7 +352,7 @@ async def test_process_job_fails_after_all_providers_exhausted(session: Session,
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main._call_provider", fake_call_provider)
-    monkeypatch.setattr("api.main.get_job_max_retries", lambda: 0)
+    monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
     monkeypatch.setattr("services.job_runner.get_http_client", lambda: mock_http_client)
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
 

@@ -200,7 +200,7 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         """LLM workers do not delete upstream models."""
-        return build_status_response("success", "LLM workers do not delete upstream models.", provider=self.provider_id)
+        return build_error_response("LLM workers do not delete upstream models.", retryable=False, code=404)
 
     async def get_file(self, path: str):
         """Not supported for LLM workers."""
@@ -230,6 +230,16 @@ class OpenAICompatProviderClient(BaseProviderClient):
     async def get_object_info(self) -> Dict[str, Any]:
         """Return object/node info — not applicable for LLM workers."""
         return {"object_info": {}}
+
+    
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        """LLM workers don't store model files locally — cheap response, no upstream calls."""
+        return {
+            "provider_id": self.provider_id,
+            "total": 0,
+            "by_directory": {},
+            "message": "LLM workers do not manage local model files.",
+        }
 
     async def run_reconciliation(self) -> Dict[str, Any]:
         """LLM workers have no file system to reconcile."""

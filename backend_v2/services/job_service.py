@@ -155,17 +155,31 @@ class JobService:
         active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
         return self.repo.get_queue_items(active_states)
     
-    def get_average_duration(self, sample_size: int = 10) -> float:
+    def get_average_duration(self, task_type: str | None = None, sample_size: int = 10) -> float:
         """
         Calculate average job duration from recent completed jobs.
-        
+
         Args:
+            task_type: Optional task type filter ("image", "llm", ...). When None,
+                averages across all types (legacy behavior).
             sample_size: Number of recent jobs to sample
-            
+
         Returns:
             Average duration in seconds, or 30.0 as default if no data
         """
-        completed_jobs = self.repo.get_recently_completed(sample_size)
+        if task_type is None:
+            completed_jobs = self.repo.get_recently_completed(sample_size)
+        else:
+            from core.entities import Job
+            from sqlmodel import col, select
+
+            stmt = (
+                select(Job)
+                .where(Job.status == JobStatus.COMPLETED, Job.task_type == task_type)
+                .order_by(col(Job.completed_at).desc())
+                .limit(sample_size)
+            )
+            completed_jobs = list(self.session.exec(stmt).all())
         
         durations = []
         for job in completed_jobs:

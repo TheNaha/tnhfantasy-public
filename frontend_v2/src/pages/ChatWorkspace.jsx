@@ -13,7 +13,8 @@ import api from '../api/client';
 import {
     useMessages, useChats, useSendMessage, useChat,
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
-    useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply
+    useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply,
+    useLLMAvailableModels, useLLMDefaultProvider
 } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -465,9 +466,9 @@ export default function ChatWorkspace() {
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
     const location = useLocation();
-    
-    const settings = useSettings();
 
+    const settings = useSettings();
+    
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
     const setActiveChatId = useWorldVaultStore(state => state.setActiveChat);
@@ -490,6 +491,8 @@ export default function ChatWorkspace() {
     const { data: messages = [] } = useMessages(activeChatId);
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
+    const { data: availableModels = [] } = useLLMAvailableModels();
+    const { data: defaultLlmConfig } = useLLMDefaultProvider();
 
     // Use activeChat's lorebooks instead of the store's global state
     const selectedLorebooks = activeChat?.active_lorebook_ids || [];
@@ -518,7 +521,7 @@ export default function ChatWorkspace() {
                         const chat = await createChatMutation.mutateAsync({ 
                             name: 'New Chat', 
                             character_id: characterId,
-                            _override_greeting: selectedGreeting 
+                            override_greeting: selectedGreeting 
                         });
                         setActiveChatId(chat.id);
                         window.history.replaceState({}, document.title);
@@ -770,7 +773,7 @@ export default function ChatWorkspace() {
         setIsGeneratingScene(true);
         toast.success('Generating scene...', { icon: '📸' });
         try {
-            const res = await fetch(`/api/world_vault/chats/${activeChatId}/scene`, { method: 'POST' });
+            const res = await fetch(`/api/v2/chats/${activeChatId}/scene`, { method: 'POST' });
             if (!res.ok) throw new Error('Failed');
             const data = await res.json();
             if (data.job_id) {
@@ -792,7 +795,7 @@ export default function ChatWorkspace() {
             const resJob = await api.post('/api/jobs', {
                 task_type: 'llm',
                 workflow: {
-                    llm_model: settings?.llm?.defaultModel || null,
+                    model: activeChat?.llm_model || defaultLlmConfig?.model_id || null,
                     messages: [
                         { role: 'system', content: 'Generate a short, catchy title (max 5 words) for the following chat. Output ONLY the title, no quotes.' },
                         { role: 'user', content: chatHistory || 'A new conversation.' }
@@ -1361,6 +1364,48 @@ export default function ChatWorkspace() {
                                 No character assigned
                             </p>
                         )}
+                    </div>
+
+                    {/* AI Model + Image generation */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-3">
+                        <div>
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-2">
+                                <Sparkles size={12} /> AI Model
+                            </h4>
+                            <select
+                                value={activeChat?.llm_model || ''}
+                                onChange={(e) => handleChatUpdate({ llm_model: e.target.value || null })}
+                                className="w-full bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1.5 text-gray-300 focus:outline-none"
+                                title="Per-chat model override (falls back to the global default)"
+                            >
+                                <option value="">Default ({defaultLlmConfig?.model_id || 'default'})</option>
+                                {availableModels.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-gray-300 font-medium">Allow image generation</p>
+                                <p className="text-[10px] text-gray-600 mt-0.5">
+                                    Lets the LLM call the <code className="text-gray-500">generate_image</code> tool in agentic mode.
+                                </p>
+                            </div>
+                            <button
+                                role="switch"
+                                aria-checked={activeChat?.allow_image_generation !== false}
+                                onClick={() => handleChatUpdate({ allow_image_generation: activeChat?.allow_image_generation === false })}
+                                className={clsx(
+                                    "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                                    activeChat?.allow_image_generation !== false ? "bg-purple-500" : "bg-gray-700"
+                                )}
+                            >
+                                <span className={clsx(
+                                    "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                                    activeChat?.allow_image_generation !== false ? "left-5.5" : "left-0.5"
+                                )} />
+                            </button>
+                        </div>
                     </div>
 
                     {/* Lorebooks */}
