@@ -4,6 +4,7 @@ import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, 
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
+import SceneGallery, { SceneCount } from '../components/SceneGallery';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
@@ -548,7 +549,6 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
 function CharacterCard({ character, onEdit, onDelete, onChat }) {
     const { data: collection } = useCharacterCollection(character.id);
     const imageCount = collection?.image_count || 0;
-    const thumbnails = collection?.images?.slice(0, 4) || [];
 
     return (
         <motion.div
@@ -589,22 +589,9 @@ function CharacterCard({ character, onEdit, onDelete, onChat }) {
 
             {imageCount > 0 && (
                 <div className="mt-3">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                        <Images size={12} className="text-gray-500" />
-                        <span className="text-[11px] text-gray-500">{imageCount} scene{imageCount !== 1 ? 's' : ''}</span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1">
-                        {thumbnails.map((filename, idx) => (
-                            <div key={idx} className="aspect-square rounded bg-gray-800/50 border border-white/5 overflow-hidden">
-                                <img
-                                    src={`/api/files/${filename}`}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                    loading="lazy"
-                                    onError={(e) => { e.target.style.display = 'none'; }}
-                                />
-                            </div>
-                        ))}
+                    <SceneCount count={imageCount} />
+                    <div className="max-h-28 overflow-y-auto custom-scrollbar rounded-lg">
+                        <SceneGallery images={collection?.images || []} compact />
                     </div>
                 </div>
             )}
@@ -763,7 +750,7 @@ export default function Characters() {
             </div>
 
             {/* Character Grid */}
-            <div className="flex-1 rounded-xl overflow-hidden">
+            <div className="flex-1 rounded-xl overflow-y-auto custom-scrollbar min-h-0">
                 {isLoading ? (
                     <div className="flex items-center justify-center p-12">
                         <Loader2 className="animate-spin text-gray-500" size={32} />

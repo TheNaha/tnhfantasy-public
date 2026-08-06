@@ -716,6 +716,31 @@ def _migration_add_llm_settings(conn) -> bool:
     return touched
 
 
+def _migration_add_narrator_system_prompt(conn) -> bool:
+    """Add per-chat system prompt override, allow_narration flag, and message metadata column."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    touched = False
+    if "chats" in table_names:
+        existing = {col["name"] for col in inspector.get_columns("chats")}
+        if "system_prompt_override" not in existing:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN system_prompt_override TEXT DEFAULT NULL"))
+            logger.info("migration_column_added", table="chats", column="system_prompt_override")
+        if "allow_narration" not in existing:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN allow_narration BOOLEAN DEFAULT TRUE"))
+            logger.info("migration_column_added", table="chats", column="allow_narration")
+        _verify_required_columns(conn, "chats", {"system_prompt_override", "allow_narration"})
+        touched = True
+    if "messages" in table_names:
+        existing = {col["name"] for col in inspector.get_columns("messages")}
+        if "message_metadata" not in existing:
+            conn.execute(text("ALTER TABLE messages ADD COLUMN message_metadata JSON DEFAULT NULL"))
+            logger.info("migration_column_added", table="messages", column="message_metadata")
+        _verify_required_columns(conn, "messages", {"message_metadata"})
+        touched = True
+    return touched
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -798,5 +823,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="016_add_llm_settings",
             description="Add per-chat/story LLM model override and allow_image_generation flag",
             apply_fn=_migration_add_llm_settings,
+        ),
+        MigrationStep(
+            version="017_add_narrator_system_prompt",
+            description="Add per-chat system prompt override, allow_narration flag, and message metadata column",
+            apply_fn=_migration_add_narrator_system_prompt,
         ),
     ]

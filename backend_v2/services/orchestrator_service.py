@@ -18,6 +18,18 @@ logger = get_logger("orchestrator")
 
 MAX_AGENTIC_DEPTH = 5
 
+NARRATOR_SYSTEM_PROMPT = (
+    "You are the Narrator of an interactive story — a separate role from the characters. "
+    "Your job is to describe the world around the conversation from a third-person standpoint: "
+    "the environment, the passage of time, off-screen events, and transitions between scenes. "
+    "When the characters agree to meet somewhere, you narrate what happens between the decision "
+    "and the meeting. Decide what the story needs most: continue the dialogue, add background "
+    "information, or cut to a new scene. Write vivid, cinematic prose in the third person, "
+    "present tense, describing actions, atmosphere, and surroundings — never speak as a "
+    "character and never write dialogue. Keep it concise (2-5 sentences) unless a scene "
+    "transition truly demands more."
+)
+
 AGENTIC_TOOLS = [
     {
         "type": "function",
@@ -48,6 +60,32 @@ AGENTIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "narrate_scene",
+            "description": (
+                "Trigger the Narrator to describe the world around the conversation from a "
+                "third-person standpoint: scene transitions, the passage of time, off-screen "
+                "events, or what happens between conversations (e.g. after agreeing to meet "
+                "somewhere). Use this when the story demands narration that the character "
+                "reply alone cannot provide. The narrator decides whether to continue the "
+                "conversation, add background information, or cut to a new scene."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scene_direction": {
+                        "type": "string",
+                        "description": (
+                            "Optional guidance for the narrator: what should happen between "
+                            "scenes, how much time passes, or what background detail to cover."
+                        ),
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -66,6 +104,62 @@ def get_agentic_depth(metadata: dict[str, Any] | None) -> int:
 def can_continue_agentic(metadata: dict[str, Any] | None) -> bool:
     """Whether the orchestrator should process another iteration."""
     return get_agentic_depth(metadata) < MAX_AGENTIC_DEPTH
+
+
+def _ready_model_files(session, directory: str) -> list[str]:
+    """List filenames of ready, enabled model files of a directory across enabled providers."""
+    from sqlmodel import select
+
+    from core.entities import (
+        ModelFile,
+        ModelV2,
+        ModelVersion,
+        Provider,
+        ProviderVersionStatus,
+    )
+
+    try:
+        rows = session.exec(
+            select(ModelFile.filename)
+            .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
+            .join(ModelV2, ModelV2.id == ModelVersion.model_id)
+            .join(
+                ProviderVersionStatus,
+                ProviderVersionStatus.version_id == ModelVersion.id,
+            )
+            .join(Provider, Provider.id == ProviderVersionStatus.provider_id)
+            .where(
+                ModelV2.directory == directory,
+                ModelVersion.is_enabled == True,  # noqa: E712
+                Provider.enabled == True,  # noqa: E712
+                ProviderVersionStatus.status == "ready",
+            )
+            .distinct()
+        ).all()
+        return [r for r in rows if r]
+    except Exception as e:
+        logger.warning("ready_model_files_query_failed", directory=directory, error=str(e))
+        return []
+
+
+def _available_checkpoint(session, preferred: str | None) -> str | None:
+    """Pick a checkpoint that is actually installed on an enabled provider."""
+    ready = _ready_model_files(session, "checkpoints")
+    if not ready:
+        return None
+    if preferred and preferred in ready:
+        return preferred
+    return ready[0]
+
+
+def _available_lora(session, preferred: str | None) -> str | None:
+    """Pick a LoRA that is actually installed on an enabled provider (or None)."""
+    if not preferred:
+        return None
+    ready = _ready_model_files(session, "loras")
+    if preferred in ready:
+        return preferred
+    return None
 
 
 async def execute_tool(
@@ -94,7 +188,122 @@ async def execute_tool(
             source_job_id=source_job_id,
         )
 
+    if name == "narrate_scene":
+        return await _tool_narrate_scene(
+            args,
+            chat_id=chat_id,
+            character_id=character_id,
+            source_job_id=source_job_id,
+        )
+
     return {"status": "error", "error": f"Unknown tool: {name}"}
+
+
+async def _tool_narrate_scene(
+    args: dict[str, Any],
+    *,
+    chat_id: str | None = None,
+    character_id: str | None = None,
+    source_job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a Narrator LLM job that writes a third-person scene description."""
+    from services.job_submission_service import JobSubmissionService
+    from infrastructure.database import get_session_sync
+
+    scene_direction = args.get("scene_direction", "")
+
+    logger.info("tool_narrate_scene", chat_id=chat_id, direction=scene_direction[:80])
+
+    session = get_session_sync()
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": NARRATOR_SYSTEM_PROMPT}]
+
+    source_context: list[dict[str, Any]] = []
+    source_meta: dict[str, Any] = {}
+    if source_job_id:
+        from core.entities import Job
+        source_job = session.get(Job, source_job_id)
+        if source_job:
+            source_meta = getattr(source_job, "metadata_", None) or {}
+            source_context = source_meta.get("original_messages", []) or []
+            if not source_context and isinstance(source_job.workflow, dict):
+                source_context = source_job.workflow.get("messages", [])
+
+    if source_context:
+        messages.extend(source_context[-12:])
+    elif chat_id:
+        from sqlmodel import select
+        from core.entities import Message, MessageRole
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        recent = session.exec(
+            select(Message)
+            .where(Message.chat_id == chat_id, Message.created_at >= cutoff)
+            .order_by(Message.created_at)
+        ).all()
+        for m in recent[-20:]:
+            if m.role == MessageRole.SYSTEM and (m.message_metadata or {}).get("source") == "narrator":
+                continue
+            messages.append({"role": "user" if m.role == MessageRole.USER else "assistant", "content": m.content})
+
+    if scene_direction:
+        messages.append({"role": "user", "content": f"[Narrate: {scene_direction}]"})
+
+    character_system_prompt = source_meta.get("character_system_prompt")
+    if not character_system_prompt and chat_id:
+        from core.entities import Chat
+        chat = session.get(Chat, chat_id)
+        if chat and chat.system_prompt_override:
+            character_system_prompt = chat.system_prompt_override
+
+    workflow: dict[str, Any] = {
+        "messages": messages,
+        "chat_id": chat_id,
+        "character_system_prompt": character_system_prompt,
+        "type": "narrator",
+        "model": None,
+    }
+    if source_meta.get("model"):
+        workflow["model"] = source_meta.get("model")
+
+    metadata: dict[str, Any] = {
+        "chat_id": chat_id,
+        "character_id": character_id,
+        "workspace": "roleplay",
+        "source": "narrator",
+        "type": "narrator",
+    }
+    if source_job_id:
+        metadata["parent_job_id"] = source_job_id
+
+    submission = JobSubmissionService(session)
+    try:
+        job = await submission.create_and_enqueue_job(
+            workflow=workflow,
+            metadata=metadata,
+            task_type="llm",
+        )
+    except Exception as e:
+        logger.error("tool_narrate_scene_enqueue_failed", error=str(e))
+        return {"status": "error", "error": f"Failed to start narrator job: {e}"}
+
+    try:
+        from core.events import wait_for_job_completion
+        final_status, output = await wait_for_job_completion(job.id, timeout=180.0)
+    except Exception as e:
+        logger.error("tool_narrate_scene_wait_failed", error=str(e))
+        return {"status": "error", "error": f"Failed waiting for narrator job: {e}"}
+
+    if final_status == "completed":
+        content = ""
+        if output:
+            content = output.get("content") or output.get("text") or ""
+        return {"status": "success", "narration": content, "job_id": job.id}
+
+    if final_status in ("failed", "cancelled"):
+        return {"status": "error", "error": f"Narration {final_status}"}
+
+    return {"status": "error", "error": f"Narration ended with status: {final_status}"}
 
 
 async def _tool_generate_image(
@@ -142,7 +351,27 @@ async def _tool_generate_image(
             if char.lora:
                 lora_name = char.lora
 
-    workflow = _build_default_image_workflow(prompt, negative, checkpoint=ckpt_name, lora=lora_name)
+    # 4. Ensure the chosen models are actually installed on an enabled provider
+    resolved_ckpt = _available_checkpoint(session, ckpt_name)
+    if not resolved_ckpt:
+        logger.error(
+            "tool_generate_image_no_checkpoint",
+            preferred=ckpt_name,
+        )
+        return {
+            "status": "error",
+            "error": (
+                "No image checkpoints are installed on any provider. "
+                "Install a checkpoint before using the image generation tool."
+            ),
+        }
+    if resolved_ckpt != ckpt_name:
+        logger.warning("tool_generate_image_ckpt_fallback", preferred=ckpt_name, used=resolved_ckpt)
+    resolved_lora = _available_lora(session, lora_name)
+    if lora_name and resolved_lora is None:
+        logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
+
+    workflow = _build_default_image_workflow(prompt, negative, checkpoint=resolved_ckpt, lora=resolved_lora)
 
     metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image"}
     if chat_id:
@@ -151,6 +380,21 @@ async def _tool_generate_image(
         metadata["character_id"] = character_id
     if source_job_id:
         metadata["parent_job_id"] = source_job_id
+
+    # Persist generation parameters so the details panel shows real values
+    # instead of "Model Unknown".
+    metadata["prompt"] = prompt
+    metadata["negativePrompt"] = negative
+    metadata["checkpoint"] = resolved_ckpt
+    if resolved_lora:
+        metadata["loras"] = [resolved_lora]
+    metadata["steps"] = 20
+    metadata["cfg"] = 7
+    metadata["sampler"] = "euler"
+    metadata["scheduler"] = "normal"
+    metadata["width"] = 1024
+    metadata["height"] = 1024
+    metadata["seed"] = 0
 
     try:
         job = await submission.create_and_enqueue_job(
@@ -163,7 +407,7 @@ async def _tool_generate_image(
 
     try:
         from core.events import wait_for_job_completion
-        final_status, output = await wait_for_job_completion(job.id, timeout=120.0)
+        final_status, output = await wait_for_job_completion(job.id, timeout=330.0)
     except Exception as e:
         logger.error("wait_for_job_completion_failed", error=str(e))
         return {"status": "error", "error": f"Failed waiting for image job: {e}"}
@@ -255,6 +499,7 @@ async def process_tool_calls_and_chain(
     character_id: str | None,
     job_service,
     enqueue_fn,
+    allowed_tools: set[str] | None = None,
 ) -> bool:
     """
     Detect tool_calls in an LLM response and chain follow-up jobs.
@@ -265,6 +510,18 @@ async def process_tool_calls_and_chain(
     tool_calls = assistant_output.get("tool_calls", [])
     if not tool_calls:
         return False
+
+    if allowed_tools:
+        filtered = []
+        for tc in tool_calls:
+            fn = tc.get("function", {})
+            name = fn.get("name", "")
+            if name in allowed_tools:
+                filtered.append(tc)
+        if not filtered:
+            logger.info("agentic_tools_all_filtered", job_id=job.id)
+            return False
+        tool_calls = filtered
 
     metadata = job.metadata_ or {}
     depth = get_agentic_depth(metadata)
@@ -277,12 +534,9 @@ async def process_tool_calls_and_chain(
         )
         return False
 
-    text_content = assistant_output.get("content", "")
-    if text_content:
-        await _persist_system_message(
-            chat_id=chat_id,
-            content=f"*{text_content}*",
-        )
+    # Note: intermediate narration text is NOT persisted as a SYSTEM message here;
+    # it is forwarded to the follow-up job via context so the final reply is the
+    # only visible character message for this exchange.
 
     tool_results = []
     for tc in tool_calls:
@@ -298,13 +552,6 @@ async def process_tool_calls_and_chain(
             "name": tc.get("function", {}).get("name", ""),
             "content": json.dumps(result),
         })
-
-        if result.get("image_path") and chat_id:
-            await _persist_tool_image_message(
-                chat_id=chat_id,
-                image_path=result["image_path"],
-                tool_name=tc.get("function", {}).get("name", ""),
-            )
 
     original_messages = metadata.get("original_messages", [])
     context = list(original_messages) if original_messages else []
@@ -353,48 +600,3 @@ async def process_tool_calls_and_chain(
     except Exception as e:
         logger.error("agentic_followup_failed", error=str(e))
         return False
-
-
-async def _persist_system_message(chat_id: str, content: str) -> None:
-    """Persist a system message to the chat (for tool-use narration)."""
-    try:
-        from datetime import datetime, timezone
-        from sqlmodel import Session
-        from core.entities import Message, MessageRole
-        from infrastructure.database import engine
-
-        with Session(engine) as session:
-            msg = Message(
-                chat_id=chat_id,
-                role=MessageRole.SYSTEM,
-                content=content,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            session.add(msg)
-            session.commit()
-    except Exception as e:
-        logger.error("persist_system_message_failed", error=str(e))
-
-
-async def _persist_tool_image_message(chat_id: str, image_path: str, tool_name: str) -> None:
-    """Persist a system message with the generated image to the chat."""
-    try:
-        from datetime import datetime, timezone
-        from sqlmodel import Session
-        from core.entities import Message, MessageRole
-        from infrastructure.database import engine
-
-        with Session(engine) as session:
-            msg = Message(
-                chat_id=chat_id,
-                role=MessageRole.SYSTEM,
-                content=f"[Image generated by {tool_name}]",
-                image_path=image_path,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            session.add(msg)
-            session.commit()
-    except Exception as e:
-        logger.error("persist_tool_image_message_failed", error=str(e))

@@ -115,6 +115,7 @@ def build_chat_context(
     persona_name: str | None = None,
     story_time: str | None = None,
     story_location: str | None = None,
+    system_prompt_override: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -122,20 +123,24 @@ def build_chat_context(
     
     Args:
         max_context_tokens: Maximum token budget for the full context window.
+        system_prompt_override: Per-chat override that wins over character.system_prompt.
     """
     system_prompt = ""
-    if character:
+    if system_prompt_override:
+        system_prompt = system_prompt_override
+    elif character:
         if character.system_prompt:
             system_prompt = character.system_prompt
         else:
             system_prompt = build_character_system_prompt(character)
 
+    if system_prompt:
         # Apply SillyTavern template variable substitution
         import re
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         _replacements = {
-            "char": character.name or "",
+            "char": (character.name if character else "") or "",
             "user": persona_name or "User",
             "time": now.strftime("%H:%M"),
             "date": now.strftime("%Y-%m-%d"),

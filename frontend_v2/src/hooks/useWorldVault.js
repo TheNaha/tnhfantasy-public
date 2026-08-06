@@ -49,6 +49,17 @@ export const useChat = (chatId) => {
     });
 };
 
+export const useChatSystemPrompt = (chatId) => {
+    return useQuery({
+        queryKey: ['world_vault', 'chats', chatId, 'system-prompt'],
+        queryFn: () => {
+            if (!chatId) return null;
+            return api.get(`/api/v2/chats/${chatId}/system-prompt`);
+        },
+        enabled: !!chatId
+    });
+};
+
 export const useLorebooks = () => {
     return useQuery({
         queryKey: ['world_vault', 'lorebooks'],

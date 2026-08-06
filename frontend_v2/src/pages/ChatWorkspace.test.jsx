@@ -55,6 +55,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useSuggestReply: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useLLMAvailableModels: () => ({ data: [{ id: 'gpt-test', name: 'gpt-test' }] }),
     useLLMDefaultProvider: () => ({ data: { provider_id: 'llm-local', model_id: 'default' } }),
+    useChatSystemPrompt: () => ({ data: { system_prompt: 'test system prompt', has_override: false } }),
+    useCharacterCollection: () => ({ data: { images: [], image_count: 0 } }),
     getAvatarUrl: () => '',
 }));
 

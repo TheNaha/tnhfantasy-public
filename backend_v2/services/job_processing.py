@@ -419,8 +419,47 @@ async def finalize_successful_job(
         final_result.get('type') == 'story_continue'
         or (isinstance(job.workflow, dict) and job.workflow.get("type") == "story_continue")
     )
-    
-    if is_chat_reply or is_story_continue:
+    is_narrator = job.task_type == 'llm' and (
+        final_result.get('type') == 'narrator'
+        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "narrator")
+    )
+
+    if is_narrator:
+        narrator_content = ""
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            narrator_content = (final_result.get("outputs")[0] or {}).get("content", "")
+        if not narrator_content and final_result.get("text"):
+            narrator_content = final_result.get("text")
+
+        narrator_chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not narrator_chat_id:
+            narrator_chat_id = final_result.get("chat_id")
+
+        if narrator_chat_id and narrator_content:
+            from sqlmodel import Session
+
+            from core.entities import Message, MessageRole
+            from infrastructure.database import engine
+
+            with Session(engine) as session:
+                msg = Message(
+                    role=MessageRole.SYSTEM,
+                    content=narrator_content,
+                    chat_id=narrator_chat_id,
+                    message_metadata={"source": "narrator"},
+                )
+                session.add(msg)
+                session.commit()
+
+            await emit_job_event(EventType.JOB_COMPLETED, {
+                "id": job.id,
+                "task_type": job.task_type,
+                "type": "narrator",
+                "metadata": {"chat_id": narrator_chat_id, "type": "narrator", "source": "narrator"},
+                "chat_id": narrator_chat_id,
+                "content": narrator_content,
+            })
+    elif is_chat_reply or is_story_continue:
         assistant_content = ""
         assistant_output: dict[str, Any] = {}
         if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
@@ -443,16 +482,27 @@ async def finalize_successful_job(
         if is_chat_reply and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
-                # Per-chat gate: allow_image_generation=False disables the generate_image tool
+                # Per-chat gates: allow_image_generation gates generate_image,
+                # allow_narration gates narrate_scene.
                 image_generation_allowed = True
+                narration_allowed = True
                 if entity_id:
                     from sqlmodel import Session
                     from core.entities import Chat
                     from infrastructure.database import engine
                     with Session(engine) as session:
                         chat = session.get(Chat, entity_id)
-                        image_generation_allowed = bool(chat.allow_image_generation) if chat else True
+                        if chat:
+                            image_generation_allowed = bool(chat.allow_image_generation)
+                            narration_allowed = bool(chat.allow_narration)
+
+                allowed_tools = set()
                 if image_generation_allowed:
+                    allowed_tools.add("generate_image")
+                if narration_allowed:
+                    allowed_tools.add("narrate_scene")
+
+                if allowed_tools:
                     from services.orchestrator_service import process_tool_calls_and_chain
                     from services.job_queue import queue_manager
 
@@ -464,9 +514,24 @@ async def finalize_successful_job(
                         character_id=metadata.get("character_id"),
                         job_service=job_service,
                         enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
+                        allowed_tools=allowed_tools,
                     )
                     if chained:
                         await load_balancer.release_job(provider_id)
+                        # Mark the parent job terminal so the frontend clears its
+                        # streaming bubble; the follow-up emits its own completion.
+                        try:
+                            from core.entities import JobStatus
+                            await job_service.update_job(
+                                job.id,
+                                status=JobStatus.COMPLETED,
+                                outputs=outputs or [],
+                                progress=100,
+                                overall_progress=100,
+                                provider_id=provider_id,
+                            )
+                        except Exception as e:
+                            logger.error("agentic_parent_finalize_failed", job_id=job.id, error=str(e))
                         return
             # If depth exceeded or not agentic, fall through to normal finalization
             
@@ -526,9 +591,15 @@ async def finalize_successful_job(
                 from core.entities import CollectionImage, Message, MessageRole
                 from infrastructure.database import engine
                 with Session(engine) as session:
+                    meta = job.metadata_ or {}
+                    if meta.get("source") == "agentic_tool":
+                        tool_name = meta.get("tool_name", "generate_image")
+                        content = f"[Image generated by {tool_name}]"
+                    else:
+                        content = meta.get("image_context", "Generated Image:")
                     msg = Message(
                         role=MessageRole.SYSTEM, 
-                        content=job.metadata_.get("image_context", "Generated Image:"), 
+                        content=content, 
                         image_path=image_path,
                         chat_id=chat_id
                     )

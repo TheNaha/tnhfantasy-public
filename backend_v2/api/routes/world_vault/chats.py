@@ -20,6 +20,8 @@ class UpdateChatRequest(BaseModel):
     active_lorebook_ids: list[str] | None = None
     llm_model: str | None = None
     allow_image_generation: bool | None = None
+    allow_narration: bool | None = None
+    system_prompt_override: str | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -41,6 +43,7 @@ class SendMessageRequest(BaseModel):
     agentic: bool = False
     generator_checkpoint: str | None = None
     no_reply: bool = False
+    narrate: bool = False
 
 
 @router.get("/", response_model=list[Chat])
@@ -147,6 +150,44 @@ def list_messages(chat_id: str, session: Session = Depends(get_session)):
     return session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
 
 
+@router.get("/{chat_id}/system-prompt")
+def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
+    """Return the assembled system prompt (and context size) used for this chat."""
+    from services.context_builder import build_chat_context, estimate_tokens
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    past_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+
+    character = None
+    if chat.character_id:
+        character = session.get(Character, chat.character_id)
+
+    system_prompt, context = build_chat_context(
+        session,
+        past_messages,
+        character=character,
+        lorebook_ids=chat.active_lorebook_ids or None,
+        persona_name=chat.persona_name,
+        story_time=chat.story_time,
+        story_location=chat.story_location,
+        system_prompt_override=chat.system_prompt_override,
+    )
+
+    return {
+        "chat_id": chat_id,
+        "character_id": chat.character_id,
+        "system_prompt": system_prompt or "",
+        "has_override": bool(chat.system_prompt_override),
+        "message_count": len(context),
+        "context_tokens": estimate_tokens("\n".join(m.get("content", "") for m in context)),
+    }
+
+
 @router.patch("/{chat_id}", response_model=Chat)
 def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depends(get_session)):
     chat = session.get(Chat, chat_id)
@@ -206,34 +247,56 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             lorebook_ids=request.lorebook_ids, 
             persona_name=chat.persona_name,
             story_time=chat.story_time,
-            story_location=chat.story_location
+            story_location=chat.story_location,
+            system_prompt_override=chat.system_prompt_override,
         )
             
         try:
             job_service = get_job_service(session)
 
-            workflow: dict = {
-                "messages": context,
-                "chat_id": chat_id,
-                "character_system_prompt": system_prompt or None,
-                "type": "chat_reply",
-                "model": chat.llm_model or _get_default_llm_model(),
-            }
-            metadata: dict = {
-                "chat_id": chat_id,
-                "character_id": chat.character_id,
-                "workspace": "roleplay",
-            }
+            if request.narrate:
+                from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
 
-            if request.agentic:
-                from services.orchestrator_service import AGENTIC_TOOLS
-                workflow["tools"] = AGENTIC_TOOLS
-                metadata["agentic"] = True
-                metadata["orchestrator_depth"] = 0
-                metadata["original_messages"] = context
+                workflow: dict = {
+                    "messages": [
+                        {"role": "system", "content": NARRATOR_SYSTEM_PROMPT},
+                        *context,
+                        {"role": "user", "content": f"[Narration request] {message.content}"},
+                    ],
+                    "chat_id": chat_id,
+                    "character_system_prompt": system_prompt or None,
+                    "type": "narrator",
+                    "model": chat.llm_model or _get_default_llm_model(),
+                }
+                metadata: dict = {
+                    "chat_id": chat_id,
+                    "character_id": chat.character_id,
+                    "workspace": "roleplay",
+                    "source": "narrator",
+                }
+            else:
+                workflow: dict = {
+                    "messages": context,
+                    "chat_id": chat_id,
+                    "character_system_prompt": system_prompt or None,
+                    "type": "chat_reply",
+                    "model": chat.llm_model or _get_default_llm_model(),
+                }
+                metadata: dict = {
+                    "chat_id": chat_id,
+                    "character_id": chat.character_id,
+                    "workspace": "roleplay",
+                }
 
-            if request.generator_checkpoint:
-                metadata["generator_checkpoint"] = request.generator_checkpoint
+                if request.agentic:
+                    from services.orchestrator_service import AGENTIC_TOOLS
+                    workflow["tools"] = AGENTIC_TOOLS
+                    metadata["agentic"] = True
+                    metadata["orchestrator_depth"] = 0
+                    metadata["original_messages"] = context
+
+                if request.generator_checkpoint:
+                    metadata["generator_checkpoint"] = request.generator_checkpoint
 
             job = await job_service.create_job(
                 task_type="llm",

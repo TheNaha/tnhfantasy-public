@@ -706,6 +706,8 @@ class Chat(SQLModel, table=True):
     story_location: str | None = Field(default=None)
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
     allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
+    allow_narration: bool = Field(default=True) # Gates the agentic narrate_scene tool
+    system_prompt_override: str | None = Field(default=None) # Per-chat system prompt override (wins over character.system_prompt)
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -725,6 +727,7 @@ class Message(SQLModel, table=True):
     role: MessageRole
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
+    message_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

@@ -771,7 +771,7 @@ export default function StorySandbox() {
                                     <div className="space-y-2">
                                         {activeChapter.image_paths.map((path, idx) => (
                                             <div key={idx} className="rounded-lg overflow-hidden border border-white/10">
-                                                <img src={`/api/files/${path}`} alt={`Scene ${idx + 1}`} className="w-full h-auto" />
+                                                <img src={`/api/view/output/${path}`} alt={`Scene ${idx + 1}`} className="w-full h-auto" />
                                             </div>
                                         ))}
                                     </div>

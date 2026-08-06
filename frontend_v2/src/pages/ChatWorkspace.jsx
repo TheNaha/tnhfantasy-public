@@ -14,7 +14,8 @@ import {
     useMessages, useChats, useSendMessage, useChat,
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
     useRenameChat, useUpdateChat, getAvatarUrl, useSuggestReply,
-    useLLMAvailableModels, useLLMDefaultProvider
+    useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
+    useCharacterCollection
 } from '../hooks/useWorldVault';
 import worldVaultApi from '../api/worldVault';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -23,6 +24,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { parseTavernMessage } from '../utils/tavernUtils';
 import { useSettings } from '../store/settingsStore';
+import SceneGallery from '../components/SceneGallery';
 
 
 const COMMANDS = [
@@ -416,7 +418,8 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                 <div className={clsx("text-[10px] mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
                     {msg.role === 'user'
                         ? (activeChat?.persona_name || 'You')
-                        : msg.role === 'system' ? '✦ System'
+                        : msg.role === 'system'
+                            ? (msg.message_metadata?.source === 'narrator' ? '✦ Narrator' : '✦ System')
                         : (linkedCharacter?.name || 'AI')}
                 </div>
                 {(msg.role === 'char' || msg.role === 'assistant') ? (
@@ -424,16 +427,25 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         <TavernMessage content={msg.content} />
                         {msg.image_path && (
                             <div className="mt-1">
-                                <img src={`/api/files/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                            </div>
+                        )}
+                    </div>
+                ) : msg.role === 'user' ? (
+                    <div className="px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm">
+                        <TavernMessage content={msg.content} />
+                        {msg.image_path && (
+                            <div className="mt-3">
+                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                             </div>
                         )}
                     </div>
                 ) : (
-                    <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", msg.role === 'user' ? "bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
+                    <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", msg.message_metadata?.source === 'narrator' ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
                         <span className="whitespace-pre-wrap">{msg.content}</span>
                         {msg.image_path && (
                             <div className="mt-3">
-                                <img src={`/api/files/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                             </div>
                         )}
                     </div>
@@ -458,6 +470,7 @@ export default function ChatWorkspace() {
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
+    const [narrateMode, setNarrateMode] = useState(false);
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     const [greetingModal, setGreetingModal] = useState(null);
     const [showNewChatModal, setShowNewChatModal] = useState(false);
@@ -493,6 +506,8 @@ export default function ChatWorkspace() {
     const { data: characters = [] } = useCharacters();
     const { data: availableModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
+    const { data: systemPromptData } = useChatSystemPrompt(activeChatId);
+    const { data: chatCollection } = useCharacterCollection(activeChat?.character_id);
 
     // Use activeChat's lorebooks instead of the store's global state
     const selectedLorebooks = activeChat?.active_lorebook_ids || [];
@@ -710,6 +725,7 @@ export default function ChatWorkspace() {
                     lorebook_ids: selectedLorebooks, 
                     image_path: attachmentFilename, 
                     agentic: agenticMode,
+                    narrate: narrateMode,
                     generator_checkpoint: settings.generator?.defaultCheckpoint || null,
                     no_reply: noReply
                 }
@@ -721,7 +737,7 @@ export default function ChatWorkspace() {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -924,7 +940,7 @@ export default function ChatWorkspace() {
 
     const handleChatUpdate = (updates) => {
         if (!activeChatId) return;
-        updateChatMutation.mutate({ chatId: activeChatId, data: updates });
+        updateChatMutation.mutate({ chatId: activeChatId, ...updates });
     };
 
     const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
@@ -1216,6 +1232,19 @@ export default function ChatWorkspace() {
                                 >
                                     <Wand2 size={18} />
                                 </button>
+                                {/* Narrate mode */}
+                                <button
+                                    onClick={() => setNarrateMode(!narrateMode)}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-colors rounded-xl",
+                                        narrateMode
+                                            ? "text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+                                            : "text-gray-500 hover:text-gray-400 hover:bg-white/5"
+                                    )}
+                                    title={narrateMode ? "Narrate ON — next message triggers the narrator" : "Narrate OFF"}
+                                >
+                                    <BookOpen size={18} />
+                                </button>
                                 {/* Suggest */}
                                 <button
                                     onClick={handleSuggestClick}
@@ -1252,8 +1281,13 @@ export default function ChatWorkspace() {
                         </div>
                         <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-[10px] text-gray-600">
                             <span><kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Enter</kbd> to send · <kbd className="font-mono bg-gray-800 px-1 py-0.5 rounded border border-gray-700 text-gray-500">Shift+Enter</kbd> for newline</span>
-                            <span className={clsx("transition-colors", agenticMode ? "text-purple-400" : "text-gray-600")}>
-                                {agenticMode ? '⚡ Agentic' : 'Standard'}
+                            <span className="flex items-center gap-2">
+                                {narrateMode && (
+                                    <span className="text-purple-400">📖 Narrate</span>
+                                )}
+                                <span className={clsx("transition-colors", agenticMode ? "text-purple-400" : "text-gray-600")}>
+                                    {agenticMode ? '⚡ Agentic' : 'Standard'}
+                                </span>
                             </span>
                         </div>
                     </div>
@@ -1406,6 +1440,93 @@ export default function ChatWorkspace() {
                                 )} />
                             </button>
                         </div>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-gray-300 font-medium">Allow narration</p>
+                                <p className="text-[10px] text-gray-600 mt-0.5">
+                                    Lets the LLM call the <code className="text-gray-500">narrate_scene</code> tool when the story calls for it.
+                                </p>
+                            </div>
+                            <button
+                                role="switch"
+                                aria-checked={activeChat?.allow_narration !== false}
+                                onClick={() => handleChatUpdate({ allow_narration: activeChat?.allow_narration === false })}
+                                className={clsx(
+                                    "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                                    activeChat?.allow_narration !== false ? "bg-purple-500" : "bg-gray-700"
+                                )}
+                            >
+                                <span className={clsx(
+                                    "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                                    activeChat?.allow_narration !== false ? "left-5.5" : "left-0.5"
+                                )} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* System prompt */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Sparkles size={12} /> System Prompt
+                            </h4>
+                            {activeChat?.system_prompt_override ? (
+                                <button
+                                    onClick={() => handleChatUpdate({ system_prompt_override: null })}
+                                    className="text-[9px] text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 transition-colors"
+                                >
+                                    Clear override
+                                </button>
+                            ) : null}
+                        </div>
+                        <p className="text-[10px] text-gray-600 mb-2">
+                            {activeChat?.system_prompt_override
+                                ? 'This chat uses its own override (takes priority over the character prompt).'
+                                : 'Assembled from the character prompt. Override to take priority per-chat.'}
+                        </p>
+                        <div className="max-h-40 overflow-y-auto custom-scrollbar rounded-lg bg-gray-900/60 border border-white/5 p-2.5 mb-2">
+                            <pre className="text-[10px] leading-relaxed text-gray-400 whitespace-pre-wrap font-sans">
+                                {systemPromptData?.system_prompt || 'Select a character to see the assembled system prompt…'}
+                            </pre>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <textarea
+                                defaultValue={activeChat?.system_prompt_override || ''}
+                                key={activeChat?.system_prompt_override || 'empty'}
+                                onBlur={(e) => {
+                                    const val = e.target.value.trim();
+                                    if (val !== (activeChat?.system_prompt_override || '')) {
+                                        handleChatUpdate({ system_prompt_override: val || null });
+                                    }
+                                }}
+                                placeholder="Optional per-chat override…"
+                                rows={2}
+                                className="flex-1 bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 resize-none"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Scenes */}
+                    <div className="glass-panel p-4 rounded-xl border border-white/5">
+                        <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <ImageIcon size={12} /> Scenes
+                            </h4>
+                            <span className="text-[10px] text-gray-600">
+                                {chatCollection?.image_count || 0} image{(chatCollection?.image_count || 0) !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+                        {activeChat?.character_id ? (
+                            <SceneGallery
+                                title={`${linkedCharacter?.name || 'Character'} scenes`}
+                                images={chatCollection?.images || []}
+                                compact
+                            />
+                        ) : (
+                            <p className="text-xs text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
+                                Assign a character to see their scenes
+                            </p>
+                        )}
                     </div>
 
                     {/* Lorebooks */}
