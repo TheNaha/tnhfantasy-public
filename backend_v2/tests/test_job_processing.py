@@ -415,6 +415,8 @@ async def test_finalize_tolerates_deleted_chat(session: Session, monkeypatch):
     # enriched JOB_COMPLETED carrying the chat routing fields).
     monkeypatch.setattr("services.job_service.emit_job_event", fake_emit)
 
+    await job_service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+
     await finalize_successful_job(
         job=job,
         job_id=job.id,

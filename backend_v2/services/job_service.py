@@ -96,6 +96,32 @@ class JobService:
         # Set started_at for first active state
         active_states = {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING}
         status = updates.get("status")
+        
+        # Enforce Finite State Machine transitions
+        if status and status != job.status:
+            VALID_TRANSITIONS = {
+                JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CANCELLED, JobStatus.FAILED},
+                JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.PENDING, JobStatus.CANCELLED},
+                JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+                JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+                JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+                JobStatus.POST_PROCESSING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+                JobStatus.COMPLETED: set(),
+                JobStatus.FAILED: {JobStatus.PENDING}, # Allow retry
+                JobStatus.CANCELLED: set()
+            }
+            allowed = VALID_TRANSITIONS.get(job.status, set())
+            if status not in allowed:
+                logger.warning(
+                    "invalid_fsm_transition", 
+                    job_id=job_id, 
+                    from_status=job.status, 
+                    to_status=status
+                )
+                # Ignore invalid transitions (e.g. updating a cancelled job to completed)
+                updates.pop("status")
+                status = None
+
         if status in active_states and not job.started_at:
             updates["started_at"] = datetime.now(timezone.utc)
         elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):

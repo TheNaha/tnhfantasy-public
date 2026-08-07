@@ -1,7 +1,7 @@
+
 from sqlmodel import Session
 
 from core.entities import Provider
-from services.load_balancer import LoadBalancerRuntimeState
 from services.load_balancer_factory import (
     create_load_balancer,
     get_load_balancing_strategy,
@@ -14,7 +14,7 @@ def test_get_load_balancing_strategy_defaults(session: Session):
 
 
 def test_create_load_balancer_uses_explicit_runtime_state(session: Session):
-    runtime_state = LoadBalancerRuntimeState()
+    runtime_state = object()
     balancer = create_load_balancer(session, runtime_state=runtime_state)
 
     assert balancer.runtime_state is runtime_state
