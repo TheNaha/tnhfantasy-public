@@ -104,14 +104,18 @@ export function substituteTemplateVars(text, vars = {}) {
 export function parseTavernMessage(text) {
     if (!text || typeof text !== 'string') return [];
 
+    // Collapse internal newlines/whitespace and drop spaces before punctuation
+    // (LLMs frequently wrap dialogue across lines, e.g. "About\ntime\n,").
+    const normalize = (s) => s.replace(/\s+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+
     const segments = [];
     let remaining = text;
 
     while (remaining.length > 0) {
-        // Try to match *action*
-        const actionMatch = remaining.match(/^\*([^*]+)\*/);
+        // Try to match *action* (also tolerates **emphasis**)
+        const actionMatch = remaining.match(/^\*+([^*]+)\*+/);
         if (actionMatch) {
-            const content = actionMatch[1].trim();
+            const content = normalize(actionMatch[1]);
             if (content) segments.push({ type: 'action', content });
             remaining = remaining.slice(actionMatch[0].length);
             continue;
@@ -120,7 +124,7 @@ export function parseTavernMessage(text) {
         // Try to match "speech"
         const speechMatch = remaining.match(/^"((?:[^"\\]|\\.)*)"/);
         if (speechMatch) {
-            const content = speechMatch[1].trim();
+            const content = normalize(speechMatch[1]);
             if (content) segments.push({ type: 'speech', content });
             remaining = remaining.slice(speechMatch[0].length);
             continue;
@@ -138,8 +142,11 @@ export function parseTavernMessage(text) {
             if (content) segments.push({ type: 'prose', content });
             remaining = remaining.slice(nextSpecial);
         } else {
-            // Dangling * or " not forming a pair - treat as prose char
-            segments.push({ type: 'prose', content: remaining[0] });
+            // Dangling special char: skip stray asterisks (LLM noise), keep
+            // stray quotes as prose punctuation
+            if (remaining[0] !== '*') {
+                segments.push({ type: 'prose', content: remaining[0] });
+            }
             remaining = remaining.slice(1);
         }
     }

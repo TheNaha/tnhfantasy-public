@@ -175,40 +175,21 @@ async def _handle_narrator(job_data: dict[str, Any]):
 async def _handle_chat_reply(job_data: dict[str, Any]):
     chat_id = job_data.get("metadata", {}).get("chat_id")
     content = _first_text(job_data)
-    is_regen = job_data.get("metadata", {}).get("regenerated", False)
-    
+
     if not chat_id or not content:
         return
 
+    # NOTE: regeneration deletes the old trailing messages in the route
+    # (chats.py regenerate_reply) and then enqueues a fresh job, so both the
+    # normal and regenerated paths must insert a NEW CHAR message. The old
+    # alternates/swipe overwrite branch was removed — it overwrote the
+    # character message BEFORE the prompt because the old reply was already
+    # deleted, pushing regenerated output above the prompt.
     with Session(engine) as session:
         try:
-            _last_char = session.exec(
-                select(Message)
-                .where(Message.chat_id == chat_id, Message.role == MessageRole.CHAR)
-                .order_by(Message.created_at.desc())
-                .limit(1)
-            ).first()
-            _meta = _last_char.message_metadata or {} if _last_char else {}
-
-            if is_regen and _last_char:
-                _MAX_ALTERNATES = 10
-                alts: list[str] = _meta.get("alternates", [_last_char.content])
-                if _last_char.content not in alts:
-                    alts.insert(0, _last_char.content)
-                alts.append(content)
-                if len(alts) > _MAX_ALTERNATES:
-                    alts = alts[-_MAX_ALTERNATES:]
-                new_index = len(alts) - 1
-                _last_char.content = content
-                _last_char.message_metadata = {**_meta, "alternates": alts, "active_index": new_index}
-                from datetime import datetime, timezone as _tz
-                _last_char.updated_at = datetime.now(_tz.utc)
-                session.add(_last_char)
-                session.commit()
-            else:
-                msg = Message(role=MessageRole.CHAR, content=content, chat_id=chat_id)
-                session.add(msg)
-                session.commit()
+            msg = Message(role=MessageRole.CHAR, content=content, chat_id=chat_id)
+            session.add(msg)
+            session.commit()
         except Exception as e:
             session.rollback()
             logger.warning("chat_reply_insert_failed", job_id=job_data.get("id"), error=str(e))

@@ -229,8 +229,13 @@ export const useRegenerateReply = () => {
     return useMutation({
         mutationFn: ({ chatId, messageId }) =>
             api.post(`/api/v2/chats/${chatId}/regenerate`, messageId ? { message_id: messageId } : {}),
-        onSuccess: () => {
+        onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            // The backend already deleted the old reply; refetching messages
+            // hides it immediately while the new reply streams in.
+            if (variables?.chatId) {
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+            }
         }
     });
 };

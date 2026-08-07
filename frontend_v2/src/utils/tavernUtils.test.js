@@ -134,6 +134,39 @@ describe('parseTavernMessage', () => {
         expect(result).toHaveLength(1);
         expect(result[0].type).toBe('prose');
     });
+
+    it('collapses newlines inside speech', () => {
+        const result = parseTavernMessage('"About\ntime\n,"');
+        expect(result[0]).toEqual({ type: 'speech', content: 'About time,' });
+    });
+
+    it('strips stray asterisks from prose', () => {
+        const result = parseTavernMessage('of her * green bell collar, for real * this time.');
+        expect(result.length).toBeGreaterThan(0);
+        for (const seg of result) {
+            expect(seg.content).not.toContain('*');
+        }
+        expect(result.map((s) => s.type)).toEqual(['prose', 'action', 'prose']);
+        expect(result[1].content).toBe('green bell collar, for real');
+    });
+
+    it('parses **bold** as an action-style segment', () => {
+        const result = parseTavernMessage('**very important** "Got it."');
+        expect(result[0]).toEqual({ type: 'action', content: 'very important' });
+        expect(result[1]).toEqual({ type: 'speech', content: 'Got it.' });
+    });
+
+    it('keeps stray quotes as prose punctuation', () => {
+        const result = parseTavernMessage('He said "weird but fine');
+        expect(result[0].type).toBe('prose');
+        expect(result[0].content).toContain('"');
+    });
+
+    it('collapses whitespace in actions', () => {
+        const result = parseTavernMessage('*She paces the\nroom twice* "Sit down."');
+        expect(result[0]).toEqual({ type: 'action', content: 'She paces the room twice' });
+        expect(result[1]).toEqual({ type: 'speech', content: 'Sit down.' });
+    });
 });
 
 
