@@ -29,6 +29,13 @@ def _log(logger: logging.Logger | None, level: int, message: str) -> None:
         logger.log(level, message)
 
 
+def _normalize_server_url(server_address: str) -> str:
+    """Ensure a ComfyUI server address carries an explicit scheme."""
+    if not server_address.startswith("http://") and not server_address.startswith("https://"):
+        server_address = f"http://{server_address}"
+    return server_address
+
+
 async def _connect_with_retry(
     ws_url: str,
     *,
@@ -301,7 +308,7 @@ async def execute_comfy_workflow(
                 _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
                 try:
                     client = get_http_client()
-                    await client.post(f"http://{server_address}/interrupt", timeout=5.0)
+                    await client.post(f"{_normalize_server_url(server_address)}/interrupt", timeout=5.0)
                 except Exception as e:
                     _log(logger, logging.ERROR, f"Failed to send interrupt after connection closed: {e}")
 
@@ -372,7 +379,7 @@ async def execute_comfy_workflow(
         _log(logger, logging.INFO, "Workflow execution cancelled. Interrupting ComfyUI.")
         try:
             client = get_http_client()
-            await client.post(f"http://{server_address}/interrupt", timeout=5.0)
+            await client.post(f"{_normalize_server_url(server_address)}/interrupt", timeout=5.0)
         except Exception as e:
             _log(logger, logging.ERROR, f"Failed to send interrupt: {e}")
         raise

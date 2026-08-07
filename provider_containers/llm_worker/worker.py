@@ -1,5 +1,4 @@
 import os
-import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
@@ -12,7 +11,7 @@ logger = get_logger("provider_core.llm_worker")
 # Read environment configuration
 PROVIDER_ID = os.environ.get("PROVIDER_ID", "local-dev")
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
-ENGINE = os.environ.get("ENGINE", "openai_compat")
+ENGINE = os.environ.get("ENGINE", "openai_compat").lower()
 
 # Runtime config dict (the image_worker pattern)
 runtime_config = {

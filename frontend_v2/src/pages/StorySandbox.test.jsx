@@ -52,7 +52,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useCharacters: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),
     useLLMDefaultProvider: () => ({ data: null }),
-    useSetLLMDefaultProvider: () => ({ mutateAsync: vi.fn() }),
+    useStoryImages: () => ({ data: [] }),
 }));
 
 vi.mock('../api/websocket', () => ({
@@ -62,6 +62,12 @@ vi.mock('../api/websocket', () => ({
 
 vi.mock('../api', () => ({
     api: { put: vi.fn().mockResolvedValue({}) },
+}));
+vi.mock('../hooks/useCollections', () => ({
+    useCollections: () => ({ data: {} }),
+}));
+vi.mock('../api/collectionsApi', () => ({
+    addImagesToCollection: vi.fn(),
 }));
 
 vi.mock('react-hot-toast', () => ({

@@ -936,13 +936,19 @@ async def generate_scene(
             checkpoint = character.checkpoint
     
     system_prompt = (
-        "You are an AI scene director. Read the following recent roleplay chat context and "
-        "write a highly detailed ComfyUI prompt (comma-separated Danbooru tags, lighting, camera angle, subjects) "
-        "describing the current visual scene or the main character's action (e.g. a selfie). "
-        "Return ONLY the prompt text."
+        "You are an AI scene director for a roleplay chat. Read the following recent "
+        "roleplay chat context and create a visual depiction of the current scene or the "
+        "main character's action (e.g. a selfie).\n"
+        "Call the generate_image tool with a highly detailed ComfyUI image prompt "
+        "(comma-separated Danbooru tags: subject, pose, lighting, camera angle, style, "
+        "quality tags).\n"
+        "After the image is generated, reply with a brief in-character caption for the "
+        "image (1-2 sentences).\n"
+        "If you are unable to call tools, output ONLY the image prompt text."
     )
-    
+
     job_service = JobService(session)
+    from services.orchestrator_service import AGENTIC_TOOLS
     prompt_job = await job_service.create_job(
         task_type="llm",
         workflow={
@@ -951,11 +957,42 @@ async def generate_scene(
                 {"role": "user", "content": f"Context:\n{context_text}"}
             ],
             "model": chat.llm_model or _get_default_llm_model(),
+            "type": "chat_reply",
+            "tools": AGENTIC_TOOLS,
         },
-        metadata={"source": "scene_prompt", "chat_id": chat_id, "scene_checkpoint": checkpoint}
+        metadata={
+            "source": "scene_prompt",
+            "chat_id": chat_id,
+            "character_id": chat.character_id,
+            "scene_checkpoint": checkpoint,
+            "generator_checkpoint": checkpoint,
+            "agentic": True,
+            "orchestrator_depth": 0,
+            "workspace": "roleplay",
+        }
     )
     await queue_manager.enqueue(prompt_job.id, task_type="llm")
     
-    # Return immediately — the prompt LLM job will chain into the image job via orchestrator
-    # or the frontend can poll. We don't block the request here.
+    # The scene LLM job is agentic: it calls the generate_image tool (or, when
+    # the model cannot call tools, its plain-text output is chained into an
+    # image job by the scene_prompt finalize branch in job_processing.py).
     return {"job_id": prompt_job.id, "status": "queued", "message": "Scene generation started"}
+
+
+@router.get("/{chat_id}/images")
+def list_chat_images(chat_id: str, session: Session = Depends(get_session)):
+    """List all images attached to messages in this chat (workspace gallery)."""
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    rows = session.exec(
+        select(Message)
+        .where(Message.chat_id == chat_id, Message.image_path.is_not(None))
+        .order_by(Message.created_at.desc())
+    ).all()
+    return [
+        {"path": m.image_path, "created_at": m.created_at.isoformat() if m.created_at else None}
+        for m in rows
+        if m.image_path
+    ]

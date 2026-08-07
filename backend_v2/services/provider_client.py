@@ -133,10 +133,20 @@ async def call_llm_provider(
                                     }
                                 })
                             elif chunk_type == "completed":
+                                outputs = data.get("outputs", [])
+                                first_output = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
+                                cancelled = (
+                                    data.get("status") == "cancelled"
+                                    or bool(first_output.get("cancelled"))
+                                )
+                                if cancelled:
+                                    raise JobCancelledError(
+                                        data.get("message") or "Job cancelled by user"
+                                    )
                                 return {
                                     "status": "success",
                                     "type": "text",
-                                    "outputs": data.get("outputs", []),
+                                    "outputs": outputs,
                                     "chat_id": workflow.get("chat_id")
                                 }
                             elif data.get("status") == "error":

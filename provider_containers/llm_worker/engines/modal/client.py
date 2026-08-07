@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-import asyncio
 from typing import Dict, Any, Optional
 
 from fastapi.responses import StreamingResponse
@@ -117,7 +116,7 @@ class VLLMModalProviderClient(BaseProviderClient):
         from provider_core.deploy import start_deploy_task
         from provider_core.base_client import _DEPLOY_STATE
 
-        commands = [["modal", "deploy", "/app/modal_app.py"]]
+        commands = [["modal", "deploy", "/app/llm_worker/engines/modal/modal_app.py"]]
         start_deploy_task("Modal vLLM", commands)
         return _DEPLOY_STATE
 

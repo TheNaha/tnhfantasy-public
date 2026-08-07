@@ -4,11 +4,12 @@ import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, 
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
+import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
 import api from '../api/client';
 
 const CHARACTER_FIELDS = [
@@ -61,6 +62,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
     const uploadAvatarMutation = useUploadAvatar();
     const avatarInputRef = React.useRef(null);
     const [previewUrl, setPreviewUrl] = useState(null);
+    const runLLMJob = useLLMJobResult();
 
     const handleFileChange = async (e) => {
         const file = e.target.files?.[0];
@@ -204,8 +206,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         
         toast(`Generating ${fieldKey}...`, { icon: '🤖' });
         try {
-            const resJob = await api.post('/api/jobs', {
-                task_type: "llm",
+            const { text, cancelled } = await runLLMJob({
                 workflow: {
                     messages: [
                         { role: "system", content: sysPrompt },
@@ -213,32 +214,21 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                     ]
                 }
             });
-            
-            const pollJob = async (jobId) => {
-                for (let i = 0; i < 30; i++) {
-                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
-                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        try {
-                            const raw = jobStatus.outputs[0].content.trim();
-                            if (fieldKey === 'visual_tags') {
-                                const tags = raw.split(',').map(s => s.trim()).filter(Boolean);
-                                setForm(f => ({ ...f, visual_tags: [...new Set([...f.visual_tags, ...tags])] }));
-                            } else {
-                                setForm(f => ({ ...f, [fieldKey]: raw }));
-                            }
-                            toast.success(`Generated field!`);
-                        } catch {
-                            toast.error('Failed to parse AI output');
-                        }
-                        return;
-                    }
-                    if (jobStatus.status === 'failed') break;
-                    await new Promise(r => setTimeout(r, 1000));
+            if (cancelled || !text) {
+                if (!cancelled) toast.error('Generation failed');
+                return;
+            }
+            try {
+                const raw = text.trim();
+                if (fieldKey === 'visual_tags') {
+                    const tags = raw.split(',').map(s => s.trim()).filter(Boolean);
+                    setForm(f => ({ ...f, visual_tags: [...new Set([...f.visual_tags, ...tags])] }));
+                } else {
+                    setForm(f => ({ ...f, [fieldKey]: raw }));
                 }
-                toast.error('Generation failed');
-            };
-            if (resJob.id) {
-                pollJob(resJob.id);
+                toast.success('Generated field!');
+            } catch {
+                toast.error('Failed to parse AI output');
             }
         } catch {
             toast.error('Failed to generate profile');
@@ -260,60 +250,50 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         
         const tId = toast('Enriching profile... (This may take a minute)', { icon: '🤖' });
         try {
-            const resJob = await api.post('/api/jobs', {
-                task_type: "llm",
+            const { text, cancelled } = await runLLMJob({
                 workflow: {
                     messages: [
                         { role: "system", content: sysPrompt },
                         { role: "user", content: context }
                     ]
-                }
+                },
+                maxPolls: 180,
             });
-            
-            const pollJob = async (jobId) => {
-                for (let i = 0; i < 180; i++) {
-                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
-                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        toast.dismiss(tId);
-                        
-                        const raw = jobStatus.outputs[0].content.trim();
-                        console.log("LLM Raw Output:", raw);
-                        
-                        // Find JSON block
-                        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                        if (jsonMatch) {
-                            try {
-                                const parsed = JSON.parse(jsonMatch[0]);
-                                console.log("Parsed JSON:", parsed);
-                                setForm(f => ({
-                                    ...f,
-                                    description: parsed.description || f.description,
-                                    personality: parsed.personality || f.personality,
-                                    scenario: parsed.scenario || f.scenario,
-                                    first_mes: parsed.first_mes || f.first_mes,
-                                    mes_example: parsed.mes_example || f.mes_example,
-                                    default_time: parsed.default_time || f.default_time,
-                                    default_location: parsed.default_location || f.default_location
-                                }));
-                                toast.success('Profile Enriched!');
-                            } catch (e) {
-                                console.error("JSON parse failed:", e);
-                                toast.error('Failed to parse AI output');
-                            }
-                        } else {
-                            console.error("No JSON block found in output");
-                            toast.error('Failed to find JSON in AI output');
-                        }
-                        return;
-                    }
-                    if (jobStatus.status === 'failed') break;
-                    await new Promise(r => setTimeout(r, 1000));
-                }
-                toast.dismiss(tId);
+            if (cancelled) return;
+            toast.dismiss(tId);
+
+            if (!text) {
                 toast.error('Enrichment failed or timed out');
-            };
-            if (resJob.id) {
-                pollJob(resJob.id);
+                return;
+            }
+
+            const raw = text.trim();
+            console.log("LLM Raw Output:", raw);
+
+            // Find JSON block
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    console.log("Parsed JSON:", parsed);
+                    setForm(f => ({
+                        ...f,
+                        description: parsed.description || f.description,
+                        personality: parsed.personality || f.personality,
+                        scenario: parsed.scenario || f.scenario,
+                        first_mes: parsed.first_mes || f.first_mes,
+                        mes_example: parsed.mes_example || f.mes_example,
+                        default_time: parsed.default_time || f.default_time,
+                        default_location: parsed.default_location || f.default_location
+                    }));
+                    toast.success('Profile Enriched!');
+                } catch (e) {
+                    console.error("JSON parse failed:", e);
+                    toast.error('Failed to parse AI output');
+                }
+            } else {
+                console.error("No JSON block found in output");
+                toast.error('Failed to find JSON in AI output');
             }
         } catch (e) {
             console.error("Enrich profile error:", e);
@@ -615,11 +595,11 @@ export default function Characters() {
     const [searchQuery, setSearchQuery] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
-    const [deleteTarget, setDeleteTarget] = useState(null);
     const fileInputRef = useRef(null);
 
     const navigate = useNavigate();
     const setActiveChat = useWorldVaultStore(state => state.setActiveChat);
+    const { confirm } = useConfirmation();
 
     const { data: characters = [], isLoading } = useCharacters();
     const createCharacter = useCreateCharacter();
@@ -647,15 +627,20 @@ export default function Characters() {
         }
     };
 
-    const handleDelete = async () => {
-        if (!deleteTarget) return;
+    const handleDelete = async (char) => {
+        const ok = await confirm({
+            title: 'Delete Character',
+            message: `Are you sure you want to delete "${char.name}"? This cannot be undone.`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
-            await deleteCharacter.mutateAsync(deleteTarget.id);
-            toast.success(`"${deleteTarget.name}" deleted`);
+            await deleteCharacter.mutateAsync(char.id);
+            toast.success(`"${char.name}" deleted`);
         } catch {
             toast.error('Failed to delete character');
         }
-        setDeleteTarget(null);
     };
 
     const handleStartChat = async (character) => {
@@ -775,7 +760,7 @@ export default function Characters() {
                                 key={character.id}
                                 character={character}
                                 onEdit={openEdit}
-                                onDelete={setDeleteTarget}
+                                onDelete={handleDelete}
                                 onChat={handleStartChat}
                             />
                         ))}
@@ -792,16 +777,6 @@ export default function Characters() {
                 onSave={handleSave}
             />
 
-            {/* Delete Confirmation */}
-            <ConfirmationModal
-                isOpen={!!deleteTarget}
-                onClose={() => setDeleteTarget(null)}
-                onConfirm={handleDelete}
-                title="Delete Character"
-                message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
-                confirmText="Delete"
-                isDangerous
-            />
         </motion.div>
     );
 }

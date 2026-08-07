@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir \
     pydantic \
     requests \
     aiofiles \
-    tenacity
+    tenacity \
+    modal
 
 # Copy provider_core shared library
 COPY provider_core/ /app/provider_core/

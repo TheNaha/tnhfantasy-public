@@ -316,6 +316,27 @@ async def illustrate_chapter(
     return {"job_id": prompt_job.id, "status": "queued", "message": "Illustration prompt generation started"}
 
 
+@router.get("/{story_id}/images")
+def list_story_images(story_id: str, session: Session = Depends(get_session)):
+    """List all images across the story's chapters (workspace gallery)."""
+    story = session.get(Story, story_id)
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    chapters = session.exec(
+        select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.created_at)
+    ).all()
+    images = []
+    for chapter in chapters:
+        for path in (chapter.image_paths or []):
+            images.append({
+                "path": path,
+                "chapter_id": chapter.id,
+                "chapter_title": chapter.title,
+            })
+    return images
+
+
 def _build_image_workflow(prompt: str, checkpoint: str) -> dict:
     """Build a standard ComfyUI image workflow."""
     return {

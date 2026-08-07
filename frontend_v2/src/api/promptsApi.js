@@ -26,20 +26,6 @@ export async function getCategories() {
 }
 
 /**
- * Get favorite prompts
- */
-export async function getFavorites(limit = 20) {
-    return api.get(`${API_BASE}/favorites?limit=${limit}`);
-}
-
-/**
- * Get most used prompts
- */
-export async function getMostUsed(limit = 10) {
-    return api.get(`${API_BASE}/most-used?limit=${limit}`);
-}
-
-/**
  * Get a single prompt by ID
  */
 export async function getPrompt(id) {
@@ -91,8 +77,6 @@ export async function exportPrompts() {
 export default {
     listPrompts,
     getCategories,
-    getFavorites,
-    getMostUsed,
     getPrompt,
     createPrompt,
     updatePrompt,

@@ -3,7 +3,7 @@ Shared Pydantic models for provider workers.
 These models define the API contract for all provider worker endpoints.
 """
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -54,9 +54,14 @@ class UploadFileRequest(BaseModel):
 
 
 class ValidateModelsRequest(BaseModel):
-    """Request for validating models in a directory."""
-    directory: List[str]
+    """Request for validating models in one or more directories."""
+    directory: Union[str, List[str]]
     delete_invalid: bool = False
+
+    @property
+    def directories(self) -> List[str]:
+        """Normalized list of directories to validate."""
+        return [self.directory] if isinstance(self.directory, str) else self.directory
 
 
 class ReconcileRequest(BaseModel):
@@ -128,5 +133,7 @@ MODEL_DIRECTORIES = [
     "models/poses",
     "models/wildcards",
     "models/ultralytics/bbox",
+    "models/ultralytics/seg",
     "models/motion_modules",
+    "models/clip_vision",
 ]

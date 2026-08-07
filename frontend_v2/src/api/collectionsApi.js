@@ -63,13 +63,6 @@ export async function importCollections(collections) {
     return api.post(`${API_BASE}/import`, { collections });
 }
 
-/**
- * Export all collections
- */
-export async function exportCollections() {
-    return api.get(`${API_BASE}/export`);
-}
-
 export default {
     listCollections,
     getCollection,
@@ -78,6 +71,5 @@ export default {
     deleteCollection,
     addImagesToCollection,
     removeImagesFromCollection,
-    importCollections,
-    exportCollections
+    importCollections
 };

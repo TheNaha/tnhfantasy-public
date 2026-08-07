@@ -10,8 +10,8 @@ import modal
 
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
-    build_error_response, build_status_response, build_deploy_compatibility_response,
+    UploadFileRequest, ValidateModelsRequest,
+    build_error_response, build_status_response,
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
@@ -105,7 +105,7 @@ class ModalProviderClient(BaseProviderClient):
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
                                     task.cancel()
-                                    yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
+                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                     return
                                 continue
                             
@@ -119,7 +119,7 @@ class ModalProviderClient(BaseProviderClient):
 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 task.cancel()
-                                yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
+                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                 return
 
                             # Backwards compatibility for old Modal deployments
@@ -144,11 +144,12 @@ class ModalProviderClient(BaseProviderClient):
                         await self.job_tracker.end_job(job_id)
             
             return StreamingResponse(generate(), media_type="application/x-ndjson")
-        except Exception as e:
+        except Exception as exc:
+            error_message = f"Internal error: {exc}"
             if job_id:
                 await self.job_tracker.end_job(job_id)
             async def stream_err():
-                yield json.dumps(build_error_response(f"Internal error: {e}", retryable=False, code=500)) + "\n"
+                yield json.dumps(build_error_response(error_message, retryable=False, code=500)) + "\n"
             return StreamingResponse(stream_err(), status_code=500, media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
@@ -200,7 +201,7 @@ class ModalProviderClient(BaseProviderClient):
         from provider_core.deploy import start_deploy_task
         from provider_core.base_client import _DEPLOY_STATE
 
-        commands = [["modal", "deploy", "/app/modal_app.py"]]
+        commands = [["modal", "deploy", "/app/image_worker/engines/modal/modal_app.py"]]
         self._deploy_task = start_deploy_task("Modal", commands)
         return _DEPLOY_STATE
 

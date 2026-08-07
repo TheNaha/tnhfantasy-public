@@ -8,7 +8,7 @@ function buildUrl(filename) {
     return `/api/view/output/${filename}`;
 }
 
-export default function SceneGallery({ title, images, compact }) {
+export default function SceneGallery({ title, images, compact, lightboxAction }) {
     const [selectedIdx, setSelectedIdx] = useState(null);
 
     if (!images || images.length === 0) {
@@ -47,9 +47,16 @@ export default function SceneGallery({ title, images, compact }) {
                 <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedIdx(null)}>
                     <div className="flex items-center justify-between w-full absolute top-0 left-0 right-0 px-4 py-3">
                         <span className="text-xs text-gray-400">{title || 'Scenes'}</span>
-                        <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setSelectedIdx(null)}>
-                            <X size={18} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {lightboxAction && (
+                                <span onClick={(e) => e.stopPropagation()}>
+                                    {lightboxAction(images[selectedIdx], selectedIdx)}
+                                </span>
+                            )}
+                            <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setSelectedIdx(null)}>
+                                <X size={18} />
+                            </button>
+                        </div>
                     </div>
                     <button
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors mr-2"

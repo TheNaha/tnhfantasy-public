@@ -1,8 +1,8 @@
 # Job Service - Business logic for job management
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.dtos import JobQueueItem
 from core.entities import Job, JobStatus
@@ -237,39 +237,36 @@ class JobService:
         Returns:
             Dict with 'by_status', 'total', 'avg_durations' keys
         """
-        from sqlalchemy import text
+        cutoff = datetime.utcnow() - timedelta(days=days)
         
-        result = self.session.exec(text("""
-            SELECT 
-                status,
-                COUNT(*) as count,
-                AVG(
-                    CASE 
-                        WHEN completed_at IS NOT NULL AND started_at IS NOT NULL 
-                        THEN (julianday(completed_at) - julianday(started_at)) * 86400 
-                        ELSE NULL 
-                    END
-                ) as avg_duration_seconds
-            FROM jobs
-            WHERE created_at > datetime('now', :days_ago)
-            GROUP BY status
-        """).bindparams(days_ago=f'-{days} days')).all()
+        rows = self.session.exec(
+            select(Job.status, Job.started_at, Job.completed_at)
+            .where(Job.created_at > cutoff)
+        ).all()
         
-        stats = {
-            'by_status': {},
-            'total': 0,
-            'avg_durations': {},
-            'period_days': days
+        by_status: dict[str, int] = {}
+        durations: dict[str, list[float]] = {}
+        
+        for status, started_at, completed_at in rows:
+            status_str = status.value if hasattr(status, 'value') else status
+            by_status[status_str] = by_status.get(status_str, 0) + 1
+            if started_at and completed_at:
+                durations.setdefault(status_str, []).append(
+                    (completed_at - started_at).total_seconds()
+                )
+        
+        avg_durations = {
+            status: round(sum(durs) / len(durs), 2)
+            for status, durs in durations.items()
+            if durs
         }
         
-        for row in result:
-            status, count, avg_duration = row
-            stats['by_status'][status] = count
-            stats['total'] += count
-            if avg_duration is not None:
-                stats['avg_durations'][status] = round(avg_duration, 2)
-        
-        return stats
+        return {
+            'by_status': by_status,
+            'total': sum(by_status.values()),
+            'avg_durations': avg_durations,
+            'period_days': days
+        }
     
     def _job_to_dict(self, job: Job) -> dict[str, Any]:
         """Convert job to dictionary for API responses."""

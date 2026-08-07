@@ -61,6 +61,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useRegenerateReply: () => ({ mutateAsync: vi.fn() }),
     useChatJobs: () => ({ data: [] }),
     useCharacterCollection: () => ({ data: { images: [], image_count: 0 } }),
+    useChatImages: () => ({ data: [] }),
     usePatchCharacter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useImpersonateMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
     usePinMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
@@ -69,10 +70,15 @@ vi.mock('../hooks/useWorldVault', () => ({
 }));
 
 vi.mock('../api', () => ({
-    worldVaultApi: {
-        chats: { sendMessage: vi.fn(), update: vi.fn() },
-        upload: { chatAttachment: vi.fn() },
+    filesApi: {
+        uploadChatAttachment: vi.fn(),
     },
+}));
+vi.mock('../hooks/useCollections', () => ({
+    useCollections: () => ({ data: {} }),
+}));
+vi.mock('../api/collectionsApi', () => ({
+    addImagesToCollection: vi.fn(),
 }));
 
 vi.mock('../api/websocket', () => ({

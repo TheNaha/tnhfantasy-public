@@ -8,9 +8,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
-const LLM_PROVIDERS_KEY = ['llm', 'providers'];
-const LLM_MODELS_KEY = ['llm', 'available-models'];
-const LLM_DEFAULT_KEY = ['llm', 'default-provider'];
+export const LLM_PROVIDERS_KEY = ['llm', 'providers'];
+export const LLM_MODELS_KEY = ['llm', 'available-models'];
+export const LLM_DEFAULT_KEY = ['llm', 'default-provider'];
 
 /** Fetch all registered LLM providers with is_default flag. */
 async function fetchLLMProviders() {

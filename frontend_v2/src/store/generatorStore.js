@@ -132,7 +132,7 @@ export const useGeneratorStore = create(
             },
             controlnets: [],
             ipAdapters: [],
-            preflightResult: null,
+            preflightTick: 0,
 
             // Models
             selectedCheckpoint: null,
@@ -196,30 +196,29 @@ export const useGeneratorStore = create(
                     [paramName]: !state.lockedParams[paramName]
                 }
             })),
-            setPreflightResult: (result) => set({ preflightResult: result }),
-            setPrompt: (prompt) => set({ prompt, preflightResult: null }),
-            setNegativePrompt: (negativePrompt) => set({ negativePrompt, preflightResult: null }),
-            setSeed: (seed) => set({ seed, preflightResult: null }),
-            setSteps: (steps) => set({ steps, preflightResult: null }),
-            setCfg: (cfg) => set({ cfg, preflightResult: null }),
-            setSampler: (sampler) => set({ sampler, preflightResult: null }),
-            setScheduler: (scheduler) => set({ scheduler, preflightResult: null }),
-            setClipSkip: (clipSkip) => set({ clipSkip, preflightResult: null }),
-            setEnableFreeU: (enableFreeU) => set({ enableFreeU, preflightResult: null }),
-            setEnablePAG: (enablePAG) => set({ enablePAG, preflightResult: null }),
-            setPagScale: (pagScale) => set({ pagScale, preflightResult: null }),
-            setEnableLatentUpscale: (enableLatentUpscale) => set({ enableLatentUpscale, preflightResult: null }),
-            setLatentUpscaleMultiplier: (latentUpscaleMultiplier) => set({ latentUpscaleMultiplier, preflightResult: null }),
-            setWidth: (width) => set({ width, preflightResult: null }),
-            setHeight: (height) => set({ height, preflightResult: null }),
-            setBatchSize: (batchSize) => set({ batchSize, preflightResult: null }),
-            setAspectRatioLocked: (aspectRatioLocked) => set({ aspectRatioLocked, preflightResult: null }),
-            setAutoApplyModelSettings: (autoApplyModelSettings) => set({ autoApplyModelSettings, preflightResult: null }),
+            setPrompt: (prompt) => set((state) => ({ prompt, preflightTick: state.preflightTick + 1 })),
+            setNegativePrompt: (negativePrompt) => set((state) => ({ negativePrompt, preflightTick: state.preflightTick + 1 })),
+            setSeed: (seed) => set((state) => ({ seed, preflightTick: state.preflightTick + 1 })),
+            setSteps: (steps) => set((state) => ({ steps, preflightTick: state.preflightTick + 1 })),
+            setCfg: (cfg) => set((state) => ({ cfg, preflightTick: state.preflightTick + 1 })),
+            setSampler: (sampler) => set((state) => ({ sampler, preflightTick: state.preflightTick + 1 })),
+            setScheduler: (scheduler) => set((state) => ({ scheduler, preflightTick: state.preflightTick + 1 })),
+            setClipSkip: (clipSkip) => set((state) => ({ clipSkip, preflightTick: state.preflightTick + 1 })),
+            setEnableFreeU: (enableFreeU) => set((state) => ({ enableFreeU, preflightTick: state.preflightTick + 1 })),
+            setEnablePAG: (enablePAG) => set((state) => ({ enablePAG, preflightTick: state.preflightTick + 1 })),
+            setPagScale: (pagScale) => set((state) => ({ pagScale, preflightTick: state.preflightTick + 1 })),
+            setEnableLatentUpscale: (enableLatentUpscale) => set((state) => ({ enableLatentUpscale, preflightTick: state.preflightTick + 1 })),
+            setLatentUpscaleMultiplier: (latentUpscaleMultiplier) => set((state) => ({ latentUpscaleMultiplier, preflightTick: state.preflightTick + 1 })),
+            setWidth: (width) => set((state) => ({ width, preflightTick: state.preflightTick + 1 })),
+            setHeight: (height) => set((state) => ({ height, preflightTick: state.preflightTick + 1 })),
+            setBatchSize: (batchSize) => set((state) => ({ batchSize, preflightTick: state.preflightTick + 1 })),
+            setAspectRatioLocked: (aspectRatioLocked) => set((state) => ({ aspectRatioLocked, preflightTick: state.preflightTick + 1 })),
+            setAutoApplyModelSettings: (autoApplyModelSettings) => set((state) => ({ autoApplyModelSettings, preflightTick: state.preflightTick + 1 })),
 
             // Enhanced checkpoint selection with auto-apply
             setSelectedCheckpoint: (checkpoint) => {
                 const state = get();
-                const newState = { selectedCheckpoint: checkpoint, preflightResult: null };
+                const newState = { selectedCheckpoint: checkpoint, preflightTick: state.preflightTick + 1 };
 
                 // Auto-apply settings if enabled and checkpoint has metadata
                 if (state.autoApplyModelSettings && checkpoint) {
@@ -241,11 +240,11 @@ export const useGeneratorStore = create(
                 set(newState);
             },
 
-            setSelectedVae: (selectedVae) => set({ selectedVae, preflightResult: null }),
-            setSelectedClip: (selectedClip) => set({ selectedClip, preflightResult: null }),
-            setSelectedClip2: (selectedClip2) => set({ selectedClip2, preflightResult: null }),
-            setSelectedLoras: (selectedLoras) => set({ selectedLoras, preflightResult: null }),
-            setControlnets: (controlnets) => set({ controlnets, preflightResult: null }),
+            setSelectedVae: (selectedVae) => set((state) => ({ selectedVae, preflightTick: state.preflightTick + 1 })),
+            setSelectedClip: (selectedClip) => set((state) => ({ selectedClip, preflightTick: state.preflightTick + 1 })),
+            setSelectedClip2: (selectedClip2) => set((state) => ({ selectedClip2, preflightTick: state.preflightTick + 1 })),
+            setSelectedLoras: (selectedLoras) => set((state) => ({ selectedLoras, preflightTick: state.preflightTick + 1 })),
+            setControlnets: (controlnets) => set((state) => ({ controlnets, preflightTick: state.preflightTick + 1 })),
 
             setHiresFix: (hiresFix) => set({ hiresFix }),
             setHiresUpscaler: (hiresUpscaler) => set({ hiresUpscaler }),
@@ -282,13 +281,13 @@ export const useGeneratorStore = create(
             randomizeSeed: () => set({ seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) }),
 
             addLora: () => set((state) => ({
-                selectedLoras: [...state.selectedLoras, { name: "", strength: 1.0 }], preflightResult: null
+                selectedLoras: [...state.selectedLoras, { name: "", strength: 1.0 }], preflightTick: state.preflightTick + 1
             })),
 
             removeLora: (index) => set((state) => {
                 const newLoras = [...state.selectedLoras];
                 newLoras.splice(index, 1);
-                return { selectedLoras: newLoras, preflightResult: null };
+                return { selectedLoras: newLoras, preflightTick: state.preflightTick + 1 };
             }),
 
             updateLora: (index, field, value) => set((state) => {
@@ -304,7 +303,7 @@ export const useGeneratorStore = create(
                 } else {
                     newLoras[index][field] = value;
                 }
-                return { selectedLoras: newLoras, preflightResult: null };
+                return { selectedLoras: newLoras, preflightTick: state.preflightTick + 1 };
             }),
 
             addControlNet: (defaultModelName) => set((state) => ({
@@ -319,19 +318,19 @@ export const useGeneratorStore = create(
 
             updateControlNet: (index, field, value) => set((state) => ({
                 controlnets: state.controlnets.map((cn, i) => i === index ? { ...cn, [field]: value } : cn),
-                preflightResult: null
+                preflightTick: state.preflightTick + 1
             })),
             addIpAdapter: () => set((state) => ({ 
                 ipAdapters: [...state.ipAdapters, { image: null, model: '', clipVision: '', weight: 1.0, stopAt: 1.0 }],
-                preflightResult: null
+                preflightTick: state.preflightTick + 1
             })),
             removeIpAdapter: (index) => set((state) => ({ 
                 ipAdapters: state.ipAdapters.filter((_, i) => i !== index),
-                preflightResult: null
+                preflightTick: state.preflightTick + 1
             })),
             updateIpAdapter: (index, field, value) => set((state) => ({
                 ipAdapters: state.ipAdapters.map((ip, i) => i === index ? { ...ip, [field]: value } : ip),
-                preflightResult: null
+                preflightTick: state.preflightTick + 1
             })),
 
             addTriggerWords: (words) => set((state) => {
@@ -359,7 +358,7 @@ export const useGeneratorStore = create(
             name: 'generator-storage', // name of the item in the storage (must be unique)
             partialize: (state) => {
                 // eslint-disable-next-line no-unused-vars
-                const { sourceImage, maskImage, preflightResult, ...rest } = state;
+                const { sourceImage, maskImage, preflightTick, ...rest } = state;
                 return rest;
             }
         }

@@ -556,7 +556,43 @@ async def _finalize_llm_job(
                     except Exception as e:
                         logger.error("agentic_parent_finalize_failed", job_id=job.id, error=str(e))
                     return
-            
+
+        # Scene generation fallback: the LLM returned plain prompt text instead
+        # of a tool call (model without tool-calling support). Chain the text
+        # directly into an image job instead of persisting it as a chat reply.
+        is_scene_prompt = (
+            isinstance(job.metadata_, dict)
+            and job.metadata_.get("source") == "scene_prompt"
+        )
+        if is_scene_prompt and not assistant_output.get("tool_calls"):
+            scene_checkpoint = (
+                job.metadata_.get("scene_checkpoint")
+                or job.metadata_.get("generator_checkpoint")
+                or "sd_xl_base_1.0.safetensors"
+            )
+            await finalize_persisted_job_outputs(
+                job_service=job_service,
+                job_id=job_id,
+                outputs=outputs,
+                provider_id=provider_id,
+                load_balancer=load_balancer,
+                process_image_background_fn=None,
+                event_extra={
+                    "type": "scene_prompt",
+                    "chat_id": entity_id,
+                    "character_id": job.metadata_.get("character_id"),
+                    "prompt": assistant_content,
+                    "checkpoint": scene_checkpoint,
+                    "metadata": {
+                        "chat_id": entity_id,
+                        "character_id": job.metadata_.get("character_id"),
+                        "type": "scene_prompt",
+                        "source": "scene_prompt",
+                    },
+                },
+            )
+            return
+
         event_type_str = "chat_reply" if is_chat_reply else "story_continue"
         if is_chat_reply:
             event_extra = {

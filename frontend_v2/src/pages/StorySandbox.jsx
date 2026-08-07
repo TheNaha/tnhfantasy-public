@@ -4,13 +4,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
+import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import EmptyState from '../components/EmptyState';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
+import { useCollections } from '../hooks/useCollections';
+import { addImagesToCollection } from '../api/collectionsApi';
+import SceneGallery from '../components/SceneGallery';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -171,6 +175,9 @@ export default function StorySandbox() {
     const { data: activeStory } = useStory(activeStoryId);
     const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [] } = useLorebooks();
+    const { data: storyImages = [] } = useStoryImages(activeStoryId);
+    const { data: collectionsMap = {} } = useCollections();
+    const collectionsList = Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const createStory = useCreateStory();
     const createChapter = useCreateChapter();
@@ -187,10 +194,10 @@ export default function StorySandbox() {
     const isStreamingRef = useRef(false);
     useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
-    const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
     const [isIllustrating, setIsIllustrating] = useState(false);
+    const [showGallery, setShowGallery] = useState(false);
     const [isPreviewMode, setIsPreviewMode] = useState(false);
     const [mobileTab, setMobileTab] = useState('write'); // 'stories' | 'chapters' | 'write' | 'context'
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
@@ -209,6 +216,8 @@ export default function StorySandbox() {
     const updateStory = useUpdateStory();
 
     const { subscribe } = useWebSocket();
+    const runLLMJob = useLLMJobResult();
+    const { confirm } = useConfirmation();
 
     const activeChapter = chapters?.find(ch => ch.id === activeChapterId);
 
@@ -281,6 +290,7 @@ export default function StorySandbox() {
                 if (eventType === 'image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'story', 'images', activeStoryId] });
                     toast.success('Illustration complete');
                 } else {
                     // Capture the final streamed content from the ref (always current)
@@ -400,45 +410,28 @@ export default function StorySandbox() {
         setIsGeneratingTitle(true);
         toast('Generating title...', { icon: '🤖' });
         try {
-            const resJob = await api.post('/api/jobs', {
-                task_type: "llm",
+            const { text, cancelled } = await runLLMJob({
                 workflow: {
                     model: defaultLlmConfig?.model_id || null,
                     messages: [
                         { role: "system", content: "You are an expert author. Analyze the following story chapter and generate a short, catchy title (max 5 words). Output ONLY the title, no quotes or prefix." },
                         { role: "user", content: editorContent.substring(0, 2000) || "A new beginning." }
                     ]
-                }
+                },
+                isCancelled: () => titlePollCancelledRef.current,
             });
-            toast.success('Title generation started...');
-            const pollJob = async (jobId) => {
-                for (let i = 0; i < 30; i++) {
-                    if (titlePollCancelledRef.current) {
-                        setIsGeneratingTitle(false);
-                        return;
-                    }
-                    const jobStatus = await api.get(`/api/jobs/${jobId}`);
-                    if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
-                        const newTitle = jobStatus.outputs[0].content.replace(/["']/g, '');
-                        await api.put(`/api/v2/stories/${activeStoryId}/chapters/${activeChapterId}`, { title: newTitle });
-                        queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                        toast.success('Title generated!');
-                        setIsGeneratingTitle(false);
-                        return;
-                    }
-                    if (jobStatus.status === 'failed') break;
-                    await new Promise(r => setTimeout(r, 1000));
-                }
+            if (cancelled) return;
+            if (!text) {
                 toast.error('Title generation failed');
-                setIsGeneratingTitle(false);
-            };
-            if (resJob.id) {
-                pollJob(resJob.id);
-            } else {
-                setIsGeneratingTitle(false);
+                return;
             }
+            const newTitle = text.replace(/["']/g, '');
+            await api.put(`/api/v2/stories/${activeStoryId}/chapters/${activeChapterId}`, { title: newTitle });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            toast.success('Title generated!');
         } catch {
             toast.error('Failed to generate title');
+        } finally {
             setIsGeneratingTitle(false);
         }
     };
@@ -473,15 +466,17 @@ export default function StorySandbox() {
     };
 
     const handleDeleteStory = async (story) => {
-        setDeleteConfirm(story);
-    };
-
-    const confirmDeleteStory = async () => {
-        if (!deleteConfirm) return;
+        const ok = await confirm({
+            title: 'Delete Story',
+            message: `Are you sure you want to delete "${story.title}"? All chapters will be lost.`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
-            await deleteStory.mutateAsync(deleteConfirm.id);
-            if (activeStoryId === deleteConfirm.id) {
-                const remaining = stories.filter(s => s.id !== deleteConfirm.id);
+            await deleteStory.mutateAsync(story.id);
+            if (activeStoryId === story.id) {
+                const remaining = stories.filter(s => s.id !== story.id);
                 if (remaining.length > 0) {
                     navigate(`/story/${remaining[0].id}`);
                 } else {
@@ -492,7 +487,6 @@ export default function StorySandbox() {
         } catch {
             toast.error('Failed to delete story');
         }
-        setDeleteConfirm(null);
     };
 
     const handleDeleteChapter = async (chapterId) => {
@@ -559,6 +553,17 @@ export default function StorySandbox() {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
         } catch { /* silent */ }
     };
+
+    const handleSaveImageToCollection = useCallback(async (collectionId, path) => {
+        if (!collectionId || !path) return;
+        try {
+            await addImagesToCollection(collectionId, [path]);
+            queryClient.invalidateQueries({ queryKey: ['collections'] });
+            toast.success('Image saved to collection');
+        } catch {
+            toast.error('Failed to save image');
+        }
+    }, [queryClient]);
 
     return (
         <motion.div
@@ -856,9 +861,17 @@ export default function StorySandbox() {
                             </div>
 
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <ImageIcon size={14} /> Chapter Images
-                                </h4>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                        <ImageIcon size={14} /> Chapter Images
+                                    </h4>
+                                    <button
+                                        onClick={() => setShowGallery(true)}
+                                        className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                                    >
+                                        View all ({storyImages.length})
+                                    </button>
+                                </div>
                                 {activeChapter?.image_paths?.length > 0 ? (
                                     <div className="space-y-2">
                                         {activeChapter.image_paths.map((path, idx) => (
@@ -912,17 +925,6 @@ export default function StorySandbox() {
                 )}
             </AnimatePresence>
 
-            <ConfirmationModal
-                isOpen={!!deleteConfirm}
-                onClose={() => setDeleteConfirm(null)}
-                onConfirm={confirmDeleteStory}
-                title="Delete Story"
-                message={`Are you sure you want to delete "${deleteConfirm?.title}"? All chapters will be lost.`}
-                confirmText="Delete"
-                isDangerous
-            />
-
-
             {/* Illustrate Prompt Modal */}
             <AnimatePresence>
                 {showIllustrateModal && (
@@ -968,6 +970,61 @@ export default function StorySandbox() {
                                     <ImageIcon size={14} />
                                     Generate
                                 </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Story Gallery Modal */}
+            <AnimatePresence>
+                {showGallery && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+                        onClick={() => setShowGallery(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="bg-gray-900 border border-white/10 rounded-3xl shadow-2xl w-full max-w-5xl flex flex-col h-[85vh] overflow-hidden"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
+                                <h3 className="font-bold text-gray-100 flex items-center gap-2">
+                                    <ImageIcon size={16} className="text-indigo-400" />
+                                    {activeStory?.title || 'Story'} Gallery
+                                </h3>
+                                <button onClick={() => setShowGallery(false)} className="p-2 text-gray-500 hover:text-white rounded-xl hover:bg-white/5 transition-colors">
+                                    <X size={18} />
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                                <SceneGallery
+                                    title={`${activeStory?.title || 'Story'} gallery`}
+                                    images={storyImages.map(img => img.path)}
+                                    lightboxAction={(path) => (
+                                        <select
+                                            value=""
+                                            onChange={(e) => {
+                                                if (e.target.value) {
+                                                    handleSaveImageToCollection(e.target.value, path);
+                                                    e.target.value = '';
+                                                }
+                                            }}
+                                            className="bg-gray-800 border border-white/10 rounded-lg text-xs text-gray-200 px-2 py-1.5 cursor-pointer hover:border-indigo-500/40 transition-colors"
+                                            title="Save to collection"
+                                        >
+                                            <option value="">Save to…</option>
+                                            {collectionsList.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                />
                             </div>
                         </motion.div>
                     </motion.div>

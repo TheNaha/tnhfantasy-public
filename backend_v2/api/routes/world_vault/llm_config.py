@@ -12,7 +12,7 @@ from services.provider_runtime import resolve_provider_runtime
 
 router = APIRouter()
 
-CONFIG_PATH = "/data/llm_config.json"
+CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "llm_config.json")
 
 class DefaultProviderResponse(BaseModel):
     provider_id: str

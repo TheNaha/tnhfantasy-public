@@ -151,6 +151,56 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
         logger.error("illustrate_chain_failed", job_id=job_data.get("id"), error=str(e), exc_info=True)
 
 
+async def _handle_scene_prompt(job_data: dict[str, Any]):
+    """Chain a chat scene prompt into an image job (non-agentic fallback path)."""
+    from services.orchestrator_service import _available_checkpoint, _build_default_image_workflow
+
+    prompt = _first_text(job_data)
+    metadata = job_data.get("metadata", {})
+    chat_id = metadata.get("chat_id")
+    character_id = metadata.get("character_id")
+    checkpoint = (
+        metadata.get("scene_checkpoint")
+        or metadata.get("checkpoint")
+        or "sd_xl_base_1.0.safetensors"
+    )
+
+    if not prompt or not chat_id:
+        return
+
+    logger.info(
+        "scene_prompt_chaining",
+        job_id=job_data.get("id"),
+        chat_id=chat_id,
+        prompt_preview=prompt[:80],
+    )
+    try:
+        with Session(engine) as session:
+            resolved_ckpt = _available_checkpoint(session, checkpoint)
+            if not resolved_ckpt:
+                logger.error("scene_prompt_no_checkpoint", chat_id=chat_id)
+                return
+            workflow = _build_default_image_workflow(
+                prompt,
+                "worst quality, low quality, bad anatomy, bad hands, missing fingers",
+                checkpoint=resolved_ckpt,
+            )
+            img_job = await JobService(session).create_job(
+                task_type="image",
+                workflow=workflow,
+                metadata={
+                    "chat_id": chat_id,
+                    "character_id": character_id,
+                    "prompt": prompt,
+                    "source": "scene_illustrate",
+                },
+            )
+            await queue_manager.enqueue(img_job.id, task_type="image")
+            logger.info("scene_image_job_queued", job_id=img_job.id, chat_id=chat_id)
+    except Exception as e:
+        logger.error("scene_chain_failed", job_id=job_data.get("id"), error=str(e), exc_info=True)
+
+
 async def _handle_narrator(job_data: dict[str, Any]):
     chat_id = job_data.get("metadata", {}).get("chat_id")
     content = _first_text(job_data)
@@ -319,6 +369,8 @@ async def start_world_integration_service():
                 await _handle_impersonation(job_data)
             elif event_type == "story_illustrate_prompt":
                 await _handle_story_illustrate(job_data)
+            elif event_type == "scene_prompt":
+                await _handle_scene_prompt(job_data)
             elif event_type == "narrator":
                 await _handle_narrator(job_data)
             elif event_type == "chat_reply":

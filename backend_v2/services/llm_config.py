@@ -4,7 +4,7 @@ import json
 import os
 
 
-_CONFIG_PATH = "/data/llm_config.json"
+_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", "/data"), "llm_config.json")
 
 
 def get_default_llm_model() -> str:

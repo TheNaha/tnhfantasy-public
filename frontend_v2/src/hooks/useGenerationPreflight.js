@@ -1,6 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { jobsApi } from '../api';
 import { useGeneratorStore } from '../store/generatorStore';
+
+const PREFLIGHT_KEY = ['jobs', 'validate'];
 
 function countModelEntries(modelGroups = {}) {
     return Object.values(modelGroups).reduce((total, filenames) => (
@@ -9,16 +12,28 @@ function countModelEntries(modelGroups = {}) {
 }
 
 export function useGenerationPreflight() {
+    const queryClient = useQueryClient();
     const [isChecking, setIsChecking] = useState(false);
-    const validationResult = useGeneratorStore(state => state.preflightResult);
-    const setValidationResult = useGeneratorStore(state => state.setPreflightResult);
     const [isMissingModelsOpen, setIsMissingModelsOpen] = useState(false);
+    const preflightTick = useGeneratorStore(state => state.preflightTick);
+
+    const { data: validationResult = null } = useQuery({
+        queryKey: PREFLIGHT_KEY,
+        queryFn: () => null,
+        enabled: false,
+    });
+
+    // Any generation form change invalidates the previous preflight
+    // (mirrors the old `preflightResult: null` resets in generatorStore).
+    useEffect(() => {
+        queryClient.setQueryData(PREFLIGHT_KEY, null);
+    }, [queryClient, preflightTick]);
 
     const validateWorkflow = useCallback(async (workflow, preferredProviderId = null) => {
         setIsChecking(true);
         try {
             const result = await jobsApi.validate(workflow, preferredProviderId);
-            setValidationResult(result);
+            queryClient.setQueryData(PREFLIGHT_KEY, result);
             if (!result.valid) {
                 setIsMissingModelsOpen(true);
             }
@@ -26,8 +41,7 @@ export function useGenerationPreflight() {
         } finally {
             setIsChecking(false);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [queryClient]);
 
     const runWithPreflight = useCallback(async (
         workflow,

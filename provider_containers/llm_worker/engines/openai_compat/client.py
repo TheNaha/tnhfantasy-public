@@ -69,7 +69,7 @@ class OpenAICompatProviderClient(BaseProviderClient):
                 workflow = request.workflow
                 messages = workflow.get("messages", [])
                 tools = workflow.get("tools")
-                model_id = workflow.get("model") or job_id or "default-model"
+                model_id = workflow.get("model") or os.environ.get("LLM_MODEL", "default-model")
 
                 payload = {
                     "model": model_id,

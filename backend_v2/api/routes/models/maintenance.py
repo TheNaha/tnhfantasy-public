@@ -193,9 +193,9 @@ async def run_background_resync():
     """Run a full metadata resync for all eligible models."""
     from api.deps import get_model_repo_v2
     from core.exceptions import ComfyError
-    repo = get_model_repo_v2(bg_session)
     
     async with get_session_context() as bg_session:
+        repo = get_model_repo_v2(bg_session)
         models = repo.get_models_for_resync()
         
         if not models:

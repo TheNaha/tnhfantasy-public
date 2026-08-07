@@ -63,30 +63,11 @@ export const providersApi = {
     reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true`),
     quickSync: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true&quick_sync=true`),
 
-    /** Get canonical status-card payloads for all providers. */
-    getStatusCards: () => api.get('/api/providers/status-cards'),
-
-    /** Get canonical status-card payload for one provider. */
-    getStatusCard: (providerId) => api.get(`/api/providers/${providerId}/status-card`),
-
-    // -------------------------------------------------------------------------
-    // Model reconciliation & status
-    // -------------------------------------------------------------------------
-
-    /** Read current model reconciliation status for a provider. */
-    getReconciliationStatus: (providerId) => api.get(`/api/providers/${providerId}/reconciliation-status`),
-
     /** Clear persisted provider model sync status to force a clean reconciliation pass. */
     resetModelStatus: (providerId) => api.delete(`/api/v2/models/providers/${providerId}/reset-status`),
 
     /** Clean orphaned provider state and stale downloading entries. */
     cleanupState: () => api.post('/api/providers/state/cleanup'),
-
-    /**
-     * Refresh storage stats for a single provider.
-     * @param {string} providerId
-     */
-    getProviderStats: (providerId) => api.get(`/api/providers/${providerId}/modal-stats`),
 
     // -------------------------------------------------------------------------
     // Modal-specific operations
@@ -103,9 +84,6 @@ export const providersApi = {
      * Beam runs three deploy steps: comfy_gpu, comfy_storage, and comfy_download.
      */
     deploy: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
-
-    /** Poll the deploy status explicitly. */
-    getDeployStatus: (providerId) => api.get(`/api/providers/${providerId}/deploy-status`),
 
     /**
      * Run initial Modal setup (create volumes, upload base files, etc.).

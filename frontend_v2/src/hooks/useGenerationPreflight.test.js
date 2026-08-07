@@ -1,4 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../api', () => ({
@@ -6,6 +8,13 @@ vi.mock('../api', () => ({
         validate: vi.fn(),
     },
 }));
+
+function renderWithClient(ui) {
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }) =>
+        createElement(QueryClientProvider, { client: queryClient }, children);
+    return renderHook(ui, { wrapper });
+}
 
 describe('useGenerationPreflight', () => {
     let jobsApi;
@@ -34,7 +43,7 @@ describe('useGenerationPreflight', () => {
 
         jobsApi.validate.mockResolvedValue(validationResult);
 
-        const { result } = renderHook(() => useGenerationPreflight());
+        const { result } = renderWithClient(() => useGenerationPreflight());
 
         let submission;
         await act(async () => {
@@ -70,7 +79,7 @@ describe('useGenerationPreflight', () => {
 
         jobsApi.validate.mockResolvedValue(validationResult);
 
-        const { result } = renderHook(() => useGenerationPreflight());
+        const { result } = renderWithClient(() => useGenerationPreflight());
 
         await act(async () => {
             result.current.setIsMissingModelsOpen(true);

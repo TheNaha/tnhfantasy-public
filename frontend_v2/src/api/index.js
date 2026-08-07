@@ -19,4 +19,3 @@ export { default as providersApi } from './providers';
 export { default as generateApi } from './generate';
 export { default as promptsApi } from './promptsApi';
 export { default as collectionsApi } from './collectionsApi';
-export { default as worldVaultApi } from './worldVault';

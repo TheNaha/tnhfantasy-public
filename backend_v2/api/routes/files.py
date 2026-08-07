@@ -43,6 +43,43 @@ OUTPUT_DIR = settings.output_dir
 INPUT_DIR = settings.input_dir
 CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(os.path.dirname(__file__), "../../cache"))
 
+MAX_INPUT_SIZE_MB = 50
+
+
+def _delete_thumbnails(local_path: str) -> None:
+    """Remove all thumbnail variants for an output image.
+
+    Thumbnails live in OUTPUT_DIR/thumb mirrored by date hierarchy
+    (output/thumb/YYYY/MM/DD/name.webp) plus legacy flat files
+    (output/thumb/name.medium.png / name.full.png).
+    """
+    import glob
+
+    name_only = os.path.splitext(os.path.basename(local_path))[0]
+    rel_dir = os.path.relpath(os.path.dirname(local_path), OUTPUT_DIR)
+
+    candidates = [
+        os.path.join(OUTPUT_DIR, "thumb", rel_dir, f"{name_only}.webp"),
+        os.path.join(OUTPUT_DIR, "thumb", f"{name_only}.medium.png"),
+        os.path.join(OUTPUT_DIR, "thumb", f"{name_only}.full.png"),
+    ]
+    for candidate in candidates:
+        try:
+            if os.path.exists(candidate):
+                os.remove(candidate)
+        except OSError:
+            pass
+
+    # Catch any stragglers elsewhere in the thumb tree (same basename).
+    thumb_root = os.path.join(OUTPUT_DIR, "thumb")
+    for pattern in (f"**/{name_only}.webp", f"**/{name_only}.png"):
+        for match in glob.glob(os.path.join(thumb_root, pattern), recursive=True):
+            try:
+                os.remove(match)
+            except OSError:
+                pass
+
+
 
 async def _sync_file_to_providers(session: Session, filename: str, content: bytes, directory: str = "input") -> dict:
     """
@@ -499,7 +536,7 @@ async def view_file_endpoint(path: str):
         # Search in date-based subdirectories only for explicit relative paths.
         if "/" in filename:
             pattern = os.path.join(OUTPUT_DIR, "**", filename)
-            matches = glob.glob(pattern, recursive=True)
+            matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
             matches = [m for m in matches if "/thumb/" not in m]
 
             if matches:
@@ -623,7 +660,7 @@ async def serve_thumbnail(size: str, filename: str):
     # Note: If optimization above worked, we wouldn't be here.
     if "/" in filename:
         webp_pattern = os.path.join(thumb_dir, "**", f"{name_only}.webp")
-        webp_matches = glob.glob(webp_pattern, recursive=True)
+        webp_matches = await asyncio.to_thread(glob.glob, webp_pattern, recursive=True)
         
         if webp_matches:
             thumbnail_path = webp_matches[0]
@@ -683,7 +720,7 @@ async def serve_thumbnail(size: str, filename: str):
 
     if "/" in filename:
         original_pattern = os.path.join(OUTPUT_DIR, "**", filename)
-        original_matches = glob.glob(original_pattern, recursive=True)
+        original_matches = await asyncio.to_thread(glob.glob, original_pattern, recursive=True)
         original_matches = [m for m in original_matches if "/thumb/" not in m]
         
         if original_matches:
@@ -782,11 +819,23 @@ async def upload_input_image(
 
     from PIL import Image
     
+    # Size guard: reject oversized uploads before reading into memory
+    if file.size is not None and file.size > MAX_INPUT_SIZE_MB * 1024 * 1024:
+        raise ValidationError(
+            f"File size exceeds the {MAX_INPUT_SIZE_MB} MB limit. "
+            f"Received: {file.size / (1024 * 1024):.1f} MB"
+        )
+    
     # Generate unique filename to avoid collisions
     ext = os.path.splitext(file.filename)[1] or ".png"
     unique_name = f"{uuid.uuid4().hex}{ext}"
     
     content = await file.read()
+    
+    if len(content) > MAX_INPUT_SIZE_MB * 1024 * 1024:
+        raise ValidationError(
+            f"File size exceeds the {MAX_INPUT_SIZE_MB} MB limit."
+        )
     
     # Save locally first (for preview/fallback) - use dedicated input folder
     os.makedirs(INPUT_DIR, exist_ok=True)
@@ -857,6 +906,11 @@ async def upload_mask_image(
     except Exception as e:
         raise ValidationError(f"Invalid base64 data: {e}")
     
+    if len(content) > MAX_INPUT_SIZE_MB * 1024 * 1024:
+        raise ValidationError(
+            f"Decoded file size exceeds the {MAX_INPUT_SIZE_MB} MB limit."
+        )
+    
     # Generate filename linked to source
     source_base = os.path.splitext(source_filename)[0] if source_filename else "mask"
     mask_filename = f"{source_base}_mask_{uuid.uuid4().hex[:8]}.png"
@@ -899,10 +953,7 @@ async def delete_single_file(filename: str):
             meta_path = f"{local_path}.json"
             if os.path.exists(meta_path):
                 os.remove(meta_path)
-            thumb_dir = os.path.join(os.path.dirname(local_path), "thumb")
-            thumb_path = os.path.join(thumb_dir, safe_filename)
-            if os.path.exists(thumb_path):
-                os.remove(thumb_path)
+            _delete_thumbnails(local_path)
             logger.info("delete_file_removed", path=local_path)
             return {"status": "success", "deleted": True}
 
@@ -913,18 +964,16 @@ async def delete_single_file(filename: str):
             meta_path = f"{indexed_path}.json"
             if os.path.exists(meta_path):
                 os.remove(meta_path)
-            thumb_dir = os.path.join(os.path.dirname(indexed_path), "thumb")
-            thumb_path = os.path.join(thumb_dir, safe_filename)
-            if os.path.exists(thumb_path):
-                os.remove(thumb_path)
+            _delete_thumbnails(indexed_path)
             logger.info("delete_file_removed", path=indexed_path)
             return {"status": "success", "deleted": True}
 
         pattern = os.path.join(OUTPUT_DIR, "**", safe_filename)
-        matches = glob.glob(pattern, recursive=True)
+        matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
         matches = [m for m in matches if "/thumb/" not in m]
         if matches:
             os.remove(matches[0])
+            _delete_thumbnails(matches[0])
             logger.info("delete_file_removed", path=matches[0])
             return {"status": "success", "deleted": True}
 
@@ -985,7 +1034,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         local_path = indexed_path
                     elif "/" in filename:
                         pattern = os.path.join(OUTPUT_DIR, "**", filename)
-                        matches = glob.glob(pattern, recursive=True)
+                        matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
                         matches = [m for m in matches if "/thumb/" not in m]
                         if matches:
                             local_path = matches[0]
@@ -1006,12 +1055,8 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                         if os.path.exists(meta_path):
                             os.remove(meta_path)
                         
-                        # Remove thumbnail if exists
-                        thumb_dir = os.path.join(os.path.dirname(local_path), "thumb")
-                        thumb_path = os.path.join(thumb_dir, filename)
-                        if os.path.exists(thumb_path):
-                            os.remove(thumb_path)
-                            
+                        _delete_thumbnails(local_path)
+                        
                         success_count += 1
                     except Exception as e:
                         logger.warning("delete_file_failed", filename=filename, error=str(e))
@@ -1167,17 +1212,20 @@ async def batch_get_metadata(request: BatchMetadataRequest):
                 unresolved[path] = os.path.basename(filename)
 
         if unresolved:
-            found_files = {}
             target_filenames = set(unresolved.values())
 
-            for root, dirs, files in os.walk(OUTPUT_DIR):
-                if "thumb" in dirs:
-                    dirs.remove("thumb")
+            def _scan_metadata():
+                found = {}
+                for root, dirs, files in os.walk(OUTPUT_DIR):
+                    if "thumb" in dirs:
+                        dirs.remove("thumb")
+                    for f in files:
+                        if f not in target_filenames:
+                            continue
+                        found.setdefault(f, []).append(os.path.join(root, f))
+                return found
 
-                for f in files:
-                    if f not in target_filenames:
-                        continue
-                    found_files.setdefault(f, []).append(os.path.join(root, f))
+            found_files = await asyncio.to_thread(_scan_metadata)
 
             for path, filename in unresolved.items():
                 matches = found_files.get(filename, [])

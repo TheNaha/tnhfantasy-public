@@ -22,9 +22,6 @@ export const filesApi = {
         return api.get(`/api/files${query ? `?${query}` : ''}`, options);
     },
 
-    // Delete file
-    delete: (filename) => api.delete(`/api/files/${encodeURIComponent(filename)}`),
-
     // Delete multiple files (from output directory)
     deleteMultiple: (filenames) => api.post('/api/batch/delete', {
         directory: 'output',
@@ -72,6 +69,16 @@ export const filesApi = {
                 source_filename: sourceFilename
         });
     },
+
+    /**
+     * Upload a chat attachment (image) to the chat attachments directory.
+     *
+     * @param {FormData} formData - FormData containing the file under the 'file' key
+     * @returns {Promise<{filename, path, ...}>}
+     */
+    uploadChatAttachment: (formData) => api.post('/api/upload?path=chat_attachments', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    }),
 };
 
 export default filesApi;

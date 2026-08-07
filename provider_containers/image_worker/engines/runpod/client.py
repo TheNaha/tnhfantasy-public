@@ -7,15 +7,19 @@ import asyncio
 
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest, build_status_response, build_error_response
+    UploadFileRequest, ValidateModelsRequest, build_status_response, build_error_response,
+    get_logger
 )
 from provider_core.base_client import BaseProviderClient
 
 PROVIDER_ID = os.getenv("PROVIDER_ID", "runpod-worker")
 
+logger = get_logger("image_worker.runpod.client")
+
 class RunpodProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
+        self.logger = logger
         self.endpoint_id = os.getenv("RUNPOD_ENDPOINT_ID", "")
         self.api_key = os.getenv("RUNPOD_API_KEY", "")
         self.base_url = f"https://api.runpod.ai/v2/{self.endpoint_id}"

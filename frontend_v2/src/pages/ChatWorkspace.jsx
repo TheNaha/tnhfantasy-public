@@ -19,13 +19,16 @@ import {
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
     useCharacterCollection, useEditMessage, useRollbackChat,
     useRegenerateReply, useChatJobs, usePatchCharacter,
-    useImpersonateMessage, usePinMessage, useSwipeMessage
+    useImpersonateMessage, usePinMessage, useSwipeMessage, useChatImages
 } from '../hooks/useWorldVault';
-import worldVaultApi from '../api/worldVault';
+import { useLLMJobResult } from '../hooks/useLLMJobResult';
+import { filesApi } from '../api/files';
+import { useCollections } from '../hooks/useCollections';
+import { addImagesToCollection } from '../api/collectionsApi';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
-import ConfirmationModal from '../components/ConfirmationModal';
+import { useConfirmation } from '../store/confirmationStore';
 import { parseTavernMessage } from '../utils/tavernUtils';
 import { useSettings } from '../store/settingsStore';
 import SceneGallery from '../components/SceneGallery';
@@ -889,7 +892,6 @@ export default function ChatWorkspace() {
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
-    const [deleteTarget, setDeleteTarget] = useState(null);
     const hasCreatedChatRef = useRef(false);
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const [pendingAttachment, setPendingAttachment] = useState(null);
@@ -901,10 +903,10 @@ export default function ChatWorkspace() {
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [showCharacterDetails, setShowCharacterDetails] = useState(false);
     const [showScenesModal, setShowScenesModal] = useState(false);
+    const [sceneTab, setSceneTab] = useState('chat');
     const [showMoreTools, setShowMoreTools] = useState(false);
     const [avatarModalSrc, setAvatarModalSrc] = useState(null);
     const handleAvatarClick = useCallback((url) => setAvatarModalSrc(url), []);
-    const [rollbackTarget, setRollbackTarget] = useState(null);
     const fileInputRef = useRef(null);
     const messagesEndRef = useRef(null);
     const textareaRef = useRef(null);
@@ -946,6 +948,12 @@ export default function ChatWorkspace() {
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
     const { data: systemPromptData } = useChatSystemPrompt(activeChatId);
     const { data: chatCollection } = useCharacterCollection(activeChat?.character_id);
+    const { data: chatImages = [] } = useChatImages(activeChatId);
+    const { data: collectionsMap = {} } = useCollections();
+    const collectionsList = useMemo(
+        () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+        [collectionsMap]
+    );
 
     // Use activeChat's lorebooks instead of the store's global state
     const emptyLorebooks = useMemo(() => [], []);
@@ -966,6 +974,8 @@ export default function ChatWorkspace() {
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
+    const runLLMJob = useLLMJobResult();
+    const { confirm } = useConfirmation();
 
     useEffect(() => {
         const characterId = location.state?.characterId;
@@ -1091,6 +1101,9 @@ export default function ChatWorkspace() {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
                 // Story time/location may have changed via update_world_state — refresh chat.
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId] });
+                if (job.task_type === 'image') {
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chat', 'images', eventChatId] });
+                }
             }
 
             if (eventChatId === activeChatId) {
@@ -1308,11 +1321,9 @@ export default function ChatWorkspace() {
         setIsGeneratingScene(true);
         toast.success('Generating scene...', { icon: '📸' });
         try {
-            const res = await fetch(`/api/v2/chats/${activeChatId}/scene`, { method: 'POST' });
-            if (!res.ok) throw new Error('Failed');
-            const data = await res.json();
+            const data = await api.post(`/api/v2/chats/${activeChatId}/scene`, {});
             if (data.job_id) {
-                updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId });
+                updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
             }
         } catch {
             toast.error('Failed to generate scene');
@@ -1321,6 +1332,20 @@ export default function ChatWorkspace() {
         }
     };
 
+    const handleSaveImageToCollection = useCallback(async (collectionId, path) => {
+        if (!collectionId || !path) return;
+        try {
+            await addImagesToCollection(collectionId, [path]);
+            queryClient.invalidateQueries({ queryKey: ['collections'] });
+            if (activeChat?.character_id) {
+                queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', activeChat.character_id, 'collection'] });
+            }
+            toast.success('Image saved to collection');
+        } catch {
+            toast.error('Failed to save image');
+        }
+    }, [queryClient, activeChat?.character_id]);
+
     const triggerAutoTitle = async () => {
         if (!activeChatId) return;
         titlePollCancelledRef.current = false;
@@ -1328,38 +1353,27 @@ export default function ChatWorkspace() {
         toast('Generating title...', { icon: '🤖' });
         try {
             const chatHistory = messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-            const resJob = await api.post('/api/jobs', {
-                task_type: 'llm',
+            const { text, cancelled } = await runLLMJob({
                 workflow: {
                     model: activeChat?.llm_model || defaultLlmConfig?.model_id || null,
                     messages: [
                         { role: 'system', content: 'Generate a short, catchy title (max 5 words) for the following chat. Output ONLY the title, no quotes.' },
                         { role: 'user', content: chatHistory || 'A new conversation.' }
                     ]
-                }
+                },
+                isCancelled: () => titlePollCancelledRef.current,
             });
-            const poll = async (jobId) => {
-                for (let i = 0; i < 30; i++) {
-                    // Stop polling if the page navigated away mid-generation
-                    if (titlePollCancelledRef.current) return;
-                    const s = await api.get(`/api/jobs/${jobId}`);
-                    if (s.status === 'completed' && s.outputs?.length > 0) {
-                        const newTitle = s.outputs[0].content.replace(/["']/g, '');
-                        await renameChatMutation.mutateAsync({ chatId: activeChatId, name: newTitle });
-                        toast.success('Title generated!');
-                        setIsGeneratingTitle(false);
-                        return;
-                    }
-                    if (s.status === 'failed') break;
-                    await new Promise(r => setTimeout(r, 1000));
-                }
+            if (cancelled) return;
+            if (!text) {
                 toast.error('Title generation failed');
-                setIsGeneratingTitle(false);
-            };
-            if (resJob.id) poll(resJob.id);
-            else setIsGeneratingTitle(false);
+                return;
+            }
+            const newTitle = text.replace(/["']/g, '');
+            await renameChatMutation.mutateAsync({ chatId: activeChatId, name: newTitle });
+            toast.success('Title generated!');
         } catch {
             toast.error('Failed to generate title');
+        } finally {
             setIsGeneratingTitle(false);
         }
     };
@@ -1423,7 +1437,7 @@ export default function ChatWorkspace() {
         try {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await worldVaultApi.upload.chatAttachment(formData);
+            const res = await filesApi.uploadChatAttachment(formData);
             setPendingAttachment({ filename: res.filename, name: file.name });
             toast.success('Image attached');
         } catch {
@@ -1433,19 +1447,24 @@ export default function ChatWorkspace() {
         }
     };
 
-    const handleDeleteChat = async () => {
-        if (!deleteTarget) return;
+    const handleDeleteChat = async (chat) => {
+        const ok = await confirm({
+            title: 'Delete Chat',
+            message: `Are you sure you want to delete "${chat.name || 'this chat'}"? All messages will be permanently lost.`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
-            await deleteChatMutation.mutateAsync(deleteTarget.id);
-            if (activeChatId === deleteTarget.id) {
-                const remaining = chats?.filter(c => c.id !== deleteTarget.id);
+            await deleteChatMutation.mutateAsync(chat.id);
+            if (activeChatId === chat.id) {
+                const remaining = chats?.filter(c => c.id !== chat.id);
                 setActiveChatId(remaining?.[0]?.id || null);
             }
             toast.success('Chat deleted');
         } catch {
             toast.error('Failed to delete chat');
         }
-        setDeleteTarget(null);
     };
 
     const startRename = (chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); };
@@ -1471,16 +1490,19 @@ export default function ChatWorkspace() {
         } catch { toast.error('Failed to update message'); }
     }, [activeChatId, editMessageMutation]);
 
-    const handleRollback = useCallback((msgId) => setRollbackTarget(msgId), []);
-
-    const confirmRollback = useCallback(async () => {
-        if (!rollbackTarget) return;
+    const handleRollback = useCallback(async (msgId) => {
+        const ok = await confirm({
+            title: 'Rollback chat',
+            message: 'This will delete this message and everything after it. The LLM reply will regenerate from the remaining message.',
+            confirmText: 'Rollback',
+            isDangerous: true,
+        });
+        if (!ok) return;
         try {
-            await rollbackMutation.mutateAsync({ chatId: activeChatId, messageId: rollbackTarget });
+            await rollbackMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
             toast.success('Chat rolled back');
         } catch { toast.error('Failed to rollback'); }
-        setRollbackTarget(null);
-    }, [activeChatId, rollbackTarget, rollbackMutation]);
+    }, [activeChatId, confirm, rollbackMutation]);
 
     const handleRegenerate = useCallback(async (msgId) => {
         try {
@@ -1638,7 +1660,7 @@ export default function ChatWorkspace() {
                                     <span className="truncate flex-1">{chat.name || 'Unnamed Chat'}</span>
                                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                                         <button onClick={e => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
-                                        <button onClick={e => { e.stopPropagation(); setDeleteTarget(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
+                                        <button onClick={e => { e.stopPropagation(); handleDeleteChat(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
                                     </div>
                                 </div>
                             )}
@@ -2455,26 +2477,6 @@ export default function ChatWorkspace() {
                 )}
             </AnimatePresence>
 
-            <ConfirmationModal
-                isOpen={!!deleteTarget}
-                onClose={() => setDeleteTarget(null)}
-                onConfirm={handleDeleteChat}
-                title="Delete Chat"
-                message={`Are you sure you want to delete "${deleteTarget?.name || 'this chat'}"? All messages will be permanently lost.`}
-                confirmText="Delete"
-                isDangerous
-            />
-
-            <ConfirmationModal
-                isOpen={!!rollbackTarget}
-                onClose={() => setRollbackTarget(null)}
-                onConfirm={confirmRollback}
-                title="Rollback chat"
-                message="This will delete this message and everything after it. The LLM reply will regenerate from the remaining message."
-                confirmText="Rollback"
-                isDangerous
-            />
-
             {showScenesModal && (
                 <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <motion.div
@@ -2492,11 +2494,50 @@ export default function ChatWorkspace() {
                                 <X size={18} />
                             </button>
                         </div>
+                        <div className="flex gap-2 px-6 pt-4 shrink-0">
+                            <button
+                                onClick={() => setSceneTab('chat')}
+                                className={clsx('px-4 py-1.5 rounded-xl text-xs font-medium transition-colors', sceneTab === 'chat' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-800/60 text-gray-400 hover:text-gray-200')}
+                            >
+                                This chat ({chatImages.length})
+                            </button>
+                            <button
+                                onClick={() => setSceneTab('collection')}
+                                className={clsx('px-4 py-1.5 rounded-xl text-xs font-medium transition-colors', sceneTab === 'collection' ? 'bg-purple-500/20 text-purple-300' : 'bg-gray-800/60 text-gray-400 hover:text-gray-200')}
+                            >
+                                Character collection ({chatCollection?.image_count || 0})
+                            </button>
+                        </div>
                         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                            <SceneGallery
-                                title={`${linkedCharacter?.name || 'Character'} scenes`}
-                                images={chatCollection?.images || []}
-                            />
+                            {sceneTab === 'chat' ? (
+                                <SceneGallery
+                                    title={`${linkedCharacter?.name || 'Character'} chat scenes`}
+                                    images={chatImages.map(img => img.path)}
+                                    lightboxAction={(path) => (
+                                        <select
+                                            value=""
+                                            onChange={(e) => {
+                                                if (e.target.value) {
+                                                    handleSaveImageToCollection(e.target.value, path);
+                                                    e.target.value = '';
+                                                }
+                                            }}
+                                            className="bg-gray-800 border border-white/10 rounded-lg text-xs text-gray-200 px-2 py-1.5 cursor-pointer hover:border-blue-500/40 transition-colors"
+                                            title="Save to collection"
+                                        >
+                                            <option value="">Save to…</option>
+                                            {collectionsList.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                />
+                            ) : (
+                                <SceneGallery
+                                    title={`${linkedCharacter?.name || 'Character'} scenes`}
+                                    images={chatCollection?.images || []}
+                                />
+                            )}
                         </div>
                     </motion.div>
                 </div>

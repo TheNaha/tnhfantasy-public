@@ -72,9 +72,26 @@ class ModelDownloader:
         
         http_client = get_http_client()
         for provider in providers:
-            container_name = f"tnhcomfy-{provider.id}"
-            worker_url = f"http://{container_name}:8000"
-            
+            from services.provider_runtime import resolve_provider_runtime
+            runtime = resolve_provider_runtime(provider)
+
+            if runtime.mode not in ("container_http", "discovery"):
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "skipped",
+                    "error": f"Runtime unavailable ({runtime.mode})",
+                })
+                continue
+
+            if getattr(provider, "worker_type", "image") == "llm":
+                results["providers"].append({
+                    "provider_id": provider.id,
+                    "status": "skipped",
+                    "error": "LLM workers do not reconcile model files",
+                })
+                continue
+
+            worker_url = runtime.worker_url
             try:
                 response = await http_client.post(
                     f"{worker_url}/reconcile",

@@ -10,19 +10,6 @@ import api, { createIdempotencyKey } from './client';
 
 export const generateApi = {
     /**
-     * Submit a simple generation request.
-     *
-     * The backend converts the high-level params into a full ComfyUI workflow
-     * internally, so callers do not need to manage the graph structure.
-     *
-     * @param {object} params - Generation parameters (prompt, model, steps, etc.)
-     * @returns {Promise<{job: object}>} Newly created job record.
-     */
-    simple: (params, options = {}) => api.post('/api/generate', params, {
-        idempotencyKey: options.idempotencyKey || createIdempotencyKey('generate'),
-    }),
-
-    /**
      * Submit a raw ComfyUI workflow for execution.
      *
      * Use this for advanced workflows that cannot be expressed through the

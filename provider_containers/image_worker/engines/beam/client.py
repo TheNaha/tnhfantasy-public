@@ -10,8 +10,8 @@ import json
 
 from provider_core import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
-    UploadFileRequest, ValidateModelsRequest, CancelJobRequest,
-    build_error_response, build_status_response, build_deploy_compatibility_response,
+    UploadFileRequest, ValidateModelsRequest,
+    build_error_response, build_status_response,
     get_logger, get_http_client
 )
 from provider_core.base_client import BaseProviderClient
@@ -113,7 +113,7 @@ class BeamProviderClient(BaseProviderClient):
                                 message = await asyncio.wait_for(ws.recv(), timeout=2.0)
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
-                                    yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
+                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                     return
                                 continue
                             except websockets.exceptions.ConnectionClosedOK:
@@ -126,7 +126,7 @@ class BeamProviderClient(BaseProviderClient):
                                 break
                                 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps(build_error_response("Job cancelled", retryable=False)) + "\n"
+                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
                                 return
                             if isinstance(message, bytes):
                                 message = message.decode('utf-8')
@@ -238,23 +238,30 @@ class BeamProviderClient(BaseProviderClient):
         from provider_core.base_client import _DEPLOY_STATE
         
         commands = [
-            ["beam", "deploy", "/app/beam_app.py:comfy_gpu"],
-            ["beam", "deploy", "/app/beam_app.py:comfy_storage"]
+            ["beam", "deploy", "/app/image_worker/engines/beam/beam_app.py:comfy_gpu"],
+            ["beam", "deploy", "/app/image_worker/engines/beam/beam_app.py:comfy_storage"]
         ]
         self._deploy_task = start_deploy_task("Beam", commands)
         return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
         client = get_http_client()
-        response = await client.post(
-            f"{BEAM_STORAGE_URL}/validate-models",
-            json={"directory": request.directory, "delete_invalid": request.delete_invalid},
-            headers=get_beam_headers(),
-            timeout=120.0
-        )
-        if response.status_code == 200:
-            return response.json()
-        return {"error": f"HTTP {response.status_code}", "valid": [], "invalid": [], "partial": []}
+        results = {"by_directory": {}, "valid": [], "invalid": [], "partial": []}
+        for directory in request.directories:
+            response = await client.post(
+                f"{BEAM_STORAGE_URL}/validate-models",
+                json={"directory": directory, "delete_invalid": request.delete_invalid},
+                headers=get_beam_headers(),
+                timeout=120.0
+            )
+            if response.status_code != 200:
+                return {"error": f"HTTP {response.status_code}", "valid": [], "invalid": [], "partial": []}
+            payload = response.json()
+            results["by_directory"][directory] = payload
+            results["valid"].extend(payload.get("valid", []))
+            results["invalid"].extend(payload.get("invalid", []))
+            results["partial"].extend(payload.get("partial", []))
+        return results
 
     async def validate_all_models(self) -> Dict[str, Any]:
         client = get_http_client()

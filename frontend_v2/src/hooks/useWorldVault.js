@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { LLM_DEFAULT_KEY, LLM_MODELS_KEY, LLM_PROVIDERS_KEY } from './useLLMProviderStatus';
 
 // ============================================================================
 // QUERIES
@@ -382,6 +383,22 @@ export const useCharacterCollection = (characterId) => {
     });
 };
 
+export const useChatImages = (chatId) => {
+    return useQuery({
+        queryKey: ['world_vault', 'chat', 'images', chatId],
+        queryFn: () => api.get(`/api/v2/chats/${chatId}/images`),
+        enabled: !!chatId
+    });
+};
+
+export const useStoryImages = (storyId) => {
+    return useQuery({
+        queryKey: ['world_vault', 'story', 'images', storyId],
+        queryFn: () => api.get(`/api/v2/stories/${storyId}/images`),
+        enabled: !!storyId
+    });
+};
+
 export const useCreateStory = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -471,29 +488,13 @@ export const useUpdateChapter = () => {
 // ============================================================================
 
 export const useLLMDefaultProvider = () => useQuery({
-    queryKey: ['llm', 'default-provider'],
+    queryKey: LLM_DEFAULT_KEY,
     queryFn: () => api.get('/api/v2/llm/default-provider'),
     staleTime: 1000 * 60 * 5,
 });
 
-export const useSetLLMDefaultProvider = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (config) => api.put('/api/v2/llm/default-provider', config),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['llm'] })
-    });
-};
-
 export const useLLMAvailableModels = () => useQuery({
-    // Must match LLM_MODELS_KEY in useLLMProviderStatus.js — same endpoint,
-    // one shared cache so the Settings tab and chat model picker can't diverge.
-    queryKey: ['llm', 'available-models'],
+    queryKey: LLM_MODELS_KEY,
     queryFn: () => api.get('/api/v2/llm/available-models'),
-    staleTime: 1000 * 60 * 5,
-});
-
-export const useLLMProviders = () => useQuery({
-    queryKey: ['llm', 'providers'],
-    queryFn: () => api.get('/api/v2/llm/providers'),
     staleTime: 1000 * 60 * 5,
 });
