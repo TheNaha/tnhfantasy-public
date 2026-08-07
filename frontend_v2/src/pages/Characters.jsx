@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Copy, Download } from 'lucide-react';
+import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useCloneCharacter } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
@@ -322,8 +322,6 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
     };
 
-    const getTokenCount = (text) => text ? Math.ceil(text.length / 4) : 0;
-
     if (!isOpen) return null;
 
     return (
@@ -394,14 +392,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
                         {CHARACTER_FIELDS.filter(f => f.key !== 'name').map(field => (
                             <div key={field.key}>
                                 <div className="flex items-center justify-between mb-1">
-                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                                        {field.label}
-                                        {field.type === 'textarea' && (
-                                            <span className="ml-2 text-[10px] text-gray-500 font-normal normal-case tracking-normal">
-                                                ~{getTokenCount(form[field.key])} tokens
-                                            </span>
-                                        )}
-                                    </label>
+                                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{field.label}</label>
                                     {field.key !== 'creator_notes' && field.key !== 'default_time' && field.key !== 'default_location' && (
                                         <button
                                             onClick={() => handleGenerateField(field.key)}
@@ -555,7 +546,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
     );
 }
 
-function CharacterCard({ character, onEdit, onDelete, onChat, onClone, onExport }) {
+function CharacterCard({ character, onEdit, onDelete, onChat }) {
     const { data: collection } = useCharacterCollection(character.id);
     const imageCount = collection?.image_count || 0;
 
@@ -612,12 +603,6 @@ function CharacterCard({ character, onEdit, onDelete, onChat, onClone, onExport 
                 <button onClick={() => onEdit(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Edit character">
                     <Edit3 size={14} /> Edit
                 </button>
-                <button onClick={() => onClone(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Clone character">
-                    <Copy size={14} /> Clone
-                </button>
-                <button onClick={() => onExport(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Export character">
-                    <Download size={14} /> Export
-                </button>
                 <button onClick={() => onDelete(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors ml-auto" title="Delete character">
                     <Trash2 size={14} />
                 </button>
@@ -641,7 +626,6 @@ export default function Characters() {
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
-    const cloneCharacter = useCloneCharacter();
 
     const filteredCharacters = useMemo(() => {
         if (!searchQuery.trim()) return characters;
@@ -678,25 +662,6 @@ export default function Characters() {
         setActiveChat(null);
         navigate('/chat', { state: { characterId: character.id } });
         toast(`Starting chat with ${character.name}...`, { icon: '💬' });
-    };
-
-    const handleClone = async (character) => {
-        toast.promise(
-            cloneCharacter.mutateAsync(character.id),
-            {
-                loading: 'Cloning character...',
-                success: 'Character cloned successfully',
-                error: 'Failed to clone character'
-            }
-        );
-    };
-
-    const handleExport = (character) => {
-        if (!character.has_avatar) {
-            toast.error("Character must have an avatar to export as a PNG card");
-            return;
-        }
-        window.open(`/api/v2/characters/${character.id}/export`, '_blank');
     };
 
     const handleImportCard = (e) => {
@@ -812,8 +777,6 @@ export default function Characters() {
                                 onEdit={openEdit}
                                 onDelete={setDeleteTarget}
                                 onChat={handleStartChat}
-                                onClone={handleClone}
-                                onExport={handleExport}
                             />
                         ))}
                     </div>

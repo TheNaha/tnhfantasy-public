@@ -718,14 +718,8 @@ export default function StorySandbox() {
                                                     ref={textareaRef}
                                                     value={editorContent}
                                                     onChange={(e) => { isDirtyRef.current = true; setEditorContent(e.target.value); }}
-                                                    onKeyDown={(e) => {
-                                                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                                                            e.preventDefault();
-                                                            handleContinue();
-                                                        }
-                                                    }}
                                                     className="story-editor-input w-full h-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
-                                                    placeholder="Begin your story here (Markdown supported)... Press Ctrl+Enter for Magic Autocomplete."
+                                                    placeholder="Begin your story here (Markdown supported)..."
                                                     disabled={isStreaming}
                                                 />
                                             )}
@@ -906,55 +900,11 @@ export default function StorySandbox() {
                             </div>
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Story Info</h4>
-                                <div className="space-y-4" key={activeStory?.id || 'empty'}>
-                                    <div className="text-xs text-gray-500">
-                                        <p>Chapters: {chapters?.length || 0}</p>
-                                        <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Genre</label>
-                                        <input
-                                            type="text"
-                                            defaultValue={activeStory?.genre || ''}
-                                            onBlur={(e) => {
-                                                if (activeStoryId && e.target.value !== activeStory.genre) {
-                                                    updateStory.mutate({ id: activeStoryId, genre: e.target.value });
-                                                }
-                                            }}
-                                            placeholder="e.g. Sci-Fi, Fantasy, Romance..."
-                                            className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Description</label>
-                                        <textarea
-                                            defaultValue={activeStory?.description || ''}
-                                            onBlur={(e) => {
-                                                if (activeStoryId && e.target.value !== activeStory.description) {
-                                                    updateStory.mutate({ id: activeStoryId, description: e.target.value });
-                                                }
-                                            }}
-                                            placeholder="Story summary..."
-                                            rows={2}
-                                            className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50 resize-none"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block flex items-center gap-2 mb-2">
-                                            <Book size={14} /> Global Memory
-                                        </label>
-                                        <textarea
-                                            defaultValue={activeStory?.memory || ''}
-                                            onBlur={(e) => {
-                                                if (activeStoryId && e.target.value !== activeStory.memory) {
-                                                    updateStory.mutate({ id: activeStoryId, memory: e.target.value });
-                                                }
-                                            }}
-                                            placeholder="Author's note or global directives (e.g. 'The tone is dark', 'Character X is secretly evil')..."
-                                            rows={3}
-                                            className="w-full bg-indigo-900/10 border border-indigo-500/30 rounded-lg px-3 py-2 text-sm text-indigo-300 focus:outline-none focus:border-indigo-500/50 resize-none"
-                                        />
-                                    </div>
+                                <div className="space-y-2 text-xs text-gray-500">
+                                    <p>Chapters: {chapters?.length || 0}</p>
+                                    <p>Genre: {activeStory?.genre || 'Not set'}</p>
+                                    <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
+                                    {activeStory?.description && <p className="italic mt-2">{activeStory.description}</p>}
                                 </div>
                             </div>
                         </div>

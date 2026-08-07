@@ -30,10 +30,24 @@ def _resolve_context_tokens(chat: Chat) -> int:
     return chat.max_context_tokens or 4096
 
 
+def _first_text(job_data: dict[str, Any]) -> str | None:
+    """Extract reply text from a completion payload.
+
+    LLM job outputs are [{'role': 'assistant', 'content': ...}] — the text
+    lives under 'content', not 'text'. Fall back to the event_extra fields
+    (some branches complete with outputs=[] and carry text top-level).
+    """
+    outputs = job_data.get("outputs") or []
+    if outputs and isinstance(outputs[0], dict):
+        v = outputs[0].get("content") or outputs[0].get("text")
+        if v:
+            return v
+    return job_data.get("content") or job_data.get("prompt")
+
+
 async def _handle_impersonation(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
     imp_chat_id = job_data.get("metadata", {}).get("chat_id")
-    imp_text = outputs[0].get("text") if outputs else None
+    imp_text = _first_text(job_data)
     if not imp_chat_id or not imp_text:
         return
 
@@ -96,11 +110,14 @@ async def _handle_impersonation(job_data: dict[str, Any]):
 
 
 async def _handle_story_illustrate(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
-    prompt = outputs[0].get("text") if outputs else None
+    prompt = _first_text(job_data)
     story_id = job_data.get("metadata", {}).get("story_id")
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    checkpoint = job_data.get("workflow", {}).get("checkpoint", "sd_xl_base_1.0.safetensors")
+    checkpoint = (
+        job_data.get("metadata", {}).get("scene_checkpoint")
+        or job_data.get("workflow", {}).get("checkpoint")
+        or "sd_xl_base_1.0.safetensors"
+    )
 
     if not prompt or not story_id or not chapter_id:
         return
@@ -135,9 +152,8 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
 
 
 async def _handle_narrator(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
     chat_id = job_data.get("metadata", {}).get("chat_id")
-    content = outputs[0].get("text") if outputs else None
+    content = _first_text(job_data)
     if not chat_id or not content:
         return
 
@@ -157,9 +173,8 @@ async def _handle_narrator(job_data: dict[str, Any]):
 
 
 async def _handle_chat_reply(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
     chat_id = job_data.get("metadata", {}).get("chat_id")
-    content = outputs[0].get("text") if outputs else None
+    content = _first_text(job_data)
     is_regen = job_data.get("metadata", {}).get("regenerated", False)
     
     if not chat_id or not content:
@@ -200,9 +215,8 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
 
 
 async def _handle_story_continue(job_data: dict[str, Any]):
-    outputs = job_data.get("outputs", [])
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    content = outputs[0].get("text") if outputs else None
+    content = _first_text(job_data)
     if not chapter_id or not content:
         return
 
@@ -222,7 +236,9 @@ async def _handle_story_continue(job_data: dict[str, Any]):
 async def _handle_chat_image(job_data: dict[str, Any]):
     outputs = job_data.get("outputs", [])
     chat_id = job_data.get("metadata", {}).get("chat_id")
-    image_path = outputs[0].get("relative_path") if outputs else None
+    image_path = (
+        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
+    ) or job_data.get("image_path")
     metadata = job_data.get("metadata", {})
     if not chat_id or not image_path:
         return
@@ -278,7 +294,9 @@ async def _handle_chat_image(job_data: dict[str, Any]):
 async def _handle_story_image(job_data: dict[str, Any]):
     outputs = job_data.get("outputs", [])
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    image_path = outputs[0].get("relative_path") if outputs else None
+    image_path = (
+        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
+    ) or job_data.get("image_path")
     if not chapter_id or not image_path:
         return
 
@@ -298,10 +316,23 @@ async def _handle_story_image(job_data: dict[str, Any]):
 async def start_world_integration_service():
     """Start listening to EventBus for world vault events."""
     logger.info("starting_world_integration_service")
-    async for event in event_bus.subscribe(EventType.JOB_COMPLETED.value):
+    # publish() fans out on the short topic ("job", not "job.completed"),
+    # so subscribe to the short topic and filter for terminal events.
+    async for event in event_bus.subscribe(EventType.JOB_COMPLETED.value.split(".")[0]):
+        if event.type != EventType.JOB_COMPLETED:
+            continue
         try:
-            job_data = event.data
-            event_type = job_data.get("workflow", {}).get("type")
+            # emit_job_event wraps the payload as {"job": {...}}
+            job_data = event.data.get("job") or event.data
+
+            # chat_image/story_image/... carry the event kind in the
+            # top-level 'type' (merged from event_extra); LLM jobs keep it
+            # in workflow.type as well.
+            event_type = (
+                job_data.get("type")
+                or (job_data.get("workflow") or {}).get("type")
+                or (job_data.get("metadata") or {}).get("source")
+            )
             
             if event_type == "impersonation":
                 await _handle_impersonation(job_data)

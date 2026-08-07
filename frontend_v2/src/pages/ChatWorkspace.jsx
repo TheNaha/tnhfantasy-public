@@ -44,11 +44,11 @@ const COMMANDS = [
 // ---------------------------------------------------------------------------
 // TavernMessage — renders narrative/dialogue with segment styling
 // ---------------------------------------------------------------------------
-const TavernMessage = memo(function TavernMessage({ content }) {
+const TavernMessage = memo(function TavernMessage({ content, alignRight }) {
     const segments = parseTavernMessage(content);
     if (!segments.length) return <span>{content}</span>;
     return (
-        <div className="flex flex-col gap-2.5 w-full">
+        <div className={clsx("flex flex-col gap-2.5 w-full", alignRight && "items-end")}>
             {segments.map((seg, i) => {
                 if (seg.type === 'action') {
                     return (
@@ -59,13 +59,13 @@ const TavernMessage = memo(function TavernMessage({ content }) {
                 }
                 if (seg.type === 'speech') {
                     return (
-                        <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-800 border border-gray-700/50 text-gray-100 font-medium tracking-wide shadow-sm w-fit max-w-full break-words">
+                        <div key={i} className={clsx("px-4 py-3 rounded-2xl bg-gray-800 border border-gray-700/50 text-gray-100 font-medium tracking-wide shadow-sm w-fit max-w-full break-words", alignRight ? "rounded-tr-sm" : "rounded-tl-sm")}>
                             "{seg.content}"
                         </div>
                     );
                 }
                 return (
-                    <div key={i} className="px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-800/40 border border-gray-700/30 text-gray-300 text-sm shadow-sm w-fit max-w-full break-words leading-relaxed">
+                    <div key={i} className={clsx("px-4 py-3 rounded-2xl bg-gray-800/40 border border-gray-700/30 text-gray-300 text-sm shadow-sm w-fit max-w-full break-words leading-relaxed", alignRight ? "rounded-tr-sm" : "rounded-tl-sm")}>
                         {seg.content}
                     </div>
                 );
@@ -522,8 +522,8 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 )}
                             </div>
                         ) : msg.role === 'user' ? (
-                            <div className="px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words bg-blue-600/20 text-blue-100 border border-blue-500/20 rounded-tr-sm">
-                                <TavernMessage content={msg.content} />
+                            <div className="text-sm leading-relaxed break-words text-gray-100">
+                                <TavernMessage content={msg.content} alignRight />
                                 {msg.image_path && (
                                     <div className="mt-3">
                                         <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
@@ -1057,6 +1057,10 @@ export default function ChatWorkspace() {
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
 
+            // Drop any buffered progress chunks for this job — a late flush
+            // would resurrect the streaming bubble after it was cleared.
+            if (eventId) pendingStream.delete(eventId);
+
             const isSuggestion = eventId === suggestJobIdRef.current || !!meta.is_suggestion;
             if (isSuggestion) {
                 // Grab final text from outputs if streaming missed it
@@ -1089,6 +1093,7 @@ export default function ChatWorkspace() {
             const job = getJob(event);
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
+            if (eventId) pendingStream.delete(eventId);
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
@@ -1106,6 +1111,7 @@ export default function ChatWorkspace() {
             const job = getJob(event);
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
+            if (eventId) pendingStream.delete(eventId);
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
