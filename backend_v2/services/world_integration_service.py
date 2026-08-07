@@ -31,8 +31,9 @@ def _resolve_context_tokens(chat: Chat) -> int:
 
 
 async def _handle_impersonation(job_data: dict[str, Any]):
-    imp_chat_id = job_data.get("chat_id")
-    imp_text = job_data.get("content")
+    outputs = job_data.get("outputs", [])
+    imp_chat_id = job_data.get("metadata", {}).get("chat_id")
+    imp_text = outputs[0].get("text") if outputs else None
     if not imp_chat_id or not imp_text:
         return
 
@@ -95,10 +96,11 @@ async def _handle_impersonation(job_data: dict[str, Any]):
 
 
 async def _handle_story_illustrate(job_data: dict[str, Any]):
-    prompt = job_data.get("prompt")
-    story_id = job_data.get("story_id")
-    chapter_id = job_data.get("chapter_id")
-    checkpoint = job_data.get("checkpoint", "sd_xl_base_1.0.safetensors")
+    outputs = job_data.get("outputs", [])
+    prompt = outputs[0].get("text") if outputs else None
+    story_id = job_data.get("metadata", {}).get("story_id")
+    chapter_id = job_data.get("metadata", {}).get("chapter_id")
+    checkpoint = job_data.get("workflow", {}).get("checkpoint", "sd_xl_base_1.0.safetensors")
 
     if not prompt or not story_id or not chapter_id:
         return
@@ -133,8 +135,9 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
 
 
 async def _handle_narrator(job_data: dict[str, Any]):
-    chat_id = job_data.get("chat_id")
-    content = job_data.get("content")
+    outputs = job_data.get("outputs", [])
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    content = outputs[0].get("text") if outputs else None
     if not chat_id or not content:
         return
 
@@ -154,8 +157,9 @@ async def _handle_narrator(job_data: dict[str, Any]):
 
 
 async def _handle_chat_reply(job_data: dict[str, Any]):
-    chat_id = job_data.get("chat_id")
-    content = job_data.get("content")
+    outputs = job_data.get("outputs", [])
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    content = outputs[0].get("text") if outputs else None
     is_regen = job_data.get("metadata", {}).get("regenerated", False)
     
     if not chat_id or not content:
@@ -196,8 +200,9 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
 
 
 async def _handle_story_continue(job_data: dict[str, Any]):
-    chapter_id = job_data.get("chapter_id")
-    content = job_data.get("content")
+    outputs = job_data.get("outputs", [])
+    chapter_id = job_data.get("metadata", {}).get("chapter_id")
+    content = outputs[0].get("text") if outputs else None
     if not chapter_id or not content:
         return
 
@@ -215,8 +220,9 @@ async def _handle_story_continue(job_data: dict[str, Any]):
 
 
 async def _handle_chat_image(job_data: dict[str, Any]):
-    chat_id = job_data.get("chat_id")
-    image_path = job_data.get("image_path")
+    outputs = job_data.get("outputs", [])
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    image_path = outputs[0].get("relative_path") if outputs else None
     metadata = job_data.get("metadata", {})
     if not chat_id or not image_path:
         return
@@ -270,8 +276,9 @@ async def _handle_chat_image(job_data: dict[str, Any]):
 
 
 async def _handle_story_image(job_data: dict[str, Any]):
-    chapter_id = job_data.get("chapter_id")
-    image_path = job_data.get("image_path")
+    outputs = job_data.get("outputs", [])
+    chapter_id = job_data.get("metadata", {}).get("chapter_id")
+    image_path = outputs[0].get("relative_path") if outputs else None
     if not chapter_id or not image_path:
         return
 
@@ -294,7 +301,7 @@ async def start_world_integration_service():
     async for event in event_bus.subscribe(EventType.JOB_COMPLETED.value):
         try:
             job_data = event.data
-            event_type = job_data.get("type")
+            event_type = job_data.get("workflow", {}).get("type")
             
             if event_type == "impersonation":
                 await _handle_impersonation(job_data)
