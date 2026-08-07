@@ -122,6 +122,7 @@ export default function Layout({ children }) {
     const { data: branding } = useBranding();
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const location = useLocation();
+    const isFullBleed = /^\/(chat|story)/.test(location.pathname);
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
@@ -208,14 +209,19 @@ export default function Layout({ children }) {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 flex flex-col min-w-0 lg:overflow-hidden pt-16 lg:pt-0 relative z-10">
+            <div className={clsx(
+                "flex-1 flex flex-col min-w-0 pt-16 lg:pt-0 relative z-10",
+                // Full-bleed routes (/chat, /story) get a fixed viewport height on mobile too,
+                // so their internal flex layout (sticky bottom tab bar, internal scroll areas) works.
+                isFullBleed ? "h-[calc(var(--vh,1vh)*100)] overflow-hidden" : "lg:overflow-hidden"
+            )}>
                 {/* Full-bleed routes (/chat, /story) get no padding so they fill edge-to-edge */}
                 <main
                     id="main-scroll-container"
                     className={clsx(
                         "flex-1 relative z-10",
-                        /^\/(chat|story)/.test(location.pathname)
-                            ? "flex flex-col lg:overflow-hidden"
+                        isFullBleed
+                            ? "flex flex-col overflow-hidden"
                             : "lg:overflow-y-auto px-2 py-3 sm:p-4 lg:p-8"
                     )}
                 >

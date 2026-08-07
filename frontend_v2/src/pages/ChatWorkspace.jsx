@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from '
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     MessageSquare, Send, Image as ImageIcon, Settings,
-    PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
+    PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen, Paperclip, Sparkles,
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
     User, X, ChevronRight, ChevronLeft, RotateCcw, Clock, MapPin, Menu,
     Pencil, Undo2, Activity, Brain, Download, Pin, PinOff, Ghost,
@@ -874,6 +874,18 @@ function ContextSlider({ activeChat, onChange }) {
 
 export default function ChatWorkspace() {
     const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context'
+    const [chatsCollapsed, setChatsCollapsed] = useState(() => {
+        try { return localStorage.getItem('cw.chatsCollapsed') === '1'; } catch { return false; }
+    });
+    const [contextCollapsed, setContextCollapsed] = useState(() => {
+        try { return localStorage.getItem('cw.contextCollapsed') === '1'; } catch { return false; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('cw.chatsCollapsed', chatsCollapsed ? '1' : '0'); } catch { /* ignore */ }
+    }, [chatsCollapsed]);
+    useEffect(() => {
+        try { localStorage.setItem('cw.contextCollapsed', contextCollapsed ? '1' : '0'); } catch { /* ignore */ }
+    }, [contextCollapsed]);
     const [message, setMessage] = useState('');
     const [renamingChatId, setRenamingChatId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
@@ -1561,11 +1573,12 @@ export default function ChatWorkspace() {
             {/* === THREE-COLUMN ROW (fills remaining height above mobile tab bar) === */}
             <div className="flex flex-1 flex-row min-h-0 overflow-hidden">
             <div className={clsx(
-                "flex-col shrink-0 border-b lg:border-r border-white/5 bg-gray-900 flex-1 lg:flex-none overflow-hidden",
-                "w-full lg:w-72",
+                "flex-col shrink-0 border-b lg:border-r border-white/5 bg-gray-900 flex-1 lg:flex-none overflow-hidden min-w-0",
+                "w-full",
+                chatsCollapsed ? "lg:w-0 lg:border-r-0" : "lg:w-72",
                 mobileTab === 'chats' ? "flex" : "hidden lg:flex"
             )}>
-                <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
+                <div className="h-12 lg:h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                     <h3 className="font-semibold text-gray-200 tracking-wide">Chats</h3>
                     <button
                         onClick={() => handleCreateChat()}
@@ -1638,8 +1651,16 @@ export default function ChatWorkspace() {
                 "flex-col min-w-0 bg-[#0B0E14] relative flex-1 lg:flex-auto",
                 mobileTab === 'chat' ? "flex" : "hidden lg:flex"
             )}>
-                <div className="h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
+                <div className="h-12 lg:h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
                     <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                        <button
+                            type="button"
+                            onClick={() => setChatsCollapsed(c => !c)}
+                            className="hidden lg:flex p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors shrink-0"
+                            title={chatsCollapsed ? 'Show chats panel' : 'Hide chats panel'}
+                        >
+                            {chatsCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+                        </button>
                         <button 
                             type="button"
                             onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
@@ -1694,6 +1715,15 @@ export default function ChatWorkspace() {
                     >
                         <Download size={18} />
                     </button>
+                    {contextCollapsed && (
+                        <button
+                            onClick={() => setContextCollapsed(false)}
+                            className="hidden lg:flex p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors shrink-0"
+                            title="Show Context & Settings panel"
+                        >
+                            <PanelRightOpen size={18} />
+                        </button>
+                    )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 custom-scrollbar flex flex-col">
@@ -2048,11 +2078,12 @@ export default function ChatWorkspace() {
 
             {/* === CONTEXT PANEL (Right) === */}
             <div className={clsx(
-                "flex-col shrink-0 border-l border-white/5 bg-gray-900 lg:bg-gray-900/70 flex-1 lg:flex-none overflow-hidden",
-                "w-full lg:w-72",
+                "flex-col shrink-0 border-l border-white/5 bg-gray-900 lg:bg-gray-900/70 flex-1 lg:flex-none overflow-hidden min-w-0",
+                "w-full",
+                contextCollapsed ? "lg:w-0 lg:border-l-0" : "lg:w-72",
                 mobileTab === 'context' ? "flex" : "hidden lg:flex"
             )}>
-                <div className="h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
+                <div className="h-12 lg:h-16 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
                     <h3 className="font-semibold text-gray-200 flex items-center gap-2 text-sm">
                         <Settings size={14} className="text-gray-400" />
                         Context &amp; Settings
@@ -2062,6 +2093,13 @@ export default function ChatWorkspace() {
                         className="lg:hidden p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                     >
                         <X size={16} />
+                    </button>
+                    <button
+                        onClick={() => setContextCollapsed(c => !c)}
+                        className="hidden lg:flex p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+                        title="Hide context panel"
+                    >
+                        <PanelRightClose size={18} />
                     </button>
                 </div>
 
