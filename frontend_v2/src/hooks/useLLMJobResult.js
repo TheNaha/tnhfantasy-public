@@ -12,7 +12,7 @@
  */
 import { useCallback, useRef } from 'react';
 import { api } from '../api';
-import { on, EventTypes } from '../api/websocket';
+import { on, EventTypes, getConnectionStatus } from '../api/websocket';
 
 const getJob = (event) => event?.job ?? event;
 
@@ -59,13 +59,18 @@ export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 30 } = 
             }));
 
             (async () => {
+                // WebSocket-first: if the socket is connected, rely on WS events
+                // and only poll as a delayed last-resort fallback.
+                const wsConnected = getConnectionStatus();
+                const initialDelay = wsConnected ? pollIntervalRef.current * 3 : 0;
                 const max = maxPolls ?? defaultMaxPollsRef.current;
                 for (let i = 0; i < max && !settled; i++) {
                     if (isCancelled()) {
                         onCancelled();
                         return;
                     }
-                    if (i > 0) await new Promise((r) => setTimeout(r, pollIntervalRef.current));
+                    const delay = i === 0 ? initialDelay : pollIntervalRef.current;
+                    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
                     try {
                         const job = await api.get(`/api/jobs/${jobId}`);
                         if (job?.status === 'completed' && job.outputs?.length > 0) {

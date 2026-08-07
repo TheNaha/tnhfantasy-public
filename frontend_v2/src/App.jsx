@@ -48,7 +48,7 @@ function AnimatedRoutes() {
     const location = useLocation();
     return (
         <AnimatePresence mode="wait">
-            <Routes location={location} key={location.pathname}>
+            <Routes location={location} key={location.key}>
                 <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
                 <Route path="/generate" element={<ErrorBoundary><SimpleGenerator /></ErrorBoundary>} />
                 <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />

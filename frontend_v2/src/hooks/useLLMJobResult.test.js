@@ -15,6 +15,7 @@ vi.mock('../api/websocket', () => ({
         JOB_CANCELLED: 'job.cancelled',
     },
     on: vi.fn(() => () => {}),
+    getConnectionStatus: vi.fn(() => false),
 }));
 
 describe('useLLMJobResult', () => {
@@ -25,6 +26,7 @@ describe('useLLMJobResult', () => {
 
     beforeEach(async () => {
         vi.resetModules();
+        vi.clearAllMocks();
 
         const apiMod = await import('../api');
         api = apiMod.api;
@@ -38,6 +40,7 @@ describe('useLLMJobResult', () => {
             handlers[event] = cb;
             return () => {};
         });
+        ws.getConnectionStatus.mockImplementation(() => false);
 
         const hookMod = await import('./useLLMJobResult');
         useLLMJobResult = hookMod.useLLMJobResult;
@@ -69,6 +72,7 @@ describe('useLLMJobResult', () => {
     it('ignores WebSocket events for other jobs', async () => {
         api.post.mockResolvedValue({ id: 'job-1' });
         api.get.mockResolvedValue({ status: 'completed', outputs: [{ content: 'From poll' }] });
+        ws.getConnectionStatus.mockImplementation(() => false);
 
         const { result } = renderHook(() => useLLMJobResult());
 
@@ -86,9 +90,11 @@ describe('useLLMJobResult', () => {
         expect(resolved).toEqual({ jobId: 'job-1', text: 'From poll' });
     });
 
-    it('resolves via polling fallback when no WS event arrives', async () => {
+    it('resolves via polling fallback when WS is disconnected', async () => {
         api.post.mockResolvedValue({ id: 'job-1' });
         api.get.mockResolvedValue({ status: 'completed', outputs: [{ content: 'From poll' }] });
+        ws.getConnectionStatus.mockImplementation(() => false);
+        ws.getConnectionStatus.mockReturnValue(false);
 
         const { result } = renderHook(() => useLLMJobResult({ pollInterval: 1000 }));
 
@@ -100,6 +106,28 @@ describe('useLLMJobResult', () => {
         const resolved = await outcome;
         expect(api.get).toHaveBeenCalledWith('/api/jobs/job-1');
         expect(resolved).toEqual({ jobId: 'job-1', text: 'From poll' });
+    });
+
+    it('resolves via WS without polling when WS is connected', async () => {
+        api.post.mockResolvedValue({ id: 'job-1' });
+        ws.getConnectionStatus.mockImplementation(() => true);
+
+        const { result } = renderHook(() => useLLMJobResult({ pollInterval: 1000 }));
+
+        let outcome;
+        await act(async () => {
+            outcome = result.current({ workflow: {} });
+            await new Promise((r) => setTimeout(r, 0));
+        });
+
+        // WS event resolves the job without any polling
+        act(() => {
+            handlers[ws.EventTypes.JOB_COMPLETED]({ job: { id: 'job-1', outputs: [{ content: 'WS result' }] } });
+        });
+
+        const resolved = await outcome;
+        expect(api.get).not.toHaveBeenCalled();
+        expect(resolved).toEqual({ jobId: 'job-1', text: 'WS result' });
     });
 
     it('resolves as cancelled when isCancelled() returns true', async () => {
