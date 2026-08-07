@@ -23,7 +23,7 @@ export const providersApi = {
      * @param {object} config - Provider configuration including `id`, `type`,
      *   `credentials`, and `config` fields.
      */
-    create: (config) => api.post('/api/providers', config),
+    create: (config) => api.post('/api/providers/', config),
 
     /**
      * Partially update a provider's configuration.

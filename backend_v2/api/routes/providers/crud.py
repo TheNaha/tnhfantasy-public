@@ -42,7 +42,7 @@ router = APIRouter()
 class ProviderRequest(BaseModel):
     id: str
     type: str = "modal"
-    worker_type: str | None = None
+    worker_type: str = "image"
     enabled: bool = True
     priority: int = 1
     credentials: dict[str, Any] = {}
@@ -176,7 +176,7 @@ async def wake_providers(session: Session = Depends(get_session)):
     return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
 
 
-@router.get("/")
+@router.get("")
 async def list_providers(session: Session = Depends(get_session)):
     """List all providers."""
     service = get_provider_service(session)
@@ -186,7 +186,7 @@ async def list_providers(session: Session = Depends(get_session)):
     return {"providers": records, "count": len(records)}
 
 
-@router.post("/")
+@router.post("")
 async def create_provider(
     request: ProviderRequest,
     session: Session = Depends(get_session)
