@@ -226,6 +226,14 @@ async def startup_application(process_job, ws_manager):
         timeout=None,
     )
 
+    logger.info("startup_init", phase="world_integration")
+    from services.world_integration_service import start_world_integration_service
+    world_integration_task = start_background_task(
+        start_world_integration_service(),
+        task_name="world_integration",
+        timeout=None,
+    )
+
     logger.info("startup_complete")
     return {
         "provider_monitor_task": provider_monitor_task,

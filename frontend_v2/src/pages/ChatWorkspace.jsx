@@ -1204,7 +1204,7 @@ export default function ChatWorkspace() {
                 if (!arg && !attachmentFilename) { toast.error("Provide action text"); return; }
             } else if (cmd === '/suggest') {
                 try {
-                    const res = await suggestReplyMutation.mutateAsync(chatIdToUse);
+                    const res = await suggestReplyMutation.mutateAsync({ chatId: chatIdToUse, draft: arg || undefined });
                     if (res.job_id) { setSuggestJobId(res.job_id); }
                 } catch { toast.error("Failed to generate suggestion"); }
                 return;
@@ -1237,8 +1237,9 @@ export default function ChatWorkspace() {
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
         try {
+            const draft = message.trim();
             setMessage('');
-            const res = await suggestReplyMutation.mutateAsync(activeChatId);
+            const res = await suggestReplyMutation.mutateAsync({ chatId: activeChatId, draft: draft || undefined });
             if (res.job_id) {
                 setSuggestJobId(res.job_id);
                 // Safety net: if the completion event is missed (reconnect gap),
@@ -1250,7 +1251,7 @@ export default function ChatWorkspace() {
         } catch {
             toast.error("Failed to generate suggestion");
         }
-    }, [activeChatId, suggestReplyMutation]);
+    }, [activeChatId, message, suggestReplyMutation]);
 
     const handleTextChange = (e) => {
         const val = e.target.value;

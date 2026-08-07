@@ -791,6 +791,7 @@ class Story(SQLModel, table=True):
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
     scenario_id: str | None = Field(default=None)  # base scenario
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
+    memory: str | None = Field(default=None, sa_column=Column(Text)) # Global author's note / story memory
     # Story state
     is_archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

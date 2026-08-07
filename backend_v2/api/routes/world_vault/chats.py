@@ -776,8 +776,11 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SuggestReplyRequest(BaseModel):
+    draft: str | None = None
+
 @router.post("/{chat_id}/suggest")
-async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -> dict:
+async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session)) -> dict:
     from services.context_builder import build_chat_context
     from services.job_queue import queue_manager
     
@@ -794,17 +797,12 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
         from core.entities import Character
         character = session.get(Character, chat.character_id)
 
-    # Build the conversation context WITHOUT the character system prompt —
-    # we don't want the LLM to think it IS the character when writing a user reply.
-    # Pass include_roleplay_default=False too so no roleplay instructions bleed in.
     from services.context_builder import build_system_prompt_sections
     from config import get_system_prompt_blocks
 
-    # Assemble a minimal world-state section so the suggestion is situationally aware
-    # (time, location, persona name) but never reads the character card.
     world_sections = build_system_prompt_sections(
         session,
-        character=None,               # deliberately exclude character identity
+        character=None,
         lorebook_ids=chat.active_lorebook_ids or None,
         persona_name=chat.persona_name,
         story_time=chat.story_time,
@@ -813,38 +811,55 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
-    # Build the suggest instruction — configurable in Settings, with a safe default
-    suggest_instruction = (
-        (get_system_prompt_blocks() or {}).get("suggest_instruction")
-        or (
-            "CRITICAL INSTRUCTION: You are acting as {user}, the human user in this roleplay. "
-            "Based on the conversation so far, write ONE short, in-character response or action "
-            "that {user} would realistically say or do next. "
-            "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
-        )
-    )
-    # Substitute {{user}} in the instruction itself
     user_name = chat.persona_name or "User"
     char_name = character.name if character else "the AI"
-    suggest_instruction = (
-        suggest_instruction
-        .replace("{user}", user_name)
-        .replace("{{user}}", user_name)
-        .replace("{char}", char_name)
-        .replace("{{char}}", char_name)
-    )
 
-    # The system prompt for suggest tells the LLM it's the USER, not the character.
-    # Include world context (lorebook/world-state) so suggestions are situationally grounded.
-    suggest_system = (
-        f"You are {user_name}, the human participant in the following roleplay conversation "
-        f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"
-        + (f"{world_context_str}\n\n" if world_context_str else "")
-        + suggest_instruction
-    )
+    if req.draft and req.draft.strip():
+        # Draft provided: Refine the user's draft
+        suggest_instruction = (
+            "CRITICAL INSTRUCTION: You are acting as {user}, the human user in this roleplay. "
+            "You have written a rough draft of your next message, but you need to refine it. "
+            "Rewrite the draft to be more descriptive, in-character, and engaging, while keeping the original intent. "
+            "Write only the raw text of the final response — no labels, no quotes around the whole reply, no meta-commentary."
+        )
+        suggest_instruction = (
+            suggest_instruction
+            .replace("{user}", user_name)
+            .replace("{{user}}", user_name)
+            .replace("{char}", char_name)
+            .replace("{{char}}", char_name)
+        )
+        suggest_system = (
+            f"You are {user_name}, the human participant in the following roleplay conversation "
+            f"with {char_name}. Your job is to rewrite and improve {user_name}'s rough draft of the next message.\n\n"
+            + (f"{world_context_str}\n\n" if world_context_str else "")
+            + suggest_instruction
+        )
+    else:
+        # No draft: Auto-suggest from scratch
+        suggest_instruction = (
+            (get_system_prompt_blocks() or {}).get("suggest_instruction")
+            or (
+                "CRITICAL INSTRUCTION: You are acting as {user}, the human user in this roleplay. "
+                "Based on the conversation so far, write ONE short, in-character response or action "
+                "that {user} would realistically say or do next. "
+                "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
+            )
+        )
+        suggest_instruction = (
+            suggest_instruction
+            .replace("{user}", user_name)
+            .replace("{{user}}", user_name)
+            .replace("{char}", char_name)
+            .replace("{{char}}", char_name)
+        )
+        suggest_system = (
+            f"You are {user_name}, the human participant in the following roleplay conversation "
+            f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"
+            + (f"{world_context_str}\n\n" if world_context_str else "")
+            + suggest_instruction
+        )
 
-    # Get the conversation history — map char→user and user→assistant so the LLM
-    # sees itself as the user-side, not the character-side.
     msg_list = []
     for msg in past_messages:
         meta = getattr(msg, "message_metadata", None) or {}
@@ -862,6 +877,10 @@ async def suggest_reply(chat_id: str, session: Session = Depends(get_session)) -
     # Prune to stay within context budget
     from services.context_builder import prune_context
     all_msgs = [{"role": "system", "content": suggest_system}] + msg_list
+    
+    if req.draft and req.draft.strip():
+        all_msgs.append({"role": "user", "content": f"[User's rough draft to refine]:\n{req.draft}"})
+        
     all_msgs = prune_context(all_msgs, suggest_system, [])
 
     try:

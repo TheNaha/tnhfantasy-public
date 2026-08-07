@@ -7,7 +7,9 @@ import zlib
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from io import BytesIO
+from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -317,3 +319,96 @@ def get_avatar(character_id: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Avatar not found")
         
     return FileResponse(character.avatar_path)
+
+
+@router.post("/{character_id}/clone", response_model=Character)
+def clone_character(character_id: str, session: Session = Depends(get_session)):
+    character = session.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+        
+    char_dict = character.model_dump(exclude={"id", "created_at", "updated_at", "avatar_path"})
+    char_dict["name"] = f"{character.name} (Copy)"
+    
+    new_char = Character(**char_dict)
+    new_char.created_at = datetime.now(timezone.utc)
+    new_char.updated_at = new_char.created_at
+    session.add(new_char)
+    session.commit()
+    session.refresh(new_char)
+    
+    if character.avatar_path and os.path.exists(character.avatar_path):
+        os.makedirs(f"/data/characters/{new_char.id}", exist_ok=True)
+        new_avatar_path = f"/data/characters/{new_char.id}/avatar.png"
+        shutil.copy2(character.avatar_path, new_avatar_path)
+        new_char.avatar_path = new_avatar_path
+        session.add(new_char)
+        session.commit()
+        session.refresh(new_char)
+        
+    # Auto-create collection
+    from core.entities import Collection
+    collection = Collection(
+        name=f"{new_char.name}'s Gallery",
+        color="#8B5CF6",
+        description=f"Scene images generated for {new_char.name}",
+        character_id=new_char.id,
+    )
+    session.add(collection)
+    session.commit()
+        
+    return new_char
+
+
+@router.get("/{character_id}/export")
+def export_character(character_id: str, session: Session = Depends(get_session)):
+    character = session.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+        
+    if not character.avatar_path or not os.path.exists(character.avatar_path):
+        raise HTTPException(status_code=400, detail="Character must have an avatar to export as a PNG card")
+        
+    # Format as V2 character card
+    v2_data = {
+        "spec": "chara2.0",
+        "spec_version": "2.0",
+        "data": {
+            "name": character.name,
+            "description": character.description or "",
+            "personality": character.personality or "",
+            "scenario": character.scenario or "",
+            "first_mes": character.first_mes or "",
+            "mes_example": character.mes_example or "",
+            "creator_notes": character.creator_notes or "",
+            "system_prompt": character.system_prompt or "",
+            "alternate_greetings": character.alternate_greetings or [],
+            "tags": character.visual_tags or [],
+            "creator": character.creator_notes or "",
+            "character_version": "",
+            "extensions": {
+                "lora_triggers": character.lora_triggers or [],
+                "visual_tags": character.visual_tags or [],
+                "voice_profile": character.voice_profile or ""
+            }
+        }
+    }
+    
+    json_str = json.dumps(v2_data)
+    b64_data = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+    
+    img = Image.open(character.avatar_path)
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("chara", b64_data)
+    
+    output = BytesIO()
+    img.save(output, format="PNG", pnginfo=metadata)
+    output.seek(0)
+    
+    # Sanitize filename
+    safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+    if not safe_name:
+        safe_name = "character"
+    filename = f"{safe_name.replace(' ', '_')}_v2.png"
+    
+    return StreamingResponse(output, media_type="image/png", headers={"Content-Disposition": f'attachment; filename="{filename}"'})

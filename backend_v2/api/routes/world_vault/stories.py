@@ -162,6 +162,9 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     if story and story.genre:
         system_prompt += f"\nThe genre is {story.genre}."
         
+    if story and story.memory:
+        system_prompt += f"\n\nGlobal Story Memory (Author's Note):\n{story.memory}\n"
+        
     if story and story.lorebook_ids:
         lorebooks_content = []
         for lorebook_id in story.lorebook_ids:

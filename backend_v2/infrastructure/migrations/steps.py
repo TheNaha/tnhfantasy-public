@@ -815,6 +815,24 @@ def _migration_add_persona_description(conn) -> bool:
     return touched
 
 
+def _migration_add_story_memory(conn) -> bool:
+    """Add memory column to stories."""
+    inspector = inspect(conn)
+    if "stories" not in inspector.get_table_names():
+        return False
+        
+    cols = _get_table_columns(conn, "stories")
+    touched = False
+    
+    if "memory" not in cols:
+        conn.execute(text("ALTER TABLE stories ADD COLUMN memory TEXT DEFAULT NULL"))
+        logger.info("migration_column_added", table="stories", column="memory")
+        touched = True
+        
+    _verify_required_columns(conn, "stories", {"memory"})
+    return touched
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -927,5 +945,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="022_add_persona_description",
             description="Add persona_description to chats and suggested_persona to characters",
             apply_fn=_migration_add_persona_description,
+        ),
+        MigrationStep(
+            version="023_add_story_memory",
+            description="Add memory column to stories for global author notes",
+            apply_fn=_migration_add_story_memory,
         ),
     ]

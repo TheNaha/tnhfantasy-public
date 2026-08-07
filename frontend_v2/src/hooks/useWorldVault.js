@@ -122,7 +122,7 @@ export const useRenameChat = () => {
     });
 };export const useSuggestReply = () => {
     return useMutation({
-        mutationFn: (chatId) => api.post(`/api/v2/chats/${chatId}/suggest`),
+        mutationFn: ({ chatId, draft }) => api.post(`/api/v2/chats/${chatId}/suggest`, { draft }),
     });
 };
 
@@ -341,6 +341,16 @@ export const useDeleteCharacter = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: (id) => api.delete(`/api/v2/characters/${id}`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+        }
+    });
+};
+
+export const useCloneCharacter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id) => api.post(`/api/v2/characters/${id}/clone`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
         }
