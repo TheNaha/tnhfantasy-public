@@ -241,6 +241,6 @@ class OpenAICompatProviderClient(BaseProviderClient):
             "message": "LLM workers do not manage local model files.",
         }
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         """LLM workers have no file system to reconcile."""
         return build_status_response("success", "No reconciliation needed for LLM workers.", provider=self.provider_id)

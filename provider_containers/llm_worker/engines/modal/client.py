@@ -130,5 +130,5 @@ class VLLMModalProviderClient(BaseProviderClient):
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}
 
-    async def run_reconciliation(self) -> Dict[str, Any]:
+    async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
         return build_status_response("success", "Not applicable", provider=self.provider_id)

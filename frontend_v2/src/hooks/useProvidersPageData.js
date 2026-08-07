@@ -201,7 +201,6 @@ async function ensureProvidersRealtime(queryClient) {
 
             if (isBatchUpdate) {
                 queryClient.invalidateQueries({ queryKey: ['installed-models'] });
-                queryClient.invalidateQueries({ queryKey: ['v2-models'] });
                 queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
             }
 
@@ -359,7 +358,6 @@ export function useProviderMutations() {
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers }),
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.loadBalancer }),
             queryClient.invalidateQueries({ queryKey: ['installed-models'] }),
-            queryClient.invalidateQueries({ queryKey: ['v2-models'] }),
         ]);
     };
 

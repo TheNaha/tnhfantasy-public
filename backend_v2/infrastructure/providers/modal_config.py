@@ -76,7 +76,9 @@ def build_modal_env_vars(credentials: dict[str, Any], config: dict[str, Any]) ->
     # Nested deploy_config: functions.download
     download = clean_dict(clean_dict(deploy.get("functions")).get("download"))
     if "timeout_seconds" in download:
-        env_vars["MODAL_DOWNLOAD_TIMEOUT"] = str(download["timeout_seconds"])
+        # Floor at 1h: multi-GB checkpoint downloads routinely exceed short
+        # configured timeouts and get cancelled mid-transfer.
+        env_vars["MODAL_DOWNLOAD_TIMEOUT"] = str(max(int(download["timeout_seconds"]), 3600))
     if "max_containers" in download:
         env_vars["MODAL_DOWNLOAD_MAX_CONTAINERS"] = str(download["max_containers"])
 

@@ -7,7 +7,6 @@ from typing import Any
 
 from config import settings
 from core.entities import JobStatus
-from core.events import EventType, emit_job_event
 from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
@@ -263,17 +262,20 @@ async def complete_job(
     outputs: list[dict[str, Any]],
     provider_id: str | None = None,
     load_balancer=None,
+    event_extra: dict | None = None,
 ) -> None:
     # Note: duration_seconds is already saved to image metadata in build_job_outputs
     # via full_metadata["job"] = {"duration_seconds": ...}
-    await job_service.update_job(
-        job_id,
-        status=JobStatus.COMPLETED,
-        outputs=outputs,
-        progress=100,
-        overall_progress=100,
-        provider_id=provider_id,
-    )
+    update_args: dict[str, Any] = {
+        "status": JobStatus.COMPLETED,
+        "outputs": outputs,
+        "progress": 100,
+        "overall_progress": 100,
+        "provider_id": provider_id,
+    }
+    if event_extra is not None:
+        update_args["event_extra"] = event_extra
+    await job_service.update_job(job_id, **update_args)
 
     if load_balancer and provider_id:
         await load_balancer.report_success(provider_id)
@@ -309,6 +311,7 @@ async def finalize_persisted_job_outputs(
     provider_id: str | None = None,
     load_balancer=None,
     process_image_background_fn: Callable[[str, str], Awaitable[Any]] | None = None,
+    event_extra: dict | None = None,
 ) -> None:
     try:
         job = await job_service.get_job(job_id)
@@ -369,6 +372,7 @@ async def finalize_persisted_job_outputs(
                 outputs=outputs,
                 provider_id=provider_id,
                 load_balancer=load_balancer,
+                event_extra=event_extra,
             )
             logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
         except Exception as exc:
@@ -426,6 +430,10 @@ async def _finalize_llm_job(
         and isinstance(job.metadata_, dict)
         and job.metadata_.get("is_impersonation") is True
     )
+    # Optional rich completion payload (type/chat_id/content/...) merged into the
+    # canonical JOB_COMPLETED event. None for plain text jobs (title generation,
+    # character enrichment, etc.).
+    event_extra: dict[str, Any] | None = None
     if is_impersonation:
         imp_text = ""
         if final_result.get("outputs") and isinstance(final_result["outputs"], list):
@@ -505,14 +513,6 @@ async def _finalize_llm_job(
                 except Exception as e:
                     logger.error("impersonate_reply_failed", job_id=job_id, error=str(e), exc_info=True)
 
-        await emit_job_event(EventType.JOB_COMPLETED, {
-            "id": job.id,
-            "task_type": job.task_type,
-            "type": "impersonation",
-            "metadata": {"chat_id": imp_chat_id, "type": "impersonation"},
-            "chat_id": imp_chat_id,
-            "content": imp_text,
-        })
         await finalize_persisted_job_outputs(
             job_service=job_service,
             job_id=job_id,
@@ -520,8 +520,17 @@ async def _finalize_llm_job(
             provider_id=provider_id,
             load_balancer=load_balancer,
             process_image_background_fn=None,
+            event_extra={
+                "type": "impersonation",
+                "metadata": {"chat_id": imp_chat_id, "type": "impersonation"},
+                "chat_id": imp_chat_id,
+                "content": imp_text,
+            },
         )
         return
+
+    # ── Illustrate chain: LLM generated an image prompt → fire image job ────
+    if is_illustrate_prompt:
         generated_prompt = ""
         if final_result.get("outputs") and isinstance(final_result["outputs"], list):
             generated_prompt = (final_result["outputs"][0] or {}).get("content", "")
@@ -618,14 +627,12 @@ async def _finalize_llm_job(
                         job_id=job.id, error=str(e),
                     )
 
-            await emit_job_event(EventType.JOB_COMPLETED, {
-                "id": job.id,
-                "task_type": job.task_type,
+            event_extra = {
                 "type": "narrator",
                 "metadata": {"chat_id": narrator_chat_id, "type": "narrator", "source": "narrator"},
                 "chat_id": narrator_chat_id,
                 "content": narrator_content,
-            })
+            }
     elif is_chat_reply or is_story_continue:
         assistant_content = ""
         assistant_output: dict[str, Any] = {}
@@ -764,26 +771,22 @@ async def _finalize_llm_job(
                     
             event_type_str = "chat_reply" if is_chat_reply else "story_continue"
             if is_chat_reply:
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id, 
-                    "task_type": job.task_type, 
+                event_extra = {
                     "type": event_type_str,
                     "metadata": {"chat_id": entity_id, "type": event_type_str},
-                    "chat_id": entity_id, 
-                    "content": assistant_content
-                })
+                    "chat_id": entity_id,
+                    "content": assistant_content,
+                }
             else:
                 story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
                 chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id,
-                    "task_type": job.task_type,
+                event_extra = {
                     "type": event_type_str,
                     "metadata": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
                     "story_id": story_id,
                     "chapter_id": chapter_id,
-                    "content": assistant_content
-                })
+                    "content": assistant_content,
+                }
 
 
     await finalize_persisted_job_outputs(
@@ -793,6 +796,7 @@ async def _finalize_llm_job(
         provider_id=provider_id,
         load_balancer=load_balancer,
         process_image_background_fn=None,
+        event_extra=event_extra,
     )
 
 
@@ -806,6 +810,122 @@ async def _finalize_image_job(
     outputs: list,
     process_image_background_fn,
 ) -> None:
+    """Finalize a successful image job.
+
+    Persists chat/story references (message, chapter image, collection tag)
+    before marking the job COMPLETED.
+    """
+    event_extra: dict[str, Any] | None = None
+    metadata = job.metadata_ or {}
+    image_path = None
+    for output in outputs or []:
+        if isinstance(output, dict):
+            image_path = output.get("relative_path") or output.get("filename")
+            if image_path:
+                break
+
+    if image_path:
+        # Image job that belongs to a chat → SYSTEM message + character collection tag
+        chat_id = metadata.get("chat_id")
+        if chat_id:
+            from sqlmodel import Session
+
+            from core.entities import CollectionImage, Message, MessageRole
+            from infrastructure.database import engine
+            with Session(engine) as session:
+                if metadata.get("source") == "agentic_tool":
+                    tool_name = metadata.get("tool_name", "generate_image")
+                    content = f"[Image generated by {tool_name}]"
+                else:
+                    content = metadata.get("image_context", "Generated Image:")
+                # Persist the chat SYSTEM message — tolerate a chat that was
+                # deleted while the job was running (FK violation).
+                try:
+                    msg = Message(
+                        role=MessageRole.SYSTEM,
+                        content=content,
+                        image_path=image_path,
+                        chat_id=chat_id,
+                    )
+                    session.add(msg)
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(
+                        "finalize_persistence_skipped_chat_deleted",
+                        job_id=job.id, error=str(e),
+                    )
+
+                # Auto-tag to character's collection if chat has a character
+                try:
+                    character_id = metadata.get("character_id")
+                    if not character_id:
+                        from core.entities import Chat
+                        chat = session.get(Chat, chat_id)
+                        if chat:
+                            character_id = chat.character_id
+                    if character_id:
+                        from core.entities import Collection
+                        from sqlmodel import select
+                        collection = session.exec(
+                            select(Collection).where(Collection.character_id == character_id)
+                        ).first()
+                        if collection:
+                            # Check for duplicate before adding
+                            existing = session.exec(
+                                select(CollectionImage).where(
+                                    CollectionImage.collection_id == collection.id,
+                                    CollectionImage.image_filename == image_path,
+                                )
+                            ).first()
+                            if not existing:
+                                session.add(CollectionImage(
+                                    collection_id=collection.id,
+                                    image_filename=image_path,
+                                ))
+                                session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(
+                        "finalize_collection_tag_failed",
+                        job_id=job.id, error=str(e),
+                    )
+
+            event_extra = {
+                "type": "chat_image",
+                "chat_id": chat_id,
+                "image_path": image_path,
+            }
+
+        # Image job that belongs to a story chapter → append to chapter.image_paths
+        story_id = metadata.get("story_id")
+        chapter_id = metadata.get("chapter_id")
+        if story_id and chapter_id:
+            from sqlmodel import Session
+            from core.entities import StoryChapter
+            from infrastructure.database import engine
+            with Session(engine) as session:
+                try:
+                    chapter = session.get(StoryChapter, chapter_id)
+                    if chapter:
+                        if image_path not in (chapter.image_paths or []):
+                            chapter.image_paths = (chapter.image_paths or []) + [image_path]
+                            session.add(chapter)
+                            session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.warning(
+                        "finalize_persistence_skipped_chat_deleted",
+                        job_id=job.id, error=str(e),
+                    )
+
+            event_extra = {
+                **(event_extra or {}),
+                "type": "story_image",
+                "story_id": story_id,
+                "chapter_id": chapter_id,
+                "image_path": image_path,
+            }
 
     await finalize_persisted_job_outputs(
         job_service=job_service,
@@ -814,6 +934,7 @@ async def _finalize_image_job(
         provider_id=provider_id,
         load_balancer=load_balancer,
         process_image_background_fn=process_image_background_fn,
+        event_extra=event_extra,
     )
 
 
@@ -858,326 +979,3 @@ async def finalize_successful_job(
             outputs=outputs,
             process_image_background_fn=process_image_background_fn,
         )
-        return
-
-    if is_narrator:
-        narrator_content = ""
-        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
-            narrator_content = (final_result.get("outputs")[0] or {}).get("content", "")
-        if not narrator_content and final_result.get("text"):
-            narrator_content = final_result.get("text")
-
-        narrator_chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
-        if not narrator_chat_id:
-            narrator_chat_id = final_result.get("chat_id")
-
-        if narrator_chat_id and narrator_content:
-            from sqlmodel import Session
-
-            from core.entities import Message, MessageRole
-            from infrastructure.database import engine
-
-            with Session(engine) as session:
-                try:
-                    msg = Message(
-                        role=MessageRole.SYSTEM,
-                        content=narrator_content,
-                        chat_id=narrator_chat_id,
-                        message_metadata={"source": "narrator"},
-                    )
-                    session.add(msg)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.warning(
-                        "finalize_persistence_skipped_chat_deleted",
-                        job_id=job.id, error=str(e),
-                    )
-
-            await emit_job_event(EventType.JOB_COMPLETED, {
-                "id": job.id,
-                "task_type": job.task_type,
-                "type": "narrator",
-                "metadata": {"chat_id": narrator_chat_id, "type": "narrator", "source": "narrator"},
-                "chat_id": narrator_chat_id,
-                "content": narrator_content,
-            })
-    elif is_chat_reply or is_story_continue:
-        assistant_content = ""
-        assistant_output: dict[str, Any] = {}
-        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
-            assistant_output = final_result.get("outputs")[0]
-            assistant_content = assistant_output.get("content", "")
-        if not assistant_content and final_result.get("text"):
-             assistant_content = final_result.get("text")
-             
-        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
-        if not chat_id:
-            chat_id = final_result.get("chat_id")
-
-        story_id = job.metadata_.get("story_id") if job.metadata_ else None
-        if not story_id:
-            story_id = final_result.get("story_id")
-
-        entity_id = chat_id if is_chat_reply else story_id
-
-        # --- Agentic tool-call handling ---
-        if is_chat_reply and assistant_output.get("tool_calls"):
-            metadata = job.metadata_ or {}
-            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
-                # Per-chat gates: allow_image_generation gates generate_image,
-                # allow_narration gates narrate_scene.
-                image_generation_allowed = True
-                narration_allowed = True
-                if entity_id:
-                    from sqlmodel import Session
-                    from core.entities import Chat
-                    from infrastructure.database import engine
-                    with Session(engine) as session:
-                        chat = session.get(Chat, entity_id)
-                        if chat:
-                            image_generation_allowed = bool(chat.allow_image_generation)
-                            narration_allowed = bool(chat.allow_narration)
-
-                allowed_tools = set()
-                if image_generation_allowed:
-                    allowed_tools.add("generate_image")
-                if narration_allowed:
-                    allowed_tools.add("narrate_scene")
-                # Harmless side-effect tool: keeps story metadata in sync with the story.
-                allowed_tools.add("update_world_state")
-
-                if allowed_tools:
-                    from services.orchestrator_service import process_tool_calls_and_chain
-                    from services.job_queue import queue_manager
-
-                    chained = await process_tool_calls_and_chain(
-                        job=job,
-                        assistant_output=assistant_output,
-                        final_result=final_result,
-                        chat_id=entity_id,
-                        character_id=metadata.get("character_id"),
-                        job_service=job_service,
-                        enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
-                        allowed_tools=allowed_tools,
-                    )
-                    if chained:
-                        await load_balancer.release_job(provider_id)
-                        # Mark the parent job terminal so the frontend clears its
-                        # streaming bubble; the follow-up emits its own completion.
-                        try:
-                            from core.entities import JobStatus
-                            await job_service.update_job(
-                                job.id,
-                                status=JobStatus.COMPLETED,
-                                outputs=outputs or [],
-                                progress=100,
-                                overall_progress=100,
-                                provider_id=provider_id,
-                            )
-                        except Exception as e:
-                            logger.error("agentic_parent_finalize_failed", job_id=job.id, error=str(e))
-                        return
-            # If depth exceeded or not agentic, fall through to normal finalization
-            
-        if entity_id and assistant_content:
-            from sqlmodel import Session
-
-            from core.entities import Message, MessageRole
-            from infrastructure.database import engine
-            
-            with Session(engine) as session:
-                try:
-                    if is_chat_reply:
-                        # Check if the most recent char message can accept this as an alternate
-                        # (i.e. it was a recent regeneration rather than a genuinely new turn)
-                        from sqlmodel import select as _sel
-                        _last_char = session.exec(
-                            _sel(Message)
-                            .where(Message.chat_id == entity_id, Message.role == MessageRole.CHAR)
-                            .order_by(Message.created_at.desc())
-                            .limit(1)
-                        ).first()
-                        _meta = _last_char.message_metadata or {} if _last_char else {}
-                        _is_regen = job.metadata_.get("regenerated") if job.metadata_ else False
-
-                        if _is_regen and _last_char:
-                            # Append as a new alternate and auto-select it
-                            _MAX_ALTERNATES = 10
-                            alts: list[str] = _meta.get("alternates", [_last_char.content])
-                            if _last_char.content not in alts:
-                                alts.insert(0, _last_char.content)
-                            alts.append(assistant_content)
-                            if len(alts) > _MAX_ALTERNATES:
-                                alts = alts[-_MAX_ALTERNATES:]
-                            new_index = len(alts) - 1
-                            _last_char.content = assistant_content
-                            _last_char.message_metadata = {**_meta, "alternates": alts, "active_index": new_index}
-                            from datetime import datetime, timezone as _tz
-                            _last_char.updated_at = datetime.now(_tz.utc)
-                            session.add(_last_char)
-                            session.commit()
-                        else:
-                            msg = Message(role=MessageRole.CHAR, content=assistant_content, chat_id=entity_id)
-                            session.add(msg)
-                            session.commit()
-                    else:
-                        chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
-                        if chapter_id:
-                            from core.entities import StoryBeatRole, StoryChapter
-                            chapter = session.get(StoryChapter, chapter_id)
-                            if chapter:
-                                chapter.beats.append({"role": StoryBeatRole.NARRATOR, "content": assistant_content})
-                                chapter.content += f"\n\n{assistant_content}\n\n"
-                                session.add(chapter)
-                                session.commit()
-                except Exception as e:
-                    session.rollback()
-                    logger.warning(
-                        "finalize_persistence_skipped_chat_deleted",
-                        job_id=job.id, error=str(e),
-                    )
-                    
-            event_type_str = "chat_reply" if is_chat_reply else "story_continue"
-            if is_chat_reply:
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id, 
-                    "task_type": job.task_type, 
-                    "type": event_type_str,
-                    "metadata": {"chat_id": entity_id, "type": event_type_str},
-                    "chat_id": entity_id, 
-                    "content": assistant_content
-                })
-            else:
-                story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
-                chapter_id = (job.metadata_.get("chapter_id") if job.metadata_ else None) or final_result.get("chapter_id")
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id,
-                    "task_type": job.task_type,
-                    "type": event_type_str,
-                    "metadata": {"story_id": story_id, "chapter_id": chapter_id, "type": event_type_str},
-                    "story_id": story_id,
-                    "chapter_id": chapter_id,
-                    "content": assistant_content
-                })
-
-    # NEW: Handle Image jobs that belong to a chat
-    if job.task_type == 'image' and job.metadata_ and job.metadata_.get("chat_id"):
-        chat_id = job.metadata_.get("chat_id")
-        if outputs and len(outputs) > 0:
-            image_path = outputs[0].get("relative_path") or outputs[0].get("filename")
-            if image_path:
-                from sqlmodel import Session
-
-                from core.entities import CollectionImage, Message, MessageRole
-                from infrastructure.database import engine
-                with Session(engine) as session:
-                    meta = job.metadata_ or {}
-                    if meta.get("source") == "agentic_tool":
-                        tool_name = meta.get("tool_name", "generate_image")
-                        content = f"[Image generated by {tool_name}]"
-                    else:
-                        content = meta.get("image_context", "Generated Image:")
-                    # Persist the chat SYSTEM message — tolerate a chat that was
-                    # deleted while the job was running (FK violation).
-                    try:
-                        msg = Message(
-                            role=MessageRole.SYSTEM, 
-                            content=content, 
-                            image_path=image_path,
-                            chat_id=chat_id
-                        )
-                        session.add(msg)
-                        session.commit()
-                    except Exception as e:
-                        session.rollback()
-                        logger.warning(
-                            "finalize_persistence_skipped_chat_deleted",
-                            job_id=job.id, error=str(e),
-                        )
-
-                    # Auto-tag to character's collection if chat has a character
-                    try:
-                        character_id = job.metadata_.get("character_id")
-                        if not character_id:
-                            from core.entities import Chat
-                            chat = session.get(Chat, chat_id)
-                            if chat:
-                                character_id = chat.character_id
-                        if character_id:
-                            from core.entities import Collection
-                            from sqlmodel import select
-                            collection = session.exec(
-                                select(Collection).where(Collection.character_id == character_id)
-                            ).first()
-                            if collection:
-                                # Check for duplicate before adding
-                                existing = session.exec(
-                                    select(CollectionImage).where(
-                                        CollectionImage.collection_id == collection.id,
-                                        CollectionImage.image_filename == image_path
-                                    )
-                                ).first()
-                                if not existing:
-                                    session.add(CollectionImage(
-                                        collection_id=collection.id,
-                                        image_filename=image_path,
-                                    ))
-                                    session.commit()
-                    except Exception as e:
-                        session.rollback()
-                        logger.warning(
-                            "finalize_collection_tag_failed",
-                            job_id=job.id, error=str(e),
-                        )
-                
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id, 
-                    "task_type": "image", 
-                    "type": "chat_image",
-                    "chat_id": chat_id, 
-                    "image_path": image_path
-                })
-
-    # Handle Image jobs that belong to a story chapter
-    if job.task_type == 'image' and job.metadata_ and job.metadata_.get("story_id"):
-        story_id = job.metadata_.get("story_id")
-        chapter_id = job.metadata_.get("chapter_id")
-        if outputs and len(outputs) > 0 and chapter_id:
-            image_path = outputs[0].get("relative_path") or outputs[0].get("filename")
-            if image_path:
-                from sqlmodel import Session
-                from core.entities import StoryChapter
-                from infrastructure.database import engine
-                with Session(engine) as session:
-                    try:
-                        chapter = session.get(StoryChapter, chapter_id)
-                        if chapter:
-                            if image_path not in (chapter.image_paths or []):
-                                chapter.image_paths = (chapter.image_paths or []) + [image_path]
-                                session.add(chapter)
-                                session.commit()
-                    except Exception as e:
-                        session.rollback()
-                        logger.warning(
-                            "finalize_persistence_skipped_chat_deleted",
-                            job_id=job.id, error=str(e),
-                        )
-
-                await emit_job_event(EventType.JOB_COMPLETED, {
-                    "id": job.id,
-                    "task_type": "image",
-                    "type": "story_image",
-                    "story_id": story_id,
-                    "chapter_id": chapter_id,
-                    "image_path": image_path
-                })
-
-    await finalize_persisted_job_outputs(
-        job_service=job_service,
-        job_id=job_id,
-        outputs=outputs,
-        provider_id=provider_id,
-        load_balancer=load_balancer,
-        process_image_background_fn=process_image_background_fn,
-    )

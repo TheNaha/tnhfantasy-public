@@ -133,7 +133,9 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
             return;
         }
 
-        if (job.status !== 'completed') {
+        // Only surface in-progress jobs as cards — failed/cancelled jobs
+        // (e.g. LLM failures) must not linger in the timeline.
+        if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
             combined.push(job);
         }
     });

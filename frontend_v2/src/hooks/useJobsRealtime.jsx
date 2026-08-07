@@ -7,14 +7,12 @@ export function useJobsRealtime() {
     const queryClient = useQueryClient();
 
     const lastEventTimeRef = useRef(0);
-    const consecutiveFailuresRef = useRef(0);
     const connectionToastIdRef = useRef(null);
-    const initializedRef = useRef(false);
     const lastSequenceNumberRef = useRef(0);
+    const connectedRef = useRef(false);
 
     const markEventReceived = useCallback(() => {
         lastEventTimeRef.current = Date.now();
-        consecutiveFailuresRef.current = 0;
     }, []);
 
     const dismissConnectionToast = useCallback(async () => {
@@ -23,30 +21,32 @@ export function useJobsRealtime() {
         connectionToastIdRef.current = null;
     }, []);
 
-    const connectAndSubscribe = useCallback(async () => {
+    // Replay events missed during a disconnect. lastSequenceNumberRef is the
+    // highest sequence number already applied, so the server only replays
+    // what the client actually missed — safe to call on every reconnect.
+    const replayMissedEvents = useCallback(async () => {
+        if (lastSequenceNumberRef.current <= 0) return;
         try {
-            await ws.connect();
-            await ws.subscribe('job');
-            initializedRef.current = true;
-
-            // Request replay of any events missed during disconnection
-            if (lastSequenceNumberRef.current > 0) {
-                const missedEvents = await ws.requestReplay(lastSequenceNumberRef.current);
-                if (missedEvents.length > 0) {
-                    ws.dispatchReplayEvents(missedEvents);
-                }
-                // After replay, invalidate active jobs to ensure consistency
-                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+            const missedEvents = await ws.requestReplay(lastSequenceNumberRef.current);
+            if (missedEvents.length > 0) {
+                ws.dispatchReplayEvents(missedEvents);
             }
         } catch (error) {
-            console.error('[useJobsRealtime] WebSocket connect/subscribe failed:', error);
+            console.warn('[useJobsRealtime] Replay request failed:', error);
         }
+        // After replay, invalidate to ensure consistency regardless.
+        queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
     }, [queryClient]);
 
     useEffect(() => {
-        // Initial setup
+        // Initial setup — subscribe exactly once. websocket.js re-subscribes
+        // topics automatically after Socket.IO reconnects, so calling
+        // subscribe() on every visibility change only leaks refcounts.
         lastEventTimeRef.current = Date.now();
-        void connectAndSubscribe();
+        ws.connect().catch((error) => {
+            console.warn('[useJobsRealtime] Initial connect failed:', error?.message || error);
+        });
+        void ws.subscribe('job');
 
         const unsubs = [];
 
@@ -61,24 +61,22 @@ export function useJobsRealtime() {
             });
         }));
 
-        // Invalidate active jobs automatically on WebSocket reconnection
-        unsubs.push(ws.on('connection', (state) => {
-            if (state.connected) {
-                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-                queryClient.invalidateQueries({ queryKey: ['gallery'] });
-                queryClient.invalidateQueries({ queryKey: ['statistics'] });
-            }
-        }));
-
         // 2. Job Progress/Updated -> Update in React Query
         const handleUpdate = (event) => {
             const job = event.data?.job || event;
             markEventReceived();
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
-            
+
+            // Partial LLM stream payloads ({id, status, stream_chunk, text,
+            // metadata_}) carry no task_type or progress and would corrupt the
+            // cached job (dropping task_type/provider_id, regressing status
+            // out-of-order). Their text content is consumed via the streaming
+            // store instead. Full job payloads always have task_type.
+            if (!job.task_type && job.progress == null && job.overall_progress == null) return;
+
             // Update the single source of truth
             queryClient.setQueryData(['jobs', job.id], (old) => old ? { ...old, ...job } : job);
-            
+
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
                 return old.map(j => j.id === job.id ? { ...j, ...job } : j);
             });
@@ -94,9 +92,11 @@ export function useJobsRealtime() {
             markEventReceived();
             if (event.sequence_number) lastSequenceNumberRef.current = event.sequence_number;
 
+            const isImageJob = job.task_type === 'image';
+
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
                 const remaining = old.filter(j => j.id !== job.id);
-                if (old.length > 0 && remaining.length === 0) {
+                if (isImageJob && old.length > 0 && remaining.length === 0) {
                     toast.success('All jobs completed! Queue is empty.', { icon: '🎉' });
                 }
                 return remaining;
@@ -107,7 +107,7 @@ export function useJobsRealtime() {
             );
             queryClient.invalidateQueries({ queryKey: ['gallery'] });
 
-            if (type === 'completed') {
+            if (type === 'completed' && isImageJob) {
                 toast.success(
                     <div>
                         <strong>Image generated!</strong>
@@ -119,7 +119,7 @@ export function useJobsRealtime() {
                     </div>,
                     { icon: '✨' }
                 );
-            } else if (type === 'failed') {
+            } else if (type === 'failed' && isImageJob) {
                 toast.error(
                     <div>
                         <strong>Job failed</strong>
@@ -127,7 +127,7 @@ export function useJobsRealtime() {
                         <span className="text-sm opacity-80">{job.error || 'Unknown error'}</span>
                     </div>
                 );
-            } else if (type === 'cancelled') {
+            } else if (type === 'cancelled' && isImageJob) {
                 toast('Job cancelled', { icon: '🛑' });
             }
         };
@@ -139,16 +139,38 @@ export function useJobsRealtime() {
         // Connection events
         unsubs.push(ws.on('connection', (data) => {
             if (data.connected) {
+                const wasConnected = connectedRef.current;
+                connectedRef.current = true;
                 dismissConnectionToast();
-            } else if (document.visibilityState === 'visible') {
-                if (!connectionToastIdRef.current) {
-                    connectionToastIdRef.current = toast.error(
-                        'Disconnected from server. Trying to reconnect...',
-                        { id: 'mobile-connection-error', duration: Infinity }
-                    );
+                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+                queryClient.invalidateQueries({ queryKey: ['gallery'] });
+                queryClient.invalidateQueries({ queryKey: ['statistics'] });
+                // Real (re)connection: catch up on events missed during the gap.
+                if (wasConnected || lastSequenceNumberRef.current > 0) {
+                    void replayMissedEvents();
+                }
+            } else {
+                connectedRef.current = false;
+                if (document.visibilityState === 'visible') {
+                    if (!connectionToastIdRef.current) {
+                        connectionToastIdRef.current = toast.error(
+                            'Disconnected from server. Trying to reconnect...',
+                            { id: 'mobile-connection-error', duration: Infinity }
+                        );
+                    }
                 }
             }
         }));
+
+        // Watchdog: if the socket claims to be connected but events stopped
+        // arriving (silently dropped), refetch the active queue so desktop
+        // stays fresh even with refetchOnWindowFocus disabled.
+        const watchdog = setInterval(() => {
+            if (ws.getConnectionStatus() && Date.now() - lastEventTimeRef.current > 15000) {
+                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+                lastEventTimeRef.current = Date.now();
+            }
+        }, 20000);
 
         // Document visibility and network listeners
         const onVisibilityChange = () => {
@@ -156,7 +178,9 @@ export function useJobsRealtime() {
                 dismissConnectionToast();
 
                 if (!ws.getConnectionStatus()) {
-                    void connectAndSubscribe();
+                    ws.connect().catch((error) => {
+                        console.warn('[useJobsRealtime] Reconnect failed:', error?.message || error);
+                    });
                 }
 
                 queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
@@ -169,7 +193,9 @@ export function useJobsRealtime() {
             dismissConnectionToast();
             // Only reconnect if actually disconnected — don't destroy a working socket
             if (!ws.getConnectionStatus()) {
-                void connectAndSubscribe();
+                ws.connect().catch((error) => {
+                    console.warn('[useJobsRealtime] Reconnect failed:', error?.message || error);
+                });
             }
             queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
             queryClient.invalidateQueries({ queryKey: ['gallery'] });
@@ -181,6 +207,7 @@ export function useJobsRealtime() {
 
         return () => {
             unsubs.forEach(unsub => unsub?.());
+            clearInterval(watchdog);
             ws.unsubscribe('job');
             // Do NOT call ws.disconnect() — the socket is a module-level singleton
             // that should persist for the lifetime of the page. Destroying it here
@@ -189,7 +216,7 @@ export function useJobsRealtime() {
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
         };
-    }, [queryClient, connectAndSubscribe, dismissConnectionToast, markEventReceived]);
+    }, [queryClient, replayMissedEvents, dismissConnectionToast, markEventReceived]);
 }
 
 export default useJobsRealtime;

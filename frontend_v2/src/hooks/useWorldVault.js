@@ -165,6 +165,8 @@ export const useUpdateChat = () => {
         onSettled: (data, error, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            // The system-prompt preview is derived from server state — refresh it.
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId, 'system-prompt'] });
         }
     });
 };
@@ -234,6 +236,7 @@ export const useRegenerateReply = () => {
 };
 
 export const useChatJobs = (chatId) => {
+    const ACTIVE_STATUSES = ['pending', 'sent_to_provider', 'connected', 'pre_generation', 'generating', 'post_processing'];
     return useQuery({
         queryKey: ['world_vault', 'chats', chatId, 'jobs'],
         queryFn: () => {
@@ -241,7 +244,13 @@ export const useChatJobs = (chatId) => {
             return api.get(`/api/v2/chats/${chatId}/jobs`);
         },
         enabled: !!chatId,
-        refetchInterval: 5000,
+        // Poll fast while a job is running; back off to 30s otherwise so an
+        // idle open chat doesn't re-fetch + re-render every 5 seconds on mobile.
+        refetchInterval: (query) => {
+            const jobs = query.state.data;
+            if (Array.isArray(jobs) && jobs.some(j => ACTIVE_STATUSES.includes(j.status))) return 5000;
+            return 30000;
+        },
         refetchIntervalInBackground: false
     });
 };
@@ -461,7 +470,9 @@ export const useSetLLMDefaultProvider = () => {
 };
 
 export const useLLMAvailableModels = () => useQuery({
-    queryKey: ['llm', 'models'],
+    // Must match LLM_MODELS_KEY in useLLMProviderStatus.js — same endpoint,
+    // one shared cache so the Settings tab and chat model picker can't diverge.
+    queryKey: ['llm', 'available-models'],
     queryFn: () => api.get('/api/v2/llm/available-models'),
     staleTime: 1000 * 60 * 5,
 });

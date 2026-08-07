@@ -57,6 +57,11 @@ body {
     padding-right: max(16px, env(safe-area-inset-right));
     padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
+
+  /* Bottom safe area for fixed bottom bars (iOS home indicator / Android nav bar) */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
 }
 
 /* Mobile Touch Target Improvements */

@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StorySandbox from './StorySandbox';
@@ -57,7 +57,7 @@ vi.mock('../hooks/useWorldVault', () => ({
 
 vi.mock('../api/websocket', () => ({
     useWebSocket: () => ({ subscribe: vi.fn(() => vi.fn()), unsubscribe: vi.fn() }),
-    EventTypes: { JOB_PROGRESS: 'job.progress', JOB_COMPLETED: 'job.completed', JOB_FAILED: 'job.failed' },
+    EventTypes: { JOB_PROGRESS: 'job.progress', JOB_COMPLETED: 'job.completed', JOB_FAILED: 'job.failed', JOB_CANCELLED: 'job.cancelled' },
 }));
 
 vi.mock('../api', () => ({
@@ -90,6 +90,15 @@ vi.mock('framer-motion', () => ({
             return <button {...safe}>{children}</button>;
         },
         span: ({ children }) => <span>{children}</span>,
+        g: ({ children, ...props }) => {
+            const safe = {};
+            for (const k of Object.keys(props)) {
+                if (!['initial', 'animate', 'exit', 'whileHover', 'whileTap', 'transition', 'variants', 'layout'].includes(k)) {
+                    safe[k] = props[k];
+                }
+            }
+            return <g {...safe}>{children}</g>;
+        },
     },
     AnimatePresence: ({ children }) => <>{children}</>,
 }));
@@ -97,7 +106,16 @@ vi.mock('framer-motion', () => ({
 function renderWithProviders(ui) {
     return render(
         <QueryClientProvider client={queryClient}>
-            <MemoryRouter>{ui}</MemoryRouter>
+            {/* StorySandbox reads storyId/chapterId from URL params; it must be
+                mounted under a <Route> so useParams() reacts to navigate() —
+                otherwise the auto-select effects can never drive the UI. */}
+            <MemoryRouter initialEntries={['/story/story-1/chapter/ch-1']}>
+                <Routes>
+                    <Route path="/story" element={ui} />
+                    <Route path="/story/:storyId" element={ui} />
+                    <Route path="/story/:storyId/chapter/:chapterId" element={ui} />
+                </Routes>
+            </MemoryRouter>
         </QueryClientProvider>
     );
 }
@@ -137,7 +155,7 @@ describe('StorySandbox page', () => {
 
     it('displays chapter list', () => {
         renderWithProviders(<StorySandbox />);
-        expect(screen.getByText(/Chapter 1/)).toBeInTheDocument();
+        expect(screen.getAllByText(/Chapter 1/).length).toBeGreaterThan(0);
     });
 
     it('shows editor with chapter content', async () => {

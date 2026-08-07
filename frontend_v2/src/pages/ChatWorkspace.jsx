@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     MessageSquare, Send, Image as ImageIcon, Settings,
     PanelRightClose, PanelRightOpen, Paperclip, Sparkles,
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
     User, X, ChevronRight, ChevronLeft, RotateCcw, Clock, MapPin, Menu,
-    Pencil, Undo2, Activity, Brain, Download, Pin, PinOff, Ghost
+    Pencil, Undo2, Activity, Brain, Download, Pin, PinOff, Ghost,
+    MoreHorizontal
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -494,7 +495,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <TavernMessage content={msg.content} />
                                 {msg.image_path && (
                                     <div className="mt-1">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                                 {/* Swipe controls — only shown when alternates exist */}
@@ -525,7 +526,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <TavernMessage content={msg.content} />
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>
@@ -534,7 +535,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <span className="whitespace-pre-wrap">{msg.content}</span>
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>
@@ -888,6 +889,7 @@ export default function ChatWorkspace() {
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [showCharacterDetails, setShowCharacterDetails] = useState(false);
     const [showScenesModal, setShowScenesModal] = useState(false);
+    const [showMoreTools, setShowMoreTools] = useState(false);
     const [avatarModalSrc, setAvatarModalSrc] = useState(null);
     const handleAvatarClick = useCallback((url) => setAvatarModalSrc(url), []);
     const [rollbackTarget, setRollbackTarget] = useState(null);
@@ -908,12 +910,20 @@ export default function ChatWorkspace() {
     const suggestReplyMutation = useSuggestReply();
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
+    const titlePollCancelledRef = useRef(false);
     
     const [activeCommand, setActiveCommand] = useState(null);
     
     useEffect(() => {
         suggestJobIdRef.current = suggestJobId;
     }, [suggestJobId]);
+
+    useEffect(() => {
+        // Cancel any in-flight title-generation poll when switching chats.
+        // triggerAutoTitle resets the flag to false at the start of a new run.
+        titlePollCancelledRef.current = true;
+        setIsGeneratingTitle(false);
+    }, [activeChatId]);
 
     const { data: chats, isLoading: isChatsLoading } = useChats();
     const { data: activeChat } = useChat(activeChatId);
@@ -926,7 +936,8 @@ export default function ChatWorkspace() {
     const { data: chatCollection } = useCharacterCollection(activeChat?.character_id);
 
     // Use activeChat's lorebooks instead of the store's global state
-    const selectedLorebooks = activeChat?.active_lorebook_ids || [];
+    const emptyLorebooks = useMemo(() => [], []);
+    const selectedLorebooks = activeChat?.active_lorebook_ids || emptyLorebooks;
 
     const sendMessageMutation = useSendMessage();
     const createChatMutation = useCreateChat();
@@ -992,8 +1003,14 @@ export default function ChatWorkspace() {
         // Backend emits: { type, data: { job: {...} }, timestamp, sequence_number }
         const getJob = (event) => event?.data?.job || {};
 
-        const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const job = getJob(event);
+        // Throttle streaming updates to ~10Hz. The backend streams one
+        // JOB_PROGRESS per token and each payload carries the FULL accumulated
+        // text, so keeping only the latest per job is lossless while avoiding
+        // a full page re-render per token (the root cause of hot mobile devices).
+        const pendingStream = new Map();
+        let flushTimer = null;
+
+        const applyStreamUpdate = (job) => {
             const streamText = job.text ?? job.message ?? null;
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
@@ -1017,6 +1034,22 @@ export default function ChatWorkspace() {
                     progress: job.overall_progress ?? job.progress ?? null
                 });
             }
+        };
+
+        const throttleProgress = (job) => {
+            const eventId = job.id ?? null;
+            if (!eventId) { applyStreamUpdate(job); return; }
+            pendingStream.set(eventId, job);
+            if (flushTimer) return;
+            flushTimer = setTimeout(() => {
+                flushTimer = null;
+                for (const [, pendingJob] of pendingStream) applyStreamUpdate(pendingJob);
+                pendingStream.clear();
+            }, 100);
+        };
+
+        const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
+            throttleProgress(getJob(event));
         });
 
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
@@ -1059,6 +1092,7 @@ export default function ChatWorkspace() {
             const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
+            if (eventId === suggestJobIdRef.current) setSuggestJobId(null);
             if (eventId) clearStreamingJob(eventId);
 
             if (eventChatId === activeChatId) {
@@ -1066,11 +1100,35 @@ export default function ChatWorkspace() {
             }
         });
 
-        return () => { unsubProgress(); unsubCompleted(); unsubError(); };
+        // JOB_CANCELLED unhandled before: left a stuck 'thinking…' bubble and
+        // a permanently disabled Suggest button. Clear the stream state here.
+        const unsubCancelled = subscribe(EventTypes.JOB_CANCELLED, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const eventId = job.id ?? null;
+            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const eventChatId = meta.chat_id || existingJob?.chatId;
+
+            if (eventId === suggestJobIdRef.current) setSuggestJobId(null);
+            if (eventId) clearStreamingJob(eventId);
+
+            if (eventChatId === activeChatId) {
+                toast('AI response cancelled', { icon: '🛑' });
+            }
+        });
+
+        return () => {
+            if (flushTimer) clearTimeout(flushTimer);
+            pendingStream.clear();
+            unsubProgress(); unsubCompleted(); unsubError(); unsubCancelled();
+        };
     }, [subscribe, activeChatId, updateStreamingJob, clearStreamingJob, queryClient]);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // During streaming, use instant (non-smooth) scrolling — smooth
+        // scrolling per token triggers repeated layout + animation on mobile.
+        const hasStreaming = Object.keys(streamingJobs).length > 0;
+        messagesEndRef.current?.scrollIntoView({ behavior: hasStreaming ? 'auto' : 'smooth', block: 'end' });
     }, [messages, streamingJobs]);
 
     useEffect(() => {
@@ -1183,6 +1241,11 @@ export default function ChatWorkspace() {
             const res = await suggestReplyMutation.mutateAsync(activeChatId);
             if (res.job_id) {
                 setSuggestJobId(res.job_id);
+                // Safety net: if the completion event is missed (reconnect gap),
+                // don't leave the Suggest button disabled forever.
+                window.setTimeout(() => {
+                    setSuggestJobId((current) => (current === res.job_id ? null : current));
+                }, 120000);
             }
         } catch {
             toast.error("Failed to generate suggestion");
@@ -1241,6 +1304,7 @@ export default function ChatWorkspace() {
 
     const triggerAutoTitle = async () => {
         if (!activeChatId) return;
+        titlePollCancelledRef.current = false;
         setIsGeneratingTitle(true);
         toast('Generating title...', { icon: '🤖' });
         try {
@@ -1257,6 +1321,8 @@ export default function ChatWorkspace() {
             });
             const poll = async (jobId) => {
                 for (let i = 0; i < 30; i++) {
+                    // Stop polling if the page navigated away mid-generation
+                    if (titlePollCancelledRef.current) return;
                     const s = await api.get(`/api/jobs/${jobId}`);
                     if (s.status === 'completed' && s.outputs?.length > 0) {
                         const newTitle = s.outputs[0].content.replace(/["']/g, '');
@@ -1373,38 +1439,38 @@ export default function ChatWorkspace() {
         setRenamingChatId(null);
     };
 
-    const handleChatUpdate = (updates) => {
+    const handleChatUpdate = useCallback((updates) => {
         if (!activeChatId) return;
         updateChatMutation.mutate({ chatId: activeChatId, ...updates });
-    };
+    }, [activeChatId, updateChatMutation]);
 
-    const handleEditMessage = async (msgId, content) => {
+    const handleEditMessage = useCallback(async (msgId, content) => {
         if (!content.trim()) return;
         try {
             await editMessageMutation.mutateAsync({ chatId: activeChatId, msgId, content });
             toast.success('Message updated');
         } catch { toast.error('Failed to update message'); }
-    };
+    }, [activeChatId, editMessageMutation]);
 
-    const handleRollback = (msgId) => setRollbackTarget(msgId);
+    const handleRollback = useCallback((msgId) => setRollbackTarget(msgId), []);
 
-    const confirmRollback = async () => {
+    const confirmRollback = useCallback(async () => {
         if (!rollbackTarget) return;
         try {
             await rollbackMutation.mutateAsync({ chatId: activeChatId, messageId: rollbackTarget });
             toast.success('Chat rolled back');
         } catch { toast.error('Failed to rollback'); }
         setRollbackTarget(null);
-    };
+    }, [activeChatId, rollbackTarget, rollbackMutation]);
 
-    const handleRegenerate = async (msgId) => {
+    const handleRegenerate = useCallback(async (msgId) => {
         try {
             const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
             if (res?.job_id) updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
         } catch { toast.error('Failed to regenerate'); }
-    };
+    }, [activeChatId, regenerateMutation, updateStreamingJob]);
 
-    const handleImpersonate = async (hint = '') => {
+    const handleImpersonate = useCallback(async (hint = '') => {
         if (!activeChatId) return;
         try {
             const res = await impersonateMutation.mutateAsync({ chatId: activeChatId, hint });
@@ -1413,20 +1479,20 @@ export default function ChatWorkspace() {
                 toast('Impersonating...', { icon: '👤' });
             }
         } catch { toast.error('Impersonation failed'); }
-    };
+    }, [activeChatId, impersonateMutation, updateStreamingJob]);
 
-    const handlePinMessage = async (msgId, currentlyPinned) => {
+    const handlePinMessage = useCallback(async (msgId, currentlyPinned) => {
         try {
             await pinMessageMutation.mutateAsync({ chatId: activeChatId, msgId, pinned: !currentlyPinned });
             toast.success(currentlyPinned ? 'Message unpinned' : 'Message pinned — won\'t be pruned from context');
         } catch { toast.error('Failed to pin message'); }
-    };
+    }, [activeChatId, pinMessageMutation]);
 
-    const handleSwipe = async (msgId, direction, index) => {
+    const handleSwipe = useCallback(async (msgId, direction, index) => {
         try {
             await swipeMessageMutation.mutateAsync({ chatId: activeChatId, msgId, direction, index });
         } catch { toast.error('Swipe failed'); }
-    };
+    }, [activeChatId, swipeMessageMutation]);
 
     const handleExportChat = () => {
         if (!messages.length) { toast.error('No messages to export'); return; }
@@ -1526,10 +1592,13 @@ export default function ChatWorkspace() {
                                     />
                                 </div>
                             ) : (
-                                <button
+                                <div
+                                    role="button"
+                                    tabIndex={0}
                                     onClick={() => { setActiveChatId(chat.id); setMobileTab('chat'); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveChatId(chat.id); setMobileTab('chat'); } }}
                                     className={clsx(
-                                        "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5",
+                                        "w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center gap-2.5 cursor-pointer",
                                         activeChatId === chat.id
                                             ? "bg-blue-500/20 text-blue-300 border border-blue-500/20"
                                             : "text-gray-400 hover:bg-white/5 border border-transparent"
@@ -1551,7 +1620,7 @@ export default function ChatWorkspace() {
                                         <button onClick={e => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
                                         <button onClick={e => { e.stopPropagation(); setDeleteTarget(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
                                     </div>
-                                </button>
+                                </div>
                             )}
                         </div>
                     ))}
@@ -1774,7 +1843,7 @@ export default function ChatWorkspace() {
                             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAttachmentChange} className="hidden" />
                             
                             {/* Input Container */}
-                            <div className="flex items-center w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-20 sm:pr-44 py-3.5 sm:py-4 transition-all shadow-inner focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30">
+                            <div className="flex items-center w-full bg-gray-900/80 border border-gray-700/50 rounded-2xl pl-10 sm:pl-12 pr-24 sm:pr-44 py-3.5 sm:py-4 transition-all shadow-inner focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/30">
                                 
                                 {activeCommand && (
                                     <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-500/20 text-blue-300 rounded-lg text-sm font-medium mr-2 whitespace-nowrap select-none ml-2">
@@ -1809,6 +1878,66 @@ export default function ChatWorkspace() {
 
                             {/* Right Buttons Group */}
                             <div className="absolute right-2 sm:right-3 bottom-2.5 sm:bottom-3 flex items-center gap-1">
+                                {/* Mobile overflow menu — keeps the 5 secondary tools
+                                    reachable without letting 6 touch-sized buttons
+                                    (~284px) cover the whole textarea on phones. */}
+                                <button
+                                    onClick={() => setShowMoreTools(v => !v)}
+                                    className="sm:hidden p-1.5 text-gray-400 hover:text-white transition-colors rounded-xl hover:bg-white/10"
+                                    title="More tools"
+                                    aria-label="More tools"
+                                >
+                                    <MoreHorizontal size={18} />
+                                </button>
+
+                                {showMoreTools && (
+                                    <div className="absolute bottom-full right-0 mb-2 w-48 bg-gray-900/95 backdrop-blur-xl border border-gray-700/60 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
+                                        <div className="px-3 py-2 text-xs font-semibold text-gray-400 bg-gray-800/40 uppercase tracking-wider border-b border-gray-700/50">Tools</div>
+                                        <div className="flex flex-col p-1">
+                                            <button
+                                                onClick={() => { setShowMoreTools(false); handleGenerateScene(); }}
+                                                disabled={isGeneratingScene || !activeChatId}
+                                                className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
+                                            >
+                                                <ImageIcon size={16} className="text-green-400" />
+                                                {isGeneratingScene ? 'Generating...' : 'Generate scene'}
+                                            </button>
+                                            <button
+                                                onClick={() => { setShowMoreTools(false); setAgenticMode(!agenticMode); }}
+                                                className={clsx("flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm", agenticMode ? "text-purple-400" : "text-gray-200")}
+                                            >
+                                                <Wand2 size={16} className="text-purple-400" />
+                                                Agentic {agenticMode ? 'ON' : 'OFF'}
+                                            </button>
+                                            <button
+                                                onClick={() => { setShowMoreTools(false); setNarrateMode(!narrateMode); }}
+                                                className={clsx("flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm", narrateMode ? "text-purple-400" : "text-gray-200")}
+                                            >
+                                                <BookOpen size={16} className="text-purple-400" />
+                                                Narrate {narrateMode ? 'ON' : 'OFF'}
+                                            </button>
+                                            <button
+                                                onClick={() => { setShowMoreTools(false); handleImpersonate(); }}
+                                                disabled={!activeChatId || impersonateMutation.isPending}
+                                                className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
+                                            >
+                                                <Ghost size={16} className="text-purple-400" />
+                                                {impersonateMutation.isPending ? 'Impersonating...' : 'Impersonate'}
+                                            </button>
+                                            <button
+                                                onClick={() => { setShowMoreTools(false); handleSuggestClick(); }}
+                                                disabled={!activeChatId || suggestReplyMutation.isPending || suggestJobId}
+                                                className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
+                                            >
+                                                <Sparkles size={16} className="text-blue-400" />
+                                                {(suggestReplyMutation.isPending || suggestJobId) ? 'Suggesting...' : 'Suggest reply'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Secondary tools — inline on sm+ screens only */}
+                                <div className="hidden sm:flex items-center gap-1">
                                 {/* Generate scene */}
                                 <button
                                     onClick={handleGenerateScene}
@@ -1876,6 +2005,7 @@ export default function ChatWorkspace() {
                                         ? <Loader2 size={16} className="animate-spin" />
                                         : <Sparkles size={16} />}
                                 </button>
+                                </div>
                                 {/* Send */}
                                 <button
                                     onClick={handleSendMessage}

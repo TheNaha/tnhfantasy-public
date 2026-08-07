@@ -97,15 +97,16 @@ import asyncio
 
 
 @pytest.mark.asyncio
-@patch("services.job_queue.job_queue")
+@patch("api.routes.websocket.queue_manager")
 @patch("services.job_service.JobService")
 @patch("infrastructure.database.get_session_context")
-async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_job_queue, mock_sio):
+async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_queue_manager, mock_sio):
     sid = "test_sid"
     job_id = "job1"
 
     # Mock job queue says job is NOT active (so it's pending)
-    mock_job_queue.is_job_active.return_value = False
+    mock_queue_manager.image.is_job_active.return_value = False
+    mock_queue_manager.llm.is_job_active.return_value = False
 
     # Mock session context
     mock_session = AsyncMock()
@@ -125,18 +126,18 @@ async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_j
     mock_sio.emit.assert_called_with('cancel_job_ack', ANY, room=sid)
 
 @pytest.mark.asyncio
-@patch("api.routes.websocket.job_queue")
+@patch("api.routes.websocket.queue_manager")
 @patch("api.routes.websocket.get_job_service")
 @patch("api.routes.websocket.get_provider_service")
 @patch("api.routes.websocket.get_http_client")
 @patch("api.routes.websocket.resolve_provider_runtime")
 @patch("infrastructure.database.get_session_context")
-async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime, mock_get_http, mock_get_provider_service, mock_get_job_service, mock_job_queue, mock_sio):
+async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime, mock_get_http, mock_get_provider_service, mock_get_job_service, mock_queue_manager, mock_sio):
     sid = "test_sid"
     job_id = "job1"
 
     # Mock job active
-    mock_job_queue.is_job_active.return_value = True
+    mock_queue_manager.image.is_job_active.return_value = True
 
     # Mock session
     mock_session = AsyncMock()

@@ -62,20 +62,8 @@ def install_streaming_client(monkeypatch, response, capture=None):
 
 
 def build_provider_core_error_payload(message: str, *, retryable: bool = False):
-    """Load provider_core error builder to ensure backend parser stays contract-compatible."""
-    provider_containers_path = Path(__file__).resolve().parents[2] / "provider_containers"
-    path_str = str(provider_containers_path)
-    inserted = False
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
-        inserted = True
-
-    try:
-        provider_models = importlib.import_module("provider_core.models")
-        return provider_models.build_error_response(message, retryable=retryable)
-    finally:
-        if inserted:
-            sys.path.remove(path_str)
+    """Hardcoded error payload to decouple backend tests from provider_containers."""
+    return {"status": "error", "message": message, "retryable": retryable}
 
 
 @pytest.mark.asyncio

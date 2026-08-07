@@ -411,7 +411,9 @@ async def test_finalize_tolerates_deleted_chat(session: Session, monkeypatch):
     async def fake_emit(event_type, data=None, **_kwargs):
         emitted.append((event_type, data))
 
-    monkeypatch.setattr("services.job_processing.emit_job_event", fake_emit)
+    # Completion events are now emitted from job_service.update_job (single,
+    # enriched JOB_COMPLETED carrying the chat routing fields).
+    monkeypatch.setattr("services.job_service.emit_job_event", fake_emit)
 
     await finalize_successful_job(
         job=job,
@@ -429,7 +431,13 @@ async def test_finalize_tolerates_deleted_chat(session: Session, monkeypatch):
         process_image_background_fn=AsyncMock(),
     )
 
-    assert emitted, "JOB_COMPLETED must still be emitted when the chat was deleted"
-    assert emitted[0][0].value == "job.completed"
-    assert emitted[0][1].get("type") == "chat_reply"
-    assert emitted[0][1].get("chat_id") == "00000000-0000-0000-0000-000000000000"
+    # Completion is scheduled in a background task — give the loop a chance to run it.
+    for _ in range(100):
+        if any(e[0].value == "job.completed" for e in emitted):
+            break
+        await asyncio.sleep(0.05)
+
+    completed = [e for e in emitted if e[0].value == "job.completed"]
+    assert completed, "JOB_COMPLETED must still be emitted when the chat was deleted"
+    assert completed[0][1].get("type") == "chat_reply"
+    assert completed[0][1].get("chat_id") == "00000000-0000-0000-0000-000000000000"

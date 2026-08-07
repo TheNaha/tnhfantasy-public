@@ -167,62 +167,6 @@ async def call_llm_provider(
         except httpx.HTTPError as error:
             raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
 
-    # --- OLLAMA ADAPTER ---
-    if provider_type == "ollama":
-        async with get_streaming_client(timeout=timeout) as client:
-            try:
-                # payload is embedded in workflow for universal tasks
-                payload = workflow.get("payload", workflow)
-                
-                # Setup streaming completion for Ollama
-                if "stream" not in payload:
-                    payload["stream"] = True
-
-                async with client.stream(
-                    "POST",
-                    f"{worker_url}/api/chat",
-                    json=payload,
-                    timeout=timeout,
-                ) as response:
-                    if response.status_code == 200:
-                        await job_service.update_job(job_id, status=JobStatus.GENERATING, message="Generating text...")
-                        full_content = ""
-                        from core.events import EventType, emit_job_event
-
-                        async for chunk in response.aiter_lines():
-                            if not chunk: continue
-                            try:
-                                data = json.loads(chunk)
-                                content = data.get("message", {}).get("content", "")
-                                if content:
-                                    full_content += content
-                                    # Fast path stream emission bypassing DB
-                                    await emit_job_event(EventType.JOB_PROGRESS, {
-                                        "id": job_id,
-                                        "status": "generating",
-                                        "stream_chunk": content,
-                                        "text": full_content
-                                    })
-                            except json.JSONDecodeError:
-                                pass
-                        
-                        return {
-                            "status": "success",
-                            "text": full_content
-                        }
-
-                    error_text = await response.aread()
-                    raise ProviderCallError(
-                        f"Ollama returned {response.status_code}: {error_text.decode()}",
-                        provider_id=provider_id,
-                        is_retryable=response.status_code >= 500,
-                    )
-            except httpx.TimeoutException:
-                raise JobTimeoutError(f"Job timed out after {timeout}s")
-            except httpx.ConnectError as error:
-                raise ProviderCallError(f"Failed to connect to Ollama: {error}", provider_id=provider_id, is_retryable=True)
-            except httpx.HTTPError as error:
-                raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
 
 async def call_image_provider(
     worker_url: str,

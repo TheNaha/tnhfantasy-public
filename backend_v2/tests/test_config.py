@@ -63,7 +63,8 @@ def reset_global_config():
 
 
 class TestSettings:
-    def test_default_database_url(self):
+    def test_default_database_url(self, monkeypatch):
+        monkeypatch.delenv("COMFY_DATABASE_URL", raising=False)
         s = Settings()
         assert "sqlite" in s.database_url
 

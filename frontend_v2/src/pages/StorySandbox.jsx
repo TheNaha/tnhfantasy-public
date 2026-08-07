@@ -32,7 +32,7 @@ const StorySidebar = React.memo(function StorySidebar({ stories, activeStoryId, 
     };
 
     return (
-        <div className="w-64 border-r border-white/5 bg-gray-900/60 flex flex-col shrink-0">
+        <div className="flex flex-col shrink-0 min-h-0 flex-1">
             <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                 <h3 className="font-semibold text-gray-200">Stories</h3>
             </div>
@@ -100,14 +100,14 @@ const ChapterSidebar = React.memo(function ChapterSidebar({ chapters, activeChap
     };
 
     return (
-        <div className="w-56 border-r border-white/5 bg-gray-900/40 flex flex-col shrink-0">
+        <div className="w-full border-t border-white/5 bg-gray-900/40 flex flex-col shrink-0 max-h-72 min-h-0">
             <div className="h-12 flex items-center justify-between px-3 border-b border-white/5 shrink-0">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Chapters</h4>
                 <button onClick={handleCreate} disabled={creating} className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded transition-colors disabled:opacity-30" title="New chapter">
                     <Plus size={14} />
                 </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
                 {isLoading ? (
                     <div className="flex justify-center p-3"><Loader2 className="animate-spin text-gray-500" size={14} /></div>
                 ) : chapters?.length === 0 ? (
@@ -143,7 +143,9 @@ const ChapterSidebar = React.memo(function ChapterSidebar({ chapters, activeChap
 });
 
 export default function StorySandbox() {
-    const [isPanelOpen, setIsPanelOpen] = useState(true);
+    // Only default the context panel open on desktop — on phones/tablets the
+    // panel is an overlay tab, so don't mount (and animate) it on every visit.
+    const [isPanelOpen, setIsPanelOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
     const [editorContent, setEditorContent] = useState('');
     const [beatInput, setBeatInput] = useState('');
     const textareaRef = useRef(null);
@@ -192,6 +194,15 @@ export default function StorySandbox() {
     const [isPreviewMode, setIsPreviewMode] = useState(false);
     const [mobileTab, setMobileTab] = useState('write'); // 'stories' | 'chapters' | 'write' | 'context'
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+    // True once the user manually edits the editor — suppresses server-pushed
+    // content updates (post-refetch sync) so typing is never clobbered.
+    const isDirtyRef = useRef(false);
+    // Cancels the 30x1s title-generation poll when navigating away.
+    const titlePollCancelledRef = useRef(false);
+
+    useEffect(() => {
+        titlePollCancelledRef.current = true;
+    }, [activeChapterId]);
 
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
@@ -223,6 +234,7 @@ export default function StorySandbox() {
         
         if (activeChapter && loadedChapterIdRef.current !== activeChapterId) {
             loadedChapterIdRef.current = activeChapterId;
+            isDirtyRef.current = false;
             // Wait for next tick to avoid synchronous cascading renders
             setTimeout(() => {
                 setEditorContent(activeChapter.content || '');
@@ -295,7 +307,17 @@ export default function StorySandbox() {
                     // Invalidate chapter data from server — the chapter-load effect
                     // will only overwrite editor content if the chapter ID changes,
                     // so this is safe.
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] }).then(() => {
+                        // Sync the editor with the persisted continuation once the
+                        // refetch lands — unless the user has typed since.
+                        if (isDirtyRef.current) return;
+                        const data = queryClient.getQueryData(['world_vault', 'stories', activeStoryId, 'chapters']);
+                        const freshChapter = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
+                        if (freshChapter?.content && freshChapter.content !== (streamingBaseRef.current || '')) {
+                            setEditorContent(freshChapter.content);
+                            streamingBaseRef.current = freshChapter.content;
+                        }
+                    });
                     if (job.id) {
                         useWorldVaultStore.getState().clearStreamingJob(job.id);
                     }
@@ -320,14 +342,32 @@ export default function StorySandbox() {
             }
         });
 
+        // JOB_CANCELLED unhandled before: isStreaming stayed true forever,
+        // permanently disabling Save/Continue. Mirror the failed-path cleanup.
+        const unsubCancelled = subscribe(EventTypes.JOB_CANCELLED, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata_ ?? job.metadata ?? {};
+            const storyId = meta.story_id;
+            const chapterId = meta.chapter_id;
+
+            if (storyId === activeStoryId && chapterId === activeChapterId) {
+                setIsStreaming(false);
+                setIsIllustrating(false);
+                streamingRef.current = '';
+                if (job.id) {
+                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                }
+            }
+        });
+
         return () => {
             unsubProgress();
             unsubCompleted();
             unsubFailed();
+            unsubCancelled();
         };
     // NOTE: editorContent intentionally excluded — we use refs for live values
     // inside the WebSocket handlers to avoid stale closure overwrites.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [subscribe, activeStoryId, activeChapterId, queryClient]);
 
     // Auto-resize textarea — debounced to avoid layout thrashing on mobile
@@ -356,6 +396,7 @@ export default function StorySandbox() {
 
     const handleAutoGenerateTitle = async () => {
         if (!activeStoryId || !activeChapterId) return;
+        titlePollCancelledRef.current = false;
         setIsGeneratingTitle(true);
         toast('Generating title...', { icon: '🤖' });
         try {
@@ -372,6 +413,10 @@ export default function StorySandbox() {
             toast.success('Title generation started...');
             const pollJob = async (jobId) => {
                 for (let i = 0; i < 30; i++) {
+                    if (titlePollCancelledRef.current) {
+                        setIsGeneratingTitle(false);
+                        return;
+                    }
                     const jobStatus = await api.get(`/api/jobs/${jobId}`);
                     if (jobStatus.status === 'completed' && jobStatus.outputs?.length > 0) {
                         const newTitle = jobStatus.outputs[0].content.replace(/["']/g, '');
@@ -476,6 +521,7 @@ export default function StorySandbox() {
                 chapterId: activeChapterId,
                 content: editorContent
             });
+            isDirtyRef.current = false;
             toast.success('Chapter saved');
         } catch {
             toast.error('Failed to save chapter');
@@ -523,8 +569,8 @@ export default function StorySandbox() {
             className="flex h-full bg-[#0B0E14]"
         >
             <div className={clsx(
-                "md:static inset-y-0 left-0 z-50 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",
-                mobileTab === 'stories' ? "absolute inset-0 w-full z-40 bg-[#0B0E14] flex" : "hidden md:flex"
+                "lg:static inset-y-0 left-0 z-50 transform lg:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0 lg:w-64",
+                mobileTab === 'stories' ? "absolute inset-0 w-full z-40 bg-[#0B0E14] flex" : "hidden lg:flex"
             )}>
                 <StorySidebar
                     stories={stories}
@@ -534,13 +580,22 @@ export default function StorySandbox() {
                     onDeleteStory={handleDeleteStory}
                     isLoading={storiesLoading}
                 />
+                {activeStoryId && (
+                    <ChapterSidebar
+                        chapters={chapters}
+                        activeChapterId={activeChapterId}
+                        onSelectChapter={(id) => { navigate(`/story/${activeStoryId}/chapter/${id}`); setMobileTab('write'); }}
+                        onCreateChapter={handleCreateChapter}
+                        onDeleteChapter={handleDeleteChapter}
+                        isLoading={chaptersLoading}
+                    />
+                )}
             </div>
 
             <div className="flex-1 flex flex-col min-w-0 relative">
                 {/* Mobile Top Tab Strip */}
-                <div className="flex md:hidden border-b border-white/5 bg-gray-900/60 backdrop-blur-md p-2 gap-2 shrink-0">
+                <div className="flex lg:hidden border-b border-white/5 bg-gray-900/60 backdrop-blur-md p-2 gap-2 shrink-0">
                     <button onClick={() => setMobileTab('stories')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'stories' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Stories</button>
-                    <button onClick={() => setMobileTab('chapters')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'chapters' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Chapters</button>
                     <button onClick={() => setMobileTab('write')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'write' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Write</button>
                     <button onClick={() => setMobileTab('context')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'context' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Context</button>
                 </div>
@@ -560,22 +615,8 @@ export default function StorySandbox() {
                     <>
                         <div className="flex-1 flex min-h-0 relative">
                             <div className={clsx(
-                                "md:static inset-y-0 left-0 z-30 transform md:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0",
-                                mobileTab === 'chapters' ? "absolute inset-0 w-full z-40 bg-[#0B0E14] flex" : "hidden md:flex"
-                            )}>
-                                <ChapterSidebar
-                                    chapters={chapters}
-                                    activeChapterId={activeChapterId}
-                                    onSelectChapter={(id) => { navigate(`/story/${activeStoryId}/chapter/${id}`); setMobileTab('write'); }}
-                                    onCreateChapter={handleCreateChapter}
-                                    onDeleteChapter={handleDeleteChapter}
-                                    isLoading={chaptersLoading}
-                                />
-                            </div>
-
-                            <div className={clsx(
                                 "flex-1 flex flex-col min-w-0",
-                                mobileTab === 'write' ? "flex" : "hidden md:flex"
+                                mobileTab === 'write' ? "flex" : "hidden lg:flex"
                             )}>
                                 <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0 gap-2">
                                     <div className="flex items-center gap-1 sm:gap-3 min-w-0 flex-1">
@@ -598,7 +639,6 @@ export default function StorySandbox() {
                                                 <div className="flex flex-col min-w-0">
                                                     <p className="font-bold text-sm sm:text-base text-gray-200 truncate flex items-center gap-2">
                                                         {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
-                                                        <span className="lg:hidden text-gray-500">▼</span>
                                                         {activeStory?.genre && <span className="hidden sm:inline font-normal text-xs text-gray-500">· {activeStory.genre}</span>}
                                                     </p>
                                                 </div>
@@ -642,7 +682,7 @@ export default function StorySandbox() {
                                         <button
                                             onClick={() => { setIsPanelOpen(!isPanelOpen); setMobileTab('context'); }}
                                             className={clsx(
-                                                "p-2 rounded-lg transition-colors border flex md:hidden",
+                                                "p-2 rounded-lg transition-colors border flex lg:hidden",
                                                 mobileTab === 'context' ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
                                             )}
                                         >
@@ -651,7 +691,7 @@ export default function StorySandbox() {
                                         <button
                                             onClick={() => setIsPanelOpen(!isPanelOpen)}
                                             className={clsx(
-                                                "p-2 rounded-lg transition-colors border hidden md:flex",
+                                                "p-2 rounded-lg transition-colors border hidden lg:flex",
                                                 isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
                                             )}
                                         >
@@ -677,7 +717,7 @@ export default function StorySandbox() {
                                                 <textarea
                                                     ref={textareaRef}
                                                     value={editorContent}
-                                                    onChange={(e) => setEditorContent(e.target.value)}
+                                                    onChange={(e) => { isDirtyRef.current = true; setEditorContent(e.target.value); }}
                                                     className="story-editor-input w-full h-full bg-transparent text-gray-300 text-lg md:text-xl leading-relaxed font-serif focus:outline-none resize-none min-h-[300px]"
                                                     placeholder="Begin your story here (Markdown supported)..."
                                                     disabled={isStreaming}
@@ -761,18 +801,18 @@ export default function StorySandbox() {
             <AnimatePresence initial={false}>
                 {(isPanelOpen || mobileTab === 'context') && activeStoryId && (
                     <motion.div
-                        initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 360, opacity: 1 }}
-                        exit={{ width: 0, opacity: 0 }}
+                        initial={{ x: 360, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        exit={{ x: 360, opacity: 0 }}
                         transition={{ duration: 0.3, ease: "easeInOut" }}
                         className={clsx(
                             "flex flex-col border-l border-white/5 bg-gray-900/95 overflow-hidden shrink-0 relative",
-                            "absolute md:static inset-y-0 right-0 z-40 h-full max-w-full w-full md:w-[360px] md:bg-gray-900/40",
-                            mobileTab === 'context' ? "flex" : "hidden md:flex"
+                            "absolute lg:static inset-y-0 right-0 z-40 h-full max-w-full w-full lg:w-[360px] lg:bg-gray-900/40",
+                            mobileTab === 'context' ? "flex" : "hidden lg:flex"
                         )}
                     >
-                        <div className="md:hidden absolute top-3 right-4 z-50">
-                            <button onClick={() => setMobileTab('write')} className="p-2 bg-gray-800 rounded-full text-white">
+                        <div className="lg:hidden absolute top-3 right-4 z-50">
+                            <button onClick={() => { setMobileTab('write'); setIsPanelOpen(false); }} className="p-2 bg-gray-800 rounded-full text-white">
                                 <X size={16} />
                             </button>
                         </div>
@@ -823,7 +863,7 @@ export default function StorySandbox() {
                                     <div className="space-y-2">
                                         {activeChapter.image_paths.map((path, idx) => (
                                             <div key={idx} className="rounded-lg overflow-hidden border border-white/10">
-                                                <img src={`/api/view/output/${path}`} alt={`Scene ${idx + 1}`} className="w-full h-auto" />
+                                                <img src={`/api/view/output/${path}`} alt={`Scene ${idx + 1}`} loading="lazy" decoding="async" className="w-full h-auto" />
                                             </div>
                                         ))}
                                     </div>

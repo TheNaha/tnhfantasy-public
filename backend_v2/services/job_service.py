@@ -74,12 +74,14 @@ class JobService:
         
         return {"jobs": jobs_data, "total": total}
     
-    async def update_job(self, job_id: str, **updates) -> Job:
+    async def update_job(self, job_id: str, event_extra: dict | None = None, **updates) -> Job:
         """
         Update a job.
         
         Args:
             job_id: Job ID
+            event_extra: Optional dict merged into the emitted event payload
+                (used to carry rich fields like type/chat_id/content on completion).
             **updates: Fields to update
             
         Returns:
@@ -118,7 +120,7 @@ class JobService:
         else:
             event_type = EventType.JOB_UPDATED
         
-        await emit_job_event(event_type, self._job_to_dict(job))
+        await emit_job_event(event_type, {**(self._job_to_dict(job)), **(event_extra or {})})
         
         return job
     
