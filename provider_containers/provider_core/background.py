@@ -51,9 +51,9 @@ async def auto_discovery_loop(
             }
             
             if http_client:
-                response = await http_client.post(discovery_url, json=payload, timeout=10.0)
+                response = await http_client.post(discovery_url, json=payload, timeout=30.0)
             else:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(discovery_url, json=payload)
                     
             if response.status_code in (200, 201):
@@ -61,7 +61,11 @@ async def auto_discovery_loop(
             else:
                 logger.error(f"[Auto-Discovery] Failed to register. Status: {response.status_code}, Body: {response.text[:500]}")
         except Exception as e:
-            logger.error(f"[Auto-Discovery] Error connecting to backend: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            etype = type(e).__name__
+            if etype in ("ReadTimeout", "ConnectTimeout", "PoolTimeout"):
+                logger.warning(f"[Auto-Discovery] Transient timeout connecting to backend: {etype}: {e}")
+            else:
+                logger.error(f"[Auto-Discovery] Error connecting to backend: {etype}: {e}\n{traceback.format_exc()}")
             
         await asyncio.sleep(interval_seconds)
 
