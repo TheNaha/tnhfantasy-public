@@ -56,14 +56,23 @@ class JobService:
             logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
         return job
     
-    async def list_jobs(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    async def list_jobs(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        cursor: tuple[datetime, str] | None = None,
+    ) -> dict[str, Any]:
         """
         List jobs with pagination.
-        
+
+        `cursor` enables keyset pagination: a (created_at, id) tuple taken
+        from the last job of a previous page (see `_job_to_dict` for how
+        clients receive it). When provided it replaces OFFSET.
+
         Returns:
             Dict with 'jobs' list and 'total' count
         """
-        results, total = self.repo.get_all(limit=limit, offset=offset)
+        results, total = self.repo.get_all(limit=limit, offset=offset, cursor=cursor)
         
         jobs_data = []
         for job, pos in results:
@@ -73,6 +82,18 @@ class JobService:
             jobs_data.append(job_dict)
         
         return {"jobs": jobs_data, "total": total}
+
+    async def get_metadata_key_counts(
+        self, key: str, *, statuses: list[JobStatus] | None = None, limit: int = 25
+    ) -> list[dict[str, Any]]:
+        """Aggregate jobs by a top-level metadata_ key (JSONB/JSON1)."""
+        rows = self.repo.get_metadata_key_counts(key, statuses=statuses, limit=limit)
+        return [{"value": value, "count": count} for value, count in rows]
+
+    async def search_jobs(self, query: str, *, limit: int = 25) -> list[dict[str, Any]]:
+        """Full-text search over job prompts (tsvector on Postgres, LIKE on SQLite)."""
+        jobs = self.repo.search_prompts(query, limit=limit)
+        return [self._job_to_dict(job) for job in jobs]
     
     async def update_job(self, job_id: str, event_extra: dict | None = None, **updates) -> Job:
         """

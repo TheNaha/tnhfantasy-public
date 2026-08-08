@@ -833,6 +833,163 @@ def _migration_add_story_memory(conn) -> bool:
     return touched
 
 
+def _migration_json_to_jsonb(conn) -> bool:
+    """Convert JSON columns to JSONB and add GIN indexes (PostgreSQL only)."""
+    if conn.dialect.name != "postgresql":
+        return False
+
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    touched = False
+
+    conversions = [
+        ("jobs", {"workflow", "metadata_", "outputs"}),
+        ("messages", {"message_metadata"}),
+        ("lorebook_entries", {"keys"}),
+        ("chats", {"active_lorebook_ids"}),
+        ("characters", {"alternate_greetings"}),
+    ]
+    for table, cols in conversions:
+        if table not in table_names:
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        for col in sorted(cols & existing):
+            conn.execute(text(
+                f'ALTER TABLE {table} ALTER COLUMN {col} TYPE JSONB USING {col}::jsonb'
+            ))
+            logger.info("migration_column_type", table=table, column=col, new_type="jsonb")
+            touched = True
+
+    # GIN indexes for JSONB containment/query access
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_jobs_metadata_gin ON jobs USING gin (metadata_)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_messages_metadata_gin ON messages USING gin (message_metadata)"
+    ))
+    return touched
+
+
+def _migration_add_jobs_claimed_at(conn) -> bool:
+    """Add jobs.claimed_at claim marker for the DB-backed job queue.
+
+    Postgres: TIMESTAMPTZ + partial index for SKIP LOCKED claims.
+    SQLite (local dev): plain DATETIME column, no index.
+    """
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "jobs" not in table_names:
+        return False
+
+    existing = {c["name"] for c in inspector.get_columns("jobs")}
+    if "claimed_at" in existing:
+        return False
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at TIMESTAMPTZ"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
+            "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
+        ))
+    else:
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at DATETIME"))
+    logger.info("migration_claimed_at_added", table="jobs")
+    return True
+
+
+def _migration_add_jobs_prompt_fts(conn) -> bool:
+    """Add a generated tsvector column for full-text prompt search (PostgreSQL only).
+
+    The generated column is kept up to date by the database as metadata_ changes,
+    and the GIN index makes `prompt_tsv @@ plainto_tsquery(...)` queries index-
+    backed. SQLite dev databases fall back to LIKE-based matching in the repo.
+    """
+    if conn.dialect.name != "postgresql":
+        return False
+
+    inspector = inspect(conn)
+    if "jobs" not in set(inspector.get_table_names()):
+        return False
+
+    existing = {c["name"] for c in inspector.get_columns("jobs")}
+    if "prompt_tsv" in existing:
+        return False
+
+    conn.execute(text(
+        "ALTER TABLE jobs ADD COLUMN prompt_tsv tsvector "
+        "GENERATED ALWAYS AS (to_tsvector('english', COALESCE(metadata_->>'prompt', ''))) STORED"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_jobs_prompt_tsv ON jobs USING gin (prompt_tsv)"
+    ))
+    logger.info("migration_prompt_fts_added", table="jobs")
+    return True
+
+
+def _migration_add_data_integrity_constraints(conn) -> bool:
+    """Add CHECK constraints and partial unique indexes (PostgreSQL only).
+
+    - jobs.progress / jobs.overall_progress are percent-scale (0-100).
+    - providers.worker_type is restricted to the known task types.
+    - collections have unique names per owner scope (global vs character),
+      enforced with partial unique indexes so the shared id-keyed table can
+      host both scopes.
+    """
+    if conn.dialect.name != "postgresql":
+        return False
+
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    if "jobs" not in tables:
+        return False
+
+    jobs_cols = {c["name"] for c in inspector.get_columns("jobs")}
+    if "progress" in jobs_cols:
+        conn.execute(text(
+            "ALTER TABLE jobs DROP CONSTRAINT IF EXISTS chk_jobs_progress"
+        ))
+        conn.execute(text(
+            "ALTER TABLE jobs ADD CONSTRAINT chk_jobs_progress "
+            "CHECK (progress >= 0 AND progress <= 100)"
+        ))
+    if "overall_progress" in jobs_cols:
+        conn.execute(text(
+            "ALTER TABLE jobs DROP CONSTRAINT IF EXISTS chk_jobs_overall_progress"
+        ))
+        conn.execute(text(
+            "ALTER TABLE jobs ADD CONSTRAINT chk_jobs_overall_progress "
+            "CHECK (overall_progress >= 0 AND overall_progress <= 100)"
+        ))
+
+    if "providers" in tables:
+        conn.execute(text(
+            "ALTER TABLE providers DROP CONSTRAINT IF EXISTS chk_providers_worker_type"
+        ))
+        conn.execute(text(
+            "ALTER TABLE providers ADD CONSTRAINT chk_providers_worker_type "
+            "CHECK (worker_type IN ('image', 'llm'))"
+        ))
+
+    if "collections" in tables:
+        conn.execute(text(
+            "DROP INDEX IF EXISTS uq_collections_global_name"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX uq_collections_global_name "
+            "ON collections (name) WHERE character_id IS NULL"
+        ))
+        conn.execute(text(
+            "DROP INDEX IF EXISTS uq_collections_character_name"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX uq_collections_character_name "
+            "ON collections (character_id, name) WHERE character_id IS NOT NULL"
+        ))
+
+    logger.info("migration_data_integrity_constraints_added")
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -950,5 +1107,25 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="023_add_story_memory",
             description="Add memory column to stories for global author notes",
             apply_fn=_migration_add_story_memory,
+        ),
+        MigrationStep(
+            version="024_json_to_jsonb",
+            description="Convert JSON columns to JSONB with GIN indexes (PostgreSQL)",
+            apply_fn=_migration_json_to_jsonb,
+        ),
+        MigrationStep(
+            version="025_add_jobs_claimed_at",
+            description="Add jobs.claimed_at claim marker for the Postgres-backed job queue",
+            apply_fn=_migration_add_jobs_claimed_at,
+        ),
+        MigrationStep(
+            version="026_add_jobs_prompt_fts",
+            description="Add generated tsvector + GIN index for full-text prompt search (PostgreSQL)",
+            apply_fn=_migration_add_jobs_prompt_fts,
+        ),
+        MigrationStep(
+            version="027_add_data_integrity_constraints",
+            description="Add CHECK constraints and partial unique indexes (PostgreSQL)",
+            apply_fn=_migration_add_data_integrity_constraints,
         ),
     ]

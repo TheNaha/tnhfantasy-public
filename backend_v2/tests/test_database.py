@@ -192,6 +192,7 @@ class TestRunMigrations:
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
+            "025_add_jobs_claimed_at",
         }
 
     def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
@@ -289,6 +290,7 @@ class TestRunMigrations:
             "004_normalize_legacy_job_statuses",
             "006_deleted_file_tombstones",
             "007_add_job_task_type",
+            "025_add_jobs_claimed_at",
         ]
 
     def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):

@@ -5,8 +5,12 @@ from enum import Enum
 from typing import Any, Optional
 
 from sqlalchemy import JSON, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, Field, SQLModel
 from pydantic import field_validator
+
+# JSON stored as JSONB on PostgreSQL (indexable/queryable), plain JSON elsewhere.
+JSONColumn = JSON().with_variant(JSONB(), "postgresql")
 
 
 class JobStatus(str, Enum):
@@ -58,13 +62,13 @@ class Job(SQLModel, table=True):
     completed_at: datetime | None = Field(default=None)  # When job finished
     
     # Workflow data (ComfyUI workflow JSON)
-    workflow: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    workflow: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
     
     # Metadata (prompt, seed, dimensions, etc.)
-    metadata_: dict[str, Any] = Field(default={}, sa_column=Column(JSON), alias="metadata")
+    metadata_: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn), alias="metadata")
     
     # Structured output entries produced by workers/post-processing.
-    outputs: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    outputs: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSONColumn))
     
     # Progress tracking
     progress: float = Field(default=0.0)
@@ -74,7 +78,11 @@ class Job(SQLModel, table=True):
     
     # Provider assignment
     provider_id: str | None = Field(default=None)
-    
+
+    # Claim marker for the Postgres-backed job queue (SELECT ... FOR UPDATE SKIP LOCKED).
+    # Not NULL while a worker owns the job; cleared when processing finishes.
+    claimed_at: datetime | None = Field(default=None)
+
     # Queue position (calculated, not stored)
     queue_position: int | None = Field(default=None, exclude=True)
 
@@ -100,13 +108,13 @@ class Provider(SQLModel, table=True):
         return value
     
     # Credentials (stored securely, used for container env vars)
-    credentials: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    credentials: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
     
     # Provider-specific config
-    config: dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    config: dict[str, Any] = Field(default={}, sa_column=Column(JSONColumn))
     
     # Container config for multi-profile mode
-    container_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+    container_config: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONColumn))
 
 
 
@@ -128,8 +136,8 @@ class LoadBalancerState(SQLModel, table=True):
     
     id: int = Field(default=1, primary_key=True)
     round_robin_index: int = Field(default=0)
-    provider_job_counts: dict[str, int] = Field(default={}, sa_column=Column(JSON))
-    provider_failures: dict[str, int] = Field(default={}, sa_column=Column(JSON))
+    provider_job_counts: dict[str, int] = Field(default={}, sa_column=Column(JSONColumn))
+    provider_failures: dict[str, int] = Field(default={}, sa_column=Column(JSONColumn))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -154,12 +162,12 @@ class Prompt(SQLModel, table=True):
     negative: str | None = Field(default=None)
     category: str = Field(default="Custom")
     description: str | None = Field(default=None)
-    tags: list[str] = Field(default=[], sa_column=Column(JSON))
+    tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     favorite: bool = Field(default=False)
     usage_count: int = Field(default=0)
     
     # Full generation settings (optional, includes model, LoRAs, etc.)
-    settings: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+    settings: dict[str, Any] | None = Field(default=None, sa_column=Column(JSONColumn))
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -681,10 +689,10 @@ class Character(SQLModel, table=True):
     # Suggested user persona when chatting with this character
     suggested_persona: str | None = Field(default=None, sa_column=Column(Text))
     
-    visual_tags: list[str] = Field(default=[], sa_column=Column(JSON))
-    lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    visual_tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))
     voice_profile: str | None = Field(default=None) # Optional voice model profile
-    alternate_greetings: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    alternate_greetings: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))
     
     # Generation Settings
     checkpoint: str | None = Field(default=None)
@@ -724,7 +732,7 @@ class Chat(SQLModel, table=True):
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    active_lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))
+    active_lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
 
 class MessageRole(str, Enum):
     USER = "user"
@@ -740,7 +748,7 @@ class Message(SQLModel, table=True):
     role: MessageRole
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
-    message_metadata: dict | None = Field(default=None, sa_column=Column(JSON))
+    message_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     pinned: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -763,7 +771,7 @@ class LorebookEntry(SQLModel, table=True):
     lorebook_id: str = Field(foreign_key="lorebooks.id", index=True)
     
     # Trigger words or keys for this entry
-    keys: list[str] = Field(default=[], sa_column=Column(JSON))
+    keys: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     content: str = Field(sa_column=Column(Text))
     
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
@@ -787,8 +795,8 @@ class Story(SQLModel, table=True):
     description: str | None = Field(default=None, sa_column=Column(Text))
     genre: str | None = Field(default=None)  # e.g., "fantasy", "sci-fi", "horror"
     # World Vault associations
-    character_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # protagonist characters
-    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSON))  # active lorebooks
+    character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # protagonist characters
+    lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active lorebooks
     scenario_id: str | None = Field(default=None)  # base scenario
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
     memory: str | None = Field(default=None, sa_column=Column(Text)) # Global author's note / story memory
@@ -813,9 +821,9 @@ class StoryChapter(SQLModel, table=True):
     # Full chapter content as accumulated prose (snapshot)
     content: str = Field(default="", sa_column=Column(Text))
     # Individual beats/turns within the chapter
-    beats: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSON))
+    beats: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSONColumn))
     # Images generated for this chapter
-    image_paths: list[str] = Field(default=[], sa_column=Column(JSON))
+    image_paths: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     story: Optional["Story"] = Relationship(back_populates="chapters")

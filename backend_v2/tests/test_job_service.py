@@ -1,4 +1,5 @@
 # Job Service Unit Tests
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -104,6 +105,67 @@ class TestJobServiceList:
         result = await service.list_jobs()
         pending = [j for j in result["jobs"] if j["status"] == "pending"]
         assert all("queue_position" in j for j in pending)
+
+
+class TestJobServiceKeysetPagination:
+    """Tests for cursor-based keyset pagination in list_jobs."""
+
+    @pytest.mark.asyncio
+    async def test_cursor_pagination_pages_through_all_jobs(self, session: Session, sample_workflow):
+        """Keyset cursor walks the full job list with no overlap and no gaps."""
+        service = JobService(session)
+        for _ in range(5):
+            await service.create_job(workflow=sample_workflow, metadata={})
+
+        # Page 1: cursor-less (newest first)
+        page1 = await service.list_jobs(limit=2)
+        assert len(page1["jobs"]) == 2
+        first_id = page1["jobs"][0]["id"]
+        assert page1["total"] == 5
+
+        # Build cursor from the last row of page 1
+        last = page1["jobs"][-1]
+        cursor = (datetime.fromisoformat(last["created_at"]), last["id"])
+
+        # Page 2 via cursor
+        page2 = await service.list_jobs(limit=2, cursor=cursor)
+        assert len(page2["jobs"]) == 2
+        page1_ids = {j["id"] for j in page1["jobs"]}
+        assert not (page1_ids & {j["id"] for j in page2["jobs"]})
+
+        # Page 3 via cursor from page 2's last row
+        last2 = page2["jobs"][-1]
+        cursor2 = (datetime.fromisoformat(last2["created_at"]), last2["id"])
+        page3 = await service.list_jobs(limit=2, cursor=cursor2)
+        assert len(page3["jobs"]) == 1
+        assert all(j["id"] not in page1_ids | {j["id"] for j in page2["jobs"]} for j in page3["jobs"])
+
+        # Exhausted: next page is empty
+        last3 = page3["jobs"][-1]
+        cursor3 = (datetime.fromisoformat(last3["created_at"]), last3["id"])
+        page4 = await service.list_jobs(limit=2, cursor=cursor3)
+        assert page4["jobs"] == []
+
+        # Sanity: first page returned the newest job
+        assert page1["jobs"][0]["id"] == first_id
+
+    @pytest.mark.asyncio
+    async def test_cursor_with_identical_created_at_breaks_ties_by_id(self, session: Session, sample_workflow):
+        """Jobs sharing a created_at timestamp are still paginated without loss."""
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        job2 = await service.create_job(workflow=sample_workflow, metadata={})
+        job2.created_at = job.created_at  # force identical timestamps
+        session.add(job2)
+        session.commit()
+
+        page1 = await service.list_jobs(limit=1)
+        assert len(page1["jobs"]) == 1
+        last = page1["jobs"][-1]
+        cursor = (datetime.fromisoformat(last["created_at"]), last["id"])
+        page2 = await service.list_jobs(limit=5, cursor=cursor)
+        assert len(page2["jobs"]) == 1
+        assert page2["jobs"][0]["id"] != last["id"]
 
 
 class TestJobServiceUpdate:
@@ -357,3 +419,78 @@ class TestJobServiceQueueItems:
         assert len(pending_items) == 2
         assert pending_items[0].id == job1.id
         assert pending_items[1].id == job2.id
+
+
+class TestJobMetadataBreakdown:
+    """Tests for JobService.get_metadata_key_counts (JSONB/JSON1 aggregation)."""
+
+    @pytest.mark.asyncio
+    async def test_breakdown_aggregates_by_key(self, session: Session, sample_workflow):
+        service = JobService(session)
+        await service.create_job(workflow=sample_workflow, metadata={"model": "sd15"})
+        await service.create_job(workflow=sample_workflow, metadata={"model": "sd15"})
+        await service.create_job(workflow=sample_workflow, metadata={"model": "xl"})
+        await service.create_job(workflow=sample_workflow, metadata={"prompt": "cat"})
+
+        breakdown = await service.get_metadata_key_counts("model")
+        assert {"value": "sd15", "count": 2} in breakdown
+        assert {"value": "xl", "count": 1} in breakdown
+        assert len(breakdown) == 2
+
+    @pytest.mark.asyncio
+    async def test_breakdown_respects_status_filter(self, session: Session, sample_workflow):
+        service = JobService(session)
+        completed = await service.create_job(workflow=sample_workflow, metadata={"model": "a"})
+        failed = await service.create_job(workflow=sample_workflow, metadata={"model": "b"})
+        completed.status = JobStatus.COMPLETED
+        failed.status = JobStatus.FAILED
+        session.add_all([completed, failed])
+        session.commit()
+
+        breakdown = await service.get_metadata_key_counts(
+            "model", statuses=[JobStatus.COMPLETED]
+        )
+        assert breakdown == [{"value": "a", "count": 1}]
+
+    @pytest.mark.asyncio
+    async def test_breakdown_unknown_key_returns_empty(self, session: Session, sample_workflow):
+        service = JobService(session)
+        await service.create_job(workflow=sample_workflow, metadata={"model": "sd15"})
+        breakdown = await service.get_metadata_key_counts("nope")
+        assert breakdown == []
+
+
+class TestJobServiceSearch:
+    """Tests for JobService.search_jobs (tsvector on Postgres, LIKE on SQLite)."""
+
+    @pytest.mark.asyncio
+    async def test_search_finds_prompt_match(self, session: Session, sample_workflow):
+        service = JobService(session)
+        await service.create_job(workflow=sample_workflow, metadata={"prompt": "a majestic dragon over a castle"})
+        await service.create_job(workflow=sample_workflow, metadata={"prompt": "a cozy kitchen interior"})
+
+        results = await service.search_jobs("dragon")
+        assert len(results) == 1
+        assert "dragon" in results[0]["metadata"]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_search_empty_query_returns_nothing(self, session: Session, sample_workflow):
+        service = JobService(session)
+        await service.create_job(workflow=sample_workflow, metadata={"prompt": "a cat"})
+        results = await service.search_jobs("")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_no_match_returns_empty(self, session: Session, sample_workflow):
+        service = JobService(session)
+        await service.create_job(workflow=sample_workflow, metadata={"prompt": "a cat"})
+        results = await service.search_jobs("elephant")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_respects_limit(self, session: Session, sample_workflow):
+        service = JobService(session)
+        for i in range(3):
+            await service.create_job(workflow=sample_workflow, metadata={"prompt": f"dragon variant {i}"})
+        results = await service.search_jobs("dragon", limit=2)
+        assert len(results) == 2

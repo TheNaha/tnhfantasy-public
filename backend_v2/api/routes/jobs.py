@@ -16,6 +16,8 @@
 # Real-time updates are delivered via WebSocket (routes/websocket.py).
 # The job queue itself lives in services/job_queue.py.
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
@@ -128,15 +130,52 @@ async def create_job(
 async def list_jobs(
     limit: int = 20,
     offset: int = 0,
+    cursor: str | None = None,
     service: JobService = Depends(get_job_service)
 ):
     """List jobs with pagination. Uses deduplication to prevent duplicate work."""
     
+    # Keyset pagination: cursor is "ISO8601_created_at|job_id" of the last row
+    # of the previous page. When provided it replaces OFFSET (O(log n) fetches
+    # on PostgreSQL instead of O(n) row skipping).
+    parsed_cursor = None
+    if cursor:
+        try:
+            created_part, _, job_id = cursor.partition("|")
+            parsed_cursor = (datetime.fromisoformat(created_part), job_id)
+        except (ValueError, TypeError):
+            raise ValidationError("Invalid cursor format; expected 'created_at|job_id'")
+    
     # Deduplicate concurrent identical requests
+    async def _list():
+        result = await service.list_jobs(limit=limit, offset=offset, cursor=parsed_cursor)
+        if result["jobs"]:
+            last = result["jobs"][-1]
+            result["next_cursor"] = f"{last['created_at']}|{last['id']}"
+        return result
+
     return await deduplicated(
-        make_key("list_jobs", limit, offset),
-        lambda: service.list_jobs(limit=limit, offset=offset)
+        make_key("list_jobs", limit, offset, cursor),
+        _list,
     )
+
+
+@router.get("/search")
+async def search_jobs(
+    q: str,
+    limit: int = 25,
+    service: JobService = Depends(get_job_service)
+):
+    """Full-text search over job prompts (tsvector on Postgres, LIKE on SQLite)."""
+    if not q.strip():
+        return {"jobs": []}
+    if limit > 100:
+        limit = 100
+    results = await deduplicated(
+        make_key("search_jobs", q, limit),
+        lambda: service.search_jobs(q.strip(), limit=limit),
+    )
+    return {"jobs": results}
 
 
 
@@ -231,6 +270,26 @@ def get_queue_status(service: JobService = Depends(get_job_service)):
 def get_job_stats(service: JobService = Depends(get_job_service)):
     """Get job statistics."""
     return service.get_job_stats()
+
+
+@router.get("/breakdown")
+async def get_jobs_breakdown(
+    key: str = "model",
+    limit: int = 25,
+    service: JobService = Depends(get_job_service),
+):
+    """
+    Aggregate jobs by a top-level metadata_ key using JSONB (PostgreSQL) /
+    JSON1 (SQLite). E.g. GET /api/jobs/breakdown?key=model returns the most
+    common checkpoint models across jobs.
+    """
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9_]+", key):
+        raise ValidationError("key must be alphanumeric/underscore only", field="key")
+    statuses = [JobStatus.COMPLETED, JobStatus.FAILED]
+    items = await service.get_metadata_key_counts(key, statuses=statuses, limit=limit)
+    return {"key": key, "breakdown": items}
 
 
 # NOTE: Routes with path parameters MUST come AFTER static routes

@@ -1,8 +1,9 @@
 # Job Repository - Data access layer for jobs
 from datetime import datetime, timezone
+import json
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import Session, col, delete, select
 
 from core.dtos import JobQueueItem
@@ -32,10 +33,20 @@ class JobRepository:
         """Get a job by ID."""
         return self.session.get(Job, job_id)
     
-    def get_all(self, limit: int = 20, offset: int = 0) -> tuple[list[tuple[Job, int | None]], int]:
+    def get_all(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        cursor: tuple[datetime, str] | None = None,
+    ) -> tuple[list[tuple[Job, int | None]], int]:
         """
         Get jobs with pagination and queue positions.
-        
+
+        Keyset pagination: when `cursor` is provided (a (created_at, id) tuple
+        from the last row of a previous page), rows are fetched with a seek
+        predicate instead of OFFSET — O(log n) page fetches on PostgreSQL.
+        Falls back to OFFSET pagination when no cursor is given.
+
         Returns:
             Tuple of (results list of (Job, queue_position), total count)
         """
@@ -58,10 +69,16 @@ class JobRepository:
         stmt = (
             select(Job, pending_subq.c.queue_position)
             .outerjoin(pending_subq, Job.id == pending_subq.c.id)
-            .order_by(col(Job.created_at).desc())
-            .offset(offset)
-            .limit(limit)
+            .order_by(col(Job.created_at).desc(), col(Job.id).desc())
         )
+        if cursor is not None:
+            stmt = stmt.where(
+                (col(Job.created_at) < cursor[0])
+                | ((col(Job.created_at) == cursor[0]) & (col(Job.id) < cursor[1]))
+            )
+        else:
+            stmt = stmt.offset(offset)
+        stmt = stmt.limit(limit)
         
         results = list(self.session.exec(stmt).all())
         return results, total
@@ -96,8 +113,7 @@ class JobRepository:
                 Job.overall_progress,
                 Job.metadata_,
                 Job.task_type,
-            )
-            .where(Job.status.in_(statuses))
+            )            .where(Job.status.in_(statuses))
             .order_by(Job.created_at)
         )
 
@@ -169,4 +185,116 @@ class JobRepository:
         for status, count in rows:
             result[status.value] = count
         return result
+
+    def get_metadata_key_counts(
+        self, key: str, *, statuses: list[JobStatus] | None = None, limit: int = 25
+    ) -> list[tuple[str, int]]:
+        """
+        Aggregate jobs by a top-level metadata_ key (e.g. "model").
+
+        Uses JSONB path access on PostgreSQL and the JSON1 extension on SQLite,
+        so the same query shape works on both backends. Statuses come from the
+        JobStatus enum (controlled vocabulary) so they are inlined safely.
+        """
+        status_clause = ""
+        if statuses:
+            # The status column stores the enum member NAME (COMPLETED) on both
+            # PostgreSQL (native enum) and SQLite (VARCHAR via SQLAlchemy Enum).
+            quoted = ", ".join(f"'{s.name}'" for s in statuses)
+            status_clause = f"AND status IN ({quoted})"
+
+        dialect = self.session.bind.dialect.name if self.session.bind is not None else "sqlite"
+        if dialect == "postgresql":
+            # GIN-index-friendly JSONB containment query
+            stmt = text(
+                f"""
+                SELECT COALESCE(metadata_->>'{key}', '(none)') AS value,
+                       COUNT(*) AS count
+                FROM jobs
+                WHERE metadata_ ? '{key}'
+                {status_clause}
+                GROUP BY 1
+                ORDER BY count DESC
+                LIMIT {int(limit)}
+                """
+            )
+            rows = self.session.execute(stmt).all()
+        else:
+            # SQLite JSON1 extension
+            stmt = text(
+                f"""
+                SELECT COALESCE(json_extract(metadata_, '$.{key}'), '(none)') AS value,
+                       COUNT(*) AS count
+                FROM jobs
+                WHERE json_extract(metadata_, '$.{key}') IS NOT NULL
+                {status_clause}
+                GROUP BY 1
+                ORDER BY count DESC
+                LIMIT {int(limit)}
+                """
+            )
+            rows = self.session.execute(stmt).all()
+
+        return [(str(row[0]), int(row[1])) for row in rows]
+
+    def search_prompts(self, query: str, *, limit: int = 25) -> list[Job]:
+        """
+        Full-text search over job prompts.
+
+        PostgreSQL: index-backed tsvector match (generated prompt_tsv column)
+        ranked by relevance. SQLite: LIKE fallback over the JSON1 extraction.
+        """
+        if not query:
+            return []
+
+        dialect = self.session.bind.dialect.name if self.session.bind is not None else "sqlite"
+        if dialect == "postgresql":
+            stmt = text(
+                """
+                SELECT jobs.*
+                FROM jobs
+                WHERE prompt_tsv @@ plainto_tsquery('english', :q)
+                ORDER BY ts_rank(prompt_tsv, plainto_tsquery('english', :q)) DESC,
+                         created_at DESC
+                LIMIT :limit
+                """
+            )
+            rows = self.session.execute(stmt, {"q": query, "limit": int(limit)}).all()
+        else:
+            stmt = text(
+                """
+                SELECT jobs.*
+                FROM jobs
+                WHERE json_extract(metadata_, '$.prompt') LIKE :like
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            )
+            rows = self.session.execute(
+                stmt, {"like": f"%{query}%", "limit": int(limit)}
+            ).all()
+
+        return [self._row_to_job(row) for row in rows]
+
+    @staticmethod
+    def _row_to_job(row) -> Job:
+        """Rehydrate a Job from a raw column select (SQLAlchemy Row)."""
+        job = Job()
+        for key in Job.__table__.columns.keys():
+            if key not in row._mapping:
+                continue
+            raw = row._mapping[key]
+            if key == "status" and isinstance(raw, str):
+                raw = JobStatus[raw]
+            elif isinstance(raw, str):
+                try:
+                    col_type = Job.__table__.columns[key].type.python_type
+                except (NotImplementedError, AttributeError):
+                    col_type = None
+                if col_type is datetime:
+                    raw = datetime.fromisoformat(raw)
+                elif col_type is dict:
+                    raw = json.loads(raw)
+            setattr(job, key, raw)
+        return job
 
