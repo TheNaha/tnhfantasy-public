@@ -23,7 +23,7 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
     This routes to the provider's CPU extraction endpoint.
     """
     service = get_provider_service(session)
-    provider = service.get_provider(provider_id)
+    provider = await service.get_provider(provider_id)
     if not provider:
         raise NotFoundError("Provider", provider_id)
         

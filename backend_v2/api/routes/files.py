@@ -104,7 +104,7 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
             if not enabled or not p_id:
                 continue
 
-            provider_entity = service.get_provider(p_id)
+            provider_entity = await service.get_provider(p_id)
             if not provider_entity:
                 continue
             
