@@ -15,11 +15,11 @@ class ScenarioUpdate(BaseModel):
     description: str | None = None
     prompt_template: str | None = None
 
-@router.get("/", response_model=list[Scenario])
+@router.get("", response_model=list[Scenario])
 def list_scenarios(session: Session = Depends(get_session)):
     return session.exec(select(Scenario).order_by(Scenario.name)).all()
 
-@router.post("/", response_model=Scenario)
+@router.post("", response_model=Scenario)
 def create_scenario(scenario: Scenario, session: Session = Depends(get_session)):
     scenario.created_at = datetime.now(timezone.utc)
     scenario.updated_at = scenario.created_at

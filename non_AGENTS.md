@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Project Vision & Architecture
+
+TNHComfy has evolved from a simple ComfyUI image generator wrapper into a **Comprehensive AI Fantasy Engine**. It now integrates three core pillars:
+1. **Image Generation**: The original ComfyUI wrapper using serverless providers (Modal, Beam).
+2. **Roleplay Chatbots**: Stateful, SillyTavern-style character chats with autonomous agentic workflows (allowing characters to trigger their own scene narration or image generation).
+3. **Story Sandbox**: An AI Dungeon-style interactive document editor for crafting stories, with context injected from active characters and lorebooks.
+
+All of these share the **World Vault** data layer (Characters, Chats, Lorebooks, Stories) via PostgreSQL + pgvector. Ensure that future architectural decisions support this unified, multi-modal vision.
+
 ## Quick commands
 
 ```bash
@@ -65,6 +74,7 @@ Tests that create DB sessions must override **both** dependency sources: `api.de
 
 - **Zustand** (`src/store/`): UI state, form drafts, realtime WebSocket job updates.
 - **React Query** (`src/hooks/`): HTTP fetching, caching, mutations. Do not store server data in Zustand.
+- **World Vault State**: Ensure entity relationships (like a Story's `character_ids` or `lorebook_ids`) are persisted directly to the backend via React Query mutations (e.g., `updateStory.mutate`), avoiding disconnected transient UI state.
 - Provider data flows through `useProvidersPageData` as the single source of truth.
 - Collections bootstrapped at app startup; images lazy-loaded when opened.
 - Read `frontend_v2/STATE_MANAGEMENT.md` before changing state logic.
@@ -113,5 +123,5 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 ## Docs
 
 - `docs/` has architecture, backend, frontend, deployment, and API reference.
-- `plan.md` tracks the phased refactor roadmap — read it before large-scale changes.
+- `PLAN.md` tracks the phased refactor roadmap — read it before large-scale changes.
 - `.github/instructions/backend.instructions.md` has backend-specific rules scoped to `backend_v2/**`.

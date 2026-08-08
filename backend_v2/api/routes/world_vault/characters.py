@@ -163,12 +163,12 @@ def parse_character_card(png_bytes: bytes) -> dict:
     return {"character": character, "avatar_bytes": png_bytes}
 
 
-@router.get("/")
+@router.get("")
 def list_characters(session: Session = Depends(get_session)):
     characters = session.exec(select(Character).order_by(Character.name)).all()
     return [_character_to_dict(c) for c in characters]
 
-@router.post("/", response_model=Character)
+@router.post("", response_model=Character)
 def create_character(character: Character, session: Session = Depends(get_session)):
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at

@@ -109,10 +109,9 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
     prompt = _first_text(job_data)
     story_id = job_data.get("metadata", {}).get("story_id")
     chapter_id = job_data.get("metadata", {}).get("chapter_id")
-    checkpoint = (
+    preferred_checkpoint = (
         job_data.get("metadata", {}).get("scene_checkpoint")
         or job_data.get("workflow", {}).get("checkpoint")
-        or "sd_xl_base_1.0.safetensors"
     )
 
     if not prompt or not story_id or not chapter_id:
@@ -126,11 +125,16 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
         prompt_preview=prompt[:80],
     )
     try:
-        from api.routes.world_vault.stories import _build_image_workflow
+        from core.workflow_builder import build_image_workflow
+        from services.model_availability_service import ModelAvailabilityService
 
         with Session(engine) as session:
+            checkpoint = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
+            if not checkpoint:
+                logger.error("illustrate_no_checkpoint", story_id=story_id, chapter_id=chapter_id)
+                return
             _job_service = JobService(session)
-            image_workflow = _build_image_workflow(prompt, checkpoint)
+            image_workflow = build_image_workflow(prompt, checkpoint=checkpoint, filename_prefix="ComfyUI")
             img_job = await _job_service.create_job(
                 task_type="image",
                 workflow=image_workflow,
@@ -149,16 +153,16 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
 
 async def _handle_scene_prompt(job_data: dict[str, Any]):
     """Chain a chat scene prompt into an image job (non-agentic fallback path)."""
-    from services.orchestrator_service import _available_checkpoint, _build_default_image_workflow
+    from core.workflow_builder import build_image_workflow, DEFAULT_NEGATIVE_PROMPT
+    from services.model_availability_service import ModelAvailabilityService
 
     prompt = _first_text(job_data)
     metadata = job_data.get("metadata", {})
     chat_id = metadata.get("chat_id")
     character_id = metadata.get("character_id")
-    checkpoint = (
+    preferred_checkpoint = (
         metadata.get("scene_checkpoint")
         or metadata.get("checkpoint")
-        or "sd_xl_base_1.0.safetensors"
     )
 
     if not prompt or not chat_id:
@@ -172,14 +176,15 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
     )
     try:
         with Session(engine) as session:
-            resolved_ckpt = _available_checkpoint(session, checkpoint)
+            resolved_ckpt = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
             if not resolved_ckpt:
                 logger.error("scene_prompt_no_checkpoint", chat_id=chat_id)
                 return
-            workflow = _build_default_image_workflow(
+            workflow = build_image_workflow(
                 prompt,
-                "worst quality, low quality, bad anatomy, bad hands, missing fingers",
+                DEFAULT_NEGATIVE_PROMPT,
                 checkpoint=resolved_ckpt,
+                filename_prefix="ComfyUI",
             )
             img_job = await JobService(session).create_job(
                 task_type="image",

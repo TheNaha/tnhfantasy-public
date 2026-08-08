@@ -229,21 +229,35 @@ class JobQueue:
         if claimed is not None:
             # Claimed without a wakeup — drain stale wakeups so the in-process
             # queue can't grow unboundedly during long-running jobs.
-            while True:
-                try:
-                    self._queue.get_nowait()
-                    self._queue.task_done()
-                except asyncio.QueueEmpty:
-                    break
+            # In Postgres mode the queue is wakeup-only; we discard items
+            # WITHOUT calling task_done() because the worker will not call it
+            # either (task_done is only used in SQLite in-process mode).
+            if self._use_db_claims:
+                while True:
+                    try:
+                        self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+            else:
+                while True:
+                    try:
+                        self._queue.get_nowait()
+                        self._queue.task_done()
+                    except asyncio.QueueEmpty:
+                        break
             return claimed
 
         try:
             await asyncio.wait_for(self._queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
             return None
-        self._queue.task_done()
 
         # Wakeup received — try to claim again.
+        # In Postgres mode the queue item is a wakeup signal only;
+        # we must not call task_done() (it would unbalance the counter
+        # and the worker does not call it in DB-claim mode).
+        if not self._use_db_claims:
+            self._queue.task_done()
         return await self._claim_next_job()
     
     async def start(self) -> None:
@@ -374,9 +388,11 @@ class JobQueue:
 
                 if not self._processor:
                     logger.warning("no_processor_set", job_id=job_id, worker_id=worker_id)
-                    self._queue.task_done()
-                    if self._use_db_claims:
-                        await self._clear_claim(job_id)
+                    # SQLite mode: the queue item was popped by _get_job_payload
+                    # without task_done; call it here. Postgres mode: queue is
+                    # wakeup-only and task_done is not used.
+                    if not self._use_db_claims:
+                        self._queue.task_done()
                     continue
                 
                 logger.info("job_processing", job_id=job_id, worker_id=worker_id)
@@ -395,7 +411,12 @@ class JobQueue:
                 finally:
                     # Remove from active jobs
                     self._active_jobs.pop(job_id, None)
-                    self._queue.task_done()
+                    # SQLite mode: task_done was not called by _get_job_payload,
+                    # so we must call it here. Postgres mode: the queue item was
+                    # already consumed/discarded by _get_job_payload without
+                    # task_done (wakeup-only queue), so we must NOT call it again.
+                    if not self._use_db_claims:
+                        self._queue.task_done()
                     # Release the DB claim so recovery/queueing stays consistent.
                     if self._use_db_claims:
                         await self._clear_claim(job_id)

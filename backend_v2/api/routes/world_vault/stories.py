@@ -7,12 +7,14 @@ from sqlmodel import Session, select
 from api.deps import get_session
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
 from core.events import wait_for_job_completion
+from core.workflow_builder import build_image_workflow
 from services.job_queue import queue_manager
 
 router = APIRouter()
 
 
 from services.llm_config import get_default_llm_model as _get_default_llm_model
+from services.model_availability_service import ModelAvailabilityService
 
 
 class StoryContinueRequest(BaseModel):
@@ -27,11 +29,11 @@ class StoryBeatRequest(BaseModel):
 class StoryIllustrateRequest(BaseModel):
     image_prompt: str = ""
 
-@router.get("/", response_model=list[Story])
+@router.get("", response_model=list[Story])
 def list_stories(session: Session = Depends(get_session)):
     return session.exec(select(Story).where(Story.is_archived == False).order_by(Story.updated_at.desc())).all()
 
-@router.post("/", response_model=Story)
+@router.post("", response_model=Story)
 def create_story(story: Story, session: Session = Depends(get_session)):
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at
@@ -165,6 +167,23 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     if story and story.memory:
         system_prompt += f"\n\nGlobal Story Memory (Author's Note):\n{story.memory}\n"
         
+    if story and story.character_ids:
+        from core.entities import Character
+        characters_content = []
+        for char_id in story.character_ids:
+            char = session.get(Character, char_id)
+            if char:
+                char_text = f"Character: {char.name}\n"
+                if char.description:
+                    char_text += f"Description: {char.description}\n"
+                if char.personality:
+                    char_text += f"Personality: {char.personality}\n"
+                if char.scenario:
+                    char_text += f"Scenario: {char.scenario}\n"
+                characters_content.append(char_text)
+        if characters_content:
+            system_prompt += "\n\nStory Characters:\n" + "\n".join(characters_content)
+        
     if story and story.lorebook_ids:
         lorebooks_content = []
         for lorebook_id in story.lorebook_ids:
@@ -241,20 +260,24 @@ async def illustrate_chapter(
 
     story = session.get(Story, story_id)
 
-    # Resolve checkpoint: story characters > fallback
-    checkpoint = "sd_xl_base_1.0.safetensors"
+    # Resolve checkpoint: story characters > fallback to an installed model
+    checkpoint = _resolve_default_checkpoint(session)
     if story and story.character_ids:
         from core.entities import Character
         char = session.get(Character, story.character_ids[0])
         if char and char.checkpoint:
-            checkpoint = char.checkpoint
+            checkpoint = _resolve_default_checkpoint(session, char.checkpoint)
 
     if data.image_prompt:
         # Provided prompt: queue image job directly (non-blocking)
         from services.job_submission_service import JobSubmissionService
         submission_service = JobSubmissionService(session)
 
-        image_workflow = _build_image_workflow(data.image_prompt, checkpoint)
+        image_workflow = build_image_workflow(
+            prompt=data.image_prompt,
+            checkpoint=checkpoint,
+            filename_prefix="ComfyUI",
+        )
         img_job = await submission_service.create_and_enqueue_job(
             workflow=image_workflow,
             metadata={
@@ -276,6 +299,21 @@ async def illustrate_chapter(
 
     if story and story.genre:
         system_prompt += f"\nThe genre is {story.genre}."
+
+    if story and story.character_ids:
+        from core.entities import Character
+        characters_content = []
+        for char_id in story.character_ids:
+            char = session.get(Character, char_id)
+            if char:
+                char_text = f"Character: {char.name}\n"
+                if char.visual_tags:
+                    char_text += f"Visual Tags: {', '.join(char.visual_tags)}\n"
+                if char.description:
+                    char_text += f"Description: {char.description}\n"
+                characters_content.append(char_text)
+        if characters_content:
+            system_prompt += "\n\nStory Characters (Use these details for illustration):\n" + "\n".join(characters_content)
 
     if story and story.lorebook_ids:
         lorebooks_content = []
@@ -337,43 +375,17 @@ def list_story_images(story_id: str, session: Session = Depends(get_session)):
     return images
 
 
-def _build_image_workflow(prompt: str, checkpoint: str) -> dict:
-    """Build a standard ComfyUI image workflow."""
-    return {
-        "3": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": 0, "steps": 20, "cfg": 7, "sampler_name": "euler",
-                "scheduler": "normal", "denoise": 1,
-                "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0],
-                "latent_image": ["5", 0]
-            }
-        },
-        "4": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": checkpoint}
-        },
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"batch_size": 1, "width": 1024, "height": 1024}
-        },
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": prompt, "clip": ["4", 1]}
-        },
-        "7": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": "worst quality, low quality, bad anatomy, bad hands, missing fingers",
-                "clip": ["4", 1]
-            }
-        },
-        "8": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["3", 0], "vae": ["4", 2]}
-        },
-        "9": {
-            "class_type": "SaveImage",
-            "inputs": {"filename_prefix": "ComfyUI", "images": ["8", 0]}
-        }
-    }
+def _resolve_default_checkpoint(session: Session, preferred: str | None = None) -> str:
+    """Find a checkpoint that is actually installed on an enabled provider.
+
+    Falls back to the configured default (sd_xl_base_1.0.safetensors) when
+    no providers have checkpoints yet, so the error message from the
+    provider-level validation will name a concrete model rather than a
+    placeholder.
+    """
+    service = ModelAvailabilityService(session)
+    resolved = service.get_available_checkpoint(preferred)
+    if resolved:
+        return resolved
+    from config import get_config
+    return get_config().get("generator", {}).get("default_checkpoint", "sd_xl_base_1.0.safetensors")

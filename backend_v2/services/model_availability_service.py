@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
-from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+from core.entities import ModelFile, ModelV2, ModelVersion, Provider, ProviderVersionStatus
 from infrastructure.logging import model_logger
 from infrastructure.repositories import ProviderRepository
 
@@ -248,6 +248,64 @@ class ModelAvailabilityService:
         result = self.check_availability(required_models)
         return result.eligible_providers
     
+    def get_available_models(self, directory: str) -> list[str]:
+        """
+        List filenames of ready (downloaded) model files in *directory*
+        across all enabled providers.
+
+        Example:
+            >>> service.get_available_models("checkpoints")
+            ['animagine_xl_v31_v31_403131.safetensors', ...]
+
+        Returns an empty list when no models are ready or the query fails.
+        """
+        try:
+            rows = self.session.exec(
+                select(ModelFile.storage_filename)
+                .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
+                .join(ModelV2, ModelV2.id == ModelVersion.model_id)
+                .join(
+                    ProviderVersionStatus,
+                    ProviderVersionStatus.file_id == ModelFile.id,
+                )
+                .join(Provider, Provider.id == ProviderVersionStatus.provider_id)
+                .where(
+                    ModelV2.directory == directory,
+                    ModelVersion.is_enabled == True,  # noqa: E712
+                    Provider.enabled == True,  # noqa: E712
+                    ProviderVersionStatus.status == "ready",
+                )
+                .distinct()
+            ).all()
+            return [r for r in rows if r]
+        except Exception as e:
+            logger.warning("available_models_query_failed", directory=directory, error=str(e))
+            return []
+
+    def get_available_checkpoint(self, preferred: str | None = None) -> str | None:
+        """Pick a checkpoint that is actually installed on an enabled provider.
+
+        Returns *preferred* if it is present, otherwise the first ready
+        checkpoint.  Returns ``None`` when no checkpoints are installed.
+        """
+        ready = self.get_available_models("checkpoints")
+        if not ready:
+            return None
+        if preferred and preferred in ready:
+            return preferred
+        return ready[0]
+
+    def get_available_lora(self, preferred: str | None = None) -> str | None:
+        """Pick a LoRA that is actually installed on an enabled provider.
+
+        Returns *preferred* if present, otherwise ``None`` (LoRAs are
+        optional — we never silently swap one for another).
+        """
+        if not preferred:
+            return None
+        ready = self.get_available_models("loras")
+        return preferred if preferred in ready else None
+
     def get_missing_models_for_provider(
         self,
         provider_id: str,

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -164,8 +164,6 @@ export default function StorySandbox() {
     const activeChapterId = urlChapterId || null;
 
     const setGlobalActiveStory = useWorldVaultStore(state => state.setActiveStory);
-    const selectedLorebooks = useWorldVaultStore(state => state.contextBuilder.selectedLorebooks);
-    const toggleLorebook = useWorldVaultStore(state => state.toggleLorebook);
 
     useEffect(() => {
         if (activeStoryId) setGlobalActiveStory(activeStoryId);
@@ -175,6 +173,7 @@ export default function StorySandbox() {
     const { data: activeStory } = useStory(activeStoryId);
     const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [] } = useLorebooks();
+    const { data: characters = [] } = useCharacters();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections();
     const collectionsList = Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -833,6 +832,40 @@ export default function StorySandbox() {
                         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
                                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <Layers size={14} /> Characters
+                                </h4>
+                                {characters.length === 0 ? (
+                                    <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No characters</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {characters.map(char => {
+                                            const isActive = (activeStory?.character_ids || []).includes(char.id);
+                                            return (
+                                                <button
+                                                    key={char.id}
+                                                    onClick={() => {
+                                                        const current = activeStory?.character_ids || [];
+                                                        const newIds = isActive ? current.filter(id => id !== char.id) : [...current, char.id];
+                                                        updateStory.mutate({ id: activeStoryId, character_ids: newIds });
+                                                    }}
+                                                    className={clsx(
+                                                        "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+                                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                                    )}
+                                                >
+                                                    {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                                    <div className="min-w-0">
+                                                        <p className="truncate font-medium">{char.name}</p>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                                     <Layers size={14} /> Lorebooks
                                 </h4>
                                 {lorebooks.length === 0 ? (
@@ -840,11 +873,15 @@ export default function StorySandbox() {
                                 ) : (
                                     <div className="space-y-2">
                                         {lorebooks.map(lb => {
-                                            const isActive = selectedLorebooks.includes(lb.id);
+                                            const isActive = (activeStory?.lorebook_ids || []).includes(lb.id);
                                             return (
                                                 <button
                                                     key={lb.id}
-                                                    onClick={() => toggleLorebook(lb.id)}
+                                                    onClick={() => {
+                                                        const current = activeStory?.lorebook_ids || [];
+                                                        const newIds = isActive ? current.filter(id => id !== lb.id) : [...current, lb.id];
+                                                        updateStory.mutate({ id: activeStoryId, lorebook_ids: newIds });
+                                                    }}
                                                     className={clsx(
                                                         "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
                                                         isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"

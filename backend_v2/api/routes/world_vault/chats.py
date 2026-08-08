@@ -49,11 +49,11 @@ class SendMessageRequest(BaseModel):
     narrate: bool = False
 
 
-@router.get("/", response_model=list[Chat])
+@router.get("", response_model=list[Chat])
 def list_chats(session: Session = Depends(get_session)):
     return session.exec(select(Chat).order_by(Chat.updated_at.desc())).all()
 
-@router.post("/", response_model=Chat)
+@router.post("", response_model=Chat)
 async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
     chat = Chat(
         name=req.name,
@@ -928,12 +928,17 @@ async def generate_scene(
         
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
     
-    # Resolve checkpoint: character > user settings > fallback
-    checkpoint = "sd_xl_base_1.0.safetensors"
+    # Resolve checkpoint: character > user settings > fallback to any installed model
+    checkpoint = None
     if chat.character_id:
         character = session.get(Character, chat.character_id)
         if character and character.checkpoint:
             checkpoint = character.checkpoint
+    if not checkpoint:
+        from services.model_availability_service import ModelAvailabilityService
+        checkpoint = ModelAvailabilityService(session).get_available_checkpoint()
+    if not checkpoint:
+        checkpoint = "sd_xl_base_1.0.safetensors"
     
     system_prompt = (
         "You are an AI scene director for a roleplay chat. Read the following recent "

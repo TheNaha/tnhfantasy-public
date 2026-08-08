@@ -118,6 +118,9 @@ class TestJobQueueStartStop:
 
     async def test_stop_allows_active_job_to_finish_before_cancelling(self):
         q = JobQueue(max_workers=1)
+        # These tests put jobs directly in the in-process queue, so force
+        # in-process mode regardless of whether the live env uses Postgres.
+        q._use_db_claims = False
         started = asyncio.Event()
         finished = asyncio.Event()
 
@@ -138,6 +141,7 @@ class TestJobQueueStartStop:
 
     async def test_stop_cancels_stuck_workers_after_timeout(self):
         q = JobQueue(max_workers=1)
+        q._use_db_claims = False
         started = asyncio.Event()
 
         async def dummy_processor(job_id, provider_id):

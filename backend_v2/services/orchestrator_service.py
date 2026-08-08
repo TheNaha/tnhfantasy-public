@@ -12,7 +12,9 @@ import json
 import logging
 from typing import Any
 
+from core.workflow_builder import build_image_workflow
 from infrastructure.logging import get_logger
+from services.model_availability_service import ModelAvailabilityService
 
 logger = get_logger("orchestrator")
 
@@ -133,60 +135,14 @@ def can_continue_agentic(metadata: dict[str, Any] | None) -> bool:
     return get_agentic_depth(metadata) < MAX_AGENTIC_DEPTH
 
 
-def _ready_model_files(session, directory: str) -> list[str]:
-    """List filenames of ready, enabled model files of a directory across enabled providers."""
-    from sqlmodel import select
-
-    from core.entities import (
-        ModelFile,
-        ModelV2,
-        ModelVersion,
-        Provider,
-        ProviderVersionStatus,
-    )
-
-    try:
-        rows = session.exec(
-            select(ModelFile.filename)
-            .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
-            .join(ModelV2, ModelV2.id == ModelVersion.model_id)
-            .join(
-                ProviderVersionStatus,
-                ProviderVersionStatus.version_id == ModelVersion.id,
-            )
-            .join(Provider, Provider.id == ProviderVersionStatus.provider_id)
-            .where(
-                ModelV2.directory == directory,
-                ModelVersion.is_enabled == True,  # noqa: E712
-                Provider.enabled == True,  # noqa: E712
-                ProviderVersionStatus.status == "ready",
-            )
-            .distinct()
-        ).all()
-        return [r for r in rows if r]
-    except Exception as e:
-        logger.warning("ready_model_files_query_failed", directory=directory, error=str(e))
-        return []
-
-
 def _available_checkpoint(session, preferred: str | None) -> str | None:
     """Pick a checkpoint that is actually installed on an enabled provider."""
-    ready = _ready_model_files(session, "checkpoints")
-    if not ready:
-        return None
-    if preferred and preferred in ready:
-        return preferred
-    return ready[0]
+    return ModelAvailabilityService(session).get_available_checkpoint(preferred)
 
 
 def _available_lora(session, preferred: str | None) -> str | None:
     """Pick a LoRA that is actually installed on an enabled provider (or None)."""
-    if not preferred:
-        return None
-    ready = _ready_model_files(session, "loras")
-    if preferred in ready:
-        return preferred
-    return None
+    return ModelAvailabilityService(session).get_available_lora(preferred)
 
 
 async def execute_tool(
@@ -503,7 +459,13 @@ async def _tool_generate_image(
     if lora_name and resolved_lora is None:
         logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
 
-    workflow = _build_default_image_workflow(prompt, negative, checkpoint=resolved_ckpt, lora=resolved_lora)
+    workflow = build_image_workflow(
+        prompt=prompt,
+        negative=negative,
+        checkpoint=resolved_ckpt,
+        lora=resolved_lora,
+        filename_prefix="AgenticGen",
+    )
 
     metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image"}
     if chat_id:
@@ -559,67 +521,6 @@ async def _tool_generate_image(
         return {"status": "error", "error": f"Image generation {final_status}"}
 
     return {"status": "error", "error": f"Image generation ended with status: {final_status}"}
-
-
-def _build_default_image_workflow(prompt: str, negative: str, checkpoint: str = "sd_xl_base_1.0.safetensors", lora: str | None = None) -> dict[str, Any]:
-    """Build a basic SDXL text-to-image workflow."""
-    workflow = {
-        "3": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": 0,
-                "steps": 20,
-                "cfg": 7,
-                "sampler_name": "euler",
-                "scheduler": "normal",
-                "denoise": 1,
-                "model": ["10", 0] if lora else ["4", 0],
-                "positive": ["6", 0],
-                "negative": ["7", 0],
-                "latent_image": ["5", 0],
-            },
-        },
-        "4": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": checkpoint},
-        },
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"batch_size": 1, "width": 1024, "height": 1024},
-        },
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": prompt, "clip": ["4", 1]},
-        },
-        "7": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": negative, "clip": ["4", 1]},
-        },
-        "8": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
-        },
-        "9": {
-            "class_type": "SaveImage",
-            "inputs": {"filename_prefix": "AgenticGen", "images": ["8", 0]},
-        },
-    }
-    
-    if lora:
-        workflow["10"] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "lora_name": lora,
-                "strength_model": 1.0,
-                "strength_clip": 1.0,
-                "model": ["4", 0],
-                "clip": ["4", 1]
-            }
-        }
-        workflow["6"]["inputs"]["clip"] = ["10", 1]
-        workflow["7"]["inputs"]["clip"] = ["10", 1]
-        
-    return workflow
 
 
 async def process_tool_calls_and_chain(

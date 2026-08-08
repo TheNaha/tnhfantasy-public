@@ -14,6 +14,13 @@ from infrastructure.logging import get_logger
 logger = get_logger("job_processing")
 
 
+def get_default_checkpoint() -> str:
+    """Read the configured default checkpoint from settings, falling back to the
+    well-known SDXL base name when no override is present."""
+    from config import get_config
+    return get_config().get("generator", {}).get("default_checkpoint", "sd_xl_base_1.0.safetensors")
+
+
 _finalizing_jobs: set[str] = set()
 _finalizing_jobs_lock = None
 
@@ -467,7 +474,7 @@ async def _finalize_llm_job(
 
         story_id   = job.metadata_.get("story_id")
         chapter_id = job.metadata_.get("chapter_id")
-        checkpoint = job.metadata_.get("scene_checkpoint", "sd_xl_base_1.0.safetensors")
+        checkpoint = job.metadata_.get("scene_checkpoint") or get_default_checkpoint()
 
         await finalize_persisted_job_outputs(
             job_service=job_service,
@@ -568,7 +575,7 @@ async def _finalize_llm_job(
             scene_checkpoint = (
                 job.metadata_.get("scene_checkpoint")
                 or job.metadata_.get("generator_checkpoint")
-                or "sd_xl_base_1.0.safetensors"
+                or get_default_checkpoint()
             )
             await finalize_persisted_job_outputs(
                 job_service=job_service,

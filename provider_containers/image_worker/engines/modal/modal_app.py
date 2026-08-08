@@ -317,8 +317,8 @@ vol = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 # =============================================================================
 image_base = (
     modal.Image.debian_slim(python_version="3.13")
-    .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0", gpu="L4")
-    .uv_pip_install("comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", "httpx", "aiofiles", gpu="L4")
+    .apt_install("git", "libgl1-mesa-glx", "libglib2.0-0")
+    .uv_pip_install("comfy-cli", "fastapi", "websockets", "uvicorn", "requests", "safetensors", "py-spy", "httpx", "aiofiles")
     # Install ComfyUI using comfy-cli
     .run_commands("comfy --skip-prompt install --fast-deps --nvidia --cuda-version 12.8",gpu="L4")
     # Ensure torch sees the complete CUDA user-space library set expected by modern nodes.
@@ -388,7 +388,7 @@ image_download = (
         remote_path="/provider_core",
         copy=True,
     )
-    .env({"PYTHONPATH": "/"})
+    .env({"PYTHONPATH": "/", "HF_XET_HIGH_PERFORMANCE": "1"})
 )
 
 # Image for snapshot mode (includes memory_snapshot_helper + load profiler)

@@ -20,11 +20,11 @@ class EntryUpdate(BaseModel):
     keys: list[str] | None = None
     content: str | None = None
 
-@router.get("/", response_model=list[Lorebook])
+@router.get("", response_model=list[Lorebook])
 def list_lorebooks(session: Session = Depends(get_session)):
     return session.exec(select(Lorebook).order_by(Lorebook.name)).all()
 
-@router.post("/", response_model=Lorebook)
+@router.post("", response_model=Lorebook)
 def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session)):
     lorebook.created_at = datetime.now(timezone.utc)
     lorebook.updated_at = lorebook.created_at
