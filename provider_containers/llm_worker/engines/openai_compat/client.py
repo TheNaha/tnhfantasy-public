@@ -1,11 +1,13 @@
 import os
 import json
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 
 from fastapi.responses import StreamingResponse
 
 from provider_core.base_client import BaseProviderClient
+from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
@@ -65,7 +67,6 @@ class OpenAICompatProviderClient(BaseProviderClient):
                 if job_id:
                     await self.job_tracker.start_job(job_id)
 
-                import httpx
                 workflow = request.workflow
                 messages = workflow.get("messages", [])
                 tools = workflow.get("tools")
@@ -83,82 +84,84 @@ class OpenAICompatProviderClient(BaseProviderClient):
                 if self.api_key:
                     headers["Authorization"] = f"Bearer {self.api_key}"
 
-                async with httpx.AsyncClient() as client:
-                    async with client.stream(
-                        "POST",
-                        f"{self.api_base}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                        timeout=120.0,
-                    ) as response:
-                        response.raise_for_status()
+                timeout = request.timeout_seconds or 120.0
+                client = await get_http_client().get_client()
 
-                        full_content = ""
-                        tool_calls = []
+                async with client.stream(
+                    "POST",
+                    f"{self.api_base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
 
-                        async for line in response.aiter_lines():
-                            line = line.strip()
-                            if not line or line == "data: [DONE]":
-                                continue
+                    full_content = ""
+                    tool_calls = []
 
-                            if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps({
-                                    "type": "completed",
-                                    "outputs": [{"role": "assistant", "content": full_content, "cancelled": True}],
-                                }) + "\n"
-                                return
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or line == "data: [DONE]":
+                            continue
 
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                try:
-                                    data = json.loads(data_str)
-                                    choices = data.get("choices", [])
-                                    if not choices:
-                                        continue
+                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                            yield json.dumps({
+                                "type": "completed",
+                                "outputs": [{"role": "assistant", "content": full_content, "cancelled": True}],
+                            }) + "\n"
+                            return
 
-                                    delta = choices[0].get("delta", {})
-                                    content = delta.get("content")
-                                    delta_tool_calls = delta.get("tool_calls")
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            try:
+                                data = json.loads(data_str)
+                                choices = data.get("choices", [])
+                                if not choices:
+                                    continue
 
-                                    if content:
-                                        full_content += content
-                                        event = {
-                                            "type": "progress",
-                                            "progress": 0,
-                                            "message": content,
-                                        }
-                                        yield json.dumps(event) + "\n"
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                delta_tool_calls = delta.get("tool_calls")
 
-                                    if delta_tool_calls:
-                                        for tc in delta_tool_calls:
-                                            index = tc.get("index", 0)
-                                            while len(tool_calls) <= index:
-                                                tool_calls.append({
-                                                    "id": "",
-                                                    "type": "function",
-                                                    "function": {"name": "", "arguments": ""},
-                                                })
-                                            if tc.get("id"):
-                                                tool_calls[index]["id"] = tc["id"]
-                                            if tc.get("type"):
-                                                tool_calls[index]["type"] = tc["type"]
-                                            if tc.get("function"):
-                                                if tc["function"].get("name"):
-                                                    tool_calls[index]["function"]["name"] = tc["function"]["name"]
-                                                if tc["function"].get("arguments"):
-                                                    tool_calls[index]["function"]["arguments"] += tc["function"]["arguments"]
+                                if content:
+                                    full_content += content
+                                    event = {
+                                        "type": "progress",
+                                        "progress": 0,
+                                        "message": content,
+                                    }
+                                    yield json.dumps(event) + "\n"
 
-                                except json.JSONDecodeError:
-                                    self.logger.error(f"Failed to decode JSON: {data_str}")
+                                if delta_tool_calls:
+                                    for tc in delta_tool_calls:
+                                        index = tc.get("index", 0)
+                                        while len(tool_calls) <= index:
+                                            tool_calls.append({
+                                                "id": "",
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""},
+                                            })
+                                        if tc.get("id"):
+                                            tool_calls[index]["id"] = tc["id"]
+                                        if tc.get("type"):
+                                            tool_calls[index]["type"] = tc["type"]
+                                        if tc.get("function"):
+                                            if tc["function"].get("name"):
+                                                tool_calls[index]["function"]["name"] = tc["function"]["name"]
+                                            if tc["function"].get("arguments"):
+                                                tool_calls[index]["function"]["arguments"] += tc["function"]["arguments"]
 
-                        output = {"role": "assistant", "content": full_content}
-                        if tool_calls:
-                            output["tool_calls"] = tool_calls
+                            except json.JSONDecodeError:
+                                self.logger.error(f"Failed to decode JSON: {data_str}")
 
-                        yield json.dumps({
-                            "type": "completed",
-                            "outputs": [output],
-                        }) + "\n"
+                    output = {"role": "assistant", "content": full_content}
+                    if tool_calls:
+                        output["tool_calls"] = tool_calls
+
+                    yield json.dumps({
+                        "type": "completed",
+                        "outputs": [output],
+                    }) + "\n"
 
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
@@ -184,16 +187,15 @@ class OpenAICompatProviderClient(BaseProviderClient):
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         """List available models from the upstream OpenAI-compatible API."""
         try:
-            import httpx
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.api_base}/models", headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                model_ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
-                return {"files": [{"path": m, "name": m} for m in model_ids]}
+            client = await get_http_client().get_client()
+            response = await client.get(f"{self.api_base}/models", headers=headers, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+            model_ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+            return {"files": [{"path": m, "name": m} for m in model_ids]}
         except Exception as e:
             self.logger.warning(f"Failed to list models from upstream: {e}")
             return {"files": []}

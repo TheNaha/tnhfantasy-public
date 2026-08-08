@@ -18,15 +18,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
 import { api, ApiError, createIdempotencyKey } from "../../api";
-import { useGeneratorStore } from "../../store/generatorStore";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
 import { formatTimestamp } from "../../utils/dateTime";
 import {
-  buildGeneratorStateFromMetadata,
-  hydrateGeneratorStateModelVisuals,
+  applyGeneratorStateFromMetadata,
 } from "../../utils/reuseParameters";
 import FeedCardDetails from "./feed-card/FeedCardDetails";
 import FeedCardActions from "./feed-card/FeedCardActions";
@@ -73,9 +71,15 @@ const FeedCard = memo(function FeedCard({
   }, [metadata, item.name, metadataEndpoint, queryClient]);
 
   const loadImageBlob = useCallback(async () => {
-    const response = await fetch(imageEndpoint);
-    if (!response.ok) throw new Error(`Failed to load image: ${response.status}`);
-    return response.blob();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(imageEndpoint, { signal: controller.signal });
+      if (!response.ok) throw new Error(`Failed to load image: ${response.status}`);
+      return response.blob();
+    } finally {
+      clearTimeout(timer);
+    }
   }, [imageEndpoint]);
 
   const handleReuse = async () => {
@@ -93,20 +97,11 @@ const FeedCard = memo(function FeedCard({
         return;
       }
 
-      const reuseState = buildGeneratorStateFromMetadata(meta);
-      if (Object.keys(reuseState).length === 0) {
+      const applied = await applyGeneratorStateFromMetadata(meta);
+      if (!applied) {
         toast.error("Could not parse reusable parameters from this image.");
         return;
       }
-
-      const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
-
-      useGeneratorStore.getState().setAll(hydratedState);
-
-      // Disable auto-randomize seed to allow reproduction of the same image
-      useSettingsStore
-        .getState()
-        .updateSetting("generator", "autoRandomizeSeed", false);
 
       toast.success(
         "Parameters loaded! Auto-randomize seed disabled for reproduction.",

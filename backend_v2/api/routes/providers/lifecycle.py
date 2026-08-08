@@ -28,6 +28,7 @@ from api.deps import (
 )
 from core.exceptions import ComfyError, NotFoundError, ProviderError, ValidationError
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
+from infrastructure.providers.runtime import provider_container_name
 from services.model_service import ModelServiceV2
 from services.provider_lifecycle_service import ProviderLifecycleService
 from services.provider_service import ProviderService
@@ -108,7 +109,7 @@ async def get_all_container_statuses(
     statuses = {}
     for provider in providers:
         provider_id = provider["id"]
-        container_name = f"tnhcomfy-{provider_id}"
+        container_name = provider_container_name(provider_id)
         
         try:
             container = container_manager.client.containers.get(container_name)

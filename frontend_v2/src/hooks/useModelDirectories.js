@@ -7,7 +7,7 @@ const MODEL_DIRECTORY_STALE_TIME_MS = 5 * 60 * 1000;
 const MODEL_DIRECTORY_GC_TIME_MS = 30 * 60 * 1000;
 
 async function fetchModelDirectory(directory) {
-    const response = await filesApi.list({ directory });
+    const response = await filesApi.list({ directory, limit: 500 });
     return response?.files || [];
 }
 

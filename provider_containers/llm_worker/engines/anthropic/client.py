@@ -1,11 +1,13 @@
 import os
 import json
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 
 from fastapi.responses import StreamingResponse
 
 from provider_core.base_client import BaseProviderClient
+from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
@@ -40,7 +42,6 @@ class AnthropicProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         async def stream():
             try:
-                import httpx
                 workflow = request.workflow
                 # Anthropic format is slightly different, but we'll try to map OpenAI messages
                 # to Anthropic format.
@@ -51,7 +52,14 @@ class AnthropicProviderClient(BaseProviderClient):
                 messages = []
                 for m in raw_messages:
                     if m.get("role") == "system":
-                        system_prompt += m.get("content", "") + "\n"
+                        content = m.get("content", "")
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "text":
+                                        system_prompt += block.get("text", "") + "\n"
+                        elif isinstance(content, str):
+                            system_prompt += content + "\n"
                     else:
                         messages.append(m)
                 
@@ -72,53 +80,74 @@ class AnthropicProviderClient(BaseProviderClient):
                     "content-type": "application/json"
                 }
 
-                async with httpx.AsyncClient() as client:
-                    async with client.stream(
-                        "POST",
-                        "https://api.anthropic.com/v1/messages",
-                        headers=headers,
-                        json=payload,
-                        timeout=120.0,
-                    ) as response:
-                        response.raise_for_status()
+                timeout = request.timeout_seconds or 120.0
+                if request.job_id:
+                    await self.job_tracker.start_job(request.job_id)
+                client = await get_http_client().get_client()
 
-                        full_content = ""
+                async def check_cancel():
+                    return request.job_id and await self.job_tracker.is_cancelled(request.job_id)
 
-                        async for line in response.aiter_lines():
-                            line = line.strip()
-                            if not line or line.startswith("event:"):
-                                continue
+                async with client.stream(
+                    "POST",
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
 
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                try:
-                                    data = json.loads(data_str)
-                                    type_ = data.get("type")
-                                    
-                                    if type_ == "content_block_delta":
-                                        delta = data.get("delta", {})
-                                        text = delta.get("text", "")
-                                        if text:
-                                            full_content += text
-                                            event = {
-                                                "type": "progress",
-                                                "progress": 0,
-                                                "message": text,
-                                            }
-                                            yield json.dumps(event) + "\n"
-                                except json.JSONDecodeError:
-                                    pass
+                    full_content = ""
 
-                        output = {"role": "assistant", "content": full_content}
+                    async for line in response.aiter_lines():
+                        if await check_cancel():
+                            yield json.dumps({
+                                "type": "completed",
+                                "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                            }) + "\n"
+                            return
+                        line = line.strip()
+                        if not line or line.startswith("event:"):
+                            continue
 
-                        yield json.dumps({
-                            "type": "completed",
-                            "outputs": [output],
-                        }) + "\n"
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            try:
+                                data = json.loads(data_str)
+                                type_ = data.get("type")
+                                
+                                if type_ == "content_block_delta":
+                                    delta = data.get("delta", {})
+                                    text = delta.get("text", "")
+                                    if text:
+                                        full_content += text
+                                        event = {
+                                            "type": "progress",
+                                            "progress": 0,
+                                            "message": text,
+                                        }
+                                        yield json.dumps(event) + "\n"
+                            except json.JSONDecodeError:
+                                pass
 
+                output = {"role": "assistant", "content": full_content}
+
+                yield json.dumps({
+                    "type": "completed",
+                    "outputs": [output],
+                }) + "\n"
+
+            except asyncio.CancelledError:
+                yield json.dumps({
+                    "type": "completed",
+                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                }) + "\n"
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
                 yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+            finally:
+                if request.job_id:
+                    await self.job_tracker.end_job(request.job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
@@ -139,22 +168,21 @@ class AnthropicProviderClient(BaseProviderClient):
         if not self.api_key:
             return {"files": [{"path": m, "name": m} for m in fallback]}
         try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.anthropic.com/v1/models",
-                    headers={
-                        "x-api-key": self.api_key,
-                        "anthropic-version": "2023-06-01",
-                    },
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
-                if not models:
-                    models = fallback
-                return {"files": [{"path": m, "name": m} for m in sorted(models)]}
+            client = await get_http_client().get_client()
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+            if not models:
+                models = fallback
+            return {"files": [{"path": m, "name": m} for m in sorted(models)]}
         except Exception:
             return {"files": [{"path": m, "name": m} for m in fallback]}
 

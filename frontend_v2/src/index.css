@@ -52,12 +52,6 @@ body {
 
 /* Mobile viewport safe area insets */
 @supports (padding: max(0px)) {
-  .safe-area-inset {
-    padding-left: max(16px, env(safe-area-inset-left));
-    padding-right: max(16px, env(safe-area-inset-right));
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
-  }
-
   /* Bottom safe area for fixed bottom bars (iOS home indicator / Android nav bar) */
   .pb-safe {
     padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
@@ -151,11 +145,6 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.glass-hover:hover {
-  background: rgba(31, 41, 55, 0.8);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
 /* Custom Scrollbar Refinement */
 ::-webkit-scrollbar {
   width: 6px;
@@ -226,10 +215,6 @@ textarea:focus-visible {
   }
 }
 
-.animate-shimmer {
-  animation: shimmer 1.5s ease-in-out infinite;
-}
-
 /* ========================================
    UI Polish Utilities
    ======================================== */
@@ -254,22 +239,6 @@ textarea,
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4),
     0 4px 6px -4px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
   transform: translateY(-2px);
-}
-
-/* Gradient Accent Utilities */
-.gradient-accent {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-}
-
-.gradient-accent-hover:hover {
-  background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
-}
-
-.gradient-text {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 /* Active Nav Item Styling */
@@ -356,52 +325,6 @@ textarea,
   }
 }
 
-.animate-pulse-soft {
-  animation: pulse-soft 2s ease-in-out infinite;
-}
-
-/* Smooth Hover Scale */
-.hover-scale {
-  transition: transform 0.2s ease-out;
-}
-
-.hover-scale:hover {
-  transform: scale(1.02);
-}
-
-/* Button Group Styling */
-.btn-group > button:not(:first-child):not(:last-child) {
-  border-radius: 0;
-}
-
-.btn-group > button:first-child {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.btn-group > button:last-child {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-/* Empty State Container */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 3rem 1.5rem;
-  text-align: center;
-  color: #9ca3af;
-}
-
-.empty-state svg {
-  width: 4rem;
-  height: 4rem;
-  margin-bottom: 1rem;
-  opacity: 0.5;
-}
-
 /* Tooltip Styles */
 [data-tooltip] {
   position: relative;
@@ -431,35 +354,6 @@ textarea,
   transform: translateX(-50%) translateY(-8px);
 }
 
-/* Badge Pulse for Status Indicators */
-.status-pulse {
-  position: relative;
-}
-
-.status-pulse::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  animation: status-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-@keyframes status-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.75;
-  }
-
-  75%,
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
-}
-
 /* Text Selection Utilities for Modal Content */
 .select-text {
   -webkit-user-select: text;
@@ -480,14 +374,6 @@ textarea,
    UI Overhaul: New Design Tokens
    ======================================== */
 
-/* Gradient Page Header */
-.gradient-header {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
 /* Elevated Surface with inner glow (for detail panels, drawers) */
 .surface-elevated {
   background: rgba(15, 23, 42, 0.85);
@@ -497,40 +383,6 @@ textarea,
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-/* Interactive Row — list items that respond to hover */
-.row-interactive {
-  position: relative;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: pointer;
-}
-
-.row-interactive::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0;
-  background: linear-gradient(
-    135deg,
-    rgba(59, 130, 246, 0.04) 0%,
-    rgba(139, 92, 246, 0.04) 100%
-  );
-  transition: opacity 0.2s ease;
-}
-
-.row-interactive:hover {
-  border-color: rgba(59, 130, 246, 0.25);
-  transform: translateY(-1px);
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.2),
-    0 0 0 1px rgba(59, 130, 246, 0.1);
-}
-
-.row-interactive:hover::before {
-  opacity: 1;
 }
 
 /* Metric Chip — compact inline stat display */
@@ -551,41 +403,6 @@ textarea,
 
 .metric-chip:hover {
   background: rgba(255, 255, 255, 0.07);
-}
-
-/* Segmented Control — pill-group for strategy picker */
-.segmented-control {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.segmented-control button {
-  flex: 1;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: #94a3b8;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.segmented-control button:hover {
-  color: #e2e8f0;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.segmented-control button.active {
-  color: #fff;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
 /* Tab Bar — horizontal tabs */

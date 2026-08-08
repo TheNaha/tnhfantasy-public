@@ -22,7 +22,6 @@ import {
     useAddImagesToCollection,
     useRemoveImagesFromCollection
 } from '../hooks/useCollections';
-import { useGeneratorStore } from '../store/generatorStore';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useDashboardModals } from '../hooks/useDashboardModals';
 import { useDashboardSelection } from '../hooks/useDashboardSelection';
@@ -44,8 +43,7 @@ import DashboardHeaderToolbar from '../components/dashboard/DashboardHeaderToolb
 
 // Utils
 import {
-    buildGeneratorStateFromMetadata,
-    hydrateGeneratorStateModelVisuals,
+    applyGeneratorStateFromMetadata,
 } from '../utils/reuseParameters';
 
 export default function Dashboard() {
@@ -103,6 +101,13 @@ export default function Dashboard() {
     useEffect(() => {
         return ws.on(ws.EventTypes.JOB_COMPLETED, (event) => {
             const job = event.data?.job || event;
+            if (!Array.isArray(job.outputs) || job.outputs.length === 0) {
+                return;
+            }
+            const autoRefreshEnabled = useSettingsStore.getState().settings.gallery.autoRefreshOnJobComplete;
+            if (!autoRefreshEnabled) {
+                return;
+            }
             setLastCompletedJob(job);
         });
     }, []);
@@ -230,7 +235,6 @@ export default function Dashboard() {
         lastCompletedJob,
         autoRefreshOnJobComplete,
         queryClient,
-        toastSuccessDuration,
         galleryQueryKey: ['gallery', filters],
     });
 
@@ -304,18 +308,14 @@ export default function Dashboard() {
         reuseParametersLockRef.current = true;
         setIsReusingParameters(true);
         try {
-            const reuseState = buildGeneratorStateFromMetadata(metadata);
-            if (Object.keys(reuseState).length === 0) {
+            const applied = await applyGeneratorStateFromMetadata(metadata);
+            if (!applied) {
                 toast.error('Could not parse reusable parameters from this image.', {
                     icon: '⚠️',
                     duration: toastErrorDuration,
                 });
                 return;
             }
-
-            const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
-            useGeneratorStore.getState().setAll(hydratedState);
-            useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
 
             toast.success('Parameters loaded! Auto-randomize seed disabled for reproduction.', {
                 icon: '🎯',

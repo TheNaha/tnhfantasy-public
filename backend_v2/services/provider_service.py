@@ -9,6 +9,7 @@ from core.events import EventType, emit_provider_event
 from core.exceptions import NotFoundError, ValidationError
 from infrastructure.logging import provider_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
+from infrastructure.providers.runtime import provider_container_name
 from infrastructure.repositories import LoadBalancingRepository, ProviderRepository
 from services.provider_deploy_service import ProviderDeployService
 from services.provider_env_builder import build_provider_environment
@@ -30,7 +31,7 @@ from services.provider_utils import (
 logger = provider_logger()
 
 # Provider types that are always LLM workers regardless of id/name.
-LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama"}
+LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm"}
 
 
 def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | None = None) -> str:
@@ -161,7 +162,7 @@ class ProviderService:
             "restart_container": False,
             "view_logs": False,
             "deploy": runtime_available,
-            "setup": provider.type == "modal" and runtime_available,
+            "setup": provider.type in ("modal", "modal_llm") and runtime_available,
             "reconcile": runtime.supports_reconciliation,
             "reset_status": True,
             "manual_deploy": deploy_mode == "manual",
@@ -329,7 +330,7 @@ class ProviderService:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
 
-        container_name = f"tnhcomfy-{provider_id}"
+        container_name = provider_container_name(provider_id)
         container_config = {"container_name": container_name}
 
         existing = self.repo.get(provider_id)

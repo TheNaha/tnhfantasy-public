@@ -1,65 +1,52 @@
 import { useState, useMemo, memo, useId } from 'react';
-import { useActiveJobs } from '../hooks/useActiveJobs';
+import { useQuery } from '@tanstack/react-query';
+import { jobsApi } from '../api';
 import { Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
+
+const QUEUE_REFETCH_INTERVAL_MS = 10000;
 
 /**
  * QueueVisualization - Shows pending and running jobs with ETA estimates.
  * Displays as a collapsible panel above the main content.
+ * ETAs come from the backend (per-task-type averages), not local guesses.
  */
 const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const contentId = useId();
 
-    // Use active jobs from React Query
-    const { data: activeJobs = [] } = useActiveJobs();
+    const { data } = useQuery({
+        queryKey: ['jobs', 'queue'],
+        queryFn: () => jobsApi.getQueueStatus(),
+        refetchInterval: QUEUE_REFETCH_INTERVAL_MS,
+    });
 
     const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {
-        // Filter for active items only and sort
-        const runningStatuses = [
-            'sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 
-            'pre-generation', 'pre_generation', 'generating', 'post-processing', 
-            'post_processing', 'generating-blurhash', 'generating_blurhash', 
-            'generating-thumbnails', 'generating_thumbnails', 'running', 'processing'
-        ];
-        
-        const running = activeJobs.filter(j => runningStatuses.includes(j.status));
-        const pending = activeJobs.filter(j => j.status === 'pending' || j.status === 'queued')
-            .sort((a, b) => (a.queue_position || 999) - (b.queue_position || 999));
-
-        // Calculate basic stats/ETAs locally since we have state
-        // This is a simplified estimation - ideally backend sends this, but WS handles status
-        const DEFAULT_AVG_JOB_TIME = 30; // Default seconds per job; backend sends actual stats via queue endpoint
-
-        const runningProcessed = running.map(j => ({
-            ...j,
-            eta_seconds: Math.max(0, DEFAULT_AVG_JOB_TIME - ((j.progress || 0) / 100) * DEFAULT_AVG_JOB_TIME)
-        }));
-
-        const pendingProcessed = pending.map((j, index) => ({
-            ...j,
-            position: index + 1,
-            eta_seconds: DEFAULT_AVG_JOB_TIME * (index + 1) + (running.length > 0 ? DEFAULT_AVG_JOB_TIME / 2 : 0)
-        }));
-
-        // Calculate approximate ETAs
-        const calculatedQueue = [...runningProcessed, ...pendingProcessed];
-
-        const derivedStats = {
-            avg_duration_seconds: DEFAULT_AVG_JOB_TIME,
-            has_history: true,
-            total_pending: pending.length,
-            total_running: running.length
-        };
+        const rawQueue = Array.isArray(data?.queue) ? data.queue : [];
+        const running = rawQueue.filter((j) => j.status === 'generating');
+        const pending = rawQueue
+            .filter((j) => j.status === 'pending')
+            .sort((a, b) => (a.position || 999) - (b.position || 999));
 
         return {
-            queue: calculatedQueue,
-            stats: derivedStats,
-            // ⚡ Bolt: Return pre-filtered arrays to avoid O(N) filtering in render
-            runningJobs: runningProcessed,
-            pendingJobs: pendingProcessed
+            queue: rawQueue,
+            stats: {
+                avg_duration_seconds: data?.avg_duration_seconds || {},
+                has_history: !!data?.has_history,
+                total_pending: data?.total_pending ?? pending.length,
+                total_running: data?.total_running ?? running.length,
+            },
+            runningJobs: running,
+            pendingJobs: pending,
         };
-    }, [activeJobs]);
+    }, [data]);
+
+    const avgDurationSeconds = useMemo(() => {
+        const durations = stats.avg_duration_seconds || {};
+        const values = Object.values(durations).filter((v) => typeof v === 'number' && v > 0);
+        if (values.length === 0) return null;
+        return Math.max(...values);
+    }, [stats.avg_duration_seconds]);
 
     // Don't render if queue is empty
     if (queue.length === 0) return null;
@@ -83,7 +70,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                 <div className="flex items-center gap-3">
                     <Clock className="text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]" size={18} aria-hidden="true" />
                     <span className="font-semibold text-white tracking-wide">
-                        Queue <span className="text-gray-400 font-normal">({runningJobs.length} running, {pendingJobs.length} pending)</span>
+                        Queue <span className="text-gray-400 font-normal">({stats.total_running} running, {stats.total_pending} pending)</span>
                     </span>
                     {!stats.has_history && (
                         <span className="text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-yellow-400/20">
@@ -146,7 +133,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                         aria-label={`Job status: ${job.status}, Prompt: ${job.prompt || 'Generating'}, Progress: ${Math.round(job.progress || 0)}%`}
                                     >
                                         <div className="flex items-center gap-3 min-w-0">
-                                            {job.status === 'running' ? (
+                                            {job.status === 'generating' ? (
                                                 <Loader2 className="flex-shrink-0 animate-spin text-blue-400" size={14} aria-hidden="true" />
                                             ) : (
                                                 <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-400" aria-hidden="true">
@@ -158,7 +145,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-2 flex-shrink-0">
-                                            {job.status === 'running' && job.progress > 0 && (
+                                            {job.status === 'generating' && job.progress > 0 && (
                                                 <span className="text-xs text-blue-400">{Math.round(job.progress)}%</span>
                                             )}
                                             <span className="text-xs text-gray-500">
@@ -171,7 +158,7 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
 
                             {/* Footer Stats */}
                             <div className="text-xs text-gray-500 text-center pt-1">
-                                Avg. job time: {formatETA(stats.avg_duration_seconds)}
+                                {avgDurationSeconds ? `Avg. job time: ${formatETA(avgDurationSeconds)}` : 'Avg. job time: —'}
                                 {pendingJobs.length > 0 && (
                                     <> • Total wait: ~{formatETA(pendingJobs[pendingJobs.length - 1].eta_seconds)}</>
                                 )}

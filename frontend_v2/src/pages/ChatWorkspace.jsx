@@ -499,7 +499,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <TavernMessage content={msg.content} />
                                 {msg.image_path && (
                                     <div className="mt-1">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                                 {/* Swipe controls — only shown when alternates exist */}
@@ -530,7 +530,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <TavernMessage content={msg.content} alignRight />
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>
@@ -539,7 +539,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <span className="whitespace-pre-wrap">{msg.content}</span>
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/view/output/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>
@@ -926,7 +926,17 @@ export default function ChatWorkspace() {
     const suggestReplyMutation = useSuggestReply();
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
+    const suggestSafetyTimerRef = useRef(null);
     const titlePollCancelledRef = useRef(false);
+    
+    useEffect(() => {
+        return () => {
+            if (suggestSafetyTimerRef.current) {
+                clearTimeout(suggestSafetyTimerRef.current);
+                suggestSafetyTimerRef.current = null;
+            }
+        };
+    }, []);
     
     const [activeCommand, setActiveCommand] = useState(null);
     
@@ -959,7 +969,7 @@ export default function ChatWorkspace() {
 
     // Combine messages + active streaming jobs for virtualized list
     const activeStreams = Object.entries(streamingJobs)
-        .filter(([_, job]) => job.status === 'running' && job.chatId === activeChatId)
+        .filter(([, job]) => job.status === 'running' && job.chatId === activeChatId)
         .map(([jobId, jobData]) => ({ _key: `stream-${jobId}`, jobId, jobData }));
     const listItems = useMemo(
         () => [
@@ -1296,7 +1306,7 @@ export default function ChatWorkspace() {
                 setSuggestJobId(res.job_id);
                 // Safety net: if the completion event is missed (reconnect gap),
                 // don't leave the Suggest button disabled forever.
-                window.setTimeout(() => {
+                suggestSafetyTimerRef.current = window.setTimeout(() => {
                     setSuggestJobId((current) => (current === res.job_id ? null : current));
                 }, 120000);
             }

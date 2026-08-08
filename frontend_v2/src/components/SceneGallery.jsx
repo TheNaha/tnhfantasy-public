@@ -8,6 +8,12 @@ function buildUrl(filename) {
     return `/api/view/output/${filename}`;
 }
 
+function buildThumbUrl(filename) {
+    if (!filename) return '';
+    if (filename.startsWith('/')) return filename;
+    return `/api/thumbnail/medium/${filename}`;
+}
+
 export default function SceneGallery({ title, images, compact, lightboxAction }) {
     const [selectedIdx, setSelectedIdx] = useState(null);
 
@@ -32,7 +38,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                         title={filename}
                     >
                         <img
-                            src={buildUrl(filename)}
+                            src={buildThumbUrl(filename)}
                             alt=""
                             className="w-full h-full object-cover"
                             loading="lazy"

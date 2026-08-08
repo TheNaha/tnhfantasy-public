@@ -55,12 +55,16 @@ export function useDashboardSelection({
     }, [selectedFiles, confirm]);
 
     const handleBatchFavorite = useCallback(() => {
+        let addedCount = 0;
         Array.from(selectedFiles).forEach(filename => {
             if (!favorites.includes(filename)) {
                 toggleFavorite(filename);
+                addedCount += 1;
             }
         });
-        toast.success(`Added ${selectedFiles.size} images to favorites`, { icon: '⭐' });
+        if (addedCount > 0) {
+            toast.success(`Added ${addedCount} image${addedCount !== 1 ? 's' : ''} to favorites`, { icon: '⭐' });
+        }
     }, [favorites, selectedFiles, toggleFavorite]);
 
     const handleAddSelectionToCollection = useCallback(() => {
@@ -68,10 +72,17 @@ export function useDashboardSelection({
     }, [setShowSelectCollection]);
 
     const handleRemoveSelectionFromCollection = useCallback(() => {
+        if (selectedFiles.size === 0) {
+            return;
+        }
+        if (!activeCollection) {
+            toast.error('No collection selected to remove from');
+            return;
+        }
         selectedFiles.forEach(filename => {
             removeFromCollection(activeCollection, filename);
         });
-        toast.success(`Removed ${selectedFiles.size} images from collection`);
+        toast.success(`Removed ${selectedFiles.size} image${selectedFiles.size !== 1 ? 's' : ''} from collection`);
         setSelectedFiles(new Set());
     }, [activeCollection, removeFromCollection, selectedFiles]);
 

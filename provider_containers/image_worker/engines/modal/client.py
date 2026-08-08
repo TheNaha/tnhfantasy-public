@@ -28,13 +28,6 @@ class CustomJSONEncoder(json.JSONEncoder):
 logger = get_logger("image_worker.modal.client")
 from provider_core.models import MODEL_DIRECTORIES
 
-
-def _log_deploy_done(task: asyncio.Task):
-    if task.cancelled():
-        logger.warning("Modal deploy task was cancelled")
-    elif task.exception():
-        logger.error(f"Modal deploy task failed with unhandled exception: {task.exception()}", exc_info=task.exception())
-
 MODAL_APP_NAME = os.getenv("MODAL_APP_NAME", "comfy-modal-stack")
 MODAL_USERNAME = os.getenv("MODAL_USERNAME", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "modal-worker")
@@ -86,6 +79,7 @@ class ModalProviderClient(BaseProviderClient):
             
             async def generate():
                 try:
+                    task = None
                     async with asyncio.timeout(inference_timeout):
                         q = asyncio.Queue()
                         
@@ -111,10 +105,10 @@ class ModalProviderClient(BaseProviderClient):
                             
                             if item is None:
                                 break
-                                
+                            
                             if isinstance(item, Exception):
                                 raise item
-                                
+                            
                             update = item
 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
@@ -140,6 +134,8 @@ class ModalProviderClient(BaseProviderClient):
                 except Exception as e:
                     yield json.dumps(build_error_response(f"Stream error: {e}", retryable=False)) + "\n"
                 finally:
+                    if task is not None:
+                        task.cancel()
                     if job_id:
                         await self.job_tracker.end_job(job_id)
             

@@ -14,6 +14,7 @@ try:
         stop_after_attempt,
         wait_exponential,
         retry_if_exception_type,
+        retry_if_result,
     )
     TENACITY_AVAILABLE = True
 except ImportError:
@@ -103,11 +104,14 @@ class SharedHttpClient:
                 min=self.config.retry_min_wait,
                 max=self.config.retry_max_wait,
             ),
-            retry=retry_if_exception_type((
-                httpx.TimeoutException,
-                httpx.ConnectError,
-                httpx.ReadError,
-            )),
+            retry=(
+                retry_if_exception_type((
+                    httpx.TimeoutException,
+                    httpx.ConnectError,
+                    httpx.ReadError,
+                ))
+                | retry_if_result(lambda r: isinstance(r, httpx.Response) and r.status_code >= 500)
+            ),
             reraise=True,
         )
         async def do_request():

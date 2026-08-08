@@ -1,22 +1,26 @@
 import os
 import json
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 
+import modal
 from fastapi.responses import StreamingResponse
 
 from provider_core.base_client import BaseProviderClient
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response
+    build_status_response, build_error_response,
 )
+
+logger = logging.getLogger("provider_core.engines.vllm_modal")
 
 
 class VLLMModalProviderClient(BaseProviderClient):
     """
     Provider Client for LLM generation via vLLM deployed on Modal.
-    This starts a Modal Web Endpoint containing a vLLM AsyncLLMEngine.
+    Calls the VLLMEngine.generate method on the Modal deployment.
     """
 
     def __init__(self, provider_id: str, runtime_config: Dict[str, Any]):
@@ -24,15 +28,25 @@ class VLLMModalProviderClient(BaseProviderClient):
         self.logger = logging.getLogger("provider_core.engines.vllm_modal")
         self.modal_app_name = os.environ.get("MODAL_APP_NAME", "vllm-modal-stack")
         self.modal_username = os.environ.get("MODAL_USERNAME", "")
-        self._function_cache = {}
+        self._cls_cache: dict = {}
+        self._func_cache: dict = {}
+
+    def _get_vllm_engine_cls(self):
+        if "VLLMEngine" not in self._cls_cache:
+            self._cls_cache["VLLMEngine"] = modal.Cls.from_name(self.modal_app_name, "VLLMEngine")
+        return self._cls_cache["VLLMEngine"]
+
+    def _get_file_storage_cls(self):
+        if "FileStorage" not in self._cls_cache:
+            self._cls_cache["FileStorage"] = modal.Cls.from_name(self.modal_app_name, "FileStorage")
+        return self._cls_cache["FileStorage"]
 
     def _get_modal_function(self, func_name: str):
-        import modal
         key = f"{self.modal_app_name}.{func_name}"
-        if key not in self._function_cache:
+        if key not in self._func_cache:
             self.logger.info(f"[{self.provider_id}] Caching Modal function: {key}")
-            self._function_cache[key] = modal.Function.from_name(self.modal_app_name, func_name)
-        return self._function_cache[key]
+            self._func_cache[key] = modal.Function.from_name(self.modal_app_name, func_name)
+        return self._func_cache[key]
 
     async def get_health(self) -> Dict[str, Any]:
         return {
@@ -51,36 +65,113 @@ class VLLMModalProviderClient(BaseProviderClient):
         }
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
+        workflow = request.workflow
+        model_id = workflow.get("model") or "default-model"
+        messages = workflow.get("messages", [])
+        tools = workflow.get("tools")
+        job_id = request.job_id
+        inference_timeout = max(
+            1.0,
+            float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)),
+        )
+
+        if job_id:
+            await self.job_tracker.start_job(job_id)
+
         async def stream():
+            task = None
             try:
-                workflow = request.workflow
-                model_id = workflow.get("model") or request.job_id or "default-model"
-                messages = workflow.get("messages", [])
+                VLLMClass = self._get_vllm_engine_cls()
+                vllm_instance = VLLMClass()
 
-                # Map messages to string prompt for vLLM or pass as list if chat template is supported
-                # For simplicity, we just pass the workflow to the remote function
-                
-                generate_fn = self._get_modal_function("generate")
-                
-                async for update in generate_fn.remote_gen.aio(model_id, messages):
-                    if isinstance(update, str):
-                        yield update + "\n"
-                    elif isinstance(update, dict):
-                        yield json.dumps(update) + "\n"
+                async with asyncio.timeout(inference_timeout):
+                    q: asyncio.Queue = asyncio.Queue()
 
+                    async def fetcher():
+                        try:
+                            async for update in vllm_instance.generate.remote_gen.aio(
+                                model_id, messages, tools, request.timeout_seconds
+                            ):
+                                await q.put(update)
+                            await q.put(None)
+                        except Exception as e:
+                            await q.put(e)
+
+                    task = asyncio.create_task(fetcher())
+
+                    while True:
+                        try:
+                            item = await asyncio.wait_for(q.get(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            if job_id and await self.job_tracker.is_cancelled(job_id):
+                                task.cancel()
+                                yield json.dumps({
+                                    "type": "completed",
+                                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                                }) + "\n"
+                                return
+                            continue
+
+                        if item is None:
+                            break
+
+                        if isinstance(item, Exception):
+                            raise item
+
+                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                            task.cancel()
+                            yield json.dumps({
+                                "type": "completed",
+                                "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                            }) + "\n"
+                            return
+
+                        yield item + "\n"
+
+            except asyncio.TimeoutError:
+                yield json.dumps(build_error_response(
+                    f"Inference timed out after {int(inference_timeout)}s",
+                    retryable=True, code=408,
+                )) + "\n"
+            except modal.exception.ConnectionError as ce:
+                yield json.dumps(build_error_response(
+                    f"Modal connection error: {ce}", retryable=True,
+                )) + "\n"
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
                 yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+            finally:
+                if task is not None:
+                    task.cancel()
+                if job_id:
+                    await self.job_tracker.end_job(job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Setup complete", provider=self.provider_id)
+        try:
+            setup_func = self._get_modal_function("setup_models")
+            result = await setup_func.spawn.aio()
+            if isinstance(result, dict):
+                return build_status_response(
+                    "success" if result.get("status") == "success" else "error",
+                    result.get("message", "Setup complete"),
+                    provider=self.provider_id,
+                )
+            return build_status_response("success", "Setup complete", provider=self.provider_id)
+        except Exception as e:
+            return build_error_response(f"Failed to setup: {e}")
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
         try:
             download_func = self._get_modal_function("download_model")
-            await download_func.spawn.aio(request.url, request.path, request.token)
+            await download_func.spawn.aio(
+                request.url,
+                request.path,
+                request.token,
+                request.preview_url,
+                request.metadata,
+            )
             return build_status_response("queued", f"Download queued for {request.path}", provider=self.provider_id)
         except Exception as e:
             return build_error_response(f"Failed to queue download: {e}")
@@ -88,29 +179,48 @@ class VLLMModalProviderClient(BaseProviderClient):
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         directory = request.directory if request else ""
         try:
-            list_func = self._get_modal_function("list_models")
+            list_func = self._get_modal_function("list_models_with_metadata")
             files = await list_func.remote.aio(directory)
             return build_status_response("success", f"Listed models in {directory}", provider=self.provider_id, files=files)
         except Exception as e:
-            return build_error_response(f"Failed to list models: {e}")
+            self.logger.warning(f"Failed to list models: {e}")
+            return build_status_response("success", f"Listed models in {directory}", provider=self.provider_id, files=[])
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
         try:
-            delete_func = self._get_modal_function("delete_file")
-            success = await delete_func.remote.aio(request.path)
-            return {"success": success, "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}", "provider": self.provider_id}
+            storage = self._get_file_storage_cls()()
+            success = await storage.delete_file.remote.aio(request.path)
+            return {
+                "success": success,
+                "message": f"Deleted {request.path}" if success else f"Failed to delete {request.path}",
+                "provider": self.provider_id,
+            }
         except Exception as e:
             return build_error_response(f"Failed to delete model: {e}")
 
     async def get_file(self, path: str):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="File access not supported")
+        try:
+            from fastapi import Response
+            storage = self._get_file_storage_cls()()
+            file_contents = await storage.read_file.remote.aio(path)
+            return Response(content=file_contents, media_type="application/octet-stream")
+        except FileNotFoundError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     async def delete_file(self, path: str) -> Dict[str, Any]:
         return await self.delete_model(DeleteModelRequest(path=path))
 
     async def upload_file(self, request: UploadFileRequest) -> Dict[str, Any]:
-        return build_error_response("File upload not supported", retryable=False, code=404)
+        import base64
+        try:
+            content = base64.b64decode(request.content_base64)
+            storage = self._get_file_storage_cls()()
+            path = f"{request.directory}/{request.filename}"
+            await storage.put_file.remote.aio(path=path, content=content)
+            return {"status": "success", "path": path, "size": len(content)}
+        except Exception as e:
+            return build_error_response(f"File upload failed: {e}")
 
     async def deploy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from provider_core.deploy import start_deploy_task
@@ -121,13 +231,111 @@ class VLLMModalProviderClient(BaseProviderClient):
         return _DEPLOY_STATE
 
     async def validate_models(self, request: ValidateModelsRequest) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        try:
+            validate_fn = self._get_modal_function("validate_models")
+            result = await validate_fn.remote.aio(request.directories, request.delete_invalid)
+            return result
+        except Exception as e:
+            return build_error_response(f"Validation failed: {e}")
 
     async def validate_all_models(self) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        try:
+            validate_fn = self._get_modal_function("validate_models")
+            result = await validate_fn.remote.aio(["models"], False)
+            return {"status": "success", "result": result}
+        except Exception as e:
+            return build_error_response(f"Validation failed: {e}")
 
     async def get_object_info(self) -> Dict[str, Any]:
         return {"object_info": {}}
 
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        try:
+            storage = self._get_file_storage_cls()()
+            total = 0
+            by_directory = {}
+            for directory in ["models"]:
+                try:
+                    files = await storage.list_directory.remote.aio(directory)
+                    by_directory[directory] = {"count": len(files), "files": files}
+                    total += len(files)
+                except Exception:
+                    by_directory[directory] = {"count": 0, "files": []}
+
+            return {
+                "provider_id": self.provider_id,
+                "total": total,
+                "by_directory": by_directory,
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to get storage stats: {e}")
+            return {
+                "provider_id": self.provider_id,
+                "total": 0,
+                "by_directory": {},
+                "error": str(e),
+            }
+
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
-        return build_status_response("success", "Not applicable", provider=self.provider_id)
+        async def validate_existing(delete_invalid: bool):
+            validate_fn = self._get_modal_function("validate_models")
+            timeout_seconds = max(1.0, float(self.runtime_config.get("validation_timeout_seconds", 300.0)))
+            return await asyncio.wait_for(
+                validate_fn.remote.aio(["models"], delete_invalid),
+                timeout=timeout_seconds,
+            )
+
+        async def list_existing_files():
+            paths = {}
+            list_func = self._get_modal_function("list_models_with_metadata")
+            list_timeout_seconds = max(1.0, float(self.runtime_config.get("reconciliation_list_timeout_seconds", 3600.0)))
+
+            async def _fetch_dir(directory: str):
+                try:
+                    files = await asyncio.wait_for(
+                        list_func.remote.aio(directory),
+                        timeout=list_timeout_seconds,
+                    )
+                    return directory, files
+                except asyncio.TimeoutError:
+                    raise RuntimeError(f"Timeout listing {directory} on Modal after {list_timeout_seconds}s")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to list {directory} on Modal: {e}")
+
+            results = await asyncio.gather(*[_fetch_dir(d) for d in ["models"]])
+            for directory, files in results:
+                for file_info in files:
+                    paths[f"{directory}/{file_info['name']}"] = file_info
+
+            return paths
+
+        async def download_file(download_url: str, storage_path: str, token: str = None):
+            download_func = self._get_modal_function("download_model")
+            result = await download_func.remote.aio(
+                url=download_url,
+                path=storage_path,
+                token=token,
+            )
+            if isinstance(result, dict) and result.get("status") == "error":
+                raise RuntimeError(result.get("message", "Download failed"))
+
+        async def delete_file(storage_path: str):
+            storage = self._get_file_storage_cls()()
+            await storage.delete_file.remote.aio(storage_path)
+            return True
+
+        HF_TOKEN = os.environ.get("HF_TOKEN", "")
+        CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN", "")
+        BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8002")
+
+        return await self._start_reconciliation_task(
+            backend_url=BACKEND_URL,
+            hf_token=HF_TOKEN,
+            civitai_token=CIVITAI_TOKEN,
+            storage_label="Modal-LLM",
+            validate_existing_fn=validate_existing,
+            list_existing_files_fn=list_existing_files,
+            download_file_fn=download_file,
+            delete_file_fn=delete_file,
+            quick_sync=quick_sync,
+        )

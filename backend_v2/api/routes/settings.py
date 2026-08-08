@@ -10,6 +10,7 @@
 #   POST /api/settings/reset     – Reset to compiled-in defaults
 #   GET  /api/settings/branding  – Read UI branding configuration
 #   PUT  /api/settings/branding  – Update branding (name, logo, theme)
+import asyncio
 import json
 import os
 from typing import Any
@@ -323,7 +324,7 @@ async def update_settings(updates: SettingsUpdate) -> dict[str, Any]:
                 "settings": app_config.get_config()
             }
         
-        updated_config = app_config.update_config(filtered, persist=True)
+        updated_config = await asyncio.to_thread(app_config.update_config, filtered, True)
         return {
             "status": "success",
             "message": "Settings updated successfully",
@@ -359,7 +360,7 @@ async def update_system_prompts(request: SystemPromptsRequest) -> dict[str, Any]
             if stripped:
                 updates[key] = stripped
         merged = {**current, **updates}
-        app_config.update_config({"system_prompts": merged}, persist=True)
+        await asyncio.to_thread(app_config.update_config, {"system_prompts": merged}, True)
         return {"status": "success", "blocks": merged}
     except Exception as e:
         raise ComfyError(str(e))
@@ -374,7 +375,7 @@ async def reset_settings() -> dict[str, Any]:
         Default configuration
     """
     try:
-        default_config = app_config.reset_config()
+        default_config = await asyncio.to_thread(app_config.reset_config)
         return {
             "status": "success",
             "message": "Settings reset to defaults",
@@ -429,7 +430,7 @@ class BrandingRequest(BaseModel):
 @router.get("/branding")
 async def get_branding():
     """Get current branding settings."""
-    return get_branding_config()
+    return await asyncio.to_thread(get_branding_config)
 
 
 @router.post("/branding")
@@ -440,7 +441,7 @@ async def update_branding(request: BrandingRequest):
         "logoUrl": request.logoUrl,
         "faviconUrl": request.faviconUrl
     }
-    save_branding_config(config)
+    await asyncio.to_thread(save_branding_config, config)
     return {"status": "success", "branding": config}
 
 
@@ -470,11 +471,11 @@ class FavoritesRequest(BaseModel):
 
 @router.get("/favorites")
 async def get_favorites():
-    return {"status": "success", "favorites": get_favorites_list()}
+    return {"status": "success", "favorites": await asyncio.to_thread(get_favorites_list)}
 
 @router.post("/favorites")
 async def update_favorites(request: FavoritesRequest):
-    save_favorites_list(request.favorites)
+    await asyncio.to_thread(save_favorites_list, request.favorites)
     return {"status": "success", "favorites": request.favorites}
 
 @router.post("/session")

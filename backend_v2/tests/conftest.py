@@ -1,5 +1,7 @@
 # Pytest configuration and fixtures
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
@@ -8,6 +10,9 @@ from sqlmodel.pool import StaticPool
 from api.deps import get_session
 from api.main import app
 import infrastructure.database as _infra_db
+
+# Disable provider health checks in tests (LoadBalancer defaults to enabled in prod)
+os.environ.setdefault("COMFY_LB_HEALTH_CHECKS_ENABLED", "0")
 
 # Need to import all models so SQLModel metadata is complete
 

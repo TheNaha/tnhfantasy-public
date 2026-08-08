@@ -627,7 +627,7 @@ import { useModelDirectories } from '../hooks/useModelDirectories';
 
 // Generator Settings Component
 function GeneratorSettings({ settings, onUpdate, onReset }) {
-    const { modelsByKey, loading } = useModelDirectories([{ directory: 'checkpoints', key: 'checkpoints' }]);
+    const { modelsByKey, loading } = useModelDirectories([{ directory: 'models/checkpoints', key: 'checkpoints' }]);
     const checkpoints = modelsByKey.checkpoints || [];
     
     return (
@@ -738,10 +738,10 @@ function AISettings({ settings, onUpdate, onReset }) {
 
     useEffect(() => {
         if (llmStatus.defaultProvider) {
-            setTimeout(() => {
-                setProviderId(llmStatus.defaultProvider.provider_id || '');
-                setModelId(llmStatus.defaultProvider.model_id || '');
-            }, 0);
+            // syncing form state from fetched provider config (external system)
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
+            setProviderId(llmStatus.defaultProvider.provider_id || '');
+            setModelId(llmStatus.defaultProvider.model_id || '');
         }
     }, [llmStatus.defaultProvider]);
 

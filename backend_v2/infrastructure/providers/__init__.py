@@ -15,6 +15,7 @@ from . import (
     beam_config,  # noqa: F401 - Registers Beam provider type
     direct_url_config,  # noqa: F401 - Registers Direct URL provider type
     modal_config,  # noqa: F401 - Registers Modal provider type
+    modal_llm_config,  # noqa: F401 - Registers Modal LLM provider type
     openai_compat_config,  # noqa: F401 - Registers OpenAI Compat provider type
 )
 from .runtime import get_provider_worker_base_url
@@ -31,8 +32,6 @@ def create_provider_client(provider_id: str, config: dict):
     raise ValueError(f"Unsupported provider type or missing client_class: {provider_type}")
 
 __all__ = [
-    "DIRECT_URL_PROVIDER_CONFIG",
-    "OPENAI_COMPAT_PROVIDER_CONFIG",
     "BeamProvider",
     "FileProxyProvider",
     "HttpFileProxy",
@@ -40,6 +39,7 @@ __all__ = [
     "ProviderRegistry",
     "ProviderTypeConfig",
     "ServerlessProvider",
+    "clean_dict",
     "clean_registry_dict",
     "create_provider_client",
     "get_provider_worker_base_url",

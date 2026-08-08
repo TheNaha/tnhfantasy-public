@@ -25,6 +25,9 @@ class RunpodProviderClient(BaseProviderClient):
         self.base_url = f"https://api.runpod.ai/v2/{self.endpoint_id}"
         
     async def get_health(self) -> Dict[str, Any]:
+        if not self.endpoint_id or not self.api_key:
+            return {"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False,
+                    "engine": "runpod", "reason": "RUNPOD_ENDPOINT_ID / RUNPOD_API_KEY not set"}
         return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True, "engine": "runpod"}
 
     async def get_info(self) -> Dict[str, Any]:
@@ -47,7 +50,10 @@ class RunpodProviderClient(BaseProviderClient):
                     "Authorization": f"Bearer {self.api_key}"
                 }
                 
+                inference_timeout = request.timeout_seconds or self.runtime_config.get("timeout_seconds", 300)
+                
                 async with httpx.AsyncClient() as client:
+                    await self.job_tracker.start_job(request.job_id)
                     # Start the job
                     response = await client.post(
                         f"{self.base_url}/run",
@@ -64,7 +70,17 @@ class RunpodProviderClient(BaseProviderClient):
                     
                     # Poll for completion
                     completed = False
+                    loop_started = asyncio.get_event_loop().time()
                     while not completed:
+                        if await self.job_tracker.is_cancelled(request.job_id):
+                            yield json.dumps({
+                                "status": "cancelled",
+                                "message": "Job cancelled",
+                                "job_id": request.job_id,
+                            }) + "\n"
+                            return
+                        if asyncio.get_event_loop().time() - loop_started > inference_timeout:
+                            raise TimeoutError(f"RunPod job exceeded {inference_timeout}s")
                         await asyncio.sleep(2.0)
                         
                         status_res = await client.get(
@@ -108,6 +124,8 @@ class RunpodProviderClient(BaseProviderClient):
             except Exception as e:
                 self.logger.exception("Inference failed")
                 yield json.dumps(build_error_response(str(e), retryable=False, code=500)) + "\n"
+            finally:
+                await self.job_tracker.end_job(request.job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
@@ -115,7 +133,7 @@ class RunpodProviderClient(BaseProviderClient):
         return build_status_response("success", "Setup complete", provider=PROVIDER_ID)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return build_status_response("error", "Not implemented for RunPod", provider=PROVIDER_ID)
+        return build_error_response("Not implemented for RunPod", retryable=False, code=501)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
         return build_status_response("success", "Not implemented for RunPod", provider=PROVIDER_ID, files=[])

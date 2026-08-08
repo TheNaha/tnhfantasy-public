@@ -18,6 +18,9 @@ export const jobsApi = {
     // Get all active jobs (pending/running)
     getActive: () => api.get('/api/jobs/active'),
 
+    // Get queue status with per-task-type ETA estimates
+    getQueueStatus: () => api.get('/api/jobs/queue'),
+
     // Delete job
     delete: (jobId) => api.delete(`/api/jobs/${jobId}`),
 

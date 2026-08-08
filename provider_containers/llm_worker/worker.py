@@ -43,6 +43,7 @@ _background_tasks: list = []
 async def lifespan(app: FastAPI):
     # Setup
     from provider_core.background import auto_discovery_loop
+    from provider_core.http_client import get_http_client, close_http_client
     import asyncio
 
     logger.info(f"Starting LLM Worker (engine={ENGINE}, provider={PROVIDER_ID})")
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
                     backend_url=BACKEND_URL,
                     interval_seconds=60,
                     worker_type="llm",
+                    http_client=get_http_client(),
                 )
             )
         )
@@ -73,6 +75,7 @@ async def lifespan(app: FastAPI):
         _background_tasks.clear()
         if hasattr(client, "close"):
             await client.close()
+        await close_http_client()
 
 
 app = FastAPI(title="Unified LLM Worker", lifespan=lifespan)

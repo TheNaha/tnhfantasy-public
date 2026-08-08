@@ -78,11 +78,11 @@ class DirectUrlProviderClient(BaseProviderClient):
         return build_status_response("success", "Setup not needed for direct_url provider", provider=PROVIDER_ID)
 
     async def download_model(self, request: DownloadRequest) -> Dict[str, Any]:
-        return build_status_response(
-            "error",
+        return build_error_response(
             "Model download is not supported for direct_url providers. "
             "Please install models directly on the ComfyUI server.",
-            provider=PROVIDER_ID,
+            retryable=False,
+            code=501,
         )
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:
@@ -93,7 +93,7 @@ class DirectUrlProviderClient(BaseProviderClient):
             object_info = resp.json()
         except Exception as e:
             self.logger.warning(f"Failed to fetch /object_info: {e}")
-            return build_status_response("error", f"Failed to query ComfyUI: {e}", provider=PROVIDER_ID, files=[])
+            return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
 
         files_by_name: Dict[str, Dict[str, Any]] = {}
         for node_type, node_info in object_info.items():
@@ -155,7 +155,7 @@ class DirectUrlProviderClient(BaseProviderClient):
             resp.raise_for_status()
             object_info = resp.json()
         except Exception as e:
-            return build_status_response("error", f"Failed to query ComfyUI: {e}", provider=PROVIDER_ID)
+            return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
 
         target_dir = request.directory if isinstance(request.directory, str) else ""
         available = set()

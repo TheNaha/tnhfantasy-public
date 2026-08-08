@@ -290,7 +290,7 @@ def _insert_world_state_marker(
 
 @router.post("/{chat_id}/messages")
 async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
-    from services.context_builder import build_chat_context
+    from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
     
     chat = session.get(Chat, chat_id)
@@ -320,7 +320,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             from core.entities import Character
             character = session.get(Character, chat.character_id)
             
-        system_prompt, context = build_chat_context(
+        system_prompt, context = await build_chat_context_async(
             session, 
             past_messages, 
             character=character, 
@@ -591,7 +591,7 @@ async def regenerate_reply(
     a fresh reply job mirroring the previous job's agentic settings.
     """
     from core.entities import Job, JobStatus
-    from services.context_builder import build_chat_context
+    from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
 
     chat = session.get(Chat, chat_id)
@@ -641,7 +641,7 @@ async def regenerate_reply(
     if chat.character_id:
         character = session.get(Character, chat.character_id)
 
-    system_prompt, context = build_chat_context(
+    system_prompt, context = await build_chat_context_async(
         session,
         remaining,
         character=character,
@@ -698,7 +698,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     a completed user message directly and immediately fires the character's response.
     The LLM writes *as the user*, not as the character.
     """
-    from services.context_builder import build_system_prompt_sections, prune_context
+    from services.context_builder import build_system_prompt_sections_async, prune_context
     from services.job_queue import queue_manager
     from config import get_system_prompt_blocks
 
@@ -718,7 +718,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     char_name = character.name if character else "the AI"
 
     # Build world-state context without character identity (same approach as suggest)
-    world_sections = build_system_prompt_sections(
+    world_sections = await build_system_prompt_sections_async(
         session,
         character=None,
         lorebook_ids=chat.active_lorebook_ids or None,
@@ -797,10 +797,10 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
         from core.entities import Character
         character = session.get(Character, chat.character_id)
 
-    from services.context_builder import build_system_prompt_sections
+    from services.context_builder import build_system_prompt_sections_async
     from config import get_system_prompt_blocks
 
-    world_sections = build_system_prompt_sections(
+    world_sections = await build_system_prompt_sections_async(
         session,
         character=None,
         lorebook_ids=chat.active_lorebook_ids or None,

@@ -29,13 +29,6 @@ class CustomJSONEncoder(json.JSONEncoder):
 logger = get_logger("image_worker.beam.client")
 from provider_core.models import MODEL_DIRECTORIES
 
-
-def _log_deploy_done(task: asyncio.Task):
-    if task.cancelled():
-        logger.warning("Beam deploy task was cancelled")
-    elif task.exception():
-        logger.error(f"Beam deploy task failed with unhandled exception: {task.exception()}", exc_info=task.exception())
-
 BEAM_API_KEY = os.getenv("BEAM_API_KEY", "")
 BEAM_WORKSPACE_ID = os.getenv("BEAM_WORKSPACE_ID", "")
 PROVIDER_ID = os.getenv("PROVIDER_ID", "beam-worker")
@@ -61,6 +54,7 @@ class BeamProviderClient(BaseProviderClient):
     def __init__(self, runtime_config: Dict[str, Any]):
         super().__init__(PROVIDER_ID, runtime_config)
         self._deploy_task: Optional[asyncio.Task] = None
+        self._download_tasks: set = set()
 
     async def get_health(self) -> Dict[str, Any]:
         missing = []
@@ -169,7 +163,9 @@ class BeamProviderClient(BaseProviderClient):
             except Exception as e:
                 logger.error(f"Beam download exception: {e}")
 
-        asyncio.create_task(_do_download())
+        task = asyncio.create_task(_do_download())
+        self._download_tasks.add(task)
+        task.add_done_callback(self._download_tasks.discard)
         return build_status_response("queued", f"Download queued for {request.path}", provider=PROVIDER_ID)
 
     async def list_models(self, request: Optional[ListModelsRequest] = None) -> Dict[str, Any]:

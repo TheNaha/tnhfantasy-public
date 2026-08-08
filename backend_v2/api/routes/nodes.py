@@ -11,6 +11,7 @@ from core.exceptions import (
     ProviderTimeoutError,
     ValidationError,
 )
+from infrastructure.http_client import get_http_client
 from services.provider_runtime import resolve_provider_runtime
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
@@ -32,10 +33,10 @@ async def get_object_info(provider_id: str, session: Session = Depends(get_sessi
         
     try:
         # Increase timeout because CPU extraction spins up ComfyUI
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.get(f"{runtime.worker_url}/object-info")
-            response.raise_for_status()
-            return response.json()
+        client = get_http_client()
+        response = await client.get(f"{runtime.worker_url}/object-info", timeout=120.0)
+        response.raise_for_status()
+        return response.json()
     except httpx.TimeoutException:
         raise ProviderTimeoutError(provider_id, "Timeout while waiting for provider to extract node definitions")
     except Exception as e:

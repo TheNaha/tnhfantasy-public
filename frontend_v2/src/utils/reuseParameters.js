@@ -1,4 +1,6 @@
 import { filesApi } from '../api';
+import { useGeneratorStore } from '../store/generatorStore';
+import useSettingsStore from '../store/settingsStore';
 
 function hasOwn(obj, key) {
     return Boolean(obj && Object.prototype.hasOwnProperty.call(obj, key));
@@ -685,4 +687,16 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
     }
 
     return cleaned;
+}
+
+export async function applyGeneratorStateFromMetadata(metadata) {
+    const reuseState = buildGeneratorStateFromMetadata(metadata);
+    if (Object.keys(reuseState).length === 0) {
+        return false;
+    }
+
+    const hydratedState = await hydrateGeneratorStateModelVisuals(reuseState);
+    useGeneratorStore.getState().setAll(hydratedState);
+    useSettingsStore.getState().updateSetting('generator', 'autoRandomizeSeed', false);
+    return true;
 }

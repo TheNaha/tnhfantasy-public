@@ -526,3 +526,42 @@ def build_chat_context(
         m.pop("_pinned", None)
 
     return system_prompt, all_msgs
+
+
+async def build_chat_context_async(
+    session: Session,
+    messages: list,
+    **kwargs: Any,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Run build_chat_context off the event loop with a dedicated session.
+
+    The context build runs local SBERT embedding (CPU-bound) plus pgvector
+    semantic queries; executing it on the event loop stalls every other
+    request. A fresh session is used inside the worker thread so the
+    request-scoped session is never touched from another thread.
+    """
+    import asyncio
+
+    from infrastructure.database import get_session_sync
+
+    def _run() -> tuple[str, list[dict[str, Any]]]:
+        with get_session_sync() as ctx_session:
+            return build_chat_context(ctx_session, messages, **kwargs)
+
+    return await asyncio.to_thread(_run)
+
+
+async def build_system_prompt_sections_async(
+    session: Session,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Run build_system_prompt_sections off the event loop with a dedicated session."""
+    import asyncio
+
+    from infrastructure.database import get_session_sync
+
+    def _run() -> list[dict[str, Any]]:
+        with get_session_sync() as ctx_session:
+            return build_system_prompt_sections(ctx_session, **kwargs)
+
+    return await asyncio.to_thread(_run)

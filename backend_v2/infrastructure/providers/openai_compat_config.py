@@ -6,7 +6,7 @@ from typing import Any
 from .base import ServerlessProvider
 from .ndjson import iter_ndjson_payloads
 from .provider_registry import ProviderRegistry, ProviderTypeConfig
-from .runtime import get_provider_worker_base_url
+from .runtime import get_provider_worker_base_url, provider_container_name
 
 
 class OpenAICompatProvider(ServerlessProvider):
@@ -19,7 +19,7 @@ class OpenAICompatProvider(ServerlessProvider):
         super().__init__(provider_id, config)
         
         self.container_port = 8000
-        self.container_name = f"tnhcomfy-{provider_id}"
+        self.container_name = provider_container_name(provider_id)
         self.worker_url = get_provider_worker_base_url(provider_id, self.container_port)
         
         self.api_base = self.config.get("api_base", "http://localhost:11434/v1")

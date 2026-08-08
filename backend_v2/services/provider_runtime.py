@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from api.deps import get_session_sync
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
+from infrastructure.providers.runtime import provider_container_name
 
 logger = get_logger("provider_runtime")
 
@@ -34,7 +35,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     provider_config = getattr(provider, "config", None) or {}
 
     if container_config:
-        container_name = container_config.get("container_name", f"tnhcomfy-{provider_id}")
+        container_name = container_config.get("container_name", provider_container_name(provider_id))
         connected = False
         healthy = None
         status = "unknown"
@@ -72,7 +73,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                 mode="container_http",
                 worker_url=f"http://{container_name}:8000",
                 container_name=container_name,
-                supports_setup=provider_type == "modal",
+                supports_setup=provider_type in ("modal", "modal_llm"),
                 supports_reconciliation=True,
                 connected=connected,
                 status=status,
@@ -100,7 +101,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             provider_id=provider_id,
             mode="discovery",
             worker_url=discovery_url,
-            supports_setup=provider_type == "modal",
+            supports_setup=provider_type in ("modal", "modal_llm"),
             supports_reconciliation=True,
             connected=True,
             status="discovered",

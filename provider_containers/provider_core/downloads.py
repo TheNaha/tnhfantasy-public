@@ -94,7 +94,7 @@ def download_model_to_path(
     log_prefix: str = "Download",
     progress_callback: Optional[ProgressCallback] = None,
     validation_unknown_header_log_prefix: Optional[str] = None,
-    chunk_size: int = 1024 * 1024,
+    chunk_size: int = 8 * 1024 * 1024,  # 8 MB — reduces Python iteration overhead for large files
     preview_timeout_seconds: float = 30.0,
     request_timeout_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:

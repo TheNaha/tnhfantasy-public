@@ -1,12 +1,13 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import QueueVisualization from './QueueVisualization';
-import { useActiveJobs } from '../hooks/useActiveJobs';
 
-// Mock dependencies
-vi.mock('../hooks/useActiveJobs', () => ({
-    useActiveJobs: vi.fn(),
+// Mock react-query useQuery to feed the backend-shaped queue payload
+vi.mock('@tanstack/react-query', () => ({
+    useQuery: vi.fn(),
 }));
+
+import { useQuery } from '@tanstack/react-query';
 
 // Mock framer-motion
 vi.mock('framer-motion', () => ({
@@ -23,23 +24,34 @@ describe('QueueVisualization', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        // Setup default mock return value
-        useActiveJobs.mockReturnValue({
-            data: [
-                {
-                    id: '1',
-                    status: 'running',
-                    prompt: 'Running Job',
-                    progress: 50,
-                    started_at: new Date().toISOString()
-                },
-                {
-                    id: '2',
-                    status: 'pending',
-                    prompt: 'Pending Job',
-                    queue_position: 1
-                },
-            ],
+        // Setup default mock return value (backend /api/jobs/queue shape)
+        useQuery.mockReturnValue({
+            data: {
+                queue: [
+                    {
+                        id: '1',
+                        task_type: 'image',
+                        status: 'generating',
+                        position: 0,
+                        progress: 50,
+                        eta_seconds: 15,
+                        prompt: 'Running Job',
+                    },
+                    {
+                        id: '2',
+                        task_type: 'image',
+                        status: 'pending',
+                        position: 1,
+                        progress: 0,
+                        eta_seconds: 45,
+                        prompt: 'Pending Job',
+                    },
+                ],
+                avg_duration_seconds: { image: 30 },
+                has_history: true,
+                total_pending: 1,
+                total_running: 1,
+            },
             isLoading: false,
         });
     });
@@ -79,6 +91,6 @@ describe('QueueVisualization', () => {
         expect(jobButton).toBeInTheDocument();
         expect(jobButton).toHaveAttribute('aria-label');
         expect(jobButton.getAttribute('aria-label')).toContain('Running Job');
-        expect(jobButton.getAttribute('aria-label')).toContain('running');
+        expect(jobButton.getAttribute('aria-label')).toContain('generating');
     });
 });

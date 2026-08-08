@@ -79,6 +79,9 @@ export const filesApi = {
     uploadChatAttachment: (formData) => api.post('/api/upload?path=chat_attachments', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
     }),
+
+    // Fetch metadata for multiple images in a single request
+    batchMetadata: (paths) => api.post('/api/files/metadata/batch', { paths }),
 };
 
 export default filesApi;

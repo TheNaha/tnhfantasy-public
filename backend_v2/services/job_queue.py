@@ -478,10 +478,5 @@ class QueueManager:
 # Global singletons
 # ---------------------------------------------------------------------------
 
-# Legacy singleton kept for backwards-compatibility with any code paths that
-# have not yet been migrated to queue_manager.  New code should prefer
-# queue_manager.enqueue(job_id, task_type=...).
-job_queue = JobQueue()
-
 # Typed queue manager — primary entry point for all new job submissions.
 queue_manager = QueueManager()

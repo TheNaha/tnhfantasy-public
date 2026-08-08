@@ -13,14 +13,6 @@ export const useCharacters = () => {
     });
 };
 
-export const useCharacter = (characterId) => {
-    return useQuery({
-        queryKey: ['world_vault', 'characters', characterId],
-        queryFn: () => api.get(`/api/v2/characters/${characterId}`),
-        enabled: !!characterId
-    });
-};
-
 export const useChats = () => {
     return useQuery({
         queryKey: ['world_vault', 'chats'],
@@ -65,13 +57,6 @@ export const useLorebooks = () => {
     return useQuery({
         queryKey: ['world_vault', 'lorebooks'],
         queryFn: () => api.get('/api/v2/lorebooks')
-    });
-};
-
-export const useScenarios = () => {
-    return useQuery({
-        queryKey: ['world_vault', 'scenarios'],
-        queryFn: () => api.get('/api/v2/scenarios')
     });
 };
 
@@ -188,16 +173,6 @@ export const useSendMessage = () => {
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-        }
-    });
-};
-
-export const useDeleteMessage = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ chatId, msgId }) => api.delete(`/api/v2/chats/${chatId}/messages/${msgId}`),
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         }
     });
 };
@@ -347,16 +322,6 @@ export const useDeleteCharacter = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: (id) => api.delete(`/api/v2/characters/${id}`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
-        }
-    });
-};
-
-export const useCloneCharacter = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (id) => api.post(`/api/v2/characters/${id}/clone`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
         }

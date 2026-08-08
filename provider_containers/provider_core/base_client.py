@@ -20,6 +20,7 @@ class BaseProviderClient(abc.ABC):
         self.runtime_config = runtime_config
         self.job_tracker = get_job_tracker()
         self.reconciliation_state = get_reconciliation_state(provider_id)
+        self.logger = logger
 
     def get_config(self) -> Dict[str, Any]:
         return {"config": self.runtime_config}

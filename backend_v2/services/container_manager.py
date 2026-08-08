@@ -14,6 +14,7 @@ from config import get_worker_backend_url
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from infrastructure.providers.provider_registry import ProviderRegistry
+from infrastructure.providers.runtime import provider_container_name
 
 logger = get_logger("container_manager")
 _CONTAINER_MANAGER_MAX_RETRIES = 3
@@ -215,7 +216,7 @@ class ContainerManager:
             environment.update(env_vars)
         
         # Container configuration
-        container_name = f"tnhcomfy-{provider_id}"
+        container_name = provider_container_name(provider_id)
         
         # Check if container already exists
         try:
@@ -353,7 +354,7 @@ class ContainerManager:
         """Stop a provider worker container."""
         container = self.running_containers.get(provider_id)
         if not container:
-            container_name = f"tnhcomfy-{provider_id}"
+            container_name = provider_container_name(provider_id)
             try:
                 container = self.client.containers.get(container_name)
             except docker.errors.NotFound:
@@ -374,7 +375,7 @@ class ContainerManager:
         """Get logs from a provider container."""
         container = self.running_containers.get(provider_id)
         if not container:
-            container_name = f"tnhcomfy-{provider_id}"
+            container_name = provider_container_name(provider_id)
             try:
                 container = self.client.containers.get(container_name)
             except docker.errors.NotFound:

@@ -10,7 +10,7 @@ import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
-import api from '../api/client';
+import filesApi from '../api/files';
 
 const CHARACTER_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Character name' },
@@ -62,15 +62,32 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
     const uploadAvatarMutation = useUploadAvatar();
     const avatarInputRef = React.useRef(null);
     const [previewUrl, setPreviewUrl] = useState(null);
+    const previewUrlRef = useRef(null);
     const runLLMJob = useLLMJobResult();
+
+    const setPreview = (url) => {
+        if (previewUrlRef.current) {
+            URL.revokeObjectURL(previewUrlRef.current);
+        }
+        previewUrlRef.current = url;
+        setPreviewUrl(url);
+    };
+
+    React.useEffect(() => {
+        return () => {
+            if (previewUrlRef.current) {
+                URL.revokeObjectURL(previewUrlRef.current);
+                previewUrlRef.current = null;
+            }
+        };
+    }, []);
 
     const handleFileChange = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         
         // Show preview immediately
-        const objectUrl = URL.createObjectURL(file);
-        setPreviewUrl(objectUrl);
+        setPreview(URL.createObjectURL(file));
 
         if (isEditing && character?.id) {
             try {
@@ -94,7 +111,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         setShowGalleryPicker(true);
         setLoadingGallery(true);
         try {
-            const res = await api.get('/api/files?directory=output&limit=12');
+            const res = await filesApi.list({ directory: 'output', limit: 12 });
             setRecentImages(res.files || []);
         } catch {
             toast.error('Failed to load recent images');
@@ -105,7 +122,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
     const handleSelectGalleryImage = async (img) => {
         try {
             // Fetch metadata to populate fields
-            const metaRes = await api.post('/api/files/metadata/batch', { paths: [img.relative_path] });
+            const metaRes = await filesApi.batchMetadata([img.relative_path]);
             const metadata = metaRes.metadata?.[img.relative_path] || {};
             
             if (metadata.prompt) {
@@ -123,8 +140,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             const blob = await imgRes.blob();
             const file = new File([blob], img.name, { type: blob.type });
             
-            const objectUrl = URL.createObjectURL(file);
-            setPreviewUrl(objectUrl);
+            setPreview(URL.createObjectURL(file));
             
             if (isEditing && character?.id) {
                 await uploadAvatarMutation.mutateAsync({ characterId: character.id, file });
@@ -159,7 +175,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             
             toast.success(isEditing ? 'Character updated' : 'Character created');
             onClose();
-            setPreviewUrl(null);
+            setPreview(null);
         } catch (err) {
             toast.error(err?.message || 'Failed to save character');
         } finally {
@@ -268,14 +284,12 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             }
 
             const raw = text.trim();
-            console.log("LLM Raw Output:", raw);
 
             // Find JSON block
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 try {
                     const parsed = JSON.parse(jsonMatch[0]);
-                    console.log("Parsed JSON:", parsed);
                     setForm(f => ({
                         ...f,
                         description: parsed.description || f.description,

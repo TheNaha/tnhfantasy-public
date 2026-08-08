@@ -1,6 +1,5 @@
 import modal
 import asyncio
-import concurrent.futures
 import subprocess
 import time
 import logging
@@ -171,7 +170,11 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
     yield {"status": "success", "images": _collect_images_from_filesystem(history_data, output_dir=output_dir, temp_dir=temp_dir, logger_obj=logger)}
 
 def _start_comfy_server(port: int, extra_args: list[str] = None):
-    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port)]
+    # --highvram: disables ComfyUI's internal memory manager from offloading models to CPU RAM.
+    # On L4 (24 GB) with SDXL+LoRAs the heuristic sits right at the eviction threshold,
+    # causing a full 90-120s reload every run with 3+ LoRAs loaded. --highvram keeps everything
+    # on VRAM and eliminates the eviction cycle.
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(port), "--highvram"]
     if extra_args: cmd.extend(extra_args)
     subprocess.Popen(cmd)
 
@@ -276,7 +279,7 @@ COMFYUI_SCALEDOWN = int(os.getenv("MODAL_GPU_SCALEDOWN", "40"))
 COMFYUI_SCALEDOWN_SNAPSHOT = int(os.getenv("MODAL_GPU_SCALEDOWN_SNAPSHOT", "40"))
 COMFYUI_STALL_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_STALL_TIMEOUT_SECONDS", "300"))
 COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS", "180"))
-COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "30"))
+COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "10"))  # 10 = safe 2x margin below observed ~20-run hang
 COMFYUI_CAPTURE_STALL_DIAGNOSTICS = os.getenv("MODAL_COMFYUI_CAPTURE_STALL_DIAGNOSTICS", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
@@ -288,6 +291,7 @@ COMFYUI_STALL_DIAGNOSTICS_MAX_CHARS = int(os.getenv("MODAL_COMFYUI_STALL_DIAGNOS
 # Download function settings
 DOWNLOAD_TIMEOUT = int(os.getenv("MODAL_DOWNLOAD_TIMEOUT", "3600"))
 DOWNLOAD_MAX_CONTAINERS = int(os.getenv("MODAL_DOWNLOAD_MAX_CONTAINERS", "5"))
+DOWNLOAD_CPU = float(os.getenv("MODAL_DOWNLOAD_CPU", "2.0"))  # 2 vCPU → enough bandwidth for CivitAI downloads
 
 # Storage function settings
 STORAGE_TIMEOUT = int(os.getenv("MODAL_STORAGE_TIMEOUT", "300"))
@@ -366,13 +370,35 @@ image_base = (
     )
 )
 
-# Image for stable mode (no snapshot helper needed)
-image = image_base
+# Image for stable mode — include load profiler for timing diagnostics
+image = image_base.add_local_dir(
+    local_path=Path(__file__).parent / "load_profiler_node",
+    remote_path="/root/comfy/ComfyUI/custom_nodes/tnh_load_profiler",
+    copy=True,
+)
 
-# Image for snapshot mode (includes memory_snapshot_helper custom node)
+# Lightweight image for download-only containers — no CUDA, no ComfyUI, just
+# enough to run requests + safetensors validation. Keeps cold-start fast and
+# avoids the bandwidth throttling that the full 15 GB image causes.
+image_download = (
+    modal.Image.debian_slim(python_version="3.13")
+    .pip_install("requests", "safetensors", "pydantic", "httpx", "fastapi")
+    .add_local_dir(
+        local_path=Path(__file__).parent.parent.parent.parent / "provider_core",
+        remote_path="/provider_core",
+        copy=True,
+    )
+    .env({"PYTHONPATH": "/"})
+)
+
+# Image for snapshot mode (includes memory_snapshot_helper + load profiler)
 image_snapshot = image_base.add_local_dir(
     local_path=Path(__file__).parent / "memory_snapshot_helper",
     remote_path="/root/comfy/ComfyUI/custom_nodes/memory_snapshot_helper",
+    copy=True,
+).add_local_dir(
+    local_path=Path(__file__).parent / "load_profiler_node",
+    remote_path="/root/comfy/ComfyUI/custom_nodes/tnh_load_profiler",
     copy=True,
 )
 
@@ -454,6 +480,24 @@ class ComfyUIStable:
             yield update
 
         self._completed_runs = getattr(self, "_completed_runs", 0) + 1
+
+        # Per-run VRAM cleanup: release fragmented allocator blocks and Python GC cycles.
+        # This mitigates KSampler hangs caused by VRAM fragmentation from LoRA patch-backup
+        # accumulation. gc.collect() frees circular refs; empty_cache() gives pages back to OS.
+        try:
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
+            alloc_mb = torch.cuda.memory_allocated() // (1024 * 1024)
+            reserved_mb = torch.cuda.memory_reserved() // (1024 * 1024)
+            logger.info(
+                f"[ComfyUIStable] run#{self._completed_runs} VRAM: "
+                f"allocated={alloc_mb}MB reserved={reserved_mb}MB"
+            )
+        except Exception as _vram_exc:
+            logger.debug(f"[ComfyUIStable] VRAM log skipped: {_vram_exc}")
+
         if saw_stall:
             diagnostics_path = await asyncio.to_thread(
                 _capture_stall_diagnostics,
@@ -555,6 +599,22 @@ class ComfyUISnapshot:
             yield update
 
         self._completed_runs = getattr(self, "_completed_runs", 0) + 1
+
+        # Same per-run VRAM cleanup as ComfyUIStable
+        try:
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
+            alloc_mb = torch.cuda.memory_allocated() // (1024 * 1024)
+            reserved_mb = torch.cuda.memory_reserved() // (1024 * 1024)
+            logger.info(
+                f"[ComfyUISnapshot] run#{self._completed_runs} VRAM: "
+                f"allocated={alloc_mb}MB reserved={reserved_mb}MB"
+            )
+        except Exception as _vram_exc:
+            logger.debug(f"[ComfyUISnapshot] VRAM log skipped: {_vram_exc}")
+
         if saw_stall:
             diagnostics_path = await asyncio.to_thread(
                 _capture_stall_diagnostics,
@@ -635,10 +695,11 @@ class ComfyUINodeExtractor:
 
 
 @app.function(
-    image=image,
+    image=image_download,       # lightweight: no CUDA, just requests+safetensors
     volumes={"/mnt/data": vol},
+    cpu=DOWNLOAD_CPU,           # 2 vCPU → adequate network I/O bandwidth for large safetensors
     timeout=DOWNLOAD_TIMEOUT,
-    max_containers=DOWNLOAD_MAX_CONTAINERS
+    max_containers=DOWNLOAD_MAX_CONTAINERS,
 )
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, metadata: dict = None):
@@ -659,19 +720,24 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
     
     def update_progress(status, percent=0, speed="", eta="", downloaded="", total="", message=""):
         try:
+            data = {
+                "filename": safe_name,
+                "status": status,
+                "percent": percent,
+                "speed": speed,
+                "eta": eta,
+                "downloaded": downloaded,
+                "total": total,
+                "message": message,
+                "updated_at": time.time()
+            }
             with open(progress_file, "w") as f:
-                json.dump({
-                    "filename": safe_name,
-                    "status": status,
-                    "percent": percent,
-                    "speed": speed,
-                    "eta": eta,
-                    "downloaded": downloaded,
-                    "total": total,
-                    "message": message,
-                    "updated_at": time.time()
-                }, f)
-            vol.commit()
+                json.dump(data, f)
+            # NOTE: vol.commit() intentionally NOT called here.
+            # Committing on every 500ms tick blocks the download loop on a
+            # remote volume sync and was the primary cause of 0.4 MB/s speed.
+            # Progress is visible in Modal logs; the file is committed once at
+            # the end in the success/finally block below.
         except Exception as e:
             logger.info(f"[Download] Failed to write progress: {e}")
 
@@ -897,41 +963,37 @@ async def validate_models(directories: list[str], delete_invalid: bool = False):
     # Execute all file validations concurrently
     # Flattened list allows optimal thread pool usage across ALL directories
     if all_file_tasks:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            # We need to pass both directory and name to the helper
-            # Using list comprehension and lambda to bind arguments
-            futures = [
-                executor.submit(validate_single_file_in_dir, d, n) 
-                for d, n in all_file_tasks
-            ]
-            
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    res = future.result()
-                    if not res:
-                        continue
-                        
-                    d = res["directory"]
-                    t = res["type"]
-                    data = res["data"]
+        async def _run_validation(d, n):
+            return await asyncio.to_thread(validate_single_file_in_dir, d, n)
+
+        results = await asyncio.gather(*(_run_validation(d, n) for d, n in all_file_tasks))
+
+        for res in results:
+            try:
+                if not res:
+                    continue
                     
-                    stats = validation_results["by_directory"][d]
+                d = res["directory"]
+                t = res["type"]
+                data = res["data"]
+                
+                stats = validation_results["by_directory"][d]
+                
+                if t == "valid":
+                    stats["valid"] += 1
+                    # stats["valid_files"].append(data) # OMITTED to reduce payload size
+                    validation_results["total_valid"] += 1
+                elif t == "invalid":
+                    stats["invalid"] += 1
+                    stats["invalid_files"].append(data)
+                    validation_results["total_invalid"] += 1
+                elif t == "partial":
+                    stats["partial"] += 1
+                    stats["partial_files"].append(data)
+                    validation_results["total_partial"] += 1
                     
-                    if t == "valid":
-                        stats["valid"] += 1
-                        # stats["valid_files"].append(data) # OMITTED to reduce payload size
-                        validation_results["total_valid"] += 1
-                    elif t == "invalid":
-                        stats["invalid"] += 1
-                        stats["invalid_files"].append(data)
-                        validation_results["total_invalid"] += 1
-                    elif t == "partial":
-                        stats["partial"] += 1
-                        stats["partial_files"].append(data)
-                        validation_results["total_partial"] += 1
-                        
-                except Exception as e:
-                    logger.error(f"File validation failed: {e}")
+            except Exception as e:
+                logger.error(f"File validation failed: {e}")
     
     if delete_invalid:
         await vol.commit.aio()

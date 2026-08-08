@@ -49,7 +49,12 @@ DEFAULT_CONFIG = {
         "timeout": 300,
         "max_retries": 3,
         "retry_base_delay": 1.0,
-        "retry_max_delay": 60.0
+        "retry_max_delay": 60.0,
+        "llm": {
+            "timeout": 180,
+            "max_retries": 2,
+            "stagger_delay": 2.0,
+        },
     },
     "model_sync": {
         "interval": 300,
@@ -61,11 +66,16 @@ DEFAULT_CONFIG = {
         "chunk_size": 8192,
         "auto_remove_delay": 5
     },
-    "modal": {
-        "timeout": 300,
-        "max_containers": 1,
-        "scaledown_window": 5
-    },
+        "modal": {
+            "timeout": 300,
+            "max_containers": 1,
+            "scaledown_window": 5,
+            "vllm": {
+                "gpu_type": "A100",
+                "timeout_seconds": 3600,
+                "max_model_len": 8192,
+            },
+        },
     "api": {
         "gzip_minimum_size": 1000,
         "cors_origins": ["*"]
@@ -127,6 +137,9 @@ class Settings(BaseSettings):
     modal_timeout: int = 300
     modal_max_containers: int = 1
     modal_scaledown_window: int = 5
+    modal_vllm_gpu_type: str = "A100"
+    modal_vllm_timeout: int = 3600
+    modal_vllm_max_model_len: int = 8192
     
     # API
     # Default: accept all origins ('*') for easier development

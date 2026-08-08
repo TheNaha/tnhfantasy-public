@@ -347,7 +347,7 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
                                             value={formData.runtime_config?.container_name || ''}
                                             onChange={(event) => updateRuntimeConfig({ container_name: event.target.value })}
                                             className={INPUT_CLASS}
-                                            placeholder={`comfy-provider-${formData.id || formData.type}`}
+                                            placeholder={`tnhcomfy-${formData.id || formData.type}`}
                                         />
                                     </Field>
                                 </div>

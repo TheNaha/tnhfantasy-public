@@ -75,6 +75,14 @@ def default_deploy_targets(provider_type: str) -> list[dict[str, Any]]:
                 "command": ["modal", "deploy", "/app/modal_app.py"],
             }
         ]
+    if provider_type == "modal_llm":
+        return [
+            {
+                "name": "modal_llm_app",
+                "entrypoint": "/app/llm_worker/engines/modal/modal_app.py",
+                "command": ["modal", "deploy", "/app/llm_worker/engines/modal/modal_app.py"],
+            }
+        ]
     if provider_type == "beam":
         return [
             {

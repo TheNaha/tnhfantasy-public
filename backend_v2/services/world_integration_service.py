@@ -15,16 +15,12 @@ from core.events import event_bus, EventType, Event
 from infrastructure.database import engine
 from infrastructure.logging import get_logger
 from sqlmodel import Session, select
-from services.context_builder import build_chat_context
+from services.context_builder import build_chat_context_async
 from services.job_queue import queue_manager
 from services.job_service import JobService
+from services.llm_config import get_default_llm_model
 
 logger = get_logger("world_integration")
-
-def _get_default_llm_model() -> str:
-    # A standalone version to avoid importing from routes
-    from config import settings
-    return getattr(settings, "default_llm_model", "gemini-2.5-flash")
 
 def _resolve_context_tokens(chat: Chat) -> int:
     return chat.max_context_tokens or 4096
@@ -75,7 +71,7 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     .where(Message.chat_id == imp_chat_id)
                     .order_by(Message.created_at)
                 ).all()
-                _sp, _ctx = build_chat_context(
+                _sp, _ctx = await build_chat_context_async(
                     session,
                     _past,
                     character=_character,
@@ -95,7 +91,7 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                         "chat_id": imp_chat_id,
                         "character_system_prompt": _sp or None,
                         "type": "chat_reply",
-                        "model": _chat.llm_model or _get_default_llm_model(),
+                        "model": _chat.llm_model or get_default_llm_model(),
                     },
                     metadata={
                         "chat_id": imp_chat_id,

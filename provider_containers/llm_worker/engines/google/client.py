@@ -1,11 +1,13 @@
 import os
 import json
 import logging
+import asyncio
 from typing import Dict, Any, Optional
 
 from fastapi.responses import StreamingResponse
 
 from provider_core.base_client import BaseProviderClient
+from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
@@ -40,7 +42,6 @@ class GoogleProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         async def stream():
             try:
-                import httpx
                 workflow = request.workflow
                 
                 raw_messages = workflow.get("messages", [])
@@ -52,12 +53,24 @@ class GoogleProviderClient(BaseProviderClient):
                 for m in raw_messages:
                     role = m.get("role")
                     if role == "system":
-                        system_prompt += m.get("content", "") + "\n"
+                        content = m.get("content", "")
+                        if isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    system_prompt += block.get("text", "") + "\n"
+                        elif isinstance(content, str):
+                            system_prompt += content + "\n"
                     else:
+                        content = m.get("content", "")
+                        if isinstance(content, list):
+                            content = " ".join(
+                                b.get("text", "") for b in content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
                         g_role = "model" if role == "assistant" else "user"
                         contents.append({
                             "role": g_role,
-                            "parts": [{"text": m.get("content", "")}]
+                            "parts": [{"text": content}]
                         })
                 
                 model_id = workflow.get("model") or "gemini-1.5-flash"
@@ -78,53 +91,74 @@ class GoogleProviderClient(BaseProviderClient):
                     "Content-Type": "application/json"
                 }
 
-                async with httpx.AsyncClient() as client:
-                    async with client.stream(
-                        "POST",
-                        url,
-                        headers=headers,
-                        json=payload,
-                        timeout=120.0,
-                    ) as response:
-                        response.raise_for_status()
+                timeout = request.timeout_seconds or 120.0
+                if request.job_id:
+                    await self.job_tracker.start_job(request.job_id)
+                client = await get_http_client().get_client()
 
-                        full_content = ""
+                async def check_cancel():
+                    return request.job_id and await self.job_tracker.is_cancelled(request.job_id)
 
-                        async for line in response.aiter_lines():
-                            line = line.strip()
-                            if not line:
-                                continue
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
 
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                try:
-                                    data = json.loads(data_str)
-                                    candidates = data.get("candidates", [])
-                                    if candidates:
-                                        content_parts = candidates[0].get("content", {}).get("parts", [])
-                                        if content_parts:
-                                            text = content_parts[0].get("text", "")
-                                            if text:
-                                                full_content += text
-                                                event = {
-                                                    "type": "progress",
-                                                    "progress": 0,
-                                                    "message": text,
-                                                }
-                                                yield json.dumps(event) + "\n"
-                                except json.JSONDecodeError:
-                                    pass
+                    full_content = ""
 
-                        output = {"role": "assistant", "content": full_content}
+                    async for line in response.aiter_lines():
+                        if await check_cancel():
+                            yield json.dumps({
+                                "type": "completed",
+                                "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                            }) + "\n"
+                            return
+                        line = line.strip()
+                        if not line:
+                            continue
 
-                        yield json.dumps({
-                            "type": "completed",
-                            "outputs": [output],
-                        }) + "\n"
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            try:
+                                data = json.loads(data_str)
+                                candidates = data.get("candidates", [])
+                                if candidates:
+                                    content_parts = candidates[0].get("content", {}).get("parts", [])
+                                    if content_parts:
+                                        text = content_parts[0].get("text", "")
+                                        if text:
+                                            full_content += text
+                                            event = {
+                                                "type": "progress",
+                                                "progress": 0,
+                                                "message": text,
+                                            }
+                                            yield json.dumps(event) + "\n"
+                            except json.JSONDecodeError:
+                                pass
 
+                output = {"role": "assistant", "content": full_content}
+
+                yield json.dumps({
+                    "type": "completed",
+                    "outputs": [output],
+                }) + "\n"
+
+            except asyncio.CancelledError:
+                yield json.dumps({
+                    "type": "completed",
+                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
+                }) + "\n"
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
                 yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+            finally:
+                if request.job_id:
+                    await self.job_tracker.end_job(request.job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
@@ -139,25 +173,24 @@ class GoogleProviderClient(BaseProviderClient):
         if not self.api_key:
             return {"files": [{"path": m, "name": m} for m in fallback]}
         try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}",
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                models = []
-                for m in data.get("models", []):
-                    name = m.get("name", "")
-                    if name.startswith("models/"):
-                        name = name[7:]
-                    supported = m.get("supportedGenerationMethods", [])
-                    if "generateContent" in supported:
-                        models.append(name)
-                if not models:
-                    models = fallback
-                return {"files": [{"path": m, "name": m} for m in sorted(models)]}
+            client = await get_http_client().get_client()
+            resp = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={self.api_key}",
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                if name.startswith("models/"):
+                    name = name[7:]
+                supported = m.get("supportedGenerationMethods", [])
+                if "generateContent" in supported:
+                    models.append(name)
+            if not models:
+                models = fallback
+            return {"files": [{"path": m, "name": m} for m in sorted(models)]}
         except Exception:
             return {"files": [{"path": m, "name": m} for m in fallback]}
 

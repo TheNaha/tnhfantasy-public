@@ -232,7 +232,8 @@ export default function StorySandbox() {
     useEffect(() => {
         if (chapters?.length > 0 && activeStoryId && !activeChapterId) {
             // Wait for next tick to avoid synchronous cascading renders
-            setTimeout(() => navigate(`/story/${activeStoryId}/chapter/${chapters[0].id}`, { replace: true }), 0);
+            const timer = setTimeout(() => navigate(`/story/${activeStoryId}/chapter/${chapters[0].id}`, { replace: true }), 0);
+            return () => clearTimeout(timer);
         }
     }, [chapters, activeStoryId, activeChapterId, navigate]);
 
@@ -245,11 +246,12 @@ export default function StorySandbox() {
             loadedChapterIdRef.current = activeChapterId;
             isDirtyRef.current = false;
             // Wait for next tick to avoid synchronous cascading renders
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 setEditorContent(activeChapter.content || '');
                 streamingRef.current = '';
                 streamingBaseRef.current = activeChapter.content || '';
             }, 0);
+            return () => clearTimeout(timer);
         }
     }, [activeChapterId, activeChapter]);
 

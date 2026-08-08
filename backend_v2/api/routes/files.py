@@ -779,23 +779,24 @@ async def upload_file_endpoint(file: UploadFile = File(...), path: str = "input"
             f"Received: {file.size / (1024 * 1024):.1f} MB"
         )
 
-    upload_dir = get_safe_path(OUTPUT_DIR, path)
-    os.makedirs(upload_dir, exist_ok=True)
-
-    filename = os.path.basename(file.filename)
-    file_path = os.path.join(upload_dir, filename)
-    
-    import shutil
-    with open(file_path, 'wb') as f:
-        shutil.copyfileobj(file.file, f)
-        
-    actual_size = os.path.getsize(file_path)
+    content = await file.read()
+    actual_size = len(content)
     if actual_size > MAX_UPLOAD_SIZE_MB * 1024 * 1024:
-        os.remove(file_path)
         raise ValidationError(
             f"File size exceeds the {MAX_UPLOAD_SIZE_MB} MB limit. "
             f"Received: {actual_size / (1024 * 1024):.1f} MB"
         )
+
+    upload_dir = get_safe_path(OUTPUT_DIR, path)
+    filename = os.path.basename(file.filename)
+    file_path = os.path.join(upload_dir, filename)
+
+    def _write_file():
+        os.makedirs(upload_dir, exist_ok=True)
+        with open(file_path, 'wb') as f:
+            f.write(content)
+
+    await asyncio.to_thread(_write_file)
 
     return {"status": "success", "filename": filename}
 
@@ -838,19 +839,21 @@ async def upload_input_image(
         )
     
     # Save locally first (for preview/fallback) - use dedicated input folder
-    os.makedirs(INPUT_DIR, exist_ok=True)
     local_path = os.path.join(INPUT_DIR, unique_name)
-    
-    with open(local_path, "wb") as f:
-        f.write(content)
-    
-    # Get image dimensions
-    try:
-        img = Image.open(io.BytesIO(content))
-        width, height = img.size
-    except Exception as e:
-        logger.warning("upload_image_dimensions_failed", error=str(e))
-        width, height = 0, 0
+
+    def _save_and_measure():
+        os.makedirs(INPUT_DIR, exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(content)
+        # Get image dimensions
+        try:
+            img = Image.open(io.BytesIO(content))
+            return img.size
+        except Exception as e:
+            logger.warning("upload_image_dimensions_failed", error=str(e))
+            return (0, 0)
+
+    width, height = await asyncio.to_thread(_save_and_measure)
     
     # Sync to ALL active providers (so job can go to any of them)
     sync_result = await _sync_file_to_providers(session, unique_name, content, "input")
@@ -916,11 +919,14 @@ async def upload_mask_image(
     mask_filename = f"{source_base}_mask_{uuid.uuid4().hex[:8]}.png"
     
     # Save locally to dedicated input folder
-    os.makedirs(INPUT_DIR, exist_ok=True)
     local_path = os.path.join(INPUT_DIR, mask_filename)
-    
-    with open(local_path, "wb") as f:
-        f.write(content)
+
+    def _save_mask():
+        os.makedirs(INPUT_DIR, exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(content)
+
+    await asyncio.to_thread(_save_mask)
     
     # Sync to ALL active providers
     sync_result = await _sync_file_to_providers(session, mask_filename, content, "input")
@@ -939,7 +945,7 @@ async def delete_single_file(filename: str):
     """Delete a single file (cleanup after failed gallery refresh)."""
     import glob
 
-    try:
+    def _delete():
         safe_filename = filename.lstrip("/\\")
         local_path = None
 
@@ -969,7 +975,7 @@ async def delete_single_file(filename: str):
             return {"status": "success", "deleted": True}
 
         pattern = os.path.join(OUTPUT_DIR, "**", safe_filename)
-        matches = await asyncio.to_thread(glob.glob, pattern, recursive=True)
+        matches = glob.glob(pattern, recursive=True)
         matches = [m for m in matches if "/thumb/" not in m]
         if matches:
             os.remove(matches[0])
@@ -978,6 +984,9 @@ async def delete_single_file(filename: str):
             return {"status": "success", "deleted": True}
 
         raise NotFoundError("Resource", f"File '{filename}' not found")
+
+    try:
+        return await asyncio.to_thread(_delete)
     except ValidationError:
         raise ValidationError("Invalid filename")
     except NotFoundError:
@@ -1142,97 +1151,102 @@ async def batch_get_metadata(request: BatchMetadataRequest):
     """
     from api.deps import read_image_metadata
     from services.gallery_indexer import gallery_indexer
-    
-    results = {}
-    missing_files_map = {}  # path -> filename
-    
-    def _get_metadata_result(full_path):
-        """Helper to extract metadata from a file."""
-        try:
-            metadata = read_image_metadata(full_path)
-            return {
-                "success": True,
-                "metadata": metadata,
-                "blurhash": metadata.get("blurhash")
-            }
-        except Exception:
-            # Fallback to sidecar JSON
-            meta_path = f"{full_path}.json"
-            if os.path.exists(meta_path):
-                try:
-                    with open(meta_path, 'r') as f:
-                        metadata = json.load(f)
-                    return {
-                        "success": True,
-                        "metadata": metadata,
-                        "blurhash": metadata.get("blurhash")
-                    }
-                except Exception:
-                    return {"error": "metadata_read_failed"}
-            else:
-                return {"error": "metadata_not_found"}
 
-    # Phase 1: Check direct paths and collect missing files
-    for path in request.paths:
-        try:
-            # Normalize path
-            if path.startswith("output/"):
-                filename = path.replace("output/", "").lstrip("/\\")
-            else:
-                filename = path.lstrip("/\\")
-            
-            # Try direct path first
+    def _process(paths: list[str]) -> dict:
+        results = {}
+        missing_files_map = {}  # path -> filename
+
+        def _get_metadata_result(full_path):
+            """Helper to extract metadata from a file."""
             try:
-                full_path = get_safe_path(OUTPUT_DIR, filename)
-            except ValidationError:
-                results[path] = {"error": "invalid_path"}
-                continue
-
-            if os.path.exists(full_path):
-                results[path] = _get_metadata_result(full_path)
-            else:
-                indexed_path = gallery_indexer.get_path(filename)
-                if indexed_path and os.path.exists(indexed_path):
-                    results[path] = _get_metadata_result(indexed_path)
+                metadata = read_image_metadata(full_path)
+                return {
+                    "success": True,
+                    "metadata": metadata,
+                    "blurhash": metadata.get("blurhash")
+                }
+            except Exception:
+                # Fallback to sidecar JSON
+                meta_path = f"{full_path}.json"
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, 'r') as f:
+                            metadata = json.load(f)
+                        return {
+                            "success": True,
+                            "metadata": metadata,
+                            "blurhash": metadata.get("blurhash")
+                        }
+                    except Exception:
+                        return {"error": "metadata_read_failed"}
                 else:
-                    # Keep a basename fallback for legacy callers that only store filenames
-                    missing_files_map[path] = filename
-                    
-        except Exception as e:
-            results[path] = {"error": str(e)}
-    
-    # Phase 2: Single pass scan for missing files
-    if missing_files_map:
-        unresolved = {}
-        for path, filename in missing_files_map.items():
-            full_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
-            if full_path and os.path.exists(full_path):
-                results[path] = _get_metadata_result(full_path)
-            else:
-                unresolved[path] = os.path.basename(filename)
+                    return {"error": "metadata_not_found"}
 
-        if unresolved:
-            target_filenames = set(unresolved.values())
-
-            def _scan_metadata():
-                found = {}
-                for root, dirs, files in os.walk(OUTPUT_DIR):
-                    if "thumb" in dirs:
-                        dirs.remove("thumb")
-                    for f in files:
-                        if f not in target_filenames:
-                            continue
-                        found.setdefault(f, []).append(os.path.join(root, f))
-                return found
-
-            found_files = await asyncio.to_thread(_scan_metadata)
-
-            for path, filename in unresolved.items():
-                matches = found_files.get(filename, [])
-                if len(matches) == 1:
-                    results[path] = _get_metadata_result(matches[0])
+        # Phase 1: Check direct paths and collect missing files
+        for path in paths:
+            try:
+                # Normalize path
+                if path.startswith("output/"):
+                    filename = path.replace("output/", "").lstrip("/\\")
                 else:
-                    results[path] = {"error": "not_found"}
+                    filename = path.lstrip("/\\")
+
+                # Try direct path first
+                try:
+                    full_path = get_safe_path(OUTPUT_DIR, filename)
+                except ValidationError:
+                    results[path] = {"error": "invalid_path"}
+                    continue
+
+                if os.path.exists(full_path):
+                    results[path] = _get_metadata_result(full_path)
+                else:
+                    indexed_path = gallery_indexer.get_path(filename)
+                    if indexed_path and os.path.exists(indexed_path):
+                        results[path] = _get_metadata_result(indexed_path)
+                    else:
+                        # Keep a basename fallback for legacy callers that only store filenames
+                        missing_files_map[path] = filename
+
+            except Exception as e:
+                results[path] = {"error": str(e)}
+
+        # Phase 2: Single pass scan for missing files
+        if missing_files_map:
+            unresolved = {}
+            for path, filename in missing_files_map.items():
+                full_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
+                if full_path and os.path.exists(full_path):
+                    results[path] = _get_metadata_result(full_path)
+                else:
+                    unresolved[path] = os.path.basename(filename)
+
+            if unresolved:
+                target_filenames = set(unresolved.values())
+
+                def _scan_metadata():
+                    found = {}
+                    for root, dirs, files in os.walk(OUTPUT_DIR):
+                        if "thumb" in dirs:
+                            dirs.remove("thumb")
+                        for f in files:
+                            if f not in target_filenames:
+                                continue
+                            found.setdefault(f, []).append(os.path.join(root, f))
+                    return found
+
+                found_files = _scan_metadata()
+
+                for path, filename in unresolved.items():
+                    matches = found_files.get(filename, [])
+                    if len(matches) == 1:
+                        results[path] = _get_metadata_result(matches[0])
+                    else:
+                        results[path] = {"error": "not_found"}
+
+        return results
+
+    results = await asyncio.to_thread(_process, request.paths)
 
     return {
         "results": results,

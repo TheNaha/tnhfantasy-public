@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
@@ -12,9 +12,17 @@ export function useTrackGenerationJob() {
     const [progress, setProgress] = useState(null);
     const [generating, setGenerating] = useState(false);
     const { data: jobData } = useTrackJob(currentJobId);
+    const redirectTimerRef = useRef(null);
 
-    // legitimate: syncing state from external WebSocket subscription
-    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        return () => {
+            if (redirectTimerRef.current) {
+                clearTimeout(redirectTimerRef.current);
+                redirectTimerRef.current = null;
+            }
+        };
+    }, []);
+
     useEffect(() => {
         if (!currentJobId || !jobData) return;
 
@@ -22,12 +30,14 @@ export function useTrackGenerationJob() {
         const progressValue = jobData.overall_progress ?? jobData.progress ?? 0;
 
         if (jobData.status === 'completed') {
+            // syncing state from external WebSocket job subscription
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
             setGenerating(false);
             setProgress(null);
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
             if (redirectAfterGenerate) {
-                setTimeout(() => navigate('/'), redirectDelay);
+                redirectTimerRef.current = setTimeout(() => navigate('/'), redirectDelay);
             }
             return;
         }
@@ -58,10 +68,7 @@ export function useTrackGenerationJob() {
     }, [
         jobData, currentJobId,
         navigate, redirectAfterGenerate, redirectDelay,
-    ]);
-    /* eslint-enable react-hooks/set-state-in-effect */
-
-    return {
+    ]);    return {
         currentJobId,
         setCurrentJobId,
         progress,

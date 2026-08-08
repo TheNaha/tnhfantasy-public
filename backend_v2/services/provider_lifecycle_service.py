@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -9,6 +10,7 @@ from sqlmodel import Session
 from core.events import EventType, emit_provider_event
 from core.exceptions import ProviderError
 from infrastructure.http_client import get_http_client
+from infrastructure.providers.runtime import provider_container_name
 from services.provider_runtime import resolve_provider_runtime
 from services.provider_service import ProviderService
 from services.provider_status_service import ProviderStatusService
@@ -66,7 +68,7 @@ class ProviderLifecycleService:
 
     async def stop_container(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
-        container_manager.stop_container(provider_id)
+        await asyncio.to_thread(container_manager.stop_container, provider_id)
         self.invalidate_caches(provider_id)
         await emit_provider_event(
             EventType.PROVIDER_CONTAINER_STATUS,
@@ -100,10 +102,10 @@ class ProviderLifecycleService:
 
     async def get_container_status(self, provider_id: str) -> dict[str, Any]:
         container_manager = self._require_container_manager()
-        container_name = f"tnhcomfy-{provider_id}"
+        container_name = provider_container_name(provider_id)
 
         try:
-            container = container_manager.client.containers.get(container_name)
+            container = await asyncio.to_thread(container_manager.client.containers.get, container_name)
         except Exception:
             return {
                 "provider_id": provider_id,
@@ -111,7 +113,7 @@ class ProviderLifecycleService:
                 "running": False,
             }
 
-        container.reload()
+        await asyncio.to_thread(container.reload)
 
         healthy = False
         try:

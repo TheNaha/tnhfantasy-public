@@ -18,6 +18,7 @@ from provider_core import (
     reconciliation_loop,
     auto_discovery_loop,
 )
+from provider_core.http_client import get_http_client, close_http_client
 
 ENGINE = os.getenv("ENGINE", "modal").lower()
 PROVIDER_ID = os.getenv("PROVIDER_ID", f"{ENGINE}-worker")
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
                 BACKEND_URL,
                 interval_seconds=runtime_config["reconciliation_interval_seconds"],
                 startup_delay_seconds=runtime_config["reconciliation_startup_delay_seconds"],
+                http_client=get_http_client(),
             )
         )
     )
@@ -68,6 +70,7 @@ async def lifespan(app: FastAPI):
                 provider_id=PROVIDER_ID,
                 provider_type=ENGINE,
                 backend_url=BACKEND_URL,
+                http_client=get_http_client(),
             )
         )
     )
@@ -80,6 +83,7 @@ async def lifespan(app: FastAPI):
         if _background_tasks:
             await asyncio.gather(*_background_tasks, return_exceptions=True)
         _background_tasks.clear()
+        await close_http_client()
 
 app = FastAPI(title="Unified Image Worker", lifespan=lifespan)
 

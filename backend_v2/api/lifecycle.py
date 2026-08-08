@@ -23,7 +23,7 @@ from infrastructure.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
-from services.job_queue import job_queue, queue_manager
+from services.job_queue import queue_manager
 from services.job_service import JobService
 from services.provider_runtime import monitor_provider_changes
 

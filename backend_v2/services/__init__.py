@@ -11,7 +11,7 @@
 #   LoadBalancer     – Route jobs across providers (round-robin, least-conn, etc.)
 #   ModelAvailabilityService – Pre-flight check: are required models ready?
 from .container_manager import ContainerManager
-from .job_queue import JobQueue, job_queue
+from .job_queue import JobQueue
 from .job_service import JobService
 from .load_balancer import LoadBalancer
 from .model_availability_service import ModelAvailabilityService
@@ -24,6 +24,5 @@ __all__ = [
     "LoadBalancer",
     "ModelAvailabilityService",
     "ProviderService",
-    "job_queue",
 ]
 
