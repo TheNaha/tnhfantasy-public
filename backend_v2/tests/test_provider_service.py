@@ -234,17 +234,20 @@ class TestProviderServiceDelete:
         assert len(providers) == 0
 
     async def test_delete_provider_cleans_load_balancer_runtime_state(self, service, session, sample_provider_data):
-        state = LoadBalancerState(id=1, provider_failures={"test-provider": 4})
-        session.add(state)
-        session.commit()
+        from services.load_balancer import get_global_runtime_state
+
+        runtime_state = get_global_runtime_state()
+
+        runtime_state.provider_failures["test-provider"] = 4
+        runtime_state.provider_job_counts["test-provider"] = 2
 
         await service.create_provider(sample_provider_data)
         await service.delete_provider("test-provider")
 
-        state_row = session.get(LoadBalancerState, 1)
-        assert state_row is not None
-        assert "test-provider" not in (state_row.provider_failures or {})
+        assert "test-provider" not in runtime_state.provider_failures
+        assert "test-provider" not in runtime_state.provider_job_counts
 
+        state_row = session.get(LoadBalancerState, 1)
         assert state_row is not None
         assert "test-provider" not in (state_row.provider_failures or {})
         assert "test-provider" not in (state_row.provider_job_counts or {})

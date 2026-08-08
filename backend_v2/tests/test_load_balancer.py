@@ -3,7 +3,7 @@ import pytest
 from sqlmodel import Session
 
 from core.entities import LoadBalancerState, Provider
-from services.load_balancer import LoadBalancer
+from services.load_balancer import LoadBalancer, LoadBalancerRuntimeState
 
 
 @pytest.fixture
@@ -92,9 +92,7 @@ class TestLoadBalancer:
 
         stats = await lb.get_stats()
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
-        # In DB-backed LB, jobs_assigned is computed from active Job rows.
-        # Since this test doesn't create a Job row, it should be 0.
-        assert provider_stats["provider-2"]["jobs_assigned"] == 0
+        assert provider_stats["provider-2"]["jobs_assigned"] == 1
     
     async def test_fallback_on_failure(self, session: Session, providers):
         """Test fallback provides alternative when provider fails."""
@@ -188,12 +186,13 @@ class TestLoadBalancer:
 
         stats = await second.get_stats()
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
-        assert provider_stats[selected.id]["jobs_assigned"] == 0
+        assert provider_stats[selected.id]["jobs_assigned"] == 1
 
     async def test_runtime_state_can_be_isolated_per_instance(self, session: Session, providers):
         """Injected runtime state should allow isolated balancing contexts."""
-        shared = LoadBalancer(session, strategy="round-robin", state_id=1)
-        isolated = LoadBalancer(session, strategy="round-robin", state_id=2)
+        shared = LoadBalancer(session, strategy="round-robin")
+        isolated_state = LoadBalancerRuntimeState()
+        isolated = LoadBalancer(session, strategy="round-robin", runtime_state=isolated_state)
 
         shared_selected = await shared.get_next_provider()
 
@@ -208,7 +207,7 @@ class TestLoadBalancer:
 
         isolated_stats_after = await isolated.get_stats()
         isolated_provider_stats_after = {item["id"]: item for item in isolated_stats_after["provider_stats"]}
-        assert isolated_provider_stats_after[isolated_selected.id]["jobs_assigned"] == 0
+        assert isolated_provider_stats_after[isolated_selected.id]["jobs_assigned"] == 1
 
     async def test_release_job_persists_state(self, session: Session, providers):
         lb = LoadBalancer(session, strategy="round-robin")
