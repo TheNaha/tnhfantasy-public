@@ -28,11 +28,18 @@ import { useCollections } from '../hooks/useCollections';
 import { addImagesToCollection } from '../api/collectionsApi';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
+import {
+    useActiveChatStreams,
+    setStreamingJob,
+    clearStreamingJob,
+    getStreamingJob,
+} from '../hooks/useStreamingJobs';
 import { useQueryClient } from '@tanstack/react-query';
 import { useConfirmation } from '../store/confirmationStore';
 import { parseTavernMessage } from '../utils/tavernUtils';
 import { useSettings } from '../store/settingsStore';
 import SceneGallery from '../components/SceneGallery';
+import BottomTabBar from '../components/BottomTabBar';
 
 
 const COMMANDS = [
@@ -920,9 +927,14 @@ export default function ChatWorkspace() {
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
     const setActiveChatId = useWorldVaultStore(state => state.setActiveChat);
-    const updateStreamingJob = useWorldVaultStore(state => state.updateStreamingJob);
-    const clearStreamingJob = useWorldVaultStore(state => state.clearStreamingJob);
-    const streamingJobs = useWorldVaultStore(state => state.streamingJobs);
+
+    const activeStreamEntries = useActiveChatStreams(activeChatId);
+    const activeStreams = useMemo(
+        () => activeStreamEntries
+            .filter(item => item.jobData?.status === 'running')
+            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
+        [activeStreamEntries]
+    );
     
     const suggestReplyMutation = useSuggestReply();
     const [suggestJobId, setSuggestJobId] = useState(null);
@@ -968,10 +980,8 @@ export default function ChatWorkspace() {
         [collectionsMap]
     );
 
-    // Combine messages + active streaming jobs for virtualized list
-    const activeStreams = Object.entries(streamingJobs)
-        .filter(([, job]) => job.status === 'running' && job.chatId === activeChatId)
-        .map(([jobId, jobData]) => ({ _key: `stream-${jobId}`, jobId, jobData }));
+    // Combine messages + active streaming jobs for virtualized list.
+    // `activeStreams` is sourced from the React-Query-backed hook above.
     const listItems = useMemo(
         () => [
             ...messages.map(msg => ({ _key: msg.id || `msg-${messages.indexOf(msg)}`, item: msg })),
@@ -1076,10 +1086,10 @@ export default function ChatWorkspace() {
                 return;
             }
 
-            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
             if (streamText && eventChatId) {
-                updateStreamingJob(eventId, {
+                setStreamingJob(queryClient, eventId, {
                     text: streamText,
                     status: 'running',
                     chatId: eventChatId,
@@ -1124,10 +1134,10 @@ export default function ChatWorkspace() {
                 return;
             }
 
-            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
-            if (eventId) clearStreamingJob(eventId);
+            if (eventId) clearStreamingJob(queryClient, eventId, eventChatId);
 
             if (eventChatId) {
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
@@ -1157,11 +1167,11 @@ export default function ChatWorkspace() {
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
             if (eventId) pendingStream.delete(eventId);
-            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
             if (eventId === suggestJobIdRef.current) setSuggestJobId(null);
-            if (eventId) clearStreamingJob(eventId);
+            if (eventId) clearStreamingJob(queryClient, eventId, eventChatId);
 
             if (eventChatId === activeChatId) {
                 toast.error('AI response failed. Please try again.');
@@ -1181,11 +1191,11 @@ export default function ChatWorkspace() {
             const meta = job.metadata_ ?? job.metadata ?? {};
             const eventId = job.id ?? null;
             if (eventId) pendingStream.delete(eventId);
-            const existingJob = useWorldVaultStore.getState().streamingJobs[eventId];
+            const existingJob = getStreamingJob(queryClient, eventId);
             const eventChatId = meta.chat_id || existingJob?.chatId;
 
             if (eventId === suggestJobIdRef.current) setSuggestJobId(null);
-            if (eventId) clearStreamingJob(eventId);
+            if (eventId) clearStreamingJob(queryClient, eventId, eventChatId);
 
             if (eventChatId === activeChatId) {
                 toast('AI response cancelled', { icon: '🛑' });
@@ -1197,14 +1207,14 @@ export default function ChatWorkspace() {
             pendingStream.clear();
             unsubProgress(); unsubCompleted(); unsubError(); unsubCancelled();
         };
-    }, [subscribe, activeChatId, updateStreamingJob, clearStreamingJob, queryClient]);
+    }, [subscribe, activeChatId, queryClient]);
 
     useEffect(() => {
         // During streaming, use instant (non-smooth) scrolling — smooth
         // scrolling per token triggers repeated layout + animation on mobile.
-        const hasStreaming = Object.keys(streamingJobs).length > 0;
+        const hasStreaming = activeStreamEntries.length > 0;
         messagesEndRef.current?.scrollIntoView({ behavior: hasStreaming ? 'auto' : 'smooth', block: 'end' });
-    }, [messages, streamingJobs]);
+    }, [messages, activeStreamEntries]);
 
     useEffect(() => {
         // Debounced resize — avoids layout thrashing on mobile with every keystroke
@@ -1301,13 +1311,13 @@ export default function ChatWorkspace() {
                 }
             });
             if (res.job_id) {
-                updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
+                setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: chatIdToUse });
             }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatIdToUse] });
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, updateStreamingJob, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -1368,7 +1378,7 @@ export default function ChatWorkspace() {
             const data = await api.post(`/api/v2/chats/${activeChatId}/scene`, {});
             if (data.job_id) {
                 setSceneJobId(data.job_id);
-                updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
+                setStreamingJob(queryClient, data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
             }
         } catch {
             toast.error('Failed to generate scene');
@@ -1551,20 +1561,20 @@ export default function ChatWorkspace() {
     const handleRegenerate = useCallback(async (msgId) => {
         try {
             const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
-            if (res?.job_id) updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
+            if (res?.job_id) setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
         } catch { toast.error('Failed to regenerate'); }
-    }, [activeChatId, regenerateMutation, updateStreamingJob]);
+    }, [activeChatId, regenerateMutation]);
 
     const handleImpersonate = useCallback(async (hint = '') => {
         if (!activeChatId) return;
         try {
             const res = await impersonateMutation.mutateAsync({ chatId: activeChatId, hint });
             if (res?.job_id) {
-                updateStreamingJob(res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'impersonation' });
+                setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'impersonation' });
                 toast('Impersonating...', { icon: '👤' });
             }
         } catch { toast.error('Impersonation failed'); }
-    }, [activeChatId, impersonateMutation, updateStreamingJob]);
+    }, [activeChatId, impersonateMutation]);
 
     const handlePinMessage = useCallback(async (msgId, currentlyPinned) => {
         try {
@@ -2445,13 +2455,13 @@ export default function ChatWorkspace() {
                                 <ImageIcon size={12} /> Scenes
                             </h4>
                             {(() => {
-                                const sceneStream = Object.values(useWorldVaultStore.getState().streamingJobs).find(
-                                    (j) => j.chatId === activeChatId && (j.type === 'image' || j.taskType === 'image')
+                                const sceneStream = activeStreamEntries.find(
+                                    (item) => item.jobId && item.jobData?.chatId === activeChatId && (item.jobData?.type === 'image' || item.jobData?.taskType === 'image')
                                 );
                                 return sceneStream ? (
                                     <span className="text-[10px] text-green-400 flex items-center gap-1">
                                         <Loader2 size={10} className="animate-spin" />
-                                        {Math.round(sceneStream.progress ?? 0)}%
+                                        {Math.round(sceneStream.jobData?.progress ?? 0)}%
                                     </span>
                                 ) : (
                                     <span className="text-[10px] text-gray-600">
@@ -2646,30 +2656,18 @@ export default function ChatWorkspace() {
                     />
                 </div>
             )}
-            {/* Mobile Tab Bar */}
-            <div className="lg:hidden shrink-0 flex items-center justify-around bg-gray-900 border-t border-white/5 p-2 pb-safe z-50">
-                <button 
-                    onClick={() => setMobileTab('chats')}
-                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'chats' ? "text-blue-400" : "text-gray-500 hover:text-gray-300")}
-                >
-                    <MessageSquare size={20} />
-                    <span className="text-[10px] font-medium">Chats</span>
-                </button>
-                <button 
-                    onClick={() => setMobileTab('chat')}
-                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'chat' ? "text-purple-400" : "text-gray-500 hover:text-gray-300")}
-                >
-                    <Activity size={20} />
-                    <span className="text-[10px] font-medium">Roleplay</span>
-                </button>
-                <button 
-                    onClick={() => setMobileTab('context')}
-                    className={clsx("flex flex-col items-center gap-1 p-2 rounded-xl flex-1", mobileTab === 'context' ? "text-amber-400" : "text-gray-500 hover:text-gray-300")}
-                >
-                    <Settings size={20} />
-                    <span className="text-[10px] font-medium">Context</span>
-                </button>
-            </div>
+            {/* Shared mobile bottom tab bar (replaces the inline tab strip — issue #1/#1.2) */}
+            <BottomTabBar
+                inline
+                tabs={[
+                    { id: 'chats', label: 'Chats', icon: MessageSquare, color: 'text-blue-400' },
+                    { id: 'chat', label: 'Roleplay', icon: Activity, color: 'text-purple-400' },
+                    { id: 'context', label: 'Context', icon: Settings, color: 'text-amber-400' },
+                ]}
+                value={mobileTab}
+                onChange={setMobileTab}
+                label="Chat workspace navigation"
+            />
         </motion.div>
     );
 }

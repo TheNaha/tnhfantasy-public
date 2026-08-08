@@ -187,6 +187,7 @@ class Collection(SQLModel, table=True):
     description: str | None = Field(default=None)
     thumbnail: str | None = Field(default=None)  # First image filename
     character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)  # Link to character for auto-generated galleries
+    workspace: str | None = Field(default=None, index=True)  # Scope album to a workspace: 'image' | 'chat' | 'story' (issue #5)
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,5 +1,6 @@
 """Tests for provider streaming response parsing in services.provider_client."""
 
+import asyncio
 import importlib
 import json
 import sys
@@ -30,6 +31,16 @@ class FakeResponse:
     async def aiter_bytes(self):
         for chunk in self._chunks:
             yield chunk
+
+    async def aiter_lines(self):
+        # Each chunk is already a single NDJSON line from the fake worker.
+        for chunk in self._chunks:
+            if isinstance(chunk, bytes):
+                chunk = chunk.decode("utf-8")
+            yield chunk
+            delay = getattr(self, "_lines_delay", 0.0)
+            if delay:
+                await asyncio.sleep(delay)
 
     async def aread(self):
         return self._body
@@ -377,3 +388,87 @@ async def test_call_image_provider_sends_timeout_seconds_and_canonical_inference
         "job_id": "job-timeout-payload",
         "timeout_seconds": 12.5,
     }
+
+
+@pytest.mark.asyncio
+async def test_call_llm_provider_throttles_rapid_progress(monkeypatch):
+    """Rapid per-token progress chunks are throttled; suppressed deltas are
+    accumulated into `full_content` and flushed once on completion (lossless)."""
+    from services.provider_client import call_llm_provider
+
+    token_count = 200
+    chunks = [json.dumps({"type": "progress", "message": f"t{i}"}) for i in range(token_count)]
+    chunks.append(json.dumps({"type": "completed", "outputs": [{"role": "assistant", "content": "done"}]}))
+
+    emitted = []
+
+    async def fake_emit(event_type, data=None, **_kw):
+        emitted.append(data)
+
+    monkeypatch.setattr("core.events.emit_job_event", fake_emit)
+
+    response = FakeResponse(status_code=200, chunks=chunks)
+    response._lines_delay = 0.0  # tight loop: tokens arrive far faster than 60fps
+    install_streaming_client(monkeypatch, response)
+
+    job_service = SimpleNamespace(update_job=AsyncMock())
+    result = await call_llm_provider(
+        worker_url="http://llm-worker",
+        workflow={"chat_id": "c1", "type": "chat_reply"},
+        job_id="job-llm-throttle",
+        job_service=job_service,
+        timeout=60,
+        provider_id="provider-1",
+    )
+
+    progress = [e for e in emitted if e and e.get("status") == "generating"]
+    # Throttling must kick in: < 200 emits for 200 rapid tokens.
+    assert len(progress) < token_count, f"expected throttling, got {len(progress)} emits"
+    # At least the first progress emit + the mandatory final flush.
+    assert len(progress) >= 2
+    # Lossless: the final flush carries the complete accumulated text.
+    assert progress[-1]["text"] == "".join(f"t{i}" for i in range(token_count))
+    assert result["outputs"] == [{"role": "assistant", "content": "done"}]
+    assert result["type"] == "text"
+    assert result["status"] == "success"
+    # update_job was called to set GENERATING status.
+    job_service.update_job.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_call_llm_provider_does_not_over_throttle_when_chunks_are_slow(monkeypatch):
+    """When tokens arrive slower than the 60fps ceiling, every chunk is emitted
+    (throttle only ever drops sub-interval tokens)."""
+    from services.provider_client import call_llm_provider, LLM_PROGRESS_THROTTLE_SECONDS
+
+    token_count = 10
+    # Delay (20ms) exceeds the 16.67ms throttle ceiling -> each token emits.
+    delay = LLM_PROGRESS_THROTTLE_SECONDS + 0.005
+    chunks = [json.dumps({"type": "progress", "message": f"x{i}"}) for i in range(token_count)]
+    chunks.append(json.dumps({"type": "completed", "outputs": [{"role": "assistant", "content": "done"}]}))
+
+    emitted = []
+
+    async def fake_emit(event_type, data=None, **_kw):
+        emitted.append(data)
+
+    monkeypatch.setattr("core.events.emit_job_event", fake_emit)
+
+    response = FakeResponse(status_code=200, chunks=chunks)
+    response._lines_delay = delay
+    install_streaming_client(monkeypatch, response)
+
+    job_service = SimpleNamespace(update_job=AsyncMock())
+    await call_llm_provider(
+        worker_url="http://llm-worker",
+        workflow={"type": "story_continue"},
+        job_id="job-llm-slow",
+        job_service=job_service,
+        timeout=60,
+        provider_id="provider-1",
+    )
+
+    progress = [e for e in emitted if e and e.get("status") == "generating"]
+    # 10 progress emits (one per token, none throttled) + 1 final flush = 11.
+    assert len(progress) == token_count + 1
+    assert progress[-1]["text"] == "".join(f"x{i}" for i in range(token_count))

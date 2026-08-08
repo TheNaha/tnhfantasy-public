@@ -582,6 +582,23 @@ def _migration_add_collection_character_id(conn) -> bool:
     _verify_required_columns(conn, "collections", {"character_id"})
     return True
 
+def _migration_add_collection_workspace(conn) -> bool:
+    """Add workspace column to collections so albums can be scoped to the
+    image / chat / story workspaces (issue #5 cross-workspace move support)."""
+
+    inspector = inspect(conn)
+    if "collections" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("collections")}
+
+    if "workspace" not in columns:
+        conn.execute(text("ALTER TABLE collections ADD COLUMN workspace VARCHAR DEFAULT 'image'"))
+        logger.info("migration_column_added", table="collections", column="workspace")
+
+    _verify_required_columns(conn, "collections", {"workspace"})
+    return True
+
 def _migration_add_chat_persona_name(conn) -> bool:
     """Add persona_name column to chats table."""
     inspector = inspect(conn)
@@ -1127,5 +1144,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="027_add_data_integrity_constraints",
             description="Add CHECK constraints and partial unique indexes (PostgreSQL)",
             apply_fn=_migration_add_data_integrity_constraints,
+        ),
+        MigrationStep(
+            version="028_add_collection_workspace",
+            description="Add workspace column to collections for cross-workspace image moves (issue #5)",
+            apply_fn=_migration_add_collection_workspace,
         ),
     ]

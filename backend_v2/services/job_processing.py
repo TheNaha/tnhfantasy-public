@@ -359,6 +359,11 @@ async def finalize_persisted_job_outputs(
 
         try:
             for output in outputs:
+                if output.get("type") == "text":
+                    # Text outputs are routed in-memory to chat/story handlers and
+                    # are never persisted to the image gallery; skip all disk/gallery
+                    # work for them so LLM jobs don't stall on wait_for_gallery_outputs.
+                    continue
                 path = output.get("path")
                 if path:
                     try:
@@ -691,18 +696,19 @@ async def finalize_successful_job(
     final_result: dict[str, Any],
     process_image_background_fn: Callable[[str, str], Any],
 ) -> None:
-    """Finalize a successful provider result and schedule image post-processing."""
-    if "images" in final_result:
-        images = final_result.get("images", [])
-        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
-    elif "text" in final_result:
-        outputs = await asyncio.to_thread(build_text_outputs, job, final_result["text"], provider_id)
-    elif "outputs" in final_result:
-        outputs = final_result["outputs"]
-    else:
-        outputs = []
+    """Finalize a successful provider result, dispatching on `job.task_type`.
 
-    if job.task_type == 'llm':
+    LLM and image results are normalized through *separate* code paths so that
+    language-model jobs are never mistaken for image jobs (issue #4). LLM jobs
+    take their outputs straight from the provider's native ``outputs`` list and
+    skip all filesystem/gallery logic — the assistant text is routed in-memory to
+    the chat/story handlers in ``_finalize_llm_job`` instead of being written to
+    an orphan ``.txt`` file and gallery-indexed.
+    """
+    if job.task_type == "llm":
+        # Language-model providers emit {"outputs": [{"role": "assistant", "content": "..."}]}].
+        # We forward the native outputs directly; no disk write, no gallery entry.
+        outputs = final_result.get("outputs", []) or []
         await _finalize_llm_job(
             job=job,
             job_id=job_id,
@@ -712,8 +718,18 @@ async def finalize_successful_job(
             final_result=final_result,
             outputs=outputs,
         )
+        return
+
+    # --- image path: normalize provider images into persisted output records ---
+    if "images" in final_result:
+        images = final_result.get("images", [])
+        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
+    elif "outputs" in final_result:
+        outputs = final_result["outputs"]
     else:
-        await _finalize_image_job(
+        outputs = []
+
+    await _finalize_image_job(
             job=job,
             job_id=job_id,
             job_service=job_service,

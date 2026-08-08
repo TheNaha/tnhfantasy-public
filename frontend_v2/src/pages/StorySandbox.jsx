@@ -10,11 +10,13 @@ import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
+import { clearStreamingJob } from '../hooks/useStreamingJobs';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import { useCollections } from '../hooks/useCollections';
 import { addImagesToCollection } from '../api/collectionsApi';
 import SceneGallery from '../components/SceneGallery';
+import BottomTabBar from '../components/BottomTabBar';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -330,7 +332,7 @@ export default function StorySandbox() {
                         }
                     });
                     if (job.id) {
-                        useWorldVaultStore.getState().clearStreamingJob(job.id);
+                        clearStreamingJob(queryClient, job.id);
                     }
                 }
             }
@@ -348,7 +350,7 @@ export default function StorySandbox() {
                 streamingRef.current = '';
                 toast.error('Job failed: ' + (job.error || 'Unknown error'));
                 if (job.id) {
-                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                    clearStreamingJob(queryClient, job.id);
                 }
             }
         });
@@ -366,7 +368,7 @@ export default function StorySandbox() {
                 setIsIllustrating(false);
                 streamingRef.current = '';
                 if (job.id) {
-                    useWorldVaultStore.getState().clearStreamingJob(job.id);
+                    clearStreamingJob(queryClient, job.id);
                 }
             }
         });
@@ -626,12 +628,8 @@ export default function StorySandbox() {
             </div>
 
             <div className="flex-1 flex flex-col min-w-0 relative">
-                {/* Mobile Top Tab Strip */}
-                <div className="flex lg:hidden border-b border-white/5 bg-gray-900/60 backdrop-blur-md p-2 gap-2 shrink-0">
-                    <button onClick={() => setMobileTab('stories')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'stories' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Stories</button>
-                    <button onClick={() => setMobileTab('write')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'write' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Write</button>
-                    <button onClick={() => setMobileTab('context')} className={clsx("flex-1 py-1.5 text-[11px] font-medium rounded-lg transition-colors", mobileTab === 'context' ? "bg-indigo-500/20 text-indigo-400" : "text-gray-400 hover:text-gray-200")}>Context</button>
-                </div>
+                {/* Mobile top tab strip removed — replaced by the shared
+                    <BottomTabBar> fixed to the bottom of the viewport. */}
                 {!activeStoryId ? (
                     <div className="flex-1 flex items-center justify-center">
                         <EmptyState
@@ -758,7 +756,7 @@ export default function StorySandbox() {
                                             )}
                                             
                                             {isStreaming && (
-                                                <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 animate-pulse">
+                                                <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 story-stream-pulse">
                                                     <Sparkles size={16} />
                                                     <span>The AI is weaving the next thread...</span>
                                                 </div>
@@ -1158,6 +1156,26 @@ export default function StorySandbox() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Shared mobile bottom tab bar for the StorySandbox workspaces. */}
+            <BottomTabBar
+                tabs={[
+                    { id: 'stories', label: 'Stories', icon: BookOpen },
+                    { id: 'write', label: 'Write', icon: Edit3 },
+                    { id: 'context', label: 'Context', icon: Layers },
+                ]}
+                value={mobileTab}
+                onChange={setMobileTab}
+                label="Story sandbox navigation"
+            />
+
+            {/* Single-layer CSS pulse for the streaming indicator (replaces
+                Tailwind's per-frame animate-pulse, §1.1). One animated layer,
+                not N nested pulsing divs. */}
+            <style>{`
+@keyframes tnh-stream-pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+.story-stream-pulse { animation: tnh-stream-pulse 1.5s ease-in-out infinite; }
+`}</style>
         </motion.div>
     );
 }

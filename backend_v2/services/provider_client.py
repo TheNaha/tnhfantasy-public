@@ -1,10 +1,17 @@
 import json
+import time
 
 from core.entities import JobStatus
 from infrastructure.http_client import get_streaming_client
 from infrastructure.logging import get_logger
 
 logger = get_logger("provider_client")
+
+# Cap LLM progress emission at ~60fps. LLM workers stream one JOB_PROGRESS per
+# token; capping the emit rate reduces WebSocket fan-out and the per-token JS
+# handling on low-end mobile devices (issue #1a). The frontend already keeps
+# only the latest payload per job (lossless), so fewer emits never drop tokens.
+LLM_PROGRESS_THROTTLE_SECONDS = 1.0 / 60.0
 
 
 class ProviderCallError(Exception):
@@ -110,29 +117,51 @@ async def call_llm_provider(
                 if response.status_code == 200:
                     await job_service.update_job(job_id, status=JobStatus.GENERATING, message="Generating text...")
                     full_content = ""
-                    
+                    last_progress_emit = 0.0
+
                     async for chunk in response.aiter_lines():
                         if not chunk: continue
                         try:
                             data = json.loads(chunk)
                             chunk_type = data.get("type")
-                            
+
                             if chunk_type == "progress":
                                 msg = data.get("message", "")
                                 full_content += msg
-                                await emit_job_event(EventType.JOB_PROGRESS, {
-                                    "id": job_id,
-                                    "status": "generating",
-                                    "stream_chunk": msg,
-                                    "text": full_content,
-                                    "metadata_": {
-                                        "chat_id": workflow.get("chat_id"),
-                                        "story_id": workflow.get("story_id"),
-                                        "chapter_id": workflow.get("chapter_id"),
-                                        "type": workflow.get("type"),
-                                    }
-                                })
+                                # Throttle: emit at most once per LLM_PROGRESS_THROTTLE_SECONDS
+                                # (≈60fps). Suppressed deltas are still accumulated into
+                                # full_content and flushed on completion (lossless).
+                                now = time.monotonic()
+                                if now - last_progress_emit >= LLM_PROGRESS_THROTTLE_SECONDS:
+                                    last_progress_emit = now
+                                    await emit_job_event(EventType.JOB_PROGRESS, {
+                                        "id": job_id,
+                                        "status": "generating",
+                                        "stream_chunk": msg,
+                                        "text": full_content,
+                                        "metadata_": {
+                                            "chat_id": workflow.get("chat_id"),
+                                            "story_id": workflow.get("story_id"),
+                                            "chapter_id": workflow.get("chapter_id"),
+                                            "type": workflow.get("type"),
+                                        }
+                                    })
                             elif chunk_type == "completed":
+                                # Flush any tokens accumulated since the last throttled
+                                # emit so the streaming bubble ends with complete text.
+                                if full_content:
+                                    await emit_job_event(EventType.JOB_PROGRESS, {
+                                        "id": job_id,
+                                        "status": "generating",
+                                        "stream_chunk": "",
+                                        "text": full_content,
+                                        "metadata_": {
+                                            "chat_id": workflow.get("chat_id"),
+                                            "story_id": workflow.get("story_id"),
+                                            "chapter_id": workflow.get("chapter_id"),
+                                            "type": workflow.get("type"),
+                                        }
+                                    })
                                 outputs = data.get("outputs", [])
                                 first_output = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
                                 cancelled = (

@@ -270,3 +270,61 @@ class TestLoadBalancer:
         second = await lb.get_next_provider(required_models=required_models)
         assert second is not None
         assert call_count == 2
+
+    async def test_llm_routing_skips_provider_in_failure_streak(self, session: Session):
+        """An LLM provider in a failure streak must be skipped before strategy
+        selection, instead of blindly returning the first-priority provider (#3)."""
+        from services.load_balancer import LLM_FAILURE_STREAK_THRESHOLD
+
+        for pid, priority in (("llm-1", 1), ("llm-2", 2), ("llm-3", 3)):
+            session.add(Provider(
+                id=pid, type="modal", enabled=True, priority=priority,
+                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+            ))
+        session.commit()
+
+        lb = LoadBalancer(session, strategy="priority")
+
+        # No failures yet -> highest-priority LLM provider wins.
+        assert (await lb.get_next_provider(task_type="llm")).id == "llm-1"
+
+        # Push llm-1 into a failure streak; it must now be skipped.
+        for _ in range(LLM_FAILURE_STREAK_THRESHOLD):
+            await lb.report_failure("llm-1")
+        assert (await lb.get_next_provider(task_type="llm")).id == "llm-2"
+
+        # A successful run resets the streak.
+        await lb.report_success("llm-1")
+        assert (await lb.get_next_provider(task_type="llm")).id == "llm-1"
+
+    async def test_llm_routing_falls_back_when_all_providers_failing(self, session: Session):
+        """If every LLM provider is in a failure streak, routing still returns a
+        provider (failover is handled upstream by job_runner) instead of None."""
+        from services.load_balancer import LLM_FAILURE_STREAK_THRESHOLD
+
+        for pid in ("llm-a", "llm-b"):
+            session.add(Provider(
+                id=pid, type="modal", enabled=True, priority=1,
+                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+            ))
+        session.commit()
+
+        lb = LoadBalancer(session, strategy="priority")
+        for pid in ("llm-a", "llm-b"):
+            for _ in range(LLM_FAILURE_STREAK_THRESHOLD):
+                await lb.report_failure(pid)
+
+        assert await lb.get_next_provider(task_type="llm") is not None
+
+    async def test_llm_routing_respects_excluded_providers(self, session: Session):
+        """LLM routing must still honor exclude_provider_ids (job-runner failover)."""
+        for pid, priority in (("llm-x", 1), ("llm-y", 2)):
+            session.add(Provider(
+                id=pid, type="modal", enabled=True, priority=priority,
+                worker_type="llm", credentials={}, config={}, container_config={"port": 8000},
+            ))
+        session.commit()
+
+        lb = LoadBalancer(session, strategy="priority")
+        selected = await lb.get_next_provider(task_type="llm", exclude_provider_ids={"llm-x"})
+        assert selected is not None and selected.id == "llm-y"

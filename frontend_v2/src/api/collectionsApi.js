@@ -63,6 +63,19 @@ export async function importCollections(collections) {
     return api.post(`${API_BASE}/import`, { collections });
 }
 
+/**
+ * Move images from one collection to another (cross-workspace). Images are
+ * added to the destination (duplicates skipped) and removed from the source.
+ * The underlying files are never copied/deleted — only associations change.
+ */
+export async function moveImagesBetweenCollections(fromCollectionId, toCollectionId, images) {
+    return api.post(`${API_BASE}/move`, {
+        from_collection_id: fromCollectionId,
+        to_collection_id: toCollectionId,
+        images,
+    });
+}
+
 export default {
     listCollections,
     getCollection,
@@ -71,5 +84,6 @@ export default {
     deleteCollection,
     addImagesToCollection,
     removeImagesFromCollection,
-    importCollections
+    importCollections,
+    moveImagesBetweenCollections,
 };

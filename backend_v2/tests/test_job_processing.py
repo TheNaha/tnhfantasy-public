@@ -443,3 +443,65 @@ async def test_finalize_tolerates_deleted_chat(session: Session, monkeypatch):
     assert completed, "JOB_COMPLETED must still be emitted when the chat was deleted"
     assert completed[0][1].get("type") == "chat_reply"
     assert completed[0][1].get("chat_id") == "00000000-0000-0000-0000-000000000000"
+
+
+@pytest.mark.asyncio
+async def test_finalize_successful_job_routes_by_task_type(session: Session, monkeypatch):
+    """finalize_successful_job must dispatch on job.task_type (issue #4) so that an
+    LLM job is never normalized through the image/text-file path."""
+    from services.job_processing import finalize_successful_job
+
+    llm_calls = []
+    image_calls = []
+
+    async def fake_finalize_llm(**kwargs):
+        llm_calls.append(kwargs)
+
+    async def fake_finalize_image(**kwargs):
+        image_calls.append(kwargs)
+
+    # build_text_outputs writes a .txt to disk + gallery-indexes it; it must NEVER
+    # be reached for LLM jobs (the assistant text stays in memory).
+    def _forbid_text_file(job, text, provider_id):
+        raise AssertionError("build_text_outputs must not run for LLM jobs")
+
+    monkeypatch.setattr("services.job_processing.build_text_outputs", _forbid_text_file)
+    monkeypatch.setattr("services.job_processing._finalize_llm_job", fake_finalize_llm)
+    monkeypatch.setattr("services.job_processing._finalize_image_job", fake_finalize_image)
+
+    job_service = JobService(session)
+    lb = SimpleNamespace(report_success=AsyncMock(), release_job=AsyncMock())
+
+    # --- LLM job ---
+    llm_job = await job_service.create_job(
+        workflow={"messages": [{"role": "user", "content": "hi"}], "type": "chat_reply"},
+        metadata={"chat_id": "00000000-0000-0000-0000-000000000000"},
+        task_type="llm",
+    )
+    await finalize_successful_job(
+        job=llm_job,
+        job_id=llm_job.id,
+        job_service=job_service,
+        load_balancer=lb,
+        provider_id="provider-1",
+        final_result={"type": "chat_reply", "outputs": [{"role": "assistant", "content": "hello"}]},
+        process_image_background_fn=AsyncMock(),
+    )
+    assert len(llm_calls) == 1, "_finalize_llm_job should be called once for an LLM job"
+    assert len(image_calls) == 0, "LLM job must not reach _finalize_image_job"
+    assert llm_calls[0]["outputs"] == [{"role": "assistant", "content": "hello"}]
+
+    # --- image job (outputs passthrough, no disk write via build_job_outputs) ---
+    image_calls.clear()
+    img_job = await job_service.create_job(workflow={"3": {"class_id": "node"}}, metadata={}, task_type="image")
+    await finalize_successful_job(
+        job=img_job,
+        job_id=img_job.id,
+        job_service=job_service,
+        load_balancer=lb,
+        provider_id="provider-1",
+        final_result={"outputs": [{"type": "image", "filename": "r.png", "relative_path": "r.png", "path": "/tmp/r.png"}]},
+        process_image_background_fn=AsyncMock(),
+    )
+    assert len(image_calls) == 1, "image job must reach _finalize_image_job"
+    assert len(llm_calls) == 1, "image job must not reach _finalize_llm_job"

@@ -9,10 +9,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 Element.prototype.scrollIntoView = vi.fn();
 
 const mockActiveChatId = vi.hoisted(() => vi.fn(() => 'chat-1'));
-const mockStreamingJobs = vi.hoisted(() => vi.fn(() => ({})));
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
-const mockUpdateStreamingJob = vi.hoisted(() => vi.fn());
-const mockClearStreamingJob = vi.hoisted(() => vi.fn());
 const mockSelectedLorebooks = vi.hoisted(() => vi.fn(() => []));
 const mockToggleLorebook = vi.hoisted(() => vi.fn());
 
@@ -20,14 +17,24 @@ vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
         sel({
             activeChatId: mockActiveChatId(),
-            streamingJobs: mockStreamingJobs(),
             setActiveChat: mockSetActiveChat,
-            updateStreamingJob: mockUpdateStreamingJob,
-            clearStreamingJob: mockClearStreamingJob,
             contextBuilder: { selectedLorebooks: [], systemPromptOverride: null, maxContextTokens: 4096 },
             selectedLorebooks: mockSelectedLorebooks(),
             toggleLorebook: mockToggleLorebook,
         }),
+}));
+
+// Streaming-job state now lives in React Query (useStreamingJobs). The mock
+// returns an empty active-stream list so ChatWorkspace renders the "no stream"
+// path; set/clear helpers are no-ops.
+const mockSetStreamingJob = vi.fn();
+const mockClearStreamingJob = vi.fn();
+const mockGetStreamingJob = vi.fn(() => undefined);
+vi.mock('../hooks/useStreamingJobs', () => ({
+    useActiveChatStreams: vi.fn(() => []),
+    setStreamingJob: (...args) => mockSetStreamingJob(...args),
+    clearStreamingJob: (...args) => mockClearStreamingJob(...args),
+    getStreamingJob: (...args) => mockGetStreamingJob(...args),
 }));
 
 const mockChats = vi.hoisted(() => vi.fn());

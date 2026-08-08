@@ -33,6 +33,7 @@ class CollectionCreate(BaseModel):
     color: str = "#3B82F6"
     description: str | None = None
     character_id: str | None = None
+    workspace: str | None = None  # Scope album: 'image' | 'chat' | 'story' (issue #5)
 
 
 class CollectionUpdate(BaseModel):
@@ -48,6 +49,13 @@ class AddImages(BaseModel):
 class CollectionBulkImport(BaseModel):
     """For migrating from localStorage."""
     collections: list[dict]  # { name, color, images: [filenames] }
+
+
+class CollectionMove(BaseModel):
+    """Move image filenames from one collection to another (cross-workspace)."""
+    from_collection_id: str
+    to_collection_id: str
+    images: list[str]  # List of image filenames to move
 
 
 # CRUD endpoints
@@ -101,6 +109,73 @@ def import_collections(data: CollectionBulkImport, session: Session = Depends(ge
     }
 
 
+@router.post("/move")
+def move_images_between_collections(
+    data: CollectionMove,
+    session: Session = Depends(get_session),
+    repo: CollectionRepository = Depends(get_collection_repo),
+):
+    """Move image filenames from one collection to another (cross-workspace).
+
+    Images are added to the destination collection (skipping duplicates) and
+    removed from the source collection in a single transaction. The actual PNG
+    files are never copied or deleted — only the collection_images associations
+    change (issue #5).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    source = repo.get_collection(data.from_collection_id)
+    if not source:
+        raise NotFoundError("Collection", data.from_collection_id)
+    destination = repo.get_collection(data.to_collection_id)
+    if not destination:
+        raise NotFoundError("Collection", data.to_collection_id)
+
+    if data.from_collection_id == data.to_collection_id:
+        return {"success": True, "moved": 0, "message": "source and destination are the same collection"}
+
+    # Only images that actually belong to the source are movable — moving a
+    # filename the source doesn't own is a no-op, never an add-to-destination.
+    src_images = {img.image_filename for img in repo.get_collection_images_by_filenames(source.id, data.images)}
+    movable = [fn for fn in data.images if fn in src_images]
+    if not movable:
+        return {
+            "success": True,
+            "moved": 0,
+            "added_to_destination": 0,
+            "removed_from_source": 0,
+        }
+
+    # Add to destination, skipping filenames already present there.
+    existing = repo.get_collection_images_by_filenames(destination.id, movable)
+    existing_filenames = {img.image_filename for img in existing}
+    new_links = [
+        CollectionImage(collection_id=destination.id, image_filename=filename)
+        for filename in movable
+        if filename not in existing_filenames
+    ]
+    repo.add_collection_images(new_links)
+
+    # Remove from source.
+    moved = repo.remove_collection_images(source.id, movable)
+
+    now = _dt.now(_tz.utc)
+    source.updated_at = now
+    if new_links:
+        destination.thumbnail = movable[0]
+    destination.updated_at = now
+    repo.update_collection(source)
+    repo.update_collection(destination)
+    session.commit()
+
+    return {
+        "success": True,
+        "moved": moved,
+        "added_to_destination": len(new_links),
+        "removed_from_source": moved,
+    }
+
+
 @router.get("/by-character/{character_id}")
 def get_character_collection(
     character_id: str,
@@ -119,6 +194,7 @@ def get_character_collection(
         "description": collection.description,
         "thumbnail": collection.thumbnail,
         "character_id": collection.character_id,
+        "workspace": collection.workspace,
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,
     }
@@ -149,6 +225,7 @@ def get_collection(
         "description": collection.description,
         "thumbnail": collection.thumbnail,
         "character_id": collection.character_id,
+        "workspace": collection.workspace,
         "created_at": collection.created_at,
         "updated_at": collection.updated_at,
     }
@@ -168,12 +245,13 @@ def create_collection(data: CollectionCreate, session: Session = Depends(get_ses
         name=data.name,
         color=data.color,
         description=data.description,
-        character_id=data.character_id
+        character_id=data.character_id,
+        workspace=data.workspace
     )
     repo.create_collection(collection)
     session.commit()
     session.refresh(collection)
-    
+
     return collection
 
 

@@ -47,21 +47,4 @@ export const useWorldVaultStore = create((set) => ({
       maxContextTokens: 4096,
     }
   })),
-
-  // Track streaming job outputs
-  streamingJobs: {}, // { [jobId]: { text: string, status: string, chatId: string, type: string } }
-  updateStreamingJob: (jobId, data) => set((state) => ({
-    streamingJobs: {
-      ...state.streamingJobs,
-      [jobId]: {
-        ...state.streamingJobs[jobId],
-        ...data
-      }
-    }
-  })),
-  clearStreamingJob: (jobId) => set((state) => {
-    const newJobs = { ...state.streamingJobs };
-    delete newJobs[jobId];
-    return { streamingJobs: newJobs };
-  })
 }));

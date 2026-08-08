@@ -55,6 +55,16 @@ _provider_health_cache = TTLCache(
     ttl=5.0
 )
 
+# LLM workers are always-running API endpoints (OpenAI-compat, Anthropic, Google,
+# Modal direct URLs) — NOT ComfyUI containers, so the HTTP /health + cold-start
+# path in the image branch does not apply to them. We still skip providers that
+# are in a failure streak before honouring the configured strategy, mirroring the
+# failure-aware selection already used by get_fallback_provider.
+LLM_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
+    os.getenv("COMFY_LLM_FAILURE_STREAK_THRESHOLD"),
+    3,
+)
+
 
 @dataclass
 class LoadBalancerRuntimeState:
@@ -362,24 +372,38 @@ class LoadBalancer:
         if not providers:
             return None
 
-        # LLM failover routing: priority-ordered selection with NO health probing
-        # and NO container cold-start. LLM workers are API endpoints (OpenAI-compat
-        # etc.), not ComfyUI containers, so the warm/cold machinery does not apply.
-        # Fallback to the next priority provider is handled by job_runner with a
-        # stagger delay between attempts.
+        # LLM failover routing: API-endpoint providers are always-running
+        # endpoints (not ComfyUI containers), so the container cold-start/health
+        # machinery below does not apply. We still skip providers in a failure
+        # streak and honour the configured strategy instead of blindly returning
+        # the first-priority provider (issue #3). Failover between providers is
+        # handled by job_runner with a stagger delay between attempts.
         if task_type == "llm":
+            eligible = [
+                p for p in providers
+                if p.id not in excluded
+                and self.runtime_state.provider_failures.get(p.id, 0) < LLM_FAILURE_STREAK_THRESHOLD
+            ]
+            if not eligible:
+                # Every non-excluded provider is in a failure streak — fall back
+                # to all of them so failover still progresses (stagger-retry in
+                # job_runner will report failure again if truly dead).
+                eligible = [p for p in providers if p.id not in excluded]
+            if not eligible:
+                return None
+
+            # Honour an explicit user/provider override even if currently failing.
             if preferred_provider_id:
-                provider = self.repo.get(preferred_provider_id)
-                if provider and provider.enabled and provider.id not in excluded:
-                    await self._track_job(provider.id)
-                    return provider
-            ordered = sorted(providers, key=lambda p: (p.priority, p.id))
-            for provider in ordered:
-                if provider.id in excluded:
-                    continue
-                await self._track_job(provider.id)
-                return provider
-            return None
+                preferred = next((p for p in eligible if p.id == preferred_provider_id), None)
+                if preferred:
+                    selected_provider = preferred
+                else:
+                    selected_provider = await self._select_by_strategy(eligible)
+            else:
+                selected_provider = await self._select_by_strategy(eligible)
+
+            await self._track_job(selected_provider.id)
+            return selected_provider
         
         # Filter by model availability if required
         if required_models:
