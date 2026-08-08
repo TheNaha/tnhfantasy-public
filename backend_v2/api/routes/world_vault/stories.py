@@ -57,7 +57,7 @@ def update_story(story_id: str, story_update: Story, session: Session = Depends(
     
     update_data = story_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
-        if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model']:
+        if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model', 'memory', 'scenario_id']:
             setattr(story, key, value)
             
     story.updated_at = datetime.now(timezone.utc)

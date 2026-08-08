@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X, Clock, MapPin, PenTool, Calendar, Tag } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
@@ -391,6 +391,33 @@ export default function StorySandbox() {
         }, 150);
         return () => clearTimeout(timer);
     }, [editorContent]);
+
+    // Auto-save chapter content — debounced (2s after last keystroke) so we
+    // don't hammer the API. Skipped while streaming (the server pushes the
+    // updated content via WebSocket and refetches).
+    const autoSaveTimerRef = useRef(null);
+    useEffect(() => {
+        if (!activeChapterId || isStreaming) return;
+        if (editorContent === (activeChapter?.content || '') && !isDirtyRef.current) return;
+        if (activeChapterId !== loadedChapterIdRef.current) return;
+
+        const currentContent = editorContent;
+        autoSaveTimerRef.current = setTimeout(() => {
+            if (
+                activeChapterId &&
+                !isStreamingRef.current &&
+                currentContent === editorContent
+            ) {
+                updateChapter.mutate({
+                    storyId: activeStoryId,
+                    chapterId: activeChapterId,
+                    content: currentContent,
+                });
+                isDirtyRef.current = false;
+            }
+        }, 2000);
+        return () => clearTimeout(autoSaveTimerRef.current);
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;
@@ -951,13 +978,75 @@ export default function StorySandbox() {
                                 </div>
                             </div>
                             <div className="glass-panel p-4 rounded-xl border border-white/5">
-                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Story Info</h4>
-                                <div className="space-y-2 text-xs text-gray-500">
+                                <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <Book size={14} /> Story Info
+                                </h4>
+                                <div className="space-y-3 text-xs text-gray-400">
                                     <p>Chapters: {chapters?.length || 0}</p>
-                                    <p>Genre: {activeStory?.genre || 'Not set'}</p>
                                     <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
-                                    {activeStory?.description && <p className="italic mt-2">{activeStory.description}</p>}
+                                    {activeStory?.created_at && (
+                                        <p className="flex items-center gap-1">
+                                            <Calendar size={10} className="text-gray-600" />
+                                            Created: {new Date(activeStory.created_at).toLocaleDateString()}
+                                        </p>
+                                    )}
                                 </div>
+                            </div>
+
+                            {/* Genre */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <Tag size={12} className="text-purple-400" /> Genre
+                                </label>
+                                <input
+                                    type="text"
+                                    value={activeStory?.genre || ''}
+                                    onChange={(e) => {
+                                        if (activeStoryId) {
+                                            updateStory.mutate({ id: activeStoryId, genre: e.target.value.trim() || null });
+                                        }
+                                    }}
+                                    placeholder="e.g. Fantasy, Cyberpunk, Horror"
+                                    className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
+                                />
+                                <p className="text-[10px] text-gray-500 mt-1">Steer story continuation tone/style.</p>
+                            </div>
+
+                            {/* Description */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                                    Description
+                                </label>
+                                <textarea
+                                    value={activeStory?.description || ''}
+                                    onChange={(e) => {
+                                        if (activeStoryId) {
+                                            updateStory.mutate({ id: activeStoryId, description: e.target.value.trim() || null });
+                                        }
+                                    }}
+                                    placeholder="A brief description of this story world..."
+                                    rows={3}
+                                    className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 resize-none"
+                                />
+                            </div>
+
+                            {/* Memory / Author's Note */}
+                            <div className="glass-panel p-4 rounded-xl border border-white/5">
+                                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <PenTool size={12} className="text-amber-400" /> Memory (Author's Note)
+                                </label>
+                                <textarea
+                                    value={activeStory?.memory || ''}
+                                    onChange={(e) => {
+                                        if (activeStoryId) {
+                                            updateStory.mutate({ id: activeStoryId, memory: e.target.value.trim() || null });
+                                        }
+                                    }}
+                                    placeholder="Persistent facts the AI should always remember (e.g. the protagonist is cursed to turn to stone at midnight)..."
+                                    rows={3}
+                                    className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50 resize-none"
+                                />
+                                <p className="text-[10px] text-gray-500 mt-1">Injected into every story continuation prompt.</p>
                             </div>
                         </div>
                     </motion.div>

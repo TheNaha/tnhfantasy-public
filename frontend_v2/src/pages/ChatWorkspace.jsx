@@ -895,6 +895,7 @@ export default function ChatWorkspace() {
     const [renameValue, setRenameValue] = useState('');
     const hasCreatedChatRef = useRef(false);
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
+    const [sceneJobId, setSceneJobId] = useState(null);
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
@@ -1143,6 +1144,12 @@ export default function ChatWorkspace() {
                     toast.success('Image generated!', { icon: '🖼️' });
                 }
             }
+
+            // Clear scene generation state when the scene job completes
+            if (eventId === sceneJobId) {
+                setSceneJobId(null);
+                setIsGeneratingScene(false);
+            }
         });
 
         const unsubError = subscribe(EventTypes.JOB_FAILED, (event) => {
@@ -1158,6 +1165,12 @@ export default function ChatWorkspace() {
 
             if (eventChatId === activeChatId) {
                 toast.error('AI response failed. Please try again.');
+            }
+
+            // Clear scene generation state when the scene job fails
+            if (eventId === sceneJobId) {
+                setSceneJobId(null);
+                setIsGeneratingScene(false);
             }
         });
 
@@ -1354,11 +1367,11 @@ export default function ChatWorkspace() {
         try {
             const data = await api.post(`/api/v2/chats/${activeChatId}/scene`, {});
             if (data.job_id) {
+                setSceneJobId(data.job_id);
                 updateStreamingJob(data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
             }
         } catch {
             toast.error('Failed to generate scene');
-        } finally {
             setIsGeneratingScene(false);
         }
     };
@@ -2431,14 +2444,38 @@ export default function ChatWorkspace() {
                             <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
                                 <ImageIcon size={12} /> Scenes
                             </h4>
-                            <span className="text-[10px] text-gray-600">
-                                {chatCollection?.image_count || 0} image{(chatCollection?.image_count || 0) !== 1 ? 's' : ''}
-                            </span>
+                            {(() => {
+                                const sceneStream = Object.values(useWorldVaultStore.getState().streamingJobs).find(
+                                    (j) => j.chatId === activeChatId && (j.type === 'image' || j.taskType === 'image')
+                                );
+                                return sceneStream ? (
+                                    <span className="text-[10px] text-green-400 flex items-center gap-1">
+                                        <Loader2 size={10} className="animate-spin" />
+                                        {Math.round(sceneStream.progress ?? 0)}%
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] text-gray-600">
+                                        {chatCollection?.image_count || 0} image{(chatCollection?.image_count || 0) !== 1 ? 's' : ''}
+                                    </span>
+                                );
+                            })()}
                         </div>
+                        {sceneJobId && (
+                            <div className="mb-2">
+                                <div className="flex items-center gap-2 text-[10px] text-purple-400 mb-1">
+                                    <Loader2 size={12} className="animate-spin" />
+                                    Generating scene image...
+                                </div>
+                                <div className="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
+                                    <div className="h-full bg-gradient-to-r from-purple-500 to-indigo-400 rounded-full transition-all animate-pulse" style={{ width: '60%' }} />
+                                </div>
+                            </div>
+                        )}
                         {activeChat?.character_id ? (
                             <button
                                 onClick={() => setShowScenesModal(true)}
-                                className="w-full mt-3 py-2 text-xs font-medium bg-gray-800/50 hover:bg-gray-800 border border-white/5 hover:border-white/10 rounded-lg transition-colors text-gray-300"
+                                disabled={!!sceneJobId}
+                                className="w-full mt-3 py-2 text-xs font-medium bg-gray-800/50 hover:bg-gray-800 border border-white/5 hover:border-white/10 rounded-lg transition-colors text-gray-300 disabled:opacity-50"
                             >
                                 View Scenes Gallery
                             </button>
