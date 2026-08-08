@@ -61,9 +61,12 @@ class CollectionMove(BaseModel):
 # CRUD endpoints
 
 @router.get("")
-def list_collections(repo: CollectionRepository = Depends(get_collection_repo)):
-    """List all collections with image counts."""
-    return {"collections": repo.list_collections_with_counts()}
+def list_collections(
+    workspace: str | None = None,
+    repo: CollectionRepository = Depends(get_collection_repo)
+):
+    """List all collections with image counts, optionally filtered by workspace."""
+    return {"collections": repo.list_collections_with_counts(workspace=workspace)}
 
 
 @router.post("/import")

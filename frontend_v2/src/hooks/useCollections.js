@@ -36,12 +36,12 @@ async function migrateIfNeeded() {
     }
 }
 
-export function useCollections() {
+export function useCollections(workspace = null) {
     return useQuery({
-        queryKey: ['collections'],
+        queryKey: ['collections', workspace],
         queryFn: async () => {
             await migrateIfNeeded();
-            const { collections } = await collectionsApi.listCollections();
+            const { collections } = await collectionsApi.listCollections(workspace);
             // Convert to collections map keyed by id to be compatible with older store design
             const collectionsMap = {};
             for (const col of collections) {
@@ -78,11 +78,12 @@ export function useCollectionImages(collectionId) {
 export function useCreateCollection() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async ({ name, color }) => {
-            return collectionsApi.createCollection({ name, color });
+        mutationFn: async ({ name, color, workspace }) => {
+            return collectionsApi.createCollection({ name, color, workspace });
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', null] });
         }
     });
 }
@@ -95,6 +96,7 @@ export function useDeleteCollection() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', null] });
         }
     });
 }
@@ -107,6 +109,7 @@ export function useRenameCollection() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', null] });
         }
     });
 }
@@ -119,6 +122,7 @@ export function useAddImagesToCollection() {
         },
         onSuccess: (_, { collectionId }) => {
             queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', null] });
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
         }
     });
@@ -132,6 +136,7 @@ export function useRemoveImagesFromCollection() {
         },
         onSuccess: (_, { collectionId }) => {
             queryClient.invalidateQueries({ queryKey: ['collections'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', null] });
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
         }
     });

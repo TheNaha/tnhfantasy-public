@@ -582,6 +582,23 @@ def _migration_add_collection_character_id(conn) -> bool:
     _verify_required_columns(conn, "collections", {"character_id"})
     return True
 
+def _migration_normalize_chat_type_defaults(conn) -> bool:
+    """Normalize chat_type values: migrate legacy 'roleplay' to 'chat'."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "chat_type" not in columns:
+        return False
+
+    result = conn.execute(text("UPDATE chats SET chat_type = 'chat' WHERE chat_type = 'roleplay'"))
+    updated = result.rowcount
+    if updated:
+        logger.info("chat_type_normalized", updated=updated)
+    return True
+
+
 def _migration_add_collection_workspace(conn) -> bool:
     """Add workspace column to collections so albums can be scoped to the
     image / chat / story workspaces (issue #5 cross-workspace move support)."""
@@ -1149,5 +1166,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="028_add_collection_workspace",
             description="Add workspace column to collections for cross-workspace image moves (issue #5)",
             apply_fn=_migration_add_collection_workspace,
+        ),
+        MigrationStep(
+            version="029_normalize_chat_type_defaults",
+            description="Normalize legacy chat_type values: migrate 'roleplay' to 'chat'",
+            apply_fn=_migration_normalize_chat_type_defaults,
         ),
     ]

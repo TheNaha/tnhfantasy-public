@@ -10,6 +10,7 @@ from core.entities import JobStatus
 from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
+from services.orchestrator_service import MAX_AGENTIC_DEPTH
 
 logger = get_logger("job_processing")
 
@@ -490,6 +491,12 @@ async def _finalize_llm_job(
             process_image_background_fn=None,
             event_extra={
                 "type": "story_illustrate_prompt",
+                "metadata": {
+                    "story_id": story_id,
+                    "chapter_id": chapter_id,
+                    "type": "story_illustrate_prompt",
+                    "source": "story_illustrate_prompt",
+                },
                 "story_id": story_id,
                 "chapter_id": chapter_id,
                 "prompt": generated_prompt,
@@ -537,7 +544,7 @@ async def _finalize_llm_job(
         # --- Agentic tool-call handling ---
         if is_chat_reply and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
-            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < 5:
+            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
                 # Decoupled DB checks; grant basic safe tool access by default.
                 allowed_tools = {"generate_image", "narrate_scene", "update_world_state"}
                 from services.orchestrator_service import process_tool_calls_and_chain

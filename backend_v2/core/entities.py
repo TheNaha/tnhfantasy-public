@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from sqlalchemy import JSON, Index
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Column, Field, SQLModel
+from sqlmodel import Column, Field, Relationship, SQLModel
 from pydantic import field_validator
 
 # JSON stored as JSONB on PostgreSQL (indexable/queryable), plain JSON elsewhere.
@@ -192,6 +192,9 @@ class Collection(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    character: Optional["Character"] = Relationship(back_populates="collections")
+    images: list["CollectionImage"] = Relationship(back_populates="collection")
+
 
 class CollectionImage(SQLModel, table=True):
     """Many-to-many relationship between collections and images."""
@@ -205,6 +208,8 @@ class CollectionImage(SQLModel, table=True):
     image_filename: str = Field(index=True)  # References output filename
     added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    collection: Optional["Collection"] = Relationship(back_populates="images")
+
 
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
@@ -213,8 +218,7 @@ from enum import Enum
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, BigInteger, Index, Text, UniqueConstraint
-from sqlmodel import Column, Field, Relationship, SQLModel
+from sqlalchemy import BigInteger, Text, UniqueConstraint
 
 
 class ModelType(str, Enum):
@@ -706,6 +710,8 @@ class Character(SQLModel, table=True):
     avatar_path: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    collections: list["Collection"] = Relationship(back_populates="character")
 
 class Chat(SQLModel, table=True):
     __tablename__ = "chats"

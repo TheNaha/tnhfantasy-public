@@ -13,19 +13,26 @@ export const useCharacters = () => {
     });
 };
 
-export const useChats = () => {
+export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
+    const params = {};
+    if (workspace) params.workspace = workspace;
+    if (limit) params.limit = limit;
+    if (offset) params.offset = offset;
     return useQuery({
-        queryKey: ['world_vault', 'chats'],
-        queryFn: () => api.get('/api/v2/chats')
+        queryKey: ['world_vault', 'chats', workspace, limit, offset],
+        queryFn: () => api.get('/api/v2/chats', { params })
     });
 };
 
-export const useMessages = (chatId) => {
+export const useMessages = (chatId, { limit = 100, offset = 0 } = {}) => {
     return useQuery({
-        queryKey: ['world_vault', 'messages', chatId],
+        queryKey: ['world_vault', 'messages', chatId, limit, offset],
         queryFn: () => {
             if (!chatId) return [];
-            return api.get(`/api/v2/chats/${chatId}/messages`);
+            const params = {};
+            if (limit) params.limit = limit;
+            if (offset) params.offset = offset;
+            return api.get(`/api/v2/chats/${chatId}/messages`, { params });
         },
         enabled: !!chatId
     });
@@ -171,8 +178,9 @@ export const useSendMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
-        onSuccess: () => {
+        onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         }
     });
 };

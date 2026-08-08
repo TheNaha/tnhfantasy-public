@@ -177,7 +177,7 @@ export default function StorySandbox() {
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
-    const { data: collectionsMap = {} } = useCollections();
+    const { data: collectionsMap = {} } = useCollections('story');
     const collectionsList = Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const createStory = useCreateStory();

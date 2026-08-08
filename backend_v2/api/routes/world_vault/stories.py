@@ -137,7 +137,9 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
 async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session)):
-    from services.job_service import JobService
+    from services.context_builder import build_chat_context_async
+    from services.job_queue import queue_manager
+    from services.llm_config import get_default_llm_model as _get_default_llm_model
 
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
@@ -152,72 +154,40 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         session.add(chapter)
         session.commit()
         session.refresh(chapter)
-        
-    messages = []
-    system_prompt = (
+    
+    # Build story context using the shared context builder so we get
+    # semantic lorebook injection, context pruning, and consistent formatting.
+    base_prompt = (
         "You are a collaborative AI storyteller. Your task is to continue the story naturally "
         "from the provided text. Maintain the tone and style. Do not include conversational filler "
         "(e.g. 'Sure, here is the continuation:'). Just output the next part of the prose."
     )
     
-    story = session.get(Story, story_id)
-    if story and story.genre:
-        system_prompt += f"\nThe genre is {story.genre}."
-        
-    if story and story.memory:
-        system_prompt += f"\n\nGlobal Story Memory (Author's Note):\n{story.memory}\n"
-        
-    if story and story.character_ids:
-        from core.entities import Character
-        characters_content = []
-        for char_id in story.character_ids:
-            char = session.get(Character, char_id)
-            if char:
-                char_text = f"Character: {char.name}\n"
-                if char.description:
-                    char_text += f"Description: {char.description}\n"
-                if char.personality:
-                    char_text += f"Personality: {char.personality}\n"
-                if char.scenario:
-                    char_text += f"Scenario: {char.scenario}\n"
-                characters_content.append(char_text)
-        if characters_content:
-            system_prompt += "\n\nStory Characters:\n" + "\n".join(characters_content)
-        
-    if story and story.lorebook_ids:
-        lorebooks_content = []
-        for lorebook_id in story.lorebook_ids:
-            lb = session.get(Lorebook, lorebook_id)
-            if lb:
-                entries = session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)).all()
-                if entries:
-                    lb_text = f"Lorebook: {lb.name}\n"
-                    for entry in entries:
-                        keys_str = ", ".join(entry.keys) if entry.keys else "General"
-                        lb_text += f"- [{keys_str}]: {entry.content}\n"
-                    lorebooks_content.append(lb_text)
-        
-        if lorebooks_content:
-            system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
-        
-    messages.append({"role": "system", "content": system_prompt})
+    system_prompt, context = await build_chat_context_async(
+        session,
+        [{"role": "user", "content": chapter.content.strip()}],
+        lorebook_ids=story.lorebook_ids or None,
+        system_prompt_override=base_prompt,
+        story_genre=story.genre,
+        story_memory=story.memory,
+        story_character_ids=story.character_ids or None,
+    )
     
-    user_context = "Here is the story so far. Please write the next few paragraphs to continue it:\n\n"
-    user_context += chapter.content.strip()
-    
-    messages.append({"role": "user", "content": user_context})
-        
+    from services.llm_workflow import build_llm_workflow
+
     job_service = JobService(session)
+    workflow, metadata = build_llm_workflow(
+        messages=context,
+        type_="story_continue",
+        story_id=story_id,
+        chapter_id=chapter_id,
+        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        workspace="story",
+    )
     job = await job_service.create_job(
         task_type="llm",
-        workflow={
-            "messages": messages,
-            "story_id": story_id,
-            "chapter_id": chapter_id,
-            "type": "story_continue",
-            "model": (story.llm_model if story else None) or _get_default_llm_model(),
-        },
-        metadata={"story_id": story_id, "chapter_id": chapter_id, "workspace": "story"}
+        workflow=workflow,
+        metadata=metadata,
     )
     
     await queue_manager.enqueue(job.id, task_type="llm")

@@ -30,7 +30,7 @@ class UpdateChatRequest(BaseModel):
 class CreateChatRequest(BaseModel):
     name: str = "New Chat"
     character_id: str | None = None
-    chat_type: str = "roleplay"
+    chat_type: str = "chat"
     persona_name: str | None = None
     override_greeting: str | None = None
     story_time: str | None = None
@@ -50,8 +50,16 @@ class SendMessageRequest(BaseModel):
 
 
 @router.get("", response_model=list[Chat])
-def list_chats(session: Session = Depends(get_session)):
-    return session.exec(select(Chat).order_by(Chat.updated_at.desc())).all()
+def list_chats(
+    session: Session = Depends(get_session),
+    limit: int = 50,
+    offset: int = 0,
+    workspace: str | None = None,
+):
+    stmt = select(Chat).order_by(Chat.updated_at.desc()).offset(offset).limit(limit)
+    if workspace:
+        stmt = stmt.where(Chat.chat_type == workspace)
+    return session.exec(stmt).all()
 
 @router.post("", response_model=Chat)
 async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
@@ -150,16 +158,18 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, session: Session = Depends(get_session)):
-    return session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+def list_messages(chat_id: str, session: Session = Depends(get_session), limit: int = 100, offset: int = 0):
+    return session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).offset(offset).limit(limit)
+    ).all()
 
 
 @router.get("/{chat_id}/system-prompt")
-def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
+async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
     """Return the assembled system prompt (with per-section breakdown) for this chat."""
     from services.context_builder import (
-        build_chat_context,
-        build_system_prompt_sections,
+        build_chat_context_async,
+        build_system_prompt_sections_async,
         estimate_tokens,
     )
 
@@ -175,7 +185,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
     if chat.character_id:
         character = session.get(Character, chat.character_id)
 
-    sections = build_system_prompt_sections(
+    sections = await build_system_prompt_sections_async(
         session,
         character=character,
         lorebook_ids=chat.active_lorebook_ids or None,
@@ -187,7 +197,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         append_system_prompt=chat.append_system_prompt,
     )
 
-    system_prompt, context = build_chat_context(
+    system_prompt, context = await build_chat_context_async(
         session,
         past_messages,
         character=character,
@@ -197,7 +207,7 @@ def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)
         story_location=chat.story_location,
         system_prompt_override=chat.system_prompt_override,
         append_system_prompt=chat.append_system_prompt,
-            persona_description=getattr(chat, "persona_description", None),
+        persona_description=getattr(chat, "persona_description", None),
     )
 
     return {
@@ -338,45 +348,47 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             job_service = get_job_service(session)
 
             if request.narrate:
+                if not chat.allow_narration:
+                    raise HTTPException(status_code=400, detail="Narration is disabled for this chat")
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
+                from services.llm_workflow import build_llm_workflow
 
                 narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
-                workflow: dict = {
-                    "messages": [
+                workflow, metadata = build_llm_workflow(
+                    messages=[
                         {"role": "system", "content": narrator_prompt},
                         *context,
                         {"role": "user", "content": f"[Narration request] {message.content}"},
                     ],
-                    "chat_id": chat_id,
-                    "character_system_prompt": system_prompt or None,
-                    "type": "narrator",
-                    "model": chat.llm_model or _get_default_llm_model(),
-                }
-                metadata: dict = {
-                    "chat_id": chat_id,
-                    "character_id": chat.character_id,
-                    "workspace": "roleplay",
-                    "source": "narrator",
-                }
+                    type_="narrator",
+                    chat_id=chat_id,
+                    character_id=chat.character_id,
+                    character_system_prompt=system_prompt or None,
+                    model=chat.llm_model or _get_default_llm_model(),
+                    source="narrator",
+                )
             else:
-                workflow: dict = {
-                    "messages": context,
-                    "chat_id": chat_id,
-                    "character_system_prompt": system_prompt or None,
-                    "type": "chat_reply",
-                    "model": chat.llm_model or _get_default_llm_model(),
-                }
-                metadata: dict = {
-                    "chat_id": chat_id,
-                    "character_id": chat.character_id,
-                    "workspace": "roleplay",
-                }
+                from services.llm_workflow import build_llm_workflow
+
+                workflow, metadata = build_llm_workflow(
+                    messages=context,
+                    type_="chat_reply",
+                    chat_id=chat_id,
+                    character_id=chat.character_id,
+                    character_system_prompt=system_prompt or None,
+                    model=chat.llm_model or _get_default_llm_model(),
+                )
 
                 if request.agentic:
                     from services.orchestrator_service import AGENTIC_TOOLS
-                    workflow["tools"] = AGENTIC_TOOLS
+                    allowed_tools = set(AGENTIC_TOOLS)
+                    if not chat.allow_image_generation:
+                        allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "generate_image"}
+                    if not chat.allow_narration:
+                        allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "narrate_scene"}
+                    workflow["tools"] = list(allowed_tools)
                     metadata["agentic"] = True
                     metadata["orchestrator_depth"] = 0
                     metadata["original_messages"] = context
@@ -384,15 +396,15 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 if request.generator_checkpoint:
                     metadata["generator_checkpoint"] = request.generator_checkpoint
 
-            job = await job_service.create_job(
-                task_type="llm",
-                workflow=workflow,
-                metadata=metadata,
-            )
-            
-            await queue_manager.enqueue(job.id, task_type="llm")
-            job_id = job.id
-            
+                job = await job_service.create_job(
+                    task_type="llm",
+                    workflow=workflow,
+                    metadata=metadata,
+                )
+                
+                await queue_manager.enqueue(job.id, task_type="llm")
+                job_id = job.id
+                
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
             
@@ -411,27 +423,29 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
 @router.get("/{chat_id}/jobs")
 def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
     """Recent jobs (LLM + image) assigned to this chat, newest first."""
+    from sqlalchemy import JSON
     from core.entities import Job, JobStatus
 
     chat = session.get(Chat, chat_id)
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    recent = session.exec(
+    jobs = session.exec(
         select(Job)
-        .where(Job.status.in_([JobStatus.PENDING, JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED,
-                               JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING,
-                               JobStatus.COMPLETED, JobStatus.FAILED]))
+        .where(
+            Job.status.in_([JobStatus.PENDING, JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED,
+                           JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING,
+                           JobStatus.COMPLETED, JobStatus.FAILED]),
+            Job.metadata_['chat_id'].as_string() == chat_id,
+        )
         .order_by(Job.created_at.desc())
-        .limit(300)
+        .limit(30)
     ).all()
 
     chat_jobs = []
-    for job in recent:
-        meta = job.metadata_ or {}
-        if meta.get("chat_id") != chat_id:
-            continue
+    for job in jobs:
         workflow = job.workflow or {}
+        meta = job.metadata_ or {}
         job_type = meta.get("type") or workflow.get("type") or meta.get("source") or job.task_type
         chat_jobs.append({
             "id": job.id,
@@ -449,7 +463,7 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
             "depth": meta.get("orchestrator_depth"),
             "parent_job_id": meta.get("parent_job_id"),
         })
-    return chat_jobs[:30]
+    return chat_jobs
 
 class EditMessageRequest(BaseModel):
     content: str
@@ -655,22 +669,25 @@ async def regenerate_reply(
         max_context_tokens=_resolve_context_tokens(chat),
     )
 
-    workflow: dict = {
-        "messages": context,
-        "chat_id": chat_id,
-        "character_system_prompt": system_prompt or None,
-        "type": "chat_reply",
-        "model": chat.llm_model or _get_default_llm_model(),
-    }
-    metadata: dict = {
-        "chat_id": chat_id,
-        "character_id": chat.character_id,
-        "workspace": "roleplay",
-        "regenerated": True,
-    }
+    from services.llm_workflow import build_llm_workflow
+
+    workflow, metadata = build_llm_workflow(
+        messages=context,
+        type_="chat_reply",
+        chat_id=chat_id,
+        character_id=chat.character_id,
+        character_system_prompt=system_prompt or None,
+        model=chat.llm_model or _get_default_llm_model(),
+        extra_metadata={"regenerated": True},
+    )
     if prev_agentic:
         from services.orchestrator_service import AGENTIC_TOOLS
-        workflow["tools"] = AGENTIC_TOOLS
+        allowed_tools = set(AGENTIC_TOOLS)
+        if not chat.allow_image_generation:
+            allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "generate_image"}
+        if not chat.allow_narration:
+            allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "narrate_scene"}
+        workflow["tools"] = list(allowed_tools)
         metadata["agentic"] = True
         metadata["orchestrator_depth"] = 0
         metadata["original_messages"] = context

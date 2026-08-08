@@ -10,15 +10,16 @@ class CollectionRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def list_collections_with_counts(self) -> list[dict[str, Any]]:
+    def list_collections_with_counts(self, workspace: str | None = None) -> list[dict[str, Any]]:
         query = text("""
             SELECT c.*, COUNT(ci.id) as image_count
             FROM collections c
             LEFT JOIN collection_images ci ON c.id = ci.collection_id
+            WHERE (:workspace IS NULL OR c.workspace = :workspace)
             GROUP BY c.id
             ORDER BY c.updated_at DESC
         """)
-        result = self.session.execute(query)
+        result = self.session.execute(query, {"workspace": workspace})
         collections = []
         for row in result:
             collections.append(dict(row._mapping))

@@ -7,8 +7,9 @@ const API_BASE = '/api/collections';
 /**
  * List all collections with image counts
  */
-export async function listCollections() {
-    return api.get(API_BASE);
+export async function listCollections(workspace = null) {
+    const params = workspace ? { workspace } : {};
+    return api.get(API_BASE, { params });
 }
 
 /**

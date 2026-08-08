@@ -344,25 +344,18 @@ async def _tool_narrate_scene(
         except Exception as _e:
             logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
 
-    workflow: dict[str, Any] = {
-        "messages": messages,
-        "chat_id": chat_id,
-        "character_system_prompt": character_system_prompt,
-        "type": "narrator",
-        "model": None,
-    }
-    if source_meta.get("model"):
-        workflow["model"] = source_meta.get("model")
+    from services.llm_workflow import build_llm_workflow
 
-    metadata: dict[str, Any] = {
-        "chat_id": chat_id,
-        "character_id": character_id,
-        "workspace": "roleplay",
-        "source": "narrator",
-        "type": "narrator",
-    }
-    if source_job_id:
-        metadata["parent_job_id"] = source_job_id
+    workflow, metadata = build_llm_workflow(
+        messages=messages,
+        type_="narrator",
+        chat_id=chat_id,
+        character_id=character_id,
+        character_system_prompt=character_system_prompt,
+        model=source_meta.get("model"),
+        source="narrator",
+        parent_job_id=source_job_id,
+    )
 
     submission = JobSubmissionService(session)
     try:

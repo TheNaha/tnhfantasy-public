@@ -190,6 +190,9 @@ def build_system_prompt_sections(
     append_system_prompt: str | None = None,
     include_roleplay_default: bool = True,
     _lorebook_query: str | None = None,
+    story_genre: str | None = None,
+    story_memory: str | None = None,
+    story_character_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -213,8 +216,10 @@ def build_system_prompt_sections(
 
     6. World-state (time / location).
 
+    7. Story-specific blocks (genre, memory, characters) when provided.
+
     Each section dict: {"key", "label", "content", "source"}
-    source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state"
+    source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state" | "story_genre" | "story_memory" | "story_characters"
     """
     sections: list[dict[str, Any]] = []
 
@@ -321,10 +326,18 @@ def build_system_prompt_sections(
             _svc = EmbeddingService()
             _TOP_K = 5  # max entries per lorebook when using semantic search
 
-            for lb_id in lorebook_ids:
-                lb_entries = session.exec(
-                    select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
+            all_lorebook_entries = []
+            if lorebook_ids:
+                all_lorebook_entries = session.exec(
+                    select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(lorebook_ids))
                 ).all()
+
+            entries_by_lorebook: dict[str, list[LorebookEntry]] = {}
+            for entry in all_lorebook_entries:
+                entries_by_lorebook.setdefault(entry.lorebook_id, []).append(entry)
+
+            for lb_id in lorebook_ids:
+                lb_entries = entries_by_lorebook.get(lb_id, [])
 
                 if not lb_entries:
                     continue
@@ -409,6 +422,43 @@ def build_system_prompt_sections(
             "source": "world_state",
         })
 
+    if story_genre:
+        sections.append({
+            "key": "story_genre",
+            "label": "Story genre",
+            "content": f"Genre: {story_genre}",
+            "source": "story_genre",
+        })
+
+    if story_memory:
+        sections.append({
+            "key": "story_memory",
+            "label": "Global story memory",
+            "content": f"[Author's Note / Global Memory]\n{story_memory}",
+            "source": "story_memory",
+        })
+
+    if story_character_ids:
+        characters_content = []
+        for char_id in story_character_ids:
+            char = session.get(Character, char_id)
+            if char:
+                char_text = f"Character: {char.name}\n"
+                if char.description:
+                    char_text += f"Description: {char.description}\n"
+                if char.personality:
+                    char_text += f"Personality: {char.personality}\n"
+                if char.scenario:
+                    char_text += f"Scenario: {char.scenario}\n"
+                characters_content.append(char_text)
+        if characters_content:
+            sections.append({
+                "key": "story_characters",
+                "label": f"Story characters ({len(characters_content)})",
+                "content": "\n\n".join(characters_content),
+                "source": "story_characters",
+            })
+
     return sections
 
 
@@ -425,6 +475,9 @@ def build_chat_context(
     story_location: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
+    story_genre: str | None = None,
+    story_memory: str | None = None,
+    story_character_ids: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -462,6 +515,9 @@ def build_chat_context(
         system_prompt_override=system_prompt_override,
         append_system_prompt=append_system_prompt,
         _lorebook_query=_lorebook_query or None,
+        story_genre=story_genre,
+        story_memory=story_memory,
+        story_character_ids=story_character_ids,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 
@@ -492,27 +548,34 @@ def build_chat_context(
 
     msg_list = []
     for msg in messages:
-        meta = getattr(msg, "message_metadata", None) or {}
-        if meta.get("source") == "world_state":
-            # World-state divider markers are UI-only — world state lives in the
-            # system prompt's [World State] section, so skip them in LLM context.
-            continue
-        if meta.get("pinned"):
-            # Pinned messages are always included; they are handled separately
-            # in prune_context so we still add them to the list here.
-            pass
-        if msg.role == MessageRole.USER:
-            role = "user"
-        elif msg.role == MessageRole.CHAR:
-            role = "assistant"
-        elif msg.role == MessageRole.SYSTEM:
-            # System-injected messages (tool results, narration) go as system role
-            role = "system"
+        if isinstance(msg, dict):
+            role = msg.get("role")
+            content = msg.get("content", "")
+            meta = msg.get("message_metadata", {})
         else:
-            # STORY role beats are internal narrative metadata — skip in LLM context
+            meta = getattr(msg, "message_metadata", None) or {}
+            if meta.get("source") == "world_state":
+                continue
+            if meta.get("pinned"):
+                pass
+            if msg.role == MessageRole.USER:
+                role = "user"
+            elif msg.role == MessageRole.CHAR:
+                role = "assistant"
+            elif msg.role == MessageRole.SYSTEM:
+                role = "system"
+            else:
+                continue
+            content = msg.content
+            is_pinned = bool(getattr(msg, "pinned", False) or meta.get("pinned"))
+            msg_list.append({"role": role, "content": content, "_pinned": is_pinned})
             continue
-        is_pinned = bool(getattr(msg, "pinned", False) or meta.get("pinned"))
-        msg_list.append({"role": role, "content": msg.content, "_pinned": is_pinned})
+
+        if meta.get("source") == "world_state":
+            continue
+        if role == "user" or role == "assistant" or role == "system":
+            is_pinned = bool(meta.get("pinned"))
+            msg_list.append({"role": role, "content": content, "_pinned": is_pinned})
 
     if system_prompt:
         all_msgs = [{"role": "system", "content": system_prompt}] + example_messages + msg_list

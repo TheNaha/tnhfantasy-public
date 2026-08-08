@@ -974,7 +974,7 @@ export default function ChatWorkspace() {
     const { data: systemPromptData } = useChatSystemPrompt(activeChatId);
     const { data: chatCollection } = useCharacterCollection(activeChat?.character_id);
     const { data: chatImages = [] } = useChatImages(activeChatId);
-    const { data: collectionsMap = {} } = useCollections();
+    const { data: collectionsMap = {} } = useCollections('chat');
     const collectionsList = useMemo(
         () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
         [collectionsMap]
