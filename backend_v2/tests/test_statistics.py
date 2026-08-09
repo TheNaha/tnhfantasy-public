@@ -1,9 +1,6 @@
 # Statistics API Tests
 from unittest.mock import patch
 
-from services.gallery_indexer import gallery_indexer
-
-gallery_indexer.is_ready = True
 
 class TestStatisticsEndpoints:
     """Tests for the statistics API endpoints."""
@@ -26,7 +23,7 @@ class TestStatisticsEndpoints:
         assert "images_by_date" in data
         assert "popular_settings" in data
 
-    @patch('api.routes.statistics.gallery_indexer.get_all_files')
+    @patch('api.routes.statistics._all_gallery_files')
     def test_get_statistics_empty_output(self, mock_get_all, client):
         """Statistics returns zeros when no output images exist."""
         mock_get_all.return_value = []
@@ -77,7 +74,7 @@ class TestStatisticsEndpoints:
         assert "loras_used" in data
         assert "avg_generation_time" in data
 
-    @patch('api.routes.statistics.gallery_indexer.get_all_files')
+    @patch('api.routes.statistics._all_gallery_files')
     def test_get_summary_empty_output(self, mock_get_all, client):
         """Summary returns zero counts when no images."""
         mock_get_all.return_value = []

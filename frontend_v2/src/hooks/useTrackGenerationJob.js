@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
-import { useTrackJob } from './useTrackJob';
+import { useJobStatus } from './useJobStatus';
 
 export function useTrackGenerationJob() {
     const navigate = useNavigate();
@@ -11,7 +11,7 @@ export function useTrackGenerationJob() {
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
     const [generating, setGenerating] = useState(false);
-    const { data: jobData } = useTrackJob(currentJobId);
+    const { data: jobData } = useJobStatus(currentJobId);
     const redirectTimerRef = useRef(null);
 
     useEffect(() => {

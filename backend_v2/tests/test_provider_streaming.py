@@ -194,9 +194,9 @@ async def test_call_image_provider_accepts_base64_completed_payload(monkeypatch)
     job_service = SimpleNamespace(update_job=AsyncMock())
     result = await call_image_provider(worker_url="http://worker", workflow={"nodes": {}}, job_id="job-modal",
                                   job_service=job_service, total_nodes=0, timeout=5.0, provider_id="provider-modal")
-    assert result["event"] == "completed"
-    assert result["outputs"][0]["filename"] == "image_0.png"
-    assert result["outputs"][0]["_base64_encoded"] is True
+    assert result["images"][0]["filename"] == "image_0.png"
+    assert result["images"][0]["_base64_encoded"] is True
+    assert result["outputs"] == []
 
 
 @pytest.mark.asyncio

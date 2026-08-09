@@ -83,23 +83,39 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
         artifacts = []
         for img in raw_images:
             if isinstance(img, dict):
-                artifacts.append({
+                artifact = {
                     "type": "image",
                     "data": img.get("data"),
                     "filename": img.get("filename"),
                     "subfolder": img.get("subfolder"),
                     "image_type": img.get("type"),
-                })
+                }
+                # Preserve the base64 marker so the backend knows it must decode
+                # and persist this artifact instead of treating it as an
+                # already-on-disk file (e.g. direct_url providers).
+                if img.get("_base64_encoded") or img.get("data"):
+                    artifact["_base64_encoded"] = True
+                artifacts.append(artifact)
         return TaskEvent(event="completed", job_id=job_id, outputs=artifacts)
 
     if status == "error":
-        return TaskEvent(event="failed", job_id=job_id, message=update.get("message") or "Image generation failed")
+        return TaskEvent(
+            event="failed",
+            job_id=job_id,
+            message=update.get("message") or "Image generation failed",
+            retryable=update.get("retryable"),
+        )
 
     if status == "cancelled":
         return TaskEvent(event="cancelled", job_id=job_id, message=update.get("message"))
 
     if status == "executing":
         return TaskEvent(event="node", job_id=job_id, node=update.get("node"))
+
+    # ComfyUI cache hits carry no progress; skip them rather than emitting a
+    # progress event with a None value (which would stall the backend reducer).
+    if status in ("execution_cached", "execution_interrupted", "execution_start"):
+        return None
 
     # queued / running / progress / starting / preparing -> progress fraction
     value = update.get("value")

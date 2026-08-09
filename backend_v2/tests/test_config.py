@@ -427,7 +427,7 @@ class TestConvenienceFunctions:
         assert y == 3
 
     def test_get_blurhash_resize_max(self):
-        assert get_blurhash_resize_max() == 400
+        assert get_blurhash_resize_max() == 64
 
     def test_get_thumbnail_format(self):
         assert get_thumbnail_format() == "webp"

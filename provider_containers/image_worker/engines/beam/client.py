@@ -114,10 +114,10 @@ class BeamProviderClient(BaseProviderClient):
                             except websockets.exceptions.ConnectionClosedOK:
                                 break
                             except websockets.exceptions.ConnectionClosedError as e:
-                                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Websocket connection closed with error: {str(e)}")).to_ndjson()
+                                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Websocket connection closed with error: {str(e)}"), retryable=True).to_ndjson()
                                 break
                             except websockets.exceptions.ConnectionClosed:
-                                yield TaskEvent(event="failed", job_id=job_id, message=str("Websocket connection closed unexpectedly")).to_ndjson()
+                                yield TaskEvent(event="failed", job_id=job_id, message=str("Websocket connection closed unexpectedly"), retryable=True).to_ndjson()
                                 break
                                 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
@@ -127,9 +127,9 @@ class BeamProviderClient(BaseProviderClient):
                                 message = message.decode('utf-8')
                             yield message + "\n"
             except asyncio.TimeoutError:
-                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {inference_timeout}s")).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {inference_timeout}s"), retryable=True).to_ndjson()
             except Exception as e:
-                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e))).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e)), retryable=True).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

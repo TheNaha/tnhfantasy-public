@@ -96,7 +96,7 @@ DEFAULT_CONFIG = {
         "embed_metadata_in_png": True,
         "blurhash_components_x": 4,
         "blurhash_components_y": 3,
-        "blurhash_resize_max": 400
+        "blurhash_resize_max": 64
     },
     "generator": {
         "default_checkpoint": "sd_xl_base_1.0.safetensors"

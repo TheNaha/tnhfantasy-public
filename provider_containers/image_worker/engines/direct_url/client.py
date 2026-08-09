@@ -71,7 +71,7 @@ class DirectUrlProviderClient(BaseProviderClient):
                     yield json.dumps(payload) + "\n"
             except Exception as e:
                 self.logger.exception("Inference failed")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e))).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e)), retryable=True).to_ndjson()
 
         return StreamingResponse(translate_task_events(stream(), job_id=job_id), media_type="application/x-ndjson")
 

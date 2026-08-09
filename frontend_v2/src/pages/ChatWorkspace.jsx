@@ -6,7 +6,7 @@ import {
     Plus, Loader2, Trash2, Edit3, Edit2, BookOpen, Check, Wand2,
     User, X, ChevronRight, ChevronLeft, RotateCcw, Clock, MapPin, Menu,
     Pencil, Undo2, Activity, Brain, Download, Pin, PinOff, Ghost,
-    MoreHorizontal
+    MoreHorizontal, Palette
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -19,7 +19,8 @@ import {
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
     useCharacterCollection, useEditMessage, useRollbackChat,
     useRegenerateReply, useChatJobs, usePatchCharacter,
-    useImpersonateMessage, usePinMessage, useSwipeMessage, useChatImages
+    useImpersonateMessage, usePinMessage, useSwipeMessage, useChatImages,
+    useIllustrateChat
 } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -420,6 +421,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
     const [draft, setDraft] = useState(msg.content);
 
     const meta = msg.message_metadata || {};
+    const isNarrator = msg.kind === 'narrator' || meta.source === 'narrator';
     const alternates = meta.alternates || null;
     const activeIndex = meta.active_index ?? 0;
     const altCount = alternates ? alternates.length : 0;
@@ -480,9 +482,14 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                 <div className={clsx("text-[10px] mb-1", msg.role === 'user' ? "text-gray-500 text-right" : "text-gray-400")}>
                     {msg.role === 'user'
                         ? (activeChat?.persona_name || 'You')
+                        : isNarrator
+                            ? '✦ Narrator'
                         : msg.role === 'system'
-                            ? (meta.source === 'narrator' ? '✦ Narrator' : '✦ System')
+                            ? '✦ System'
                         : (linkedCharacter?.name || 'AI')}
+                    {msg.kind === 'image' && msg.image_path && (
+                        <span className="ml-1.5 text-pink-400/80">· 🖼️ Image</span>
+                    )}
                 </div>
                 {editing ? (
                     <div className="flex flex-col gap-2">
@@ -503,7 +510,35 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     <>
                         {(msg.role === 'char' || msg.role === 'assistant') ? (
                             <div className="flex flex-col gap-1.5 w-full">
-                                <TavernMessage content={msg.content} />
+                                {msg.content && <TavernMessage content={msg.content} />}
+                                {msg.tool_calls?.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {msg.tool_calls.map((tc, idx) => {
+                                            const fn = tc.function || {};
+                                            let argsPreview = '';
+                                            try {
+                                                const args = typeof fn.arguments === 'string'
+                                                    ? JSON.parse(fn.arguments)
+                                                    : (fn.arguments || {});
+                                                argsPreview = Object.values(args)
+                                                    .filter(Boolean).map(String).join(' · ').slice(0, 80);
+                                            } catch {
+                                                argsPreview = '';
+                                            }
+                                            return (
+                                                <span
+                                                    key={tc.id || idx}
+                                                    title="Agentic tool call"
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-[10px] text-purple-300 font-mono"
+                                                >
+                                                    <Activity size={9} />
+                                                    {fn.name || 'tool'}
+                                                    {argsPreview ? `: ${argsPreview}` : ''}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                                 {msg.image_path && (
                                     <div className="mt-1">
                                         <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
@@ -542,7 +577,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 )}
                             </div>
                         ) : (
-                            <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", meta.source === 'narrator' ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
+                            <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", isNarrator ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
                                 <span className="whitespace-pre-wrap">{msg.content}</span>
                                 {msg.image_path && (
                                     <div className="mt-3">
@@ -1013,6 +1048,7 @@ export default function ChatWorkspace() {
     const impersonateMutation = useImpersonateMessage();
     const pinMessageMutation = usePinMessage();
     const swipeMessageMutation = useSwipeMessage();
+    const illustrateMutation = useIllustrateChat();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
@@ -1383,6 +1419,18 @@ export default function ChatWorkspace() {
         } catch {
             toast.error('Failed to generate scene');
             setIsGeneratingScene(false);
+        }
+    };
+
+    const handleIllustrate = async () => {
+        if (!activeChatId || illustrateMutation.isPending) return;
+        const prompt = message.trim();
+        try {
+            await illustrateMutation.mutateAsync({ chatId: activeChatId, imagePrompt: prompt });
+            if (prompt) setMessage('');
+            toast.success('Illustration queued...', { icon: '🖼️' });
+        } catch {
+            toast.error('Failed to start illustration');
         }
     };
 
@@ -2036,6 +2084,14 @@ export default function ChatWorkspace() {
                                                 {isGeneratingScene ? 'Generating...' : 'Generate scene'}
                                             </button>
                                             <button
+                                                onClick={() => { setShowMoreTools(false); handleIllustrate(); }}
+                                                disabled={illustrateMutation.isPending || !activeChatId}
+                                                className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm text-gray-200 disabled:opacity-50"
+                                            >
+                                                <Palette size={16} className="text-pink-400" />
+                                                {illustrateMutation.isPending ? 'Illustrating...' : 'Illustrate moment'}
+                                            </button>
+                                            <button
                                                 onClick={() => { setShowMoreTools(false); setAgenticMode(!agenticMode); }}
                                                 className={clsx("flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 rounded-xl transition-colors text-left text-sm", agenticMode ? "text-purple-400" : "text-gray-200")}
                                             >
@@ -2079,6 +2135,20 @@ export default function ChatWorkspace() {
                                     title="Generate Scene"
                                 >
                                     {isGeneratingScene ? <Loader2 size={18} className="animate-spin" /> : <ImageIcon size={18} />}
+                                </button>
+                                {/* Illustrate moment — direct image job from draft or last reply */}
+                                <button
+                                    onClick={handleIllustrate}
+                                    disabled={illustrateMutation.isPending || !activeChatId}
+                                    className={clsx(
+                                        "p-1.5 sm:p-2 transition-colors rounded-xl",
+                                        illustrateMutation.isPending
+                                            ? "text-pink-400 bg-pink-500/10 cursor-not-allowed"
+                                            : (activeChatId ? "text-gray-400 hover:text-pink-400 hover:bg-pink-500/10" : "text-gray-600 cursor-not-allowed")
+                                    )}
+                                    title="Illustrate moment — generates an image from your draft or the latest reply"
+                                >
+                                    {illustrateMutation.isPending ? <Loader2 size={18} className="animate-spin" /> : <Palette size={18} />}
                                 </button>
                                 {/* Agentic mode */}
                                 <button

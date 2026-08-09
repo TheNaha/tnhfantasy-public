@@ -960,6 +960,137 @@ def _migration_add_jobs_prompt_fts(conn) -> bool:
     return True
 
 
+def _migration_add_asset_generated_at(conn) -> bool:
+    """Add `generated_at` to assets for stable, content-accurate ordering.
+
+    `created_at` records when the row was upserted, which scrambles gallery
+    ordering for legacy files backfilled by move_existing_assets. `generated_at`
+    holds the true image creation time (from embedded PNG metadata or file
+    mtime) and becomes the ordering key for galleries and keyset pagination.
+    """
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("assets")}
+    if "generated_at" not in columns:
+        conn.execute(text("ALTER TABLE assets ADD COLUMN generated_at TIMESTAMP DEFAULT NULL"))
+        logger.info("migration_column_added", table="assets", column="generated_at")
+    _verify_required_columns(conn, "assets", {"generated_at"})
+    return True
+
+
+def _migration_backfill_message_kind(conn) -> bool:
+    """    Backfill `kind` for messages created before the kind column existed.
+
+    Migration 030 added the column but left legacy rows at kind=NULL. This
+    backfills by role so the UI can render narrator/image/tool kinds distinctly:
+    role=system → narrator, role=user → user, role=assistant/char → char.
+    World-state marker rows (role=system with metadata.source='world_state')
+    become kind='narrator' too, but the UI keys off the world_state source
+    first, so their rendering is unaffected.
+
+    NOTE: `role` is stored as a Postgres enum (`messagerole`) whose labels are
+    the enum NAMES (USER/CHAR/SYSTEM/STORY), while SQLite stores the lowercase
+    values. The literals below must match the dialect. 'assistant' was never a
+    valid enum label on Postgres, so it is only matched on SQLite (legacy rows).
+    """
+    inspector = inspect(conn)
+    if "messages" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("messages")}
+    if "kind" not in columns:
+        return False
+
+    is_postgres = conn.dialect.name == "postgresql"
+    if is_postgres:
+        roles = {"system": "SYSTEM", "user": "USER", "char": "CHAR"}
+    else:
+        roles = {"system": "system", "user": "user", "char": "char"}
+
+    result = conn.execute(
+        text("UPDATE messages SET kind = 'narrator' WHERE kind IS NULL AND role = :role").bindparams(
+            role=roles["system"]
+        )
+    )
+    if result.rowcount:
+        logger.info("migration_backfilled_kind", role="system", rows=result.rowcount)
+    result = conn.execute(
+        text("UPDATE messages SET kind = 'user' WHERE kind IS NULL AND role = :role").bindparams(
+            role=roles["user"]
+        )
+    )
+    if result.rowcount:
+        logger.info("migration_backfilled_kind", role="user", rows=result.rowcount)
+    if is_postgres:
+        result = conn.execute(
+            text("UPDATE messages SET kind = 'char' WHERE kind IS NULL AND role = :role").bindparams(
+                role=roles["char"]
+            )
+        )
+    else:
+        result = conn.execute(
+            text(
+                "UPDATE messages SET kind = 'char' "
+                "WHERE kind IS NULL AND role IN ('assistant', 'char')"
+            )
+        )
+    if result.rowcount:
+        logger.info("migration_backfilled_kind", role="char", rows=result.rowcount)
+    return True
+
+
+def _migration_add_asset_relative_path_unique(conn) -> bool:
+    """Add a unique constraint on assets.relative_path.
+
+    The asset reconciler upserts rows with Postgres ON CONFLICT (relative_path);
+    that requires a unique constraint or index on the column, which was missing
+    from the original create_all schema. Safe to re-run: checks for an existing
+    unique index first and creates a unique index (works on both Postgres and
+    SQLite, unlike ADD CONSTRAINT ... UNIQUE which needs a table rewrite on PG).
+    """
+    inspector = inspect(conn)
+    if "assets" not in inspector.get_table_names():
+        return False
+    existing = {
+        idx["name"]
+        for idx in inspector.get_indexes("assets")
+        if idx.get("unique")
+    } | {
+        cons["name"]
+        for cons in inspector.get_unique_constraints("assets")
+    }
+    if "uq_assets_relative_path" in existing:
+        logger.info("migration_asset_relative_path_unique_skipped", reason="already_exists")
+        return True
+    conn.execute(
+        text("CREATE UNIQUE INDEX IF NOT EXISTS uq_assets_relative_path ON assets (relative_path)")
+    )
+    logger.info("migration_asset_relative_path_unique_applied")
+    return True
+
+
+def _migration_normalize_message_kind_case(conn) -> bool:
+    """Normalize messages.kind to lowercase values.
+
+    `kind` is stored as VARCHAR. Rows written by the app before the column was
+    configured with `values_callable` stored the enum NAMES ('CHAR', 'IMAGE'),
+    while migration 032 backfilled lowercase VALUES. Consumers (context
+    builder, UI) compare lowercase, so uppercase rows render/treat as unknown.
+    """
+    inspector = inspect(conn)
+    if "messages" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("messages")}
+    if "kind" not in columns:
+        return False
+    result = conn.execute(
+        text("UPDATE messages SET kind = lower(kind) WHERE kind IS NOT NULL AND kind <> lower(kind)")
+    )
+    if result.rowcount:
+        logger.info("migration_normalized_message_kind_case", rows=result.rowcount)
+    return True
+
+
 def _migration_add_message_kind_and_tool_calls(conn) -> bool:
     """Add `kind` and `tool_calls` to messages.
 
@@ -1207,5 +1338,25 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="030_add_message_kind_and_tool_calls",
             description="Add kind/tool_calls to messages; backfill narrator rows",
             apply_fn=_migration_add_message_kind_and_tool_calls,
+        ),
+        MigrationStep(
+            version="031_add_asset_generated_at",
+            description="Add generated_at to assets for content-accurate gallery ordering",
+            apply_fn=_migration_add_asset_generated_at,
+        ),
+        MigrationStep(
+            version="032_backfill_message_kind",
+            description="Backfill messages.kind from role for pre-030 rows",
+            apply_fn=_migration_backfill_message_kind,
+        ),
+        MigrationStep(
+            version="033_add_asset_relative_path_unique",
+            description="Unique index on assets.relative_path for ON CONFLICT upserts",
+            apply_fn=_migration_add_asset_relative_path_unique,
+        ),
+        MigrationStep(
+            version="034_normalize_message_kind_case",
+            description="Lowercase any enum-NAME rows in messages.kind",
+            apply_fn=_migration_normalize_message_kind_case,
         ),
     ]

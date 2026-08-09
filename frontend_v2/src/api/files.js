@@ -84,4 +84,22 @@ export const filesApi = {
     batchMetadata: (paths) => api.post('/api/files/metadata/batch', { paths }),
 };
 
+/**
+ * Assets API (v2)
+ * DB-backed gallery listing with keyset pagination.
+ */
+export const assetsApi = {
+    list: (params = {}, options = {}) => {
+        const searchParams = new URLSearchParams();
+        if (params.limit) searchParams.append('limit', params.limit);
+        if (params.cursor) searchParams.append('cursor', params.cursor);
+        if (params.search) searchParams.append('search', params.search);
+        if (params.workspace) searchParams.append('workspace', params.workspace);
+        if (params.character_id) searchParams.append('character_id', params.character_id);
+        if (params.story_id) searchParams.append('story_id', params.story_id);
+        const query = searchParams.toString();
+        return api.get(`/api/v2/assets${query ? `?${query}` : ''}`, options);
+    },
+};
+
 export default filesApi;

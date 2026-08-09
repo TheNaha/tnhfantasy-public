@@ -7,13 +7,13 @@ from api.routes.statistics import _calculate_detailed_statistics, _calculate_sta
 
 
 class TestStatisticsOptimization:
-    """Tests for the optimized statistics logic using GalleryIndexer."""
+    """Tests for the optimized statistics logic using the assets database."""
 
-    @patch('api.routes.statistics.gallery_indexer')
-    def test_calculate_statistics_uses_indexer(self, mock_indexer):
-        """Verify _calculate_statistics uses gallery_indexer instead of glob."""
+    @patch('api.routes.statistics._all_gallery_files')
+    def test_calculate_statistics_uses_asset_db(self, mock_gallery_files):
+        """Verify _calculate_statistics uses the assets database."""
         # Setup mock return value
-        mock_indexer.get_all_files.return_value = [
+        mock_gallery_files.return_value = [
             {
                 "metadata": {
                     "metadata_version": "2.0",
@@ -34,7 +34,7 @@ class TestStatisticsOptimization:
         stats = _calculate_statistics()
 
         # Verify
-        mock_indexer.get_all_files.assert_called_once()
+        mock_gallery_files.assert_called_once()
 
         # Check stats correctness
         assert stats["total_images"] == 1
@@ -43,11 +43,11 @@ class TestStatisticsOptimization:
         assert stats["avg_generation_time"] == 5.0
         assert stats["popular_settings"]["steps"]["20"] == 1
 
-    @patch('api.routes.statistics.gallery_indexer')
-    def test_calculate_detailed_statistics_uses_indexer(self, mock_indexer):
-        """Verify _calculate_detailed_statistics uses gallery_indexer instead of glob."""
+    @patch('api.routes.statistics._all_gallery_files')
+    def test_calculate_detailed_statistics_uses_asset_db(self, mock_gallery_files):
+        """Verify _calculate_detailed_statistics uses the assets database."""
         # Setup mock return value
-        mock_indexer.get_all_files.return_value = [
+        mock_gallery_files.return_value = [
             {
                 "metadata": {
                     "metadata_version": "2.0",
@@ -69,7 +69,7 @@ class TestStatisticsOptimization:
         stats = _calculate_detailed_statistics()
 
         # Verify
-        mock_indexer.get_all_files.assert_called_once()
+        mock_gallery_files.assert_called_once()
 
         # Check stats correctness
         assert stats["total_images"] == 1

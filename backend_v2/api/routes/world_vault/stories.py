@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -28,6 +29,38 @@ class StoryBeatRequest(BaseModel):
 
 class StoryIllustrateRequest(BaseModel):
     image_prompt: str = ""
+
+
+class StoryBranchRequest(BaseModel):
+    from_beat_id: str
+    prompt: str = ""
+
+
+def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
+    """Assign stable ids to beats that predate branching support.
+
+    Beats are stored as JSON dicts; branching needs a per-beat id to fork
+    from. Legacy beats have none, so backfill them lazily (idempotent).
+
+    NOTE: MutableList does NOT track in-place mutation of its dict members,
+    so the list must be rebuilt (assignment) for the change to persist.
+    """
+    if not chapter.beats:
+        return
+    rebuilt = []
+    changed = False
+    for beat in chapter.beats:
+        if not isinstance(beat, dict) or beat.get("id"):
+            rebuilt.append(beat)
+            continue
+        rebuilt.append({**beat, "id": str(uuid4()), "parent_beat_id": None})
+        changed = True
+    if changed:
+        chapter.beats = rebuilt
+        session.add(chapter)
+        session.commit()
+        session.refresh(chapter)
+
 
 @router.get("", response_model=list[Story])
 def list_stories(session: Session = Depends(get_session)):
@@ -82,7 +115,10 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
 
 @router.get("/{story_id}/chapters", response_model=list[StoryChapter])
 def list_chapters(story_id: str, session: Session = Depends(get_session)):
-    return session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).all()
+    chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).all()
+    for ch in chapters:
+        _ensure_beat_ids(session, ch)
+    return chapters
 
 @router.post("/{story_id}/chapters", response_model=StoryChapter)
 def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depends(get_session)):
@@ -106,6 +142,7 @@ def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_s
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise HTTPException(status_code=404, detail="Chapter not found")
+    _ensure_beat_ids(session, chapter)
     return chapter
 
 @router.put("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)
@@ -149,7 +186,13 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         
     prompt = data.prompt
     if prompt:
-        chapter.beats.append({"role": StoryBeatRole.USER, "content": prompt})
+        _ensure_beat_ids(session, chapter)
+        chapter.beats.append({
+            "id": str(uuid4()),
+            "parent_beat_id": (chapter.beats[-1].get("id") if chapter.beats else None),
+            "role": StoryBeatRole.USER.value,
+            "content": prompt,
+        })
         chapter.content += f"\n\n> {prompt}\n\n"
         session.add(chapter)
         session.commit()
@@ -174,6 +217,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     )
     
     from services.llm_workflow import build_llm_workflow
+    from services.job_service import JobService
 
     job_service = JobService(session)
     workflow, metadata = build_llm_workflow(
@@ -201,8 +245,14 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
         
     content = data.content
     role = data.role
-    
-    chapter.beats.append({"role": role, "content": content})
+
+    _ensure_beat_ids(session, chapter)
+    chapter.beats.append({
+        "id": str(uuid4()),
+        "parent_beat_id": (chapter.beats[-1].get("id") if chapter.beats else None),
+        "role": role,
+        "content": content,
+    })
     if role == StoryBeatRole.USER.value:
         chapter.content += f"\n\n> {content}\n\n"
     else:
@@ -214,7 +264,69 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     session.refresh(chapter)
     return chapter
 
-@router.post("/{story_id}/chapters/{chapter_id}/illustrate")
+@router.post("/{story_id}/chapters/{chapter_id}/branch", response_model=StoryChapter)
+def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, session: Session = Depends(get_session)):
+    """Fork the story at a specific beat into a new chapter.
+
+    The new chapter keeps the shared history up to (and including) the
+    branch point, then continues from there. Content is rebuilt from beats
+    so the editor stays consistent with the beat list.
+    """
+    chapter = session.get(StoryChapter, chapter_id)
+    if not chapter or chapter.story_id != story_id:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+
+    _ensure_beat_ids(session, chapter)
+    beats = chapter.beats or []
+
+    idx = None
+    for i, beat in enumerate(beats):
+        if isinstance(beat, dict) and beat.get("id") == data.from_beat_id:
+            idx = i
+            break
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Beat not found")
+
+    prefix = [dict(b) for b in beats[: idx + 1]]
+
+    prompt = data.prompt.strip()
+    if prompt:
+        prefix.append({
+            "id": str(uuid4()),
+            "parent_beat_id": data.from_beat_id,
+            "role": StoryBeatRole.USER.value,
+            "content": prompt,
+        })
+
+    content_parts = []
+    for beat in prefix:
+        text = (beat.get("content") or "").strip()
+        if not text:
+            continue
+        if beat.get("role") == StoryBeatRole.USER.value:
+            content_parts.append(f"\n\n> {text}\n\n")
+        else:
+            content_parts.append(f"\n\n{text}\n\n")
+    new_content = "".join(content_parts).strip()
+
+    max_chapter = session.exec(
+        select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number.desc())
+    ).first()
+
+    now = datetime.now(timezone.utc)
+    branch = StoryChapter(
+        story_id=story_id,
+        chapter_number=(max_chapter.chapter_number + 1 if max_chapter else 1),
+        title=f"Branch from {chapter.title or f'Chapter {chapter.chapter_number}'}",
+        content=new_content,
+        beats=prefix,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(branch)
+    session.commit()
+    session.refresh(branch)
+    return branch
 async def illustrate_chapter(
     story_id: str,
     chapter_id: str,

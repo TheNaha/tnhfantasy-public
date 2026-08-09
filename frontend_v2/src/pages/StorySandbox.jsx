@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
-import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X, Clock, MapPin, PenTool, Calendar, Tag } from 'lucide-react';
+import { BookOpen, Sparkles, Image as ImageIcon, Save, Undo2, Play, Settings, Type, Plus, Loader2, Trash2, ChevronRight, Edit3, Book, Layers, Check, Columns, X, Clock, MapPin, PenTool, Calendar, Tag, GitBranch } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { api } from '../api';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -183,6 +183,7 @@ export default function StorySandbox() {
     const createStory = useCreateStory();
     const createChapter = useCreateChapter();
     const continueChapter = useContinueChapter();
+    const branchChapter = useBranchChapter();
     const addStoryBeat = useAddStoryBeat();
     const deleteStory = useDeleteStory();
     const deleteChapter = useDeleteChapter();
@@ -200,6 +201,8 @@ export default function StorySandbox() {
     const [isIllustrating, setIsIllustrating] = useState(false);
     const [showGallery, setShowGallery] = useState(false);
     const [isPreviewMode, setIsPreviewMode] = useState(false);
+    const [showBeatsPanel, setShowBeatsPanel] = useState(false);
+    const [branchingBeatId, setBranchingBeatId] = useState(null);
     const [mobileTab, setMobileTab] = useState('write'); // 'stories' | 'chapters' | 'write' | 'context'
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     // True once the user manually edits the editor — suppresses server-pushed
@@ -487,6 +490,31 @@ export default function StorySandbox() {
         }
     }, [beatInput, activeStoryId, activeChapterId, addStoryBeat, queryClient, editorContent]);
 
+    const handleBranchFromBeat = useCallback(async (beatId) => {
+        if (!activeStoryId || !activeChapterId || isStreaming || branchChapter.isPending) return;
+        const ok = await confirm({
+            title: 'Branch Story',
+            message: 'Fork the story from this beat into a new chapter? The original chapter is untouched.',
+            confirmText: 'Branch',
+        });
+        if (!ok) return;
+        setBranchingBeatId(beatId);
+        try {
+            const branch = await branchChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                fromBeatId: beatId,
+            });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            navigate(`/story/${activeStoryId}/chapter/${branch.id}`);
+            toast.success('Branch created');
+        } catch {
+            toast.error('Failed to create branch');
+        } finally {
+            setBranchingBeatId(null);
+        }
+    }, [activeStoryId, activeChapterId, isStreaming, branchChapter, confirm, queryClient, navigate]);
+
     const handleCreateStory = async (data) => {
         return createStory.mutateAsync(data);
     };
@@ -767,8 +795,69 @@ export default function StorySandbox() {
 
                                 {activeChapterId && (
                                     <div className="px-2 sm:px-4 lg:px-6 pb-16 md:pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
+                                        {showBeatsPanel && (
+                                            <div className="max-w-3xl mx-auto mb-3 max-h-56 overflow-y-auto custom-scrollbar rounded-xl border border-white/5 bg-gray-950/60 p-3 space-y-1.5">
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                                        <GitBranch size={11} /> Story Beats
+                                                    </h4>
+                                                    <button
+                                                        onClick={() => setShowBeatsPanel(false)}
+                                                        className="p-1 text-gray-500 hover:text-white hover:bg-white/10 rounded transition-colors"
+                                                        title="Close beats panel"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                </div>
+                                                {(activeChapter?.beats || []).length === 0 ? (
+                                                    <p className="text-xs text-gray-500 text-center py-2">No beats recorded yet. Use the beat input below or press Continue.</p>
+                                                ) : (
+                                                    (activeChapter?.beats || []).map((beat, idx) => {
+                                                        const beatId = beat?.id || null;
+                                                        const isUser = beat?.role === 'user';
+                                                        const snippet = (beat?.content || '').length > 140
+                                                            ? (beat?.content || '').slice(0, 140) + '…'
+                                                            : (beat?.content || '');
+                                                        return (
+                                                            <div key={beatId || idx} className="group flex items-start gap-2 rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-1.5">
+                                                                <span className={clsx(
+                                                                    "mt-0.5 shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded",
+                                                                    isUser ? "bg-blue-500/15 text-blue-300" : "bg-purple-500/15 text-purple-300"
+                                                                )}>
+                                                                    {isUser ? 'user' : (beat?.role || 'narrator')}
+                                                                </span>
+                                                                <p className="flex-1 text-xs text-gray-400 leading-relaxed min-w-0">{snippet || <span className="italic text-gray-600">(empty)</span>}</p>
+                                                                <button
+                                                                    onClick={() => handleBranchFromBeat(beatId)}
+                                                                    disabled={!beatId || isStreaming || branchChapter.isPending || branchingBeatId === beatId}
+                                                                    className="shrink-0 opacity-60 group-hover:opacity-100 disabled:opacity-20 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+                                                                    title="Branch the story from this beat into a new chapter"
+                                                                >
+                                                                    {branchingBeatId === beatId ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
+                                                                    Branch
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                        )}
                                         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
                                             <div className="grid grid-cols-2 sm:flex gap-2 shrink-0">
+                                                <button
+                                                    onClick={() => setShowBeatsPanel(!showBeatsPanel)}
+                                                    className={clsx(
+                                                        "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
+                                                        showBeatsPanel
+                                                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                                            : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                                                    )}
+                                                    title="Show story beats (fork points)"
+                                                >
+                                                    <GitBranch size={14} />
+                                                    <span className="hidden sm:inline">Beats</span>
+                                                    <span className="text-[10px] text-gray-500">({(activeChapter?.beats || []).length})</span>
+                                                </button>
                                                 <button
                                                     onClick={handleContinue}
                                                     disabled={isStreaming || continueChapter.isPending}

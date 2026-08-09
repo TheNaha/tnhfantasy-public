@@ -209,7 +209,7 @@ async def test_process_job_writes_sidecar_metadata_when_embedded_save_fails(sess
     monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
     monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
     monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: ".")
-    monkeypatch.setattr("infrastructure.image_processor.get_output_path", lambda base_dir: str(tmp_path))
+    monkeypatch.setattr("infrastructure.image_processor.get_output_path", lambda base_dir, subdir=None, workspace="main", **kwargs: str(tmp_path))
     monkeypatch.setattr(
         "infrastructure.image_processor.save_image_with_metadata",
         lambda image_obj, path, metadata_dict: (_ for _ in ()).throw(RuntimeError("pnginfo failed")),
@@ -295,6 +295,60 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
 
     updated_job = await _get_job_from_fresh_session(session, job.id)
     assert updated_job.status == JobStatus.FAILED
+
+    LoadBalancer.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_process_job_persists_base64_image_to_workspace_partition(session: Session, sample_workflow, monkeypatch, tmp_path):
+    """Base64 worker artifacts must be written to disk in the workspace-partitioned
+    directory (job.metadata_.workspace), not flat 'main' — roleplay/story images
+    would otherwise land in default_user/main."""
+    LoadBalancer.reset_state()
+    _add_provider(session, "provider-1", 1, {"port": 8000})
+
+    metadata = {"prompt": "hello", "seed": 42, "workspace": "roleplay"}
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow=sample_workflow, metadata=metadata)
+
+    image = Image.new("RGB", (8, 8), color=(0, 255, 0))
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    async def fake_call_image_provider(**kwargs):
+        return {
+            "images": [
+                {
+                    "filename": "result.png",
+                    "data": encoded,
+                    "_base64_encoded": True,
+                }
+            ]
+        }
+
+    async def fake_process_image_background(image_path, job_id):
+        return None
+
+    monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
+    monkeypatch.setattr("api.main._call_image_provider", fake_call_image_provider)
+    monkeypatch.setattr("services.job_runner.ProviderService.get_load_balancing_config", lambda self: SimpleNamespace(strategy="priority"))
+    monkeypatch.setattr("api.main._process_image_background", fake_process_image_background)
+    monkeypatch.setattr("services.job_processing.os.path.relpath", lambda target, base: str(tmp_path))
+    monkeypatch.setattr(
+        "infrastructure.image_processor.get_output_path",
+        lambda base_dir, subdir=None, workspace="main", **kwargs: (lambda p: (p.mkdir(parents=True, exist_ok=True), str(p))[1])(
+            tmp_path / (workspace or "main")
+        ),
+    )
+
+    await process_job(job.id)
+
+    output_path = tmp_path / "roleplay" / "result.png"
+    assert output_path.exists(), f"image must be written under the workspace partition: {output_path}"
+
+    updated_job = await _get_job_from_fresh_session(session, job.id)
+    assert updated_job.status == JobStatus.COMPLETED
 
     LoadBalancer.reset_state()
 

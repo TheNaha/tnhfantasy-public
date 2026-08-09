@@ -2,10 +2,6 @@
 import os
 from unittest.mock import patch
 
-from services.gallery_indexer import gallery_indexer
-
-gallery_indexer.is_ready = True
-
 class TestStatisticsExtended:
     """Extended tests for statistics API endpoints."""
 

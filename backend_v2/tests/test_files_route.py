@@ -57,9 +57,9 @@ class TestFilesRoute:
                 with pytest.raises(ValidationError):
                     get_safe_path(base, path)
 
-    @patch("services.gallery_indexer.gallery_indexer")
-    def test_list_files_output(self, mock_indexer, client):
-        mock_indexer.get_files.return_value = {
+    @patch("api.routes.files._query_gallery_files")
+    def test_list_files_output(self, mock_query_gallery_files, client):
+        mock_query_gallery_files.return_value = {
             "files": [{"name": "test.png"}],
             "total": 1
         }

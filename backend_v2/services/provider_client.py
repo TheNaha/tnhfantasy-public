@@ -196,7 +196,20 @@ class _ImageReducer:
                 validate_image_outputs(ev)
             except ValueError as error:
                 raise ProviderCallError(f"Invalid success payload: {error}", provider_id=self.provider_id, is_retryable=True) from error
-            self.final_result = ev
+            artifacts = ev.get("outputs") or []
+            # Split artifacts: base64 payloads must be decoded and written to disk
+            # by build_job_outputs (legacy ``images`` shape); already-persisted
+            # files (direct_url providers on a shared mount) pass through as
+            # ``outputs`` so they are never decoded from base64 again.
+            base64_images = [a for a in artifacts if isinstance(a, dict) and a.get("data")]
+            persisted_outputs = [a for a in artifacts if isinstance(a, dict) and not a.get("data")]
+            if base64_images:
+                for img in base64_images:
+                    img.setdefault("_base64_encoded", True)
+                    img.setdefault("subfolder", "")
+                self.final_result = {"images": base64_images, "outputs": persisted_outputs}
+            else:
+                self.final_result = ev
         elif event == "failed":
             raise ProviderCallError(ev.get("message", "Image generation failed"), provider_id=self.provider_id,
                                     is_retryable=bool(ev.get("retryable", False)))

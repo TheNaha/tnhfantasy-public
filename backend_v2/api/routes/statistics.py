@@ -16,7 +16,8 @@ from fastapi import APIRouter
 
 from api.deps import cache_stats, get_logger
 from config import settings
-from services.gallery_indexer import gallery_indexer
+from infrastructure.database import Session as DBSession, engine as db_engine
+from services.asset_reconciler import all_assets_as_file_data
 
 logger = get_logger("statistics_route")
 
@@ -24,6 +25,11 @@ router = APIRouter(prefix="/api/statistics", tags=["statistics"])
 
 # Output directory - will be configured via environment or settings
 OUTPUT_DIR = settings.output_dir
+
+
+def _all_gallery_files() -> list[dict[str, Any]]:
+    """DB-backed gallery snapshot for statistics (non-deleted assets only)."""
+    return all_assets_as_file_data(OUTPUT_DIR, lambda: DBSession(db_engine))
 
 
 def _calculate_statistics() -> dict[str, Any]:
@@ -52,9 +58,9 @@ def _calculate_statistics() -> dict[str, Any]:
     total_duration = 0
     duration_count = 0
     
-    # Use GalleryIndexer for fast in-memory access
+    # Pull all gallery files from the DB-backed assets index
     try:
-        all_files = gallery_indexer.get_all_files()
+        all_files = _all_gallery_files()
         
         for file_data in all_files:
             meta = file_data.get("metadata", {})
@@ -244,9 +250,9 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
         'this', 'will', 'have', 'been', 'more', 'when', 'into', 'some', 'than'
     }
     
-    # Use GalleryIndexer for fast in-memory access
+    # Pull all gallery files from the DB-backed assets index
     try:
-        all_files = gallery_indexer.get_all_files()
+        all_files = _all_gallery_files()
         
         now_ts = datetime.now().timestamp()
         cutoff_ts = 0
@@ -523,18 +529,10 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
     return detailed_stats
 
 
-from core.exceptions import ComfyError
-
-
 @router.get("")
 @cache_stats
 async def get_statistics():
-    """Generate comprehensive statistics from image metadata files."""
-    if not gallery_indexer.is_ready:
-        await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
-    if not gallery_indexer.is_ready:
-        raise ComfyError("Gallery indexer is still scanning files. Please wait.", code="SERVICE_UNAVAILABLE")
-        
+    """Generate comprehensive statistics from the DB-backed assets index."""
     return await asyncio.to_thread(_calculate_statistics)
 
 
@@ -545,11 +543,6 @@ async def get_detailed_statistics(timeRange: str = "all"):
     Extended statistics with data optimized for charts and visualizations.
     Provides timeline data, distributions, and advanced analytics.
     """
-    if not gallery_indexer.is_ready:
-        await asyncio.to_thread(gallery_indexer._ready_event.wait, 5.0)
-    if not gallery_indexer.is_ready:
-        raise ComfyError("Gallery indexer is still scanning files. Please wait.", code="SERVICE_UNAVAILABLE")
-        
     return await asyncio.to_thread(_calculate_detailed_statistics, timeRange)
 
 

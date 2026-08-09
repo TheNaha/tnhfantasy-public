@@ -5,7 +5,7 @@
 #   INPUT_DIR  – user-uploaded source images for Img2Img/Inpainting
 #
 # KEY ENDPOINTS:
-#   GET  /api/files                        – Paginated file listing (uses GalleryIndexer)
+#   GET  /api/files                        – Paginated file listing (DB-backed assets gallery)
 #   GET  /api/files/{filename}             – Serve a raw file (full resolution)
 #   GET  /api/thumbnail/{size}/{filename}  – Serve a pre-generated WebP thumbnail
 #   POST /api/files/upload                 – Upload a file to OUTPUT_DIR
@@ -319,15 +319,19 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
     direct = os.path.join(OUTPUT_DIR, rel)
     if os.path.exists(direct):
         return direct
-    with _sync_session() as session:
-        asset = session.exec(
-            select(Asset).where(Asset.relative_path == rel).where(Asset.deleted_at.is_(None))
-        ).first()
-        if not asset and "/" not in rel:
+    asset = None
+    try:
+        with _sync_session() as session:
             asset = session.exec(
-                select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
+                select(Asset).where(Asset.relative_path == rel).where(Asset.deleted_at.is_(None))
             ).first()
-        if asset:
+            if not asset and "/" not in rel:
+                asset = session.exec(
+                    select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
+                ).first()
+    except Exception:
+        asset = None
+    if asset:
             cand = os.path.join(OUTPUT_DIR, asset.relative_path)
             if os.path.exists(cand):
                 return cand
@@ -336,6 +340,73 @@ def _resolve_asset_path(rel_or_filename: str) -> str | None:
                 return leg
     leg = os.path.join(OUTPUT_DIR, os.path.basename(rel))
     return leg if os.path.exists(leg) else None
+
+
+def _query_gallery_files(
+    limit: int = 20,
+    offset: int = 0,
+    sort: str = "date_desc",
+    search: str | None = None,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+) -> dict:
+    """DB-backed gallery listing (replaces the in-memory GalleryIndexer).
+
+    Synchronous helper — callers MUST wrap in asyncio.to_thread. Ordering uses
+    `generated_at` (true image time) falling back to `created_at`. Sort options:
+    date_desc (default), date_asc, name_asc, name_desc.
+    """
+    from sqlalchemy import func
+
+    from services.asset_reconciler import _asset_as_file_data
+
+    order_col = func.coalesce(Asset.generated_at, Asset.created_at)
+    with _sync_session() as session:
+        q = select(Asset).where(Asset.deleted_at.is_(None))
+        if workspace:
+            q = q.where(Asset.workspace == workspace)
+        if character_id:
+            q = q.where(Asset.character_id == character_id)
+        if story_id:
+            q = q.where(Asset.story_id == story_id)
+        if search:
+            like = f"%{search}%"
+            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(str).ilike(like)))
+
+        if sort in ("name_asc", "name_desc"):
+            # Name sorts need the full filtered set to slice deterministically.
+            rows = session.exec(q.order_by(order_col.desc(), Asset.id.desc())).all()
+            total = len(rows)
+            rows = sorted(rows, key=lambda a: a.filename, reverse=(sort == "name_desc"))
+            page = rows[offset : offset + limit]
+            return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
+
+        order = order_col.asc() if sort == "date_asc" else order_col.desc()
+        rows = session.exec(q.order_by(order, Asset.id.asc() if sort == "date_asc" else Asset.id.desc())).all()
+        total = len(rows)
+        page = rows[offset : offset + limit]
+        return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
+
+
+def _soft_delete_assets(relative_or_filename: str) -> int:
+    """Mark matching asset rows deleted after their file is removed from disk."""
+    from datetime import datetime, timezone
+
+    rel = relative_or_filename.lstrip("/\\")
+    now = datetime.now(timezone.utc)
+    with _sync_session() as session:
+        q = select(Asset).where(Asset.deleted_at.is_(None)).where(Asset.relative_path == rel)
+        rows = session.exec(q).all()
+        if not rows and "/" not in rel:
+            rows = session.exec(
+                select(Asset).where(Asset.deleted_at.is_(None)).where(Asset.filename == rel)
+            ).all()
+        for a in rows:
+            a.deleted_at = now
+            session.add(a)
+        session.commit()
+        return len(rows)
 
 
 @router.get("/api/v2/assets")
@@ -347,9 +418,20 @@ async def list_assets(
     story_id: str | None = None,
     search: str | None = None,
 ):
-    """Keyset-paginated asset listing backed by the DB (replaces in-memory scan)."""
+    """Keyset-paginated asset listing backed by the DB (replaces in-memory scan).
+
+    Ordering uses `generated_at` (true image creation time) falling back to
+    `created_at`, so migrated legacy rows keep their timeline position. Items
+    carry both the legacy gallery shape (`name`/`preview`/`thumbnail`/metadata)
+    and the new id-based fields.
+    """
     from datetime import datetime
 
+    from sqlalchemy import func
+
+    from services.asset_reconciler import _asset_as_file_data
+
+    order_col = func.coalesce(Asset.generated_at, Asset.created_at)
     with _sync_session() as session:
         q = select(Asset).where(Asset.deleted_at.is_(None))
         if workspace:
@@ -364,20 +446,21 @@ async def list_assets(
         if cursor:
             try:
                 cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-                q = q.where(Asset.created_at < cur_dt)
+                q = q.where(order_col < cur_dt)
             except Exception:
                 pass
-        q = q.order_by(Asset.created_at.desc()).limit(limit + 1)
+        q = q.order_by(order_col.desc(), Asset.id.desc()).limit(limit + 1)
         rows = session.exec(q).all()
         has_more = len(rows) > limit
         page = rows[:limit]
         items = []
         for a in page:
-            items.append({
+            item = _asset_as_file_data(a, OUTPUT_DIR)
+            item.update({
                 "id": a.id,
                 "filename": a.filename,
                 "relative_path": a.relative_path,
-                "thumbnail": a.thumbnail_relative_path,
+                "thumbnail": f"/api/thumbnail/medium/{a.relative_path}",
                 "file_url": f"/api/v2/assets/{a.id}/file",
                 "thumb_url": f"/api/v2/assets/{a.id}/thumb" if a.thumbnail_relative_path else f"/api/v2/assets/{a.id}/file",
                 "workspace": a.workspace,
@@ -389,7 +472,9 @@ async def list_assets(
                 "created_at": a.created_at.isoformat() if a.created_at else None,
                 "metadata": a.metadata_ or {},
             })
-        next_cursor = page[-1].created_at.isoformat() if (has_more and page) else None
+            items.append(item)
+        order_ts = (page[-1].generated_at or page[-1].created_at) if page else None
+        next_cursor = order_ts.isoformat() if (has_more and order_ts) else None
         return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
 
@@ -463,11 +548,16 @@ async def list_files_endpoint(
     # Handle Local Output Files
     if directory == "output" or directory.startswith("output/"):
         try:
-            from services.gallery_indexer import gallery_indexer
             return await asyncio.to_thread(
-                gallery_indexer.get_files, limit=limit, offset=offset, sort=sort, search=search, workspace=workspace, character_id=character_id, story_id=story_id
+                _query_gallery_files,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                search=search,
+                workspace=workspace,
+                character_id=character_id,
+                story_id=story_id,
             )
-            
         except Exception as e:
             logger.warning("local_file_list_failed", error=str(e))
             return {"files": [], "total": 0}
@@ -704,8 +794,6 @@ async def serve_thumbnail(size: str, filename: str):
     import glob
     import hashlib
 
-    from services.gallery_indexer import gallery_indexer
-    
     if size not in ("medium",):
         raise ValidationError("Size must be 'medium'")
 
@@ -722,11 +810,38 @@ async def serve_thumbnail(size: str, filename: str):
     
     # Thumbnail directory (output/thumb)
     thumb_dir = os.path.join(OUTPUT_DIR, "thumb")
-    
-    # Optimization: Use gallery index to find original image, then infer thumbnail path
-    original_path = gallery_indexer.get_path(filename)
+
+    # Fast path: the DB assets index knows the exact thumbnail location
+    # (partitioned layout: {uid}/{ws}/thumb/YYYY/MM/DD/name.webp).
+    with _sync_session() as session:
+        rel = filename
+        asset = session.exec(
+            select(Asset).where(Asset.relative_path == rel).where(Asset.deleted_at.is_(None))
+        ).first()
+        if not asset and "/" not in rel:
+            asset = session.exec(
+                select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
+            ).first()
+        if asset and asset.thumbnail_relative_path:
+            indexed_thumb = os.path.join(OUTPUT_DIR, asset.thumbnail_relative_path)
+            if os.path.exists(indexed_thumb):
+                stat = os.stat(indexed_thumb)
+                etag = hashlib.md5(f"{indexed_thumb}:{stat.st_mtime}".encode()).hexdigest()[:16]
+                return FileResponse(
+                    indexed_thumb,
+                    media_type="image/webp",
+                    headers={
+                        "Cache-Control": "public, max-age=31536000, immutable",
+                        "ETag": f'"{etag}"',
+                        "Content-Disposition": f"inline; {encode_filename_for_header(os.path.basename(indexed_thumb))}"
+                    }
+                )
+
+    # Optimization: resolve original image via assets index, then infer the
+    # thumbnail path from the mirrored structure (legacy flat thumb layout).
+    original_path = _resolve_asset_path(filename)
     if not original_path:
-        original_path = gallery_indexer.get_path_by_filename(base_name)
+        original_path = _resolve_asset_path(base_name)
 
     if original_path:
         # Check if we have a thumbnail in the mirrored structure
@@ -1070,17 +1185,18 @@ async def delete_single_file(filename: str):
             if os.path.exists(meta_path):
                 os.remove(meta_path)
             _delete_thumbnails(local_path)
+            _soft_delete_assets(safe_filename)
             logger.info("delete_file_removed", path=local_path)
             return {"status": "success", "deleted": True}
 
-        from services.gallery_indexer import gallery_indexer
-        indexed_path = gallery_indexer.get_path(safe_filename)
+        indexed_path = _resolve_asset_path(safe_filename)
         if indexed_path and os.path.exists(indexed_path):
             os.remove(indexed_path)
             meta_path = f"{indexed_path}.json"
             if os.path.exists(meta_path):
                 os.remove(meta_path)
             _delete_thumbnails(indexed_path)
+            _soft_delete_assets(safe_filename)
             logger.info("delete_file_removed", path=indexed_path)
             return {"status": "success", "deleted": True}
 
@@ -1090,6 +1206,7 @@ async def delete_single_file(filename: str):
         if matches:
             os.remove(matches[0])
             _delete_thumbnails(matches[0])
+            _soft_delete_assets(safe_filename)
             logger.info("delete_file_removed", path=matches[0])
             return {"status": "success", "deleted": True}
 
@@ -1146,9 +1263,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                     continue
                 
                 if not os.path.exists(local_path):
-                    from services.gallery_indexer import gallery_indexer
-
-                    indexed_path = gallery_indexer.get_path(filename)
+                    indexed_path = _resolve_asset_path(filename)
                     if indexed_path and os.path.exists(indexed_path):
                         local_path = indexed_path
                     elif "/" in filename:
@@ -1175,6 +1290,7 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                             os.remove(meta_path)
                         
                         _delete_thumbnails(local_path)
+                        _soft_delete_assets(filename)
                         
                         success_count += 1
                     except Exception as e:
@@ -1260,7 +1376,6 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         Dict mapping paths to their metadata
     """
     from api.deps import read_image_metadata
-    from services.gallery_indexer import gallery_indexer
 
     def _process(paths: list[str]) -> dict:
         results = {}
@@ -1311,7 +1426,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
                 if os.path.exists(full_path):
                     results[path] = _get_metadata_result(full_path)
                 else:
-                    indexed_path = gallery_indexer.get_path(filename)
+                    indexed_path = _resolve_asset_path(filename)
                     if indexed_path and os.path.exists(indexed_path):
                         results[path] = _get_metadata_result(indexed_path)
                     else:
@@ -1325,7 +1440,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         if missing_files_map:
             unresolved = {}
             for path, filename in missing_files_map.items():
-                full_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
+                full_path = _resolve_asset_path(os.path.basename(filename))
                 if full_path and os.path.exists(full_path):
                     results[path] = _get_metadata_result(full_path)
                 else:

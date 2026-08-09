@@ -122,7 +122,8 @@ def build_job_outputs(job, images: list[dict[str, Any]], provider_id: str, durat
 
     outputs: list[dict[str, Any]] = []
     base_output_dir = settings.output_dir
-    final_output_dir = get_output_path(base_output_dir)
+    workspace = (job.metadata_ or {}).get("workspace", "main")
+    final_output_dir = get_output_path(base_output_dir, subdir="", workspace=workspace)
 
     # Calculate duration if not provided and job has timing info
     if duration_seconds is None:
@@ -138,12 +139,11 @@ def build_job_outputs(job, images: list[dict[str, Any]], provider_id: str, durat
         filename = img.get("filename", "output.png")
         subfolder = img.get("subfolder", "")
 
-        if img.get("_base64_encoded") and img.get("data"):
+        if img.get("data"):
             image_data = base64.b64decode(img["data"])
 
             if subfolder:
-                target_dir = os.path.join(base_output_dir, subfolder)
-                os.makedirs(target_dir, exist_ok=True)
+                target_dir = get_output_path(base_output_dir, subdir=subfolder, workspace=workspace)
             else:
                 target_dir = final_output_dir
 
@@ -315,6 +315,13 @@ async def wait_for_gallery_outputs(
     if not output_paths:
         return
 
+    # Workers may return relative paths (e.g. YYYY/MM/DD/name.png); resolve them
+    # against OUTPUT_DIR so the existence check actually matches on disk.
+    def _absolutize(p: str) -> str:
+        return p if os.path.isabs(p) else os.path.join(settings.output_dir, p)
+
+    output_paths = [_absolutize(p) for p in output_paths]
+
     for _ in range(attempts):
         if all(os.path.exists(p) for p in output_paths):
             return
@@ -366,7 +373,7 @@ async def finalize_persisted_job_outputs(
         raise
 
     async def complete_when_ready():
-        from services.gallery_indexer import gallery_indexer
+        reconcile_session = get_session_sync()
 
         try:
             for output in outputs:
@@ -388,8 +395,10 @@ async def finalize_persisted_job_outputs(
                 if path and output.get("type") == "image":
                     try:
                         from services.asset_reconciler import reconcile_asset
-                        await reconcile_asset(
-                            get_session_sync(),
+
+                        await asyncio.to_thread(
+                            reconcile_asset,
+                            reconcile_session,
                             path,
                             user_id="default_user",
                             workspace=(job.metadata_ or {}).get("workspace", "main"),
@@ -426,6 +435,7 @@ async def finalize_persisted_job_outputs(
             if load_balancer and provider_id:
                 await load_balancer.release_job(provider_id)
         finally:
+            reconcile_session.close()
             await _release_finalization(job_id)
 
     start_background_task(
@@ -759,7 +769,19 @@ async def finalize_successful_job(
         images = final_result.get("images", [])
         outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
     elif "outputs" in final_result:
-        outputs = final_result["outputs"]
+        # Already-persisted artifacts (e.g. direct_url providers on a shared
+        # mount) carry only filename/subfolder; resolve real paths so
+        # reconciliation and the disk-existence check work downstream.
+        outputs = []
+        for out in final_result.get("outputs", []) or []:
+            if not isinstance(out, dict):
+                continue
+            if out.get("path") is None and out.get("filename"):
+                sub = (out.get("subfolder") or "").strip("/")
+                rel = os.path.join(sub, out["filename"]) if sub else out["filename"]
+                rel = rel.replace("\\", "/")
+                out = {**out, "relative_path": rel, "path": os.path.join(settings.output_dir, rel)}
+            outputs.append(out)
     else:
         outputs = []
 

@@ -185,6 +185,17 @@ export const useSendMessage = () => {
     });
 };
 
+export const useIllustrateChat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, imagePrompt }) =>
+            api.post(`/api/v2/chats/${chatId}/illustrate`, { image_prompt: imagePrompt || '' }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
 export const useEditMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -395,6 +406,17 @@ export const useCreateChapter = () => {
 export const useContinueChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, prompt }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, { prompt: prompt || '' }),
+    });
+};
+
+export const useBranchChapter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, fromBeatId, prompt }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/branch`, { from_beat_id: fromBeatId, prompt: prompt || '' }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        }
     });
 };
 

@@ -74,7 +74,7 @@ export default function DashboardGalleryGrid({
                 type={
                     showFavorites ? 'favorites' :
                         activeCollection ? 'collection' :
-                            (filters.search || filters.model || filters.sampler || filters.aspect_ratio) ? 'search' :
+                            filters.search ? 'search' :
                                 'gallery'
                 }
                 onAction={onClearFilters}

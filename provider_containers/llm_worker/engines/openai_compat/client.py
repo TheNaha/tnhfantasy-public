@@ -168,7 +168,7 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(e)).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

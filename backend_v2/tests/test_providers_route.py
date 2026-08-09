@@ -142,11 +142,14 @@ class TestProvidersSaveImage:
         expected_image_data = base64.b64decode(b64)
         mock_service = MagicMock()
         mock_service.save_generated_image = AsyncMock(return_value={"path": "/tmp/test.png"})
-        mock_gallery_indexer = MagicMock()
+        mock_reconcile = MagicMock()
+
+        def run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
 
         with patch("services.image_service.get_image_service", return_value=mock_service), \
-             patch("services.gallery_indexer.gallery_indexer", mock_gallery_indexer), \
-             patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+             patch("services.asset_reconciler.reconcile_asset", mock_reconcile), \
+             patch("asyncio.to_thread", side_effect=run_in_thread) as mock_to_thread:
             response = client.post(
                 "/api/providers/save-image",
                 json={"image_base64": b64}
@@ -160,7 +163,9 @@ class TestProvidersSaveImage:
             filename=None,
             batch_index=0
         )
-        mock_to_thread.assert_awaited_once_with(mock_gallery_indexer.add_file, "/tmp/test.png")
+        mock_to_thread.assert_awaited_once()
+        assert mock_reconcile.call_count == 1
+        assert mock_reconcile.call_args.args[1] == "/tmp/test.png"
 
 
 class TestProvidersContainers:

@@ -129,11 +129,11 @@ class ModalProviderClient(BaseProviderClient):
                             yield json.dumps(update, cls=CustomJSONEncoder) + "\n"
 
                 except TimeoutError:
-                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {int(inference_timeout)}s")).to_ndjson()
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {int(inference_timeout)}s"), retryable=True).to_ndjson()
                 except modal.exception.ConnectionError as ce:
-                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Modal connection timeout: {ce}")).to_ndjson()
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Modal connection timeout: {ce}"), retryable=True).to_ndjson()
                 except Exception as e:
-                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Stream error: {e}")).to_ndjson()
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Stream error: {e}"), retryable=True).to_ndjson()
                 finally:
                     if task is not None:
                         task.cancel()

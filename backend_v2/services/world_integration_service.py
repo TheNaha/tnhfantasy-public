@@ -1,5 +1,6 @@
 import asyncio
 from typing import Any
+from uuid import uuid4
 
 from core.entities import (
     Chat,
@@ -274,7 +275,19 @@ async def _handle_story_continue(job_data: dict[str, Any]):
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter:
-                chapter.beats.append({"role": StoryBeatRole.NARRATOR, "content": content})
+                if not chapter.beats or not all(isinstance(b, dict) and b.get("id") for b in chapter.beats):
+                    chapter.beats = [
+                        ({**b, "id": str(uuid4()), "parent_beat_id": None}
+                         if isinstance(b, dict) and not b.get("id") else b)
+                        for b in (chapter.beats or [])
+                    ]
+                beat = {
+                    "id": str(uuid4()),
+                    "parent_beat_id": (chapter.beats[-1].get("id") if chapter.beats else None),
+                    "role": StoryBeatRole.NARRATOR.value,
+                    "content": content,
+                }
+                chapter.beats.append(beat)
                 chapter.content += f"\n\n{content}\n\n"
                 session.add(chapter)
                 session.commit()

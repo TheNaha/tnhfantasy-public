@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush } from 'lucide-react';
 import { useMemo, useState, memo } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -189,6 +189,8 @@ export default function Layout({ children }) {
                     <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-3 px-4">Menu</div>
                     <NavItem to="/" icon={Home} label="Dashboard" />
                     <NavItem to="/generate" icon={Wand2} label="Simple Generate" />
+                    <NavItem to="/img2img" icon={ImagePlus} label="Img2Img" />
+                    <NavItem to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem to="/advanced" icon={Settings} label="Advanced" />
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Roleplay</div>

@@ -999,6 +999,96 @@ async def generate_scene(
     return {"job_id": prompt_job.id, "status": "queued", "message": "Scene generation started"}
 
 
+class ChatIllustrateRequest(BaseModel):
+    image_prompt: str = ""
+
+
+@router.post("/{chat_id}/illustrate")
+async def illustrate_chat(
+    chat_id: str,
+    request: ChatIllustrateRequest,
+    session: Session = Depends(get_session),
+):
+    """Generate an image for the current chat moment without an LLM in the loop.
+
+    Uses the provided prompt, or falls back to the latest character reply when
+    no prompt is given. Mirrors the agentic generate_image tool's metadata so
+    the image lands in the chat as a kind=IMAGE message via the chat_image
+    event (world_integration_service) and in the roleplay workspace.
+    """
+    from core.workflow_builder import build_image_workflow
+    from services.job_queue import queue_manager
+    from services.job_service import JobService
+    from services.model_availability_service import ModelAvailabilityService
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    if not chat.allow_image_generation:
+        raise HTTPException(status_code=400, detail="Image generation is disabled for this chat")
+
+    image_prompt = (request.image_prompt or "").strip()
+    if not image_prompt:
+        last_char = session.exec(
+            select(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.role.in_(["char", "assistant"]),
+                Message.content.is_not(None),
+            )
+            .order_by(Message.created_at.desc())
+        ).first()
+        if last_char and last_char.content.strip():
+            image_prompt = last_char.content.strip()
+    if not image_prompt:
+        raise HTTPException(status_code=400, detail="No prompt and no character reply to illustrate")
+
+    character = session.get(Character, chat.character_id) if chat.character_id else None
+
+    checkpoint = (character.checkpoint if character and character.checkpoint else None)
+    if not checkpoint:
+        checkpoint = ModelAvailabilityService(session).get_available_checkpoint()
+    if not checkpoint:
+        checkpoint = "sd_xl_base_1.0.safetensors"
+
+    lora_name = character.lora if character and character.lora else None
+
+    workflow = build_image_workflow(
+        prompt=image_prompt,
+        checkpoint=checkpoint,
+        lora=lora_name,
+        filename_prefix="ChatIllustrate",
+    )
+
+    metadata: dict = {
+        "source": "chat_image",
+        "chat_id": chat_id,
+        "character_id": chat.character_id,
+        "workspace": "roleplay",
+        "image_context": image_prompt,
+        "prompt": image_prompt,
+        "checkpoint": checkpoint,
+        "steps": 20,
+        "cfg": 7,
+        "sampler": "euler",
+        "scheduler": "normal",
+        "width": 1024,
+        "height": 1024,
+        "seed": 0,
+    }
+    if lora_name:
+        metadata["loras"] = [lora_name]
+
+    job_service = JobService(session)
+    job = await job_service.create_job(
+        task_type="image",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+    return {"job_id": job.id, "status": "queued", "message": "Illustration started"}
+
+
 @router.get("/{chat_id}/images")
 def list_chat_images(chat_id: str, session: Session = Depends(get_session)):
     """List all images attached to messages in this chat (workspace gallery)."""

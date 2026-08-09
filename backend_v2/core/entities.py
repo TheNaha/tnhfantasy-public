@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Index
+from sqlalchemy import JSON, Index, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableList
 from sqlmodel import Column, Field, Relationship, SQLModel
 from pydantic import field_validator
 
@@ -233,6 +235,7 @@ class Asset(SQLModel, table=True):
         Index("idx_asset_workspace", "user_id", "workspace", "created_at"),
         Index("idx_asset_character", "user_id", "character_id"),
         Index("idx_asset_story", "user_id", "story_id"),
+        UniqueConstraint("relative_path", name="uq_assets_relative_path"),
     )
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -249,6 +252,7 @@ class Asset(SQLModel, table=True):
     blurhash: str | None = Field(default=None)
     thumbnail_relative_path: str | None = Field(default=None)
     metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn))
+    generated_at: datetime | None = Field(default=None, index=True)  # image creation time (from PNG meta or mtime)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     deleted_at: datetime | None = Field(default=None, index=True)  # soft delete
 
@@ -260,7 +264,7 @@ from enum import Enum
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Text
 
 
 class ModelType(str, Enum):
@@ -813,7 +817,13 @@ class Message(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     chat_id: str = Field(foreign_key="chats.id", index=True)
     role: MessageRole
-    kind: MessageKind | None = Field(default=None, index=True)
+    kind: MessageKind | None = Field(
+        default=None,
+        sa_column=Column(
+            SQLEnum(MessageKind, values_callable=lambda e: [m.value for m in e], native_enum=False),
+            index=True,
+        ),
+    )
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
     tool_calls: dict | None = Field(default=None, sa_column=Column(JSONColumn))
@@ -890,7 +900,9 @@ class StoryChapter(SQLModel, table=True):
     # Full chapter content as accumulated prose (snapshot)
     content: str = Field(default="", sa_column=Column(Text))
     # Individual beats/turns within the chapter
-    beats: list[dict[str, Any]] = Field(default=[], sa_column=Column(JSONColumn))
+    # MutableList tracks in-place appends (JSON columns don't by default).
+    # A fresh JSON type is used so as_mutable() does not poison the shared JSONColumn.
+    beats: list[dict[str, Any]] = Field(default=[], sa_column=Column(MutableList.as_mutable(JSON().with_variant(JSONB(), "postgresql"))))
     # Images generated for this chapter
     image_paths: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -31,11 +31,38 @@ logger = get_logger("lifecycle")
 
 
 async def _process_image_background_for_recovery(image_path: str, job_id: str) -> None:
-    """Apply thumbnail/metadata post-processing when recovering post-processing jobs."""
-    try:
-        from infrastructure.image_processor import process_image as img_process
+    """Apply thumbnail/metadata post-processing when recovering post-processing jobs.
 
-        await asyncio.to_thread(img_process, image_path, save_metadata=True)
+    Jobs stuck in POST_PROCESSING crashed before the asset reconciler ran, so
+    this re-runs reconciliation (thumbnails/blurhash/DB row) for each output.
+    """
+    try:
+        from config import settings
+        from services.asset_reconciler import reconcile_asset
+
+        session = get_session_sync()
+        try:
+            job_metadata = None
+            from core.entities import Job
+
+            job = session.get(Job, job_id)
+            if job:
+                job_metadata = job.metadata_
+
+            await asyncio.to_thread(
+                reconcile_asset,
+                session,
+                image_path,
+                user_id="default_user",
+                workspace=(job_metadata or {}).get("workspace", "main"),
+                character_id=(job_metadata or {}).get("character_id"),
+                story_id=(job_metadata or {}).get("story_id"),
+                job_id=job_id,
+                job_metadata=job_metadata,
+                output_dir=settings.output_dir,
+            )
+        finally:
+            session.close()
     except Exception as exc:
         logger.warning(
             "recovery_image_processing_failed",
@@ -180,14 +207,6 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="job_processor")
     queue_manager.set_processor(process_job)
-
-    logger.info("startup_init", phase="gallery_indexer")
-    try:
-        from services.gallery_indexer import gallery_indexer
-
-        gallery_indexer.start()
-    except Exception as exc:
-        logger.warning("gallery_indexer_not_started", error=str(exc))
 
     # One-time, idempotent relocation of the legacy flat output tree into the
     # partitioned /{user_id}/{workspace}/ layout + DB-backed asset index.

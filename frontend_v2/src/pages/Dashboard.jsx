@@ -121,12 +121,7 @@ export default function Dashboard() {
 
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
-    const [filters, setFilters] = useState({
-        search: '',
-        model: '',
-        sampler: '',
-        aspect_ratio: ''
-    });
+    const [filters, setFilters] = useState({ search: '' });
 
     const { confirm } = useConfirmation();
 
@@ -343,8 +338,8 @@ export default function Dashboard() {
             setShowFavorites(false);
         } else if (activeCollection) {
             setActiveCollection(null);
-        } else if (filters.search || filters.model || filters.sampler || filters.aspect_ratio) {
-            setFilters({ search: '', model: '', sampler: '', aspect_ratio: '' });
+        } else if (filters.search) {
+            setFilters({ search: '' });
         }
     }, [showFavorites, activeCollection, filters, setShowFavorites, setActiveCollection, setFilters]);
 

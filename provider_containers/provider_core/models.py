@@ -64,6 +64,7 @@ class TaskEvent(BaseModel):
     outputs: Optional[List[Dict[str, Any]]] = None      # final outputs (on completed)
     status: Optional[str] = None           # backend-facing status hint
     message: Optional[str] = None          # error / cancel / human message
+    retryable: Optional[bool] = None       # failed: True if the job may be retried
 
     def to_ndjson(self) -> str:
         return self.model_dump_json() + "\n"

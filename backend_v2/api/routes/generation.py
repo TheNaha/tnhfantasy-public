@@ -92,10 +92,28 @@ async def save_generated_image(
     )
     
     try:
-        from services.gallery_indexer import gallery_indexer
-        await asyncio.to_thread(gallery_indexer.add_file, result['path'])
+        from config import settings
+        from infrastructure.database import Session as DBSession, engine as db_engine
+        from services.asset_reconciler import reconcile_asset
+
+        def _reconcile():
+            session = DBSession(db_engine)
+            try:
+                reconcile_asset(
+                    session,
+                    result["path"],
+                    user_id="default_user",
+                    workspace=(request.metadata or {}).get("workspace", "main"),
+                    job_id=request.job_id,
+                    job_metadata=request.metadata or {},
+                    output_dir=settings.output_dir,
+                )
+            finally:
+                session.close()
+
+        await asyncio.to_thread(_reconcile)
     except Exception as e:
-        logger.error(f"Error updating gallery indexer: {e}")
+        logger.error(f"Error reconciling saved image: {e}")
 
     return result
 

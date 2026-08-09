@@ -32,6 +32,7 @@ const mockCreateChapter = vi.hoisted(() => vi.fn());
 const mockDeleteChapter = vi.hoisted(() => vi.fn());
 const mockUpdateChapter = vi.hoisted(() => vi.fn());
 const mockContinueChapter = vi.hoisted(() => vi.fn());
+const mockBranchChapter = vi.hoisted(() => vi.fn());
 const mockAddStoryBeat = vi.hoisted(() => vi.fn());
 const mockIllustrateChapter = vi.hoisted(() => vi.fn());
 
@@ -47,6 +48,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useDeleteChapter: (...a) => mockDeleteChapter(...a),
     useUpdateChapter: (...a) => mockUpdateChapter(...a),
     useContinueChapter: (...a) => mockContinueChapter(...a),
+    useBranchChapter: (...a) => mockBranchChapter(...a),
     useAddStoryBeat: (...a) => mockAddStoryBeat(...a),
     useIllustrateChapter: (...a) => mockIllustrateChapter(...a),
     useCharacters: () => ({ data: [] }),
@@ -145,6 +147,7 @@ describe('StorySandbox page', () => {
         mockDeleteChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockUpdateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockContinueChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }) });
+        mockBranchChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: 'branch-ch' }), isPending: false });
         mockAddStoryBeat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockIllustrateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'img-1' }) });
     });
