@@ -14,31 +14,68 @@ from infrastructure.logging import get_logger
 logger = get_logger("image_processor")
 
 
-def get_output_path(base_dir: str = None, subdir: str = None) -> str:
+def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
     """
-    Generate date-based output path: {base}/[subdir/]YYYY/MM/DD/
-    
+    Generate a partitioned, date-based output path.
+
+    Layout: {base}/{user_id}/{workspace}/[subdir/]YYYY/MM/DD/
+
+    The /{user_id}/ root partition future-proofs for (optional) multi-tenancy;
+    the /{workspace}/ segment keeps Roleplay/Story/Image assets separated on
+    disk so they can be scoped by the DB-backed assets index. A single-user
+    deployment uses user_id="default_user".
+
     Args:
         base_dir: Base output directory (defaults to OUTPUT_DIR env or ./output)
         subdir: Optional subdirectory (e.g., 'thumb')
-    
+        user_id: Owner partition (default "default_user")
+        workspace: Workspace partition (main / roleplay / story)
+
     Returns:
-        Path to date-based directory (created if doesn't exist)
+        Path to the date-based directory (created if doesn't exist)
     """
     if base_dir is None:
         base_dir = app_config.settings.output_dir
-    
+
+    # Partition: /{user_id}/{workspace}/  (skip empty segments)
+    partition = os.path.join(base_dir, user_id or "default_user", workspace or "main")
     if subdir:
-        base_dir = os.path.join(base_dir, subdir)
-    
+        partition = os.path.join(partition, subdir)
+
     if app_config.get_output_date_hierarchy():
         now = datetime.now()
-        date_path = os.path.join(base_dir, str(now.year), f"{now.month:02d}", f"{now.day:02d}")
+        date_path = os.path.join(partition, str(now.year), f"{now.month:02d}", f"{now.day:02d}")
     else:
-        date_path = base_dir
-    
+        date_path = partition
+
     os.makedirs(date_path, exist_ok=True)
     return date_path
+
+
+def read_png_metadata(path: str) -> dict:
+    """Read embedded generation metadata back out of a saved PNG (best-effort)."""
+    import json as _json
+    try:
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        with Image.open(path) as img:
+            raw = img.info.get("comfy_metadata") or img.info.get("parameters") or img.info.get("Comment")
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", "ignore")
+            if not raw:
+                return {}
+            # comfy_metadata is JSON; parameters/Comment are free text.
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return {"parameters": raw}
+    except Exception:
+        return {}
+
+
+def get_thumb_output_path(base_dir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
+    """Thumbnails mirror the partitioned layout under a `thumb` subdir."""
+    return get_output_path(base_dir=base_dir, subdir="thumb", user_id=user_id, workspace=workspace)
 
 
 def save_image_with_metadata(image: Image.Image, path: str, metadata: dict) -> str:
@@ -114,15 +151,17 @@ def read_image_metadata(path: str) -> dict:
     return metadata
 
 
-def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: str = None) -> dict:
+def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: str = None, user_id: str = "default_user", workspace: str = "main") -> dict:
     """
-    Generate thumbnails from an image and save to thumb directory.
-    
+    Generate thumbnails from an image and save to a partitioned thumb directory.
+
     Args:
         image_path: Path to the original image
         sizes: Dict of {suffix: max_dimension}, e.g. {'medium': 512}
         output_base_dir: Base output directory (uses OUTPUT_DIR env if not specified)
-    
+        user_id: Owner partition (default "default_user")
+        workspace: Workspace partition (main / roleplay / story)
+
     Returns:
         Dict of {suffix: thumbnail_path}
     """
@@ -141,7 +180,7 @@ def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: st
     quality = app_config.get_thumbnail_quality()
     
     # Get thumb output directory (output/thumb/YYYY/MM/DD/)
-    thumb_output_dir = get_output_path(output_base_dir, subdir=thumb_dir_name)
+    thumb_output_dir = get_output_path(output_base_dir, subdir=thumb_dir_name, user_id=user_id, workspace=workspace)
     
     thumbnail_paths = {}
     

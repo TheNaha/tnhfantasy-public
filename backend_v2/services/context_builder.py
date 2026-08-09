@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from core.entities import LorebookEntry, MessageRole
+from core.entities import LorebookEntry, MessageKind, MessageRole
 
 logger = logging.getLogger("context_builder")
 
@@ -140,8 +140,19 @@ def prune_context(
     Priority (pruned first):
     1. Oldest non-pinned conversation messages
     """
-    system_msgs = [m for m in messages if m.get("role") == "system"]
-    non_system_msgs = [m for m in messages if m.get("role") != "system"]
+    # Exempt from pruning only *true* system messages (kind == "system", or
+    # None which covers the assembled system prompt and example-dialogue
+    # markers). Narrator / image / tool messages are stored with role="system"
+    # for rendering but carry a distinct `kind`, so they must remain prunable
+    # like normal conversation turns — otherwise they accumulate unchecked and
+    # eventually evict the entire real conversation.
+    def _is_exempt_system(m: dict) -> bool:
+        if m.get("role") != "system":
+            return False
+        return m.get("_kind") in (None, "system")
+
+    system_msgs = [m for m in messages if _is_exempt_system(m)]
+    non_system_msgs = [m for m in messages if not _is_exempt_system(m)]
 
     system_tokens = sum(estimate_tokens(m.get("content", "")) for m in system_msgs)
     remaining_budget = max_tokens - system_tokens
@@ -171,7 +182,7 @@ def prune_context(
     pinned_set = {id(m) for m in pinned_msgs}
     unpinned_set = {id(m) for m in unpinned_msgs}
     for m in messages:
-        if m.get("role") == "system":
+        if _is_exempt_system(m):
             continue
         if id(m) in unpinned_set or id(m) in pinned_set:
             result.append(m)
@@ -377,8 +388,11 @@ def build_system_prompt_sections(
                         keyword_only = lb_entries
 
                 if not embedded or not _query_text.strip():
-                    # Keyword matching: check if any key appears in the query or recent context
-                    for e in keyword_only[:_TOP_K]:
+                    # Keyword matching: scan ALL non-embedded entries (cap the
+                    # scan for very large lorebooks, but never truncate to 5 so
+                    # entries beyond the first handful can still be matched).
+                    keyword_only_scanned = keyword_only[: max(_TOP_K, 50)]
+                    for e in keyword_only_scanned:
                         if not e.keys:
                             entries.append({"content": e.content, "keys": e.keys})
                             continue
@@ -567,8 +581,17 @@ def build_chat_context(
             else:
                 continue
             content = msg.content
+            kind = getattr(msg, "kind", None)
             is_pinned = bool(getattr(msg, "pinned", False) or meta.get("pinned"))
-            msg_list.append({"role": role, "content": content, "_pinned": is_pinned})
+            # Serialize `kind` so prune_context can treat narrator/image/tool
+            # messages as prunable conversation turns instead of exempt
+            # "system" messages (role stays 'system' for rendering).
+            msg_list.append({
+                "role": role,
+                "content": content,
+                "_pinned": is_pinned,
+                "_kind": kind.value if kind else None,
+            })
             continue
 
         if meta.get("source") == "world_state":

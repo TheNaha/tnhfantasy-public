@@ -43,7 +43,9 @@ class ImageService:
         metadata: dict[str, Any] | None = None,
         job_id: str | None = None,
         filename: str | None = None,
-        batch_index: int = 0
+        batch_index: int = 0,
+        user_id: str = "default_user",
+        workspace: str = "main",
     ) -> dict[str, Any]:
         """
         Save a generated image with metadata embedding and thumbnail generation.
@@ -75,7 +77,7 @@ class ImageService:
             filename = f"Generated_{now.strftime('%Y-%m-%d_%H-%M-%S')}{job_suffix}{batch_suffix}_.png"
         
         # Get date-based output path (creates directory if needed)
-        output_path = get_output_path(self.output_dir)
+        output_path = get_output_path(self.output_dir, user_id=user_id, workspace=workspace)
         full_path = os.path.join(output_path, filename)
         
         # Load image from bytes
@@ -93,7 +95,7 @@ class ImageService:
         
         # Generate WebP thumbnail (in thumb/YYYY/MM/DD/)
         try:
-            thumbnails = generate_thumbnails(full_path, output_base_dir=self.output_dir)
+            thumbnails = generate_thumbnails(full_path, output_base_dir=self.output_dir, user_id=user_id, workspace=workspace)
             thumbnail_path = thumbnails.get("medium") or thumbnails.get("thumb")
         except Exception as e:
             logger.warning("thumbnail_generation_failed", error=str(e), path=full_path)
@@ -118,6 +120,8 @@ class ImageService:
             "filename": filename,
             "width": width,
             "height": height,
+            "user_id": user_id,
+            "workspace": workspace,
         }
         
         if thumbnail_path:
@@ -134,7 +138,9 @@ class ImageService:
         self,
         images: list,
         metadata: dict[str, Any] | None = None,
-        job_id: str | None = None
+        job_id: str | None = None,
+        user_id: str = "default_user",
+        workspace: str = "main",
     ) -> list:
         """
         Save multiple base64-encoded images.
@@ -171,7 +177,9 @@ class ImageService:
                 metadata=metadata,
                 job_id=job_id,
                 filename=custom_filename,
-                batch_index=i
+                batch_index=i,
+                user_id=user_id,
+                workspace=workspace,
             )
             results.append(result)
         

@@ -42,7 +42,8 @@ class GoogleProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         async def stream():
             try:
-                workflow = request.workflow
+                workflow = request.workflow or {}
+                messages = request.messages or workflow.get("messages", [])
                 
                 raw_messages = workflow.get("messages", [])
                 
@@ -73,7 +74,7 @@ class GoogleProviderClient(BaseProviderClient):
                             "parts": [{"text": content}]
                         })
                 
-                model_id = workflow.get("model") or "gemini-1.5-flash"
+                model_id = (request.model or workflow.get("model") or "gemini-1.5-flash")
                 
                 payload = {
                     "contents": contents,

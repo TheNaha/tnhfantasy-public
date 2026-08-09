@@ -15,6 +15,7 @@ from provider_core import (
     get_logger, get_http_client
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.utils import translate_task_events, TaskEvent
 from provider_core.reconciliation import determine_download_token
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -107,33 +108,33 @@ class BeamProviderClient(BaseProviderClient):
                                 message = await asyncio.wait_for(ws.recv(), timeout=2.0)
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
-                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                    yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
                                     return
                                 continue
                             except websockets.exceptions.ConnectionClosedOK:
                                 break
                             except websockets.exceptions.ConnectionClosedError as e:
-                                yield json.dumps(build_error_response(f"Websocket connection closed with error: {str(e)}", retryable=True)) + "\n"
+                                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Websocket connection closed with error: {str(e)}")).to_ndjson()
                                 break
                             except websockets.exceptions.ConnectionClosed:
-                                yield json.dumps(build_error_response("Websocket connection closed unexpectedly", retryable=True)) + "\n"
+                                yield TaskEvent(event="failed", job_id=job_id, message=str("Websocket connection closed unexpectedly")).to_ndjson()
                                 break
                                 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
                                 return
                             if isinstance(message, bytes):
                                 message = message.decode('utf-8')
                             yield message + "\n"
             except asyncio.TimeoutError:
-                yield json.dumps(build_error_response(f"Inference timed out after {inference_timeout}s", retryable=True, code=408)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {inference_timeout}s")).to_ndjson()
             except Exception as e:
-                yield json.dumps(build_error_response(str(e), retryable=True)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e))).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)
 
-        return StreamingResponse(generate(), media_type="application/x-ndjson")
+        return StreamingResponse(translate_task_events(generate(), job_id=job_id), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
         client = get_http_client()

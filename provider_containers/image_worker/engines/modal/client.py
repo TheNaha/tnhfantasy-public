@@ -15,6 +15,7 @@ from provider_core import (
     get_logger
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.utils import translate_task_events, TaskEvent
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -128,24 +129,24 @@ class ModalProviderClient(BaseProviderClient):
                             yield json.dumps(update, cls=CustomJSONEncoder) + "\n"
 
                 except TimeoutError:
-                    yield json.dumps(build_error_response(f"Inference timed out after {int(inference_timeout)}s", retryable=True, code=408)) + "\n"
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {int(inference_timeout)}s")).to_ndjson()
                 except modal.exception.ConnectionError as ce:
-                    yield json.dumps(build_error_response(f"Modal connection timeout: {ce}", retryable=True)) + "\n"
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Modal connection timeout: {ce}")).to_ndjson()
                 except Exception as e:
-                    yield json.dumps(build_error_response(f"Stream error: {e}", retryable=False)) + "\n"
+                    yield TaskEvent(event="failed", job_id=job_id, message=str(f"Stream error: {e}")).to_ndjson()
                 finally:
                     if task is not None:
                         task.cancel()
                     if job_id:
                         await self.job_tracker.end_job(job_id)
             
-            return StreamingResponse(generate(), media_type="application/x-ndjson")
+            return StreamingResponse(translate_task_events(generate(), job_id=job_id), media_type="application/x-ndjson")
         except Exception as exc:
             error_message = f"Internal error: {exc}"
             if job_id:
                 await self.job_tracker.end_job(job_id)
             async def stream_err():
-                yield json.dumps(build_error_response(error_message, retryable=False, code=500)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(error_message)).to_ndjson()
             return StreamingResponse(stream_err(), status_code=500, media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:

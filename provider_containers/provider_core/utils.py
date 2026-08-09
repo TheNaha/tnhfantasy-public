@@ -1,5 +1,9 @@
 import os
-from typing import Any, Dict
+import json
+from typing import Any, AsyncIterator, Dict, Iterable, Optional
+
+from provider_core.models import TaskEvent
+
 
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
@@ -59,3 +63,77 @@ def build_deploy_compatibility_response(
         "backend_deploy_endpoint": deploy_endpoint,
         "backend_deploy_status_endpoint": status_endpoint,
     }
+
+
+def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = None) -> Optional[TaskEvent]:
+    """Translate a legacy ComfyUI ``{"status": ...}`` progress dict into a unified TaskEvent.
+
+    Used by image workers so the backend needs only one event schema.
+    Returns ``None`` for updates that carry no meaningful progress (e.g. keep-alive).
+    """
+    if not isinstance(update, dict):
+        return None
+    status = (update.get("status") or "").lower()
+    data = update.get("data") or {}
+
+    if status == "success":
+        # ComfyUI returns images as a list of {"data": base64, ...} or
+        # {"filename": ..., "subfolder": ..., "type": ...}. Compose artifacts.
+        raw_images = update.get("images") or data.get("images") or []
+        artifacts = []
+        for img in raw_images:
+            if isinstance(img, dict):
+                artifacts.append({
+                    "type": "image",
+                    "data": img.get("data"),
+                    "filename": img.get("filename"),
+                    "subfolder": img.get("subfolder"),
+                    "image_type": img.get("type"),
+                })
+        return TaskEvent(event="completed", job_id=job_id, outputs=artifacts)
+
+    if status == "error":
+        return TaskEvent(event="failed", job_id=job_id, message=update.get("message") or "Image generation failed")
+
+    if status == "cancelled":
+        return TaskEvent(event="cancelled", job_id=job_id, message=update.get("message"))
+
+    if status == "executing":
+        return TaskEvent(event="node", job_id=job_id, node=update.get("node"))
+
+    # queued / running / progress / starting / preparing -> progress fraction
+    value = update.get("value")
+    if value is None:
+        progress = update.get("progress")
+        if isinstance(progress, dict):
+            max_v = progress.get("max") or 0
+            cur = progress.get("value") or 0
+            value = (cur / max_v) if max_v else None
+    return TaskEvent(event="progress", job_id=job_id, value=value)
+
+
+async def translate_task_events(
+    source: AsyncIterator[str],
+    job_id: Optional[str] = None,
+) -> AsyncIterator[str]:
+    """Wrap a legacy ComfyUI NDJSON stream and re-emit it as TaskEvent NDJSON.
+
+    Each item from ``source`` is either already a TaskEvent JSON string or a
+    legacy ``{"status": ...}`` dict (string or dict). Emits unified
+    ``TaskEvent.to_ndjson()`` lines for every meaningful update.
+    """
+    async for item in source:
+        if isinstance(item, TaskEvent):
+            yield item.to_ndjson()
+            continue
+        if isinstance(item, str):
+            try:
+                parsed = json.loads(item)
+            except (ValueError, TypeError):
+                # Pass through lines we cannot parse (e.g. keep-alives are skipped upstream).
+                continue
+        else:
+            parsed = item
+        te = comfy_status_to_task_event(parsed, job_id=job_id)
+        if te is not None:
+            yield te.to_ndjson()

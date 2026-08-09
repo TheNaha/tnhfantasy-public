@@ -46,21 +46,16 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 4.  **Health Checks & Cost Mitigation:**
     *   To avoid expensive serverless billing from continuous polling, the backend will only health-check the local worker container itself. The worker assumes the remote URL/engine is alive until an actual job is dispatched.
     *   The UI will feature a manual "Test Connection" button for providers so users can validate their endpoints on demand.
-5.  **Streaming Standardization (The Unified Protocol):**
-    *   To accommodate the wildly different streaming formats of various engines (e.g., ComfyUI's NDJSON vs. OpenAI's SSE), parsing responsibility is shifted to the Worker.
-    *   The Worker container will translate any engine's native stream into a single, unified stream format that the backend inherently understands. 
-6.  **Codebase Merger & Standalone Deployments:**
-    *   The fragmented `modal_worker` and `beam_worker` repositories will merge into `image_worker`. 
-    *   Inside the worker, standalone deployment scripts (e.g., `modal_app.py`, `beam_app.py`) will reside to deploy the remote functions, with Modal prioritized as the primary production target.
-7.  **Context Management (Stateful Frontend):**
-    *   The platform will use a "SillyTavern Style" Stateful Frontend. The React frontend will be responsible for fetching all components (lore, chat history) and constructing the final massive prompt payload before sending it to the backend. This maximizes UI flexibility. Robust sync mechanisms (e.g., optimistic updates + React Query) will be required to prevent state desyncs.
-8. **Asset Storage (Filesystem First & Partitioned):**
-    *   All generated artifacts—Images, Audio, and Text (Chat logs, Stories)—will be stored directly on the filesystem in a robust, human-readable directory tree. 
-    *   To future-proof for multi-tenancy, the filesystem will strictly enforce a `/{user_id}/` root partition immediately.
-    *   The database acts merely as an indexer/tracker, allowing users to browse their creations via a standard OS file manager without vendor lock-in.
-9.  **Multi-Tenancy (Future-Proofing):**
-    *   The core platform will be built as a single-user private sandbox initially. 
-    *   However, architectural choices will leave room for a future "Guest/Ephemeral" mode (cookie-based) to allow temporary sandboxed multi-tenancy once the core vision is completed.
+ 5. **Streaming Standardization (The Unified Protocol) — IMPLEMENTED:**
+     *   Parsing responsibility is shifted to the Worker. All workers (image + LLM) now translate their native stream into a single `provider_core.models.TaskEvent` NDJSON schema (`event` ∈ started/progress/delta/node/artifact/completed/failed/cancelled, plus `text`, `tool_calls`, `outputs`, `value`). The backend has ONE reader (`services/provider_client.stream_task_events`) with thin per-task reducers instead of two divergent dialects.
+ 6. **Codebase Merger & Standalone Deployments — IMPLEMENTED:**
+     *   `modal_worker`/`beam_worker` were merged into `image_worker` + `llm_worker` + shared `provider_core`. Standalone `modal_app.py`/`beam_app.py` deploy scripts live in the worker `deploy/` dirs. The orphaned `runpod` engine was removed (no backend registration ever existed).
+ 7. **Context Management (Backend-Authoritative) — CORRECTED:**
+     *   The backend (`services/context_builder.py`) owns context assembly. This is intentional and correct: semantic lorebook retrieval needs `pgvector` server-side, and shipping the whole lorebook to the frontend to build a prompt would be wasteful and lose retrieval quality. The frontend sends text + flags (narrate/agentic/etc.); the backend builds, prunes (token budget), and injects lore. The frontend remains stateful for UI sync (React Query + optimistic updates) but does NOT assemble the final payload.
+ 8. **Asset Storage (Filesystem First, Partitioned in Phase 2) — PARTIAL:**
+     *   All generated artifacts are stored on the filesystem in a `YYYY/MM/DD` tree; `metadata["workspace"]` (`main`/`roleplay`/`story`) scopes them for workspace galleries (VISION #13). The physical `/{user_id}/` root partition and a DB-backed `assets` indexer are planned for Phase 2 (deferred only because a same-device rename is cheap later; metadata scoping already works today). The database remains the indexer/tracker.
+ 9. **Multi-Tenancy (Future-Proofing) — DEFERRED:**
+     *   The core platform is a single-user private sandbox. Audio/TTS and multi-tenancy are explicitly deferred for now (see Future Frontiers). `metadata["workspace"]` + the planned `/{user_id}/` layout leave room for a future "Guest/Ephemeral" mode, but no auth/multi-tenant code is being built yet.
 10. **Database Expansion (PostgreSQL + pgvector):**
     *   Migrating from SQLite to PostgreSQL to leverage `pgvector` for semantic search (vector embeddings) across `Lorebooks` and chat histories. Adding domains for tracking `Characters`, `Lorebooks`, and `Scenarios` (acting as metadata indexers for the filesystem storage), while abstracting the `providers` table to simply track `worker_type` and health status.
 12. **Interoperability & Data Standards (Compatible + Extended):**
@@ -77,10 +72,24 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 
 ---
 
-## Future Frontiers
-Once the core pillars (Image + Text + World) are integrated, the platform can expand into:
-*   **Video/Animation:** Transforming static generated scenes into short animations using AnimateDiff or SVD.
-*   **Visual Novel Mode:** An automated mode that turns roleplay logs or story generations into a playable, visual-novel style UI.
+## Implementation Status (as of 2026-08-09)
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Pillar 1 — Image Gen | ✅ Working | Modal + Beam + direct_url engines; 115 image jobs completed in last 7 days |
+| Pillar 2 — Roleplay | ✅ Working (fixed) | Agentic mode was crashing (regression), now fixed; narrator + tool-calls persisted as `Message.kind` |
+| Pillar 3 — Story | ✅ Working | Story continue + illustrate implemented |
+| Pillar 4 — World Vault | ✅ Working | Characters, lorebooks (pgvector), semantic retrieval |
+| #5 Unified Protocol | ✅ Implemented | `provider_core.models.TaskEvent`; single backend reader; image + LLM workers emit it |
+| #7 Context (backend-owned) | ✅ Implemented | `context_builder.py` authoritative; frontend sends text + flags |
+| #8 Asset storage | 🟡 Partial | `metadata["workspace"]` scoping works; `/{user_id}/` + DB `assets` indexer deferred to Phase 2 |
+| #9 Multi-tenancy | ⏸️ Deferred | No auth/multi-tenant code yet (single-user by design) |
+| Audio / TTS | ⏸️ Deferred | Not started |
+| Video/Animation, Visual Novel | 🔮 Future | Post-core expansion |
+
+**Known gaps being addressed (roadmap):**
+- Phase 2: DB-backed `assets` indexer (kills the 15s in-memory gallery scan), `/{user_id}/` partition, frontend consolidation (`useJobStatus`, shared `assetUrl`, virtualized `SceneGallery`, `GeneratorShell`), perf (keyset pagination).
+- Phase 3: Story branching (parent beat + "retry from here"), in-chat "Illustrate" button, agentic tool-call transcript rendering.
 
 ---
 *Note to AI Agents: This document dictates the macro-level trajectory of the project. Any architectural decisions, database changes, or frontend refactors should keep this multimodal, unrestricted end-goal in mind.*

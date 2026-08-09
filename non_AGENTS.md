@@ -15,8 +15,8 @@ All of these share the **World Vault** data layer (Characters, Chats, Lorebooks,
 # Full stack (agent/dev shell)
 bash setup_jules.sh
 
-# Full stack (Docker)
-docker compose up -d
+# Full stack (Docker, with providers + dev overrides)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
 
 # Backend only (from backend_v2/)
 pip install -r requirements.txt && uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
@@ -51,7 +51,7 @@ Tests run on push/PR to `main`/`master` only when the relevant directory changes
 - Domain events: emit through `core/events.py` helpers (`emit_job_event`, `emit_download_event`).
 - Config precedence: `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`.
 - `metadata` is `metadata_` in Python models, aliased back to `metadata` in API payloads.
-- Migrations are manual in `infrastructure/database.py` (`_run_migrations()`) — no Alembic.
+- Migrations run automatically at backend startup via the ordered steps runner in `infrastructure/migrations/steps.py` (no Alembic). Add new migrations as `MigrationStep(version=..., apply_fn=...)` entries there; each step is recorded in `schema_migrations` and runs once.
 - Startup re-enqueues PENDING/RUNNING jobs from DB — preserve this when changing lifecycle code.
 - `LoadBalancer` uses class-level state in `services/load_balancer.py` — avoid introducing more shared mutable globals.
 

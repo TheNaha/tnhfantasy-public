@@ -6,6 +6,7 @@ from core.entities import (
     Character,
     Message,
     MessageRole,
+    MessageKind,
     Collection,
     CollectionImage,
     StoryChapter,
@@ -212,6 +213,7 @@ async def _handle_narrator(job_data: dict[str, Any]):
         try:
             msg = Message(
                 role=MessageRole.SYSTEM,
+                kind=MessageKind.NARRATOR,
                 content=content,
                 chat_id=chat_id,
                 message_metadata={"source": "narrator"},
@@ -230,6 +232,15 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
     if not chat_id or not content:
         return
 
+    # Capture tool calls (agentic loop) as a transcript on the message so the
+    # UI can show what the character did (generated an image, narrated, etc.)
+    # without needing to re-derive it. The orchestrator chains follow-up jobs
+    # for the actual tool effects; this is just the inline record.
+    tool_calls = None
+    outputs = job_data.get("outputs") or []
+    if outputs and isinstance(outputs[0], dict):
+        tool_calls = outputs[0].get("tool_calls")
+
     # NOTE: regeneration deletes the old trailing messages in the route
     # (chats.py regenerate_reply) and then enqueues a fresh job, so both the
     # normal and regenerated paths must insert a NEW CHAR message. The old
@@ -238,7 +249,14 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
     # deleted, pushing regenerated output above the prompt.
     with Session(engine) as session:
         try:
-            msg = Message(role=MessageRole.CHAR, content=content, chat_id=chat_id)
+            msg = Message(
+                role=MessageRole.CHAR,
+                kind=MessageKind.CHAR,
+                content=content,
+                chat_id=chat_id,
+                tool_calls=tool_calls,
+                message_metadata={"agentic": bool(tool_calls)},
+            )
             session.add(msg)
             session.commit()
         except Exception as e:
@@ -285,6 +303,7 @@ async def _handle_chat_image(job_data: dict[str, Any]):
         try:
             msg = Message(
                 role=MessageRole.SYSTEM,
+                kind=MessageKind.IMAGE,
                 content=content,
                 image_path=image_path,
                 chat_id=chat_id,

@@ -8,6 +8,8 @@ __pycache__/
 !.env.example
 tests/
 venv/
+test_env/
+scripts/
 .coverage
 *.db
 fix_*.py

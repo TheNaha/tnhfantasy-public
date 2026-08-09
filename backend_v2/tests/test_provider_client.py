@@ -1,57 +1,38 @@
 import pytest
 
-from services.provider_client import validate_success_payload
+from services.provider_client import validate_image_outputs
 
 
-def test_validate_success_payload_accepts_valid_images():
+def test_validate_image_outputs_accepts_valid_images():
     payload = {
-        "status": "success",
-        "images": [
-            {
-                "filename": "image-1.png",
-                "data": "YWJj",
-                "_base64_encoded": True,
-            }
+        "event": "completed",
+        "outputs": [
+            {"filename": "image-1.png", "data": "YWJj", "_base64_encoded": True},
         ],
     }
+    validate_image_outputs(payload)
 
-    validate_success_payload(payload)
 
-
-def test_validate_success_payload_allows_success_without_images():
+def test_validate_image_outputs_accepts_reference_images():
     payload = {
-        "status": "success",
-        "message": "Completed",
+        "event": "completed",
+        "outputs": [{"filename": "image-1.png", "subfolder": "", "image_type": "output"}],
     }
-
-    validate_success_payload(payload)
-
-
-def test_validate_success_payload_rejects_non_list_images():
-    payload = {
-        "status": "success",
-        "images": {"filename": "image-1.png"},
-    }
-
-    with pytest.raises(ValueError, match="images must be a list"):
-        validate_success_payload(payload)
+    validate_image_outputs(payload)
 
 
-def test_validate_success_payload_rejects_missing_filename():
-    payload = {
-        "status": "success",
-        "images": [{"data": "YWJj", "_base64_encoded": True}],
-    }
-
-    with pytest.raises(ValueError, match="missing filename"):
-        validate_success_payload(payload)
+def test_validate_image_outputs_accepts_success_without_outputs():
+    validate_image_outputs({"event": "completed"})
+    validate_image_outputs({"event": "completed", "outputs": None})
 
 
-def test_validate_success_payload_rejects_missing_encoded_data():
-    payload = {
-        "status": "success",
-        "images": [{"filename": "image-1.png", "_base64_encoded": True}],
-    }
+def test_validate_image_outputs_rejects_non_list_outputs():
+    payload = {"event": "completed", "outputs": {"filename": "image-1.png"}}
+    with pytest.raises(ValueError, match="outputs must be a list"):
+        validate_image_outputs(payload)
 
-    with pytest.raises(ValueError, match="missing base64 data"):
-        validate_success_payload(payload)
+
+def test_validate_image_outputs_rejects_missing_data_or_filename():
+    payload = {"event": "completed", "outputs": [{"_base64_encoded": True}]}
+    with pytest.raises(ValueError, match="missing data or filename"):
+        validate_image_outputs(payload)

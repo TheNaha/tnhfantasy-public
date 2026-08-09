@@ -65,10 +65,11 @@ class VLLMModalProviderClient(BaseProviderClient):
         }
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
-        workflow = request.workflow
-        model_id = workflow.get("model") or "default-model"
-        messages = workflow.get("messages", [])
-        tools = workflow.get("tools")
+        # Unified InferenceRequest: LLM jobs carry messages/tools/model top-level.
+        workflow = request.workflow or {}
+        messages = request.messages or workflow.get("messages", [])
+        tools = request.tools or workflow.get("tools")
+        model_id = (request.model or workflow.get("model") or "default-model")
         job_id = request.job_id
         inference_timeout = max(
             1.0,

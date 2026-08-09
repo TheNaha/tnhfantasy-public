@@ -89,6 +89,12 @@ async def test_worker_websocket_closes_when_token_is_invalid():
 
 
 @pytest.mark.asyncio
+async def _await_inline(coro, **kw):
+    # Await the finalize coroutine inline so the test can assert completion
+    # without racing the event loop teardown.
+    await coro
+
+
 async def test_worker_websocket_finalization_uses_output_filenames():
     outputs = [{"filename": "image-1.png", "relative_path": "2026/03/06/image-1.png", "subfolder": "2026/03/06"}]
     websocket = DummyWebSocket(
@@ -104,18 +110,16 @@ async def test_worker_websocket_finalization_uses_output_filenames():
     provider_service = AsyncMock()
     provider_service.get_provider.return_value = provider
     job_service = AsyncMock()
-    gallery_indexer = MagicMock()
-    gallery_indexer.get_path.return_value = "/app/output/2026/03/06/image-1.png"
 
     with patch("api.routes.worker_ws.get_session_context", side_effect=_fake_session_context), \
          patch("services.provider_service.ProviderService", return_value=provider_service), \
          patch("services.job_service.JobService", return_value=job_service), \
-         patch("services.gallery_indexer.gallery_indexer", gallery_indexer):
+         patch("services.asset_reconciler.reconcile_asset", AsyncMock()), \
+         patch("services.job_processing.wait_for_gallery_outputs", AsyncMock()):
         await worker_websocket(websocket, "provider-a", "token-1")
         await asyncio.sleep(0.05)
 
     assert websocket.accepted is True
-    gallery_indexer.get_path.assert_called_with("2026/03/06/image-1.png")
     job_service.update_job.assert_any_await(
         "job-1",
         status=JobStatus.POST_PROCESSING,

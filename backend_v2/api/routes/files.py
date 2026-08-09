@@ -21,7 +21,7 @@ import tempfile
 from fastapi import APIRouter, Depends, File, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from api.deps import (
@@ -31,8 +31,16 @@ from api.deps import (
     get_session,
 )
 from config import settings
+from core.entities import Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from infrastructure.database import Session as DBSession, engine as db_engine
+from services.asset_reconciler import DEFAULT_USER_ID
 from services.provider_service import ProviderService
+
+
+def _sync_session():
+    """Open a synchronous DB session for non-request code paths in this module."""
+    return DBSession(db_engine)
 
 logger = get_logger("files_route")
 
@@ -168,18 +176,13 @@ async def batch_download(request: BatchDownloadRequest):
     """Create a ZIP file of multiple images for batch download."""
     import zipfile
 
-    from services.gallery_indexer import gallery_indexer
-    
     fd, temp_path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
-    
+
     try:
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for filename in request.files:
-                indexed_path = gallery_indexer.get_path(filename)
-                if not indexed_path:
-                    indexed_path = gallery_indexer.get_path_by_filename(os.path.basename(filename))
-                
+                indexed_path = _resolve_asset_path(filename)
                 if indexed_path and os.path.exists(indexed_path):
                     zipf.write(indexed_path, arcname=os.path.basename(filename))
                 else:
@@ -304,6 +307,116 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
     except Exception as e:
         logger.warning("model_cache_read_failed", error=str(e))
         return {"files": [], "total": 0}
+
+
+def _resolve_asset_path(rel_or_filename: str) -> str | None:
+    """Resolve an image request (relative_path or filename) to an on-disk path.
+
+    Uses the DB-backed assets index first, falling back to a direct join under
+    OUTPUT_DIR so requests still work during/after the partition migration.
+    """
+    rel = rel_or_filename.lstrip("/\\")
+    direct = os.path.join(OUTPUT_DIR, rel)
+    if os.path.exists(direct):
+        return direct
+    with _sync_session() as session:
+        asset = session.exec(
+            select(Asset).where(Asset.relative_path == rel).where(Asset.deleted_at.is_(None))
+        ).first()
+        if not asset and "/" not in rel:
+            asset = session.exec(
+                select(Asset).where(Asset.filename == rel).where(Asset.deleted_at.is_(None))
+            ).first()
+        if asset:
+            cand = os.path.join(OUTPUT_DIR, asset.relative_path)
+            if os.path.exists(cand):
+                return cand
+            leg = os.path.join(OUTPUT_DIR, asset.filename)
+            if os.path.exists(leg):
+                return leg
+    leg = os.path.join(OUTPUT_DIR, os.path.basename(rel))
+    return leg if os.path.exists(leg) else None
+
+
+@router.get("/api/v2/assets")
+async def list_assets(
+    limit: int = 24,
+    cursor: str | None = None,
+    workspace: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+    search: str | None = None,
+):
+    """Keyset-paginated asset listing backed by the DB (replaces in-memory scan)."""
+    from datetime import datetime
+
+    with _sync_session() as session:
+        q = select(Asset).where(Asset.deleted_at.is_(None))
+        if workspace:
+            q = q.where(Asset.workspace == workspace)
+        if character_id:
+            q = q.where(Asset.character_id == character_id)
+        if story_id:
+            q = q.where(Asset.story_id == story_id)
+        if search:
+            like = f"%{search}%"
+            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(str).ilike(like)))
+        if cursor:
+            try:
+                cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+                q = q.where(Asset.created_at < cur_dt)
+            except Exception:
+                pass
+        q = q.order_by(Asset.created_at.desc()).limit(limit + 1)
+        rows = session.exec(q).all()
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        items = []
+        for a in page:
+            items.append({
+                "id": a.id,
+                "filename": a.filename,
+                "relative_path": a.relative_path,
+                "thumbnail": a.thumbnail_relative_path,
+                "file_url": f"/api/v2/assets/{a.id}/file",
+                "thumb_url": f"/api/v2/assets/{a.id}/thumb" if a.thumbnail_relative_path else f"/api/v2/assets/{a.id}/file",
+                "workspace": a.workspace,
+                "character_id": a.character_id,
+                "story_id": a.story_id,
+                "width": a.width,
+                "height": a.height,
+                "blurhash": a.blurhash,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "metadata": a.metadata_ or {},
+            })
+        next_cursor = page[-1].created_at.isoformat() if (has_more and page) else None
+        return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
+
+
+@router.get("/api/v2/assets/{asset_id}/file")
+async def serve_asset_file(asset_id: str):
+    with _sync_session() as session:
+        asset = session.get(Asset, asset_id)
+        if not asset or asset.deleted_at is not None:
+            raise NotFoundError("Asset not found")
+        path = os.path.join(OUTPUT_DIR, asset.relative_path)
+        if not os.path.exists(path):
+            path = os.path.join(OUTPUT_DIR, asset.filename)
+        if not os.path.exists(path):
+            raise NotFoundError("Asset file missing on disk")
+        return FileResponse(path)
+
+
+@router.get("/api/v2/assets/{asset_id}/thumb")
+async def serve_asset_thumb(asset_id: str):
+    with _sync_session() as session:
+        asset = session.get(Asset, asset_id)
+        if not asset or asset.deleted_at is not None or not asset.thumbnail_relative_path:
+            raise NotFoundError("Thumbnail not found")
+        path = os.path.join(OUTPUT_DIR, asset.thumbnail_relative_path)
+        if not os.path.exists(path):
+            raise NotFoundError("Thumbnail missing on disk")
+        return FileResponse(path)
 
 
 @router.get("/api/v2/gallery")
@@ -506,15 +619,12 @@ async def view_file_endpoint(path: str):
     """Serve files from local output or cached previews."""
     import glob
 
-    from services.gallery_indexer import gallery_indexer
-    
-    # Try local output first
+    # Try local output first (supports both legacy flat and new partitioned paths)
     if path.startswith("output/"):
         filename = path.replace("output/", "").lstrip("/\\")
 
         # Security check: ensure path is within OUTPUT_DIR
         local_path = get_safe_path(OUTPUT_DIR, filename)
-        
         if os.path.exists(local_path) and os.path.isfile(local_path):
             return FileResponse(
                 local_path,
@@ -523,8 +633,8 @@ async def view_file_endpoint(path: str):
                 }
             )
 
-        # Optimization: Check the gallery index before any recursive scan
-        indexed_path = gallery_indexer.get_path(filename)
+        # Resolve via the DB-backed asset index (partitioned layout aware)
+        indexed_path = _resolve_asset_path(filename)
         if indexed_path and os.path.exists(indexed_path):
             return FileResponse(
                 indexed_path,

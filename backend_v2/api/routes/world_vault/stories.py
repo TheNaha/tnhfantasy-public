@@ -253,6 +253,7 @@ async def illustrate_chapter(
             metadata={
                 "story_id": story_id,
                 "chapter_id": chapter_id,
+                "workspace": "story",
                 "prompt": data.image_prompt,
             }
         )

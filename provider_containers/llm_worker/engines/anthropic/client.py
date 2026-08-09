@@ -42,7 +42,8 @@ class AnthropicProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         async def stream():
             try:
-                workflow = request.workflow
+                workflow = request.workflow or {}
+                messages = request.messages or workflow.get("messages", [])
                 # Anthropic format is slightly different, but we'll try to map OpenAI messages
                 # to Anthropic format.
                 raw_messages = workflow.get("messages", [])
@@ -63,7 +64,7 @@ class AnthropicProviderClient(BaseProviderClient):
                     else:
                         messages.append(m)
                 
-                model_id = workflow.get("model") or "claude-3-haiku-20240307"
+                model_id = (request.model or workflow.get("model") or "claude-3-haiku-20240307")
 
                 payload = {
                     "model": model_id,

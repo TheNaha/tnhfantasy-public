@@ -54,9 +54,12 @@ class TestGetOutputPath:
         assert "thumb" in path
 
     def test_no_date_hierarchy(self, tmp_dir):
+        # Partition (/user_id/workspace/) is always applied; only the date
+        # YYYY/MM/DD suffix is suppressed when the hierarchy is disabled.
         with patch("config.get_output_date_hierarchy", return_value=False):
             path = get_output_path(base_dir=tmp_dir)
-            assert path == tmp_dir
+            assert path == os.path.join(tmp_dir, "default_user", "main")
+            assert os.path.exists(path)
 
     def test_with_date_hierarchy(self, tmp_dir):
         with patch("config.get_output_date_hierarchy", return_value=True):

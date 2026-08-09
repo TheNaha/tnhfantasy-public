@@ -108,8 +108,8 @@ class TestFilesRoute:
     @patch("os.path.exists")
     @patch("api.routes.files.FileResponse")
     def test_view_file_nested(self, mock_file_response, mock_exists, mock_glob, client):
-        # First check fails (direct path), second passes (glob)
-        mock_exists.side_effect = [False, True]
+        # local exists=False; resolver DB miss + exists=False; falls to glob (mocked)
+        mock_exists.return_value = False
         mock_glob.return_value = ["/tmp/output/date/test.png"]
 
         mock_file_response.return_value = Response(content=b"content")

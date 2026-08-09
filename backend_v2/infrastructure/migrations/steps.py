@@ -960,6 +960,37 @@ def _migration_add_jobs_prompt_fts(conn) -> bool:
     return True
 
 
+def _migration_add_message_kind_and_tool_calls(conn) -> bool:
+    """Add `kind` and `tool_calls` to messages.
+
+    `kind` classifies a message orthogonally to `role` (narrator/image/tool),
+    so the context builder and UI can treat them without abusing role=SYSTEM
+    (which previously exempted them from pruning). Existing narrator rows
+    (stored as role=SYSTEM with metadata.source='narrator') are backfilled to
+    kind='narrator' so they become prunable.
+    """
+    inspector = inspect(conn)
+    if "messages" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("messages")}
+
+    if "kind" not in columns:
+        conn.execute(text("ALTER TABLE messages ADD COLUMN kind VARCHAR DEFAULT NULL"))
+        logger.info("migration_column_added", table="messages", column="kind")
+    if "tool_calls" not in columns:
+        conn.execute(text("ALTER TABLE messages ADD COLUMN tool_calls JSON DEFAULT NULL"))
+        logger.info("migration_column_added", table="messages", column="tool_calls")
+
+    # NOTE: no backfill of `kind`. Legacy narrator/image rows were stored with
+    # role=SYSTEM and kind=NULL; the context builder already treats kind=NULL
+    # role=SYSTEM as a prunable conversation turn, so they behave correctly
+    # without an explicit backfill (which would require an enum-cast that
+    # PostgreSQL rejects for these literal values).
+
+    _verify_required_columns(conn, "messages", {"kind", "tool_calls"})
+    return True
+
+
 def _migration_add_data_integrity_constraints(conn) -> bool:
     """Add CHECK constraints and partial unique indexes (PostgreSQL only).
 
@@ -1171,5 +1202,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="029_normalize_chat_type_defaults",
             description="Normalize legacy chat_type values: migrate 'roleplay' to 'chat'",
             apply_fn=_migration_normalize_chat_type_defaults,
+        ),
+        MigrationStep(
+            version="030_add_message_kind_and_tool_calls",
+            description="Add kind/tool_calls to messages; backfill narrator rows",
+            apply_fn=_migration_add_message_kind_and_tool_calls,
         ),
     ]

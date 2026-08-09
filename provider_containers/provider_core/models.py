@@ -5,15 +5,68 @@ These models define the API contract for all provider worker endpoints.
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class InferenceRequest(BaseModel):
-    """Request for running ComfyUI workflow inference."""
-    workflow: Dict[str, Any]
+    """Unified inference request for ALL worker types (image, llm, audio, video).
+
+    The worker dispatches on which payload fields are present:
+      - image jobs: ``workflow`` holds the ComfyUI graph.
+      - llm jobs: ``messages`` / ``tools`` / ``model`` hold the chat payload.
+    This replaces the old ComfyUI-shaped contract where LLM messages were
+    smuggled inside ``workflow``.
+    """
+    workflow: Optional[Dict[str, Any]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    model: Optional[str] = None
     use_snapshot: bool = False
     job_id: Optional[str] = None
     timeout_seconds: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _ensure_payload_present(self):
+        if not (self.workflow or self.messages or self.tools or self.model):
+            raise ValueError(
+                "InferenceRequest requires at least one of: workflow, messages, tools, or model"
+            )
+        return self
+
+
+class TaskEvent(BaseModel):
+    """Single, unified streaming event emitted by every worker.
+
+    Both the image worker (ComfyUI progress/executing/success) and the LLM
+    worker (SSE deltas/completed/tool-calls) translate their native stream
+    into this one schema, so the backend needs a single reader + reducer pair
+    instead of two divergent NDJSON dialects.
+
+    event:
+      started      job accepted, work beginning
+      progress     coarse progress fraction (0..1) for image jobs
+      delta        incremental token text for llm jobs
+      node         a ComfyUI node started executing (image jobs)
+      artifact     a finished output (image path / text)
+      completed    terminal success (carries ``outputs``)
+      failed       terminal failure (carries ``message``)
+      cancelled    terminal cancellation
+    """
+    event: Literal[
+        "started", "progress", "delta", "node", "artifact", "completed", "failed", "cancelled"
+    ]
+    job_id: Optional[str] = None
+    seq: Optional[int] = None
+    value: Optional[float] = None          # progress fraction 0..1
+    text: Optional[str] = None             # llm token delta
+    node: Optional[str] = None             # executing comfy node
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # llm tool calls (on completed)
+    outputs: Optional[List[Dict[str, Any]]] = None      # final outputs (on completed)
+    status: Optional[str] = None           # backend-facing status hint
+    message: Optional[str] = None          # error / cancel / human message
+
+    def to_ndjson(self) -> str:
+        return self.model_dump_json() + "\n"
 
 
 class CancelJobRequest(BaseModel):

@@ -155,6 +155,20 @@ async def prune_stale_providers() -> None:
         logger.warning("prune_stale_providers_failed", error=str(exc))
 
 
+def _run_asset_migration() -> None:
+    """Synchronous asset migration; invoked in a thread at startup."""
+    try:
+        from config import settings
+        from services.asset_reconciler import move_existing_assets
+
+        output_dir = settings.output_dir
+        with get_session_sync() as session:
+            moved = move_existing_assets(output_dir, lambda: get_session_sync(), user_id="default_user")
+        logger.info("asset_migration_complete", moved=moved)
+    except Exception as exc:
+        logger.warning("asset_migration_failed", error=str(exc))
+
+
 async def startup_application(process_job, ws_manager):
     """Run application startup side effects and return tracked background tasks."""
     logger.info("startup_init", phase="database")
@@ -174,6 +188,19 @@ async def startup_application(process_job, ws_manager):
         gallery_indexer.start()
     except Exception as exc:
         logger.warning("gallery_indexer_not_started", error=str(exc))
+
+    # One-time, idempotent relocation of the legacy flat output tree into the
+    # partitioned /{user_id}/{workspace}/ layout + DB-backed asset index.
+    # Runs in a background thread so startup isn't blocked (≈15s for 13k files);
+    # re-runs are no-ops once files are already partitioned.
+    logger.info("startup_init", phase="asset_migration")
+    start_background_task(
+        asyncio.to_thread(
+            _run_asset_migration,
+        ),
+        task_name="asset_migration",
+        timeout=600.0,
+    )
 
     logger.info("startup_init", phase="worker_pool")
     configure_worker_pool()

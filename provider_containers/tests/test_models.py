@@ -26,9 +26,17 @@ class TestProviderModels:
         assert req.job_id == "123"
         assert req.timeout_seconds == 42.0
 
-    def test_inference_request_missing_workflow(self):
+    def test_inference_request_missing_payload(self):
         with pytest.raises(ValidationError):
             InferenceRequest(job_id="123")
+
+    def test_inference_request_valid_with_workflow(self):
+        req = InferenceRequest(workflow={"key": "val"}, job_id="123")
+        assert req.workflow == {"key": "val"}
+
+    def test_inference_request_valid_with_messages(self):
+        req = InferenceRequest(messages=[{"role": "user", "content": "hello"}], job_id="123")
+        assert req.messages == [{"role": "user", "content": "hello"}]
 
     def test_cancel_job_request(self):
         req = CancelJobRequest(job_id="123")

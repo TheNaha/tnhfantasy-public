@@ -5,6 +5,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from api.deps import get_session_sync
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
@@ -293,20 +294,29 @@ async def complete_job(
 async def wait_for_gallery_outputs(
     outputs: list[dict[str, Any]],
     *,
-    resolve_output_path,
+    resolve_output_path=None,
     attempts: int = 20,
     delay_seconds: float = 0.5,
 ) -> None:
-    output_refs = [
-        output.get("relative_path") or output.get("filename")
+    """Wait until every image output actually exists on disk.
+
+    The DB-backed asset index replaces the old in-memory GalleryIndexer, so we
+    verify files exist on the filesystem directly (the worker writes them before
+    completion) rather than depending on an index that may not be populated yet.
+    """
+    import os
+
+    output_paths = [
+        output.get("path") or output.get("relative_path")
         for output in outputs
         if isinstance(output, dict) and output.get("filename")
     ]
-    if not output_refs:
+    output_paths = [p for p in output_paths if p]
+    if not output_paths:
         return
 
     for _ in range(attempts):
-        if all(resolve_output_path(ref) for ref in output_refs):
+        if all(os.path.exists(p) for p in output_paths):
             return
         await asyncio.sleep(delay_seconds)
 
@@ -365,20 +375,37 @@ async def finalize_persisted_job_outputs(
                     # are never persisted to the image gallery; skip all disk/gallery
                     # work for them so LLM jobs don't stall on wait_for_gallery_outputs.
                     continue
-                path = output.get("path")
-                if path:
+                path = output.get("path") or output.get("relative_path")
+                if path and not os.path.isabs(path) and not os.path.exists(path):
+                    # Worker gave a relative path (e.g. YYYY/MM/DD/name.png); make it
+                    # absolute under OUTPUT_DIR so reconcile can read dimensions/thumb.
+                    candidate = os.path.join(settings.output_dir, path)
+                    if os.path.exists(candidate):
+                        path = candidate
+                # Reconcile into the DB-backed assets index (replaces the
+                # in-memory GalleryIndexer). Newly saved images already live in the
+                # partitioned layout; this just writes/updates the asset row.
+                if path and output.get("type") == "image":
                     try:
-                        await asyncio.to_thread(gallery_indexer.add_file, path)
+                        from services.asset_reconciler import reconcile_asset
+                        await reconcile_asset(
+                            get_session_sync(),
+                            path,
+                            user_id="default_user",
+                            workspace=(job.metadata_ or {}).get("workspace", "main"),
+                            character_id=(job.metadata_ or {}).get("character_id"),
+                            story_id=(job.metadata_ or {}).get("story_id"),
+                            job_id=job_id,
+                            job_metadata=job.metadata_,
+                            output_dir=settings.output_dir,
+                        )
                     except Exception as exc:
-                        logger.warning("gallery_index_update_failed", job_id=job_id, path=path, error=str(exc))
+                        logger.warning("asset_reconcile_failed", job_id=job_id, path=path, error=str(exc))
 
                 if process_image_background_fn and path and output.get("type") == "image":
                     await process_image_background_fn(path, job_id)
 
-            await wait_for_gallery_outputs(
-                outputs,
-                resolve_output_path=gallery_indexer.get_path,
-            )
+            await wait_for_gallery_outputs(outputs)
             await complete_job(
                 job_service=job_service,
                 job_id=job_id,

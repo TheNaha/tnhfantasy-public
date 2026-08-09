@@ -41,6 +41,10 @@ def build_llm_workflow(
         "workspace": workspace,
         "type": type_,
     }
+    if story_id is not None:
+        metadata["story_id"] = story_id
+    if chapter_id is not None:
+        metadata["chapter_id"] = chapter_id
     if source is not None:
         metadata["source"] = source
     if parent_job_id is not None:

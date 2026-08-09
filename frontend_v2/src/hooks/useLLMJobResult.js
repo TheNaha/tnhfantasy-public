@@ -16,7 +16,7 @@ import { on, EventTypes, getConnectionStatus } from '../api/websocket';
 
 const getJob = (event) => event?.job ?? event;
 
-export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 30 } = {}) {
+export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 300 } = {}) {
     const pollIntervalRef = useRef(pollInterval);
     const defaultMaxPollsRef = useRef(defaultMaxPolls);
 
@@ -59,11 +59,14 @@ export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 30 } = 
             }));
 
             (async () => {
-                // WebSocket-first: if the socket is connected, rely on WS events
-                // and only poll as a delayed last-resort fallback.
+                // WebSocket-first: when connected we rely on JOB_COMPLETED/FAILED
+                // events and only poll as a genuine last-resort fallback. When
+                // disconnected, poll immediately so the hook still resolves.
                 const wsConnected = getConnectionStatus();
-                const initialDelay = wsConnected ? pollIntervalRef.current * 3 : 0;
+                // Long overall ceiling (300s) so slow jobs (e.g. Modal cold
+                // starts) never get a false "LLM job failed" rejection.
                 const max = maxPolls ?? defaultMaxPollsRef.current;
+                const initialDelay = wsConnected ? 5000 : 0;
                 for (let i = 0; i < max && !settled; i++) {
                     if (isCancelled()) {
                         onCancelled();

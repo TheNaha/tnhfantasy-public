@@ -382,32 +382,31 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 )
 
                 if request.agentic:
-                    from services.orchestrator_service import AGENTIC_TOOLS
-                    allowed_tools = set(AGENTIC_TOOLS)
-                    if not chat.allow_image_generation:
-                        allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "generate_image"}
-                    if not chat.allow_narration:
-                        allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "narrate_scene"}
-                    workflow["tools"] = list(allowed_tools)
+                    from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
+                    workflow["tools"] = filter_agentic_tools(
+                        AGENTIC_TOOLS,
+                        allow_image=chat.allow_image_generation,
+                        allow_narration=chat.allow_narration,
+                    )
                     metadata["agentic"] = True
                     metadata["orchestrator_depth"] = 0
                     metadata["original_messages"] = context
 
-                if request.generator_checkpoint:
-                    metadata["generator_checkpoint"] = request.generator_checkpoint
+            if request.generator_checkpoint:
+                metadata["generator_checkpoint"] = request.generator_checkpoint
 
-                job = await job_service.create_job(
-                    task_type="llm",
-                    workflow=workflow,
-                    metadata=metadata,
-                )
-                
-                await queue_manager.enqueue(job.id, task_type="llm")
-                job_id = job.id
-                
+            job = await job_service.create_job(
+                task_type="llm",
+                workflow=workflow,
+                metadata=metadata,
+            )
+
+            await queue_manager.enqueue(job.id, task_type="llm")
+            job_id = job.id
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-            
+
     return {"user_message_id": message.id, "job_id": job_id}
 
 @router.delete("/{chat_id}/messages/{message_id}")
@@ -681,13 +680,12 @@ async def regenerate_reply(
         extra_metadata={"regenerated": True},
     )
     if prev_agentic:
-        from services.orchestrator_service import AGENTIC_TOOLS
-        allowed_tools = set(AGENTIC_TOOLS)
-        if not chat.allow_image_generation:
-            allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "generate_image"}
-        if not chat.allow_narration:
-            allowed_tools = {t for t in allowed_tools if t["function"]["name"] != "narrate_scene"}
-        workflow["tools"] = list(allowed_tools)
+        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
+        workflow["tools"] = filter_agentic_tools(
+            AGENTIC_TOOLS,
+            allow_image=chat.allow_image_generation,
+            allow_narration=chat.allow_narration,
+        )
         metadata["agentic"] = True
         metadata["orchestrator_depth"] = 0
         metadata["original_messages"] = context

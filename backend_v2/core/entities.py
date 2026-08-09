@@ -211,6 +211,48 @@ class CollectionImage(SQLModel, table=True):
     collection: Optional["Collection"] = Relationship(back_populates="images")
 
 
+class AssetKind(str, Enum):
+    """Type of a stored asset."""
+    IMAGE = "image"
+    TEXT = "text"
+    AUDIO = "audio"
+    VIDEO = "video"
+
+
+class Asset(SQLModel, table=True):
+    """DB-backed index of a generated/interoperable asset on the filesystem.
+
+    The filesystem remains the source of truth for bytes; this table is the
+    fast, queryable index (replacing the in-memory GalleryIndexer). It enables
+    workspace/character/story-scoped galleries, keyset pagination, and the
+    future `/{user_id}/` partition without scanning thousands of files.
+    """
+    __tablename__ = "assets"
+    __table_args__ = (
+        Index("idx_asset_user_created", "user_id", "created_at"),
+        Index("idx_asset_workspace", "user_id", "workspace", "created_at"),
+        Index("idx_asset_character", "user_id", "character_id"),
+        Index("idx_asset_story", "user_id", "story_id"),
+    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(default="default_user", index=True)
+    filename: str = Field(index=True)
+    relative_path: str  # path relative to OUTPUT_DIR, e.g. default_user/roleplay/2026/08/09/foo.png
+    kind: AssetKind = Field(default=AssetKind.IMAGE)
+    workspace: str = Field(default="main", index=True)
+    character_id: str | None = Field(default=None, index=True)
+    story_id: str | None = Field(default=None, index=True)
+    job_id: str | None = Field(default=None, index=True)
+    width: int | None = Field(default=None)
+    height: int | None = Field(default=None)
+    blurhash: str | None = Field(default=None)
+    thumbnail_relative_path: str | None = Field(default=None)
+    metadata_: dict | None = Field(default=None, sa_column=Column(JSONColumn))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    deleted_at: datetime | None = Field(default=None, index=True)  # soft delete
+
+
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
 from datetime import datetime
@@ -747,14 +789,34 @@ class MessageRole(str, Enum):
     SYSTEM = "system"
     STORY = "story"
 
+
+class MessageKind(str, Enum):
+    """Semantic classification of a message, orthogonal to `role`.
+
+    `role` carries the speaker (user/char/system/story). `kind` carries *what
+    the message is* so the context builder and UI can treat narrator turns,
+    generated images, and tool-call transcripts differently without abusing
+    `role=SYSTEM` (which previously made them exempt from context pruning and
+    silently ate the whole context window).
+    """
+    USER = "user"
+    CHAR = "char"
+    SYSTEM = "system"
+    NARRATOR = "narrator"
+    IMAGE = "image"
+    TOOL = "tool"
+
+
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
     __table_args__ = (Index('idx_message_chat_id', 'chat_id'),)
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     chat_id: str = Field(foreign_key="chats.id", index=True)
     role: MessageRole
+    kind: MessageKind | None = Field(default=None, index=True)
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
+    tool_calls: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     message_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     pinned: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

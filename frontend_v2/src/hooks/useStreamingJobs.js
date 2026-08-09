@@ -18,7 +18,7 @@
  *   ['streaming', jobId]                       per-job payload (for targeted lookups)
  *   ['streaming', 'active', chatId]            array of active payloads for a chat (for lists)
  */
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 const JOB_KEY = (jobId) => ['streaming', jobId];
@@ -83,7 +83,6 @@ export function getStreamingJob(queryClient, jobId) {
  * Returns a stable-shaped array; consumers map it once via useMemo.
  */
 export function useActiveChatStreams(chatId) {
-    const queryClient = useQueryClient();
     const result = useQuery({
         queryKey: ACTIVE_KEY(chatId),
         queryFn: () => [],

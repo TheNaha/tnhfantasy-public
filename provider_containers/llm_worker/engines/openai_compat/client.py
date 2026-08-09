@@ -11,7 +11,7 @@ from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response
+    build_status_response, build_error_response, TaskEvent
 )
 
 
@@ -67,10 +67,12 @@ class OpenAICompatProviderClient(BaseProviderClient):
                 if job_id:
                     await self.job_tracker.start_job(job_id)
 
-                workflow = request.workflow
-                messages = workflow.get("messages", [])
-                tools = workflow.get("tools")
-                model_id = workflow.get("model") or os.environ.get("LLM_MODEL", "default-model")
+                # Unified InferenceRequest: LLM jobs carry `messages`/`tools`/`model`
+                # at the top level (image jobs use `workflow`). Support both.
+                workflow = request.workflow or {}
+                messages = request.messages or workflow.get("messages", [])
+                tools = request.tools or workflow.get("tools")
+                model_id = (request.model or workflow.get("model") or os.environ.get("LLM_MODEL", "default-model"))
 
                 payload = {
                     "model": model_id,
@@ -105,10 +107,11 @@ class OpenAICompatProviderClient(BaseProviderClient):
                             continue
 
                         if job_id and await self.job_tracker.is_cancelled(job_id):
-                            yield json.dumps({
-                                "type": "completed",
-                                "outputs": [{"role": "assistant", "content": full_content, "cancelled": True}],
-                            }) + "\n"
+                            yield TaskEvent(
+                                event="cancelled",
+                                job_id=job_id,
+                                outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                            ).to_ndjson()
                             return
 
                         if line.startswith("data: "):
@@ -125,12 +128,11 @@ class OpenAICompatProviderClient(BaseProviderClient):
 
                                 if content:
                                     full_content += content
-                                    event = {
-                                        "type": "progress",
-                                        "progress": 0,
-                                        "message": content,
-                                    }
-                                    yield json.dumps(event) + "\n"
+                                    yield TaskEvent(
+                                        event="delta",
+                                        job_id=job_id,
+                                        text=content,
+                                    ).to_ndjson()
 
                                 if delta_tool_calls:
                                     for tc in delta_tool_calls:
@@ -158,14 +160,15 @@ class OpenAICompatProviderClient(BaseProviderClient):
                     if tool_calls:
                         output["tool_calls"] = tool_calls
 
-                    yield json.dumps({
-                        "type": "completed",
-                        "outputs": [output],
-                    }) + "\n"
+                    yield TaskEvent(
+                        event="completed",
+                        job_id=job_id,
+                        outputs=[output],
+                    ).to_ndjson()
 
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e)).to_ndjson()
             finally:
                 if job_id:
                     await self.job_tracker.end_job(job_id)

@@ -2,6 +2,7 @@ import json
 import time
 
 from core.entities import JobStatus
+from core.events import emit_job_event, EventType
 from infrastructure.http_client import get_streaming_client
 from infrastructure.logging import get_logger
 
@@ -55,156 +56,218 @@ def format_worker_http_error(status_code: int, error_text: str) -> str:
     return f"Worker returned {status_code}: {payload}"
 
 
-def validate_success_payload(update: dict) -> None:
-    """Validate terminal success payloads before backend-side finalization."""
-    if not isinstance(update, dict):
-        raise ValueError("success payload must be an object")
-
-    if update.get("status") != "success":
+def validate_image_outputs(payload: dict) -> None:
+    """Validate a completed image TaskEvent's ``outputs`` before finalization."""
+    if not isinstance(payload, dict):
+        raise ValueError("image result must be an object")
+    outputs = payload.get("outputs")
+    if outputs is None:
         return
-
-    images = update.get("images")
-    if images is None:
-        return
-
-    if not isinstance(images, list):
-        raise ValueError("success payload images must be a list")
-
-    for index, image in enumerate(images):
-        if not isinstance(image, dict):
-            raise ValueError(f"success payload images[{index}] must be an object")
-
-        filename = image.get("filename")
-        if not filename:
-            raise ValueError(f"success payload images[{index}] missing filename")
-
-        if image.get("_base64_encoded"):
-            encoded_data = image.get("data")
-            if not isinstance(encoded_data, str) or not encoded_data:
-                raise ValueError(
-                    f"success payload images[{index}] missing base64 data for encoded image"
-                )
+    if not isinstance(outputs, list):
+        raise ValueError("image outputs must be a list")
+    for index, img in enumerate(outputs):
+        if not isinstance(img, dict):
+            raise ValueError(f"image outputs[{index}] must be an object")
+        if img.get("data") is None and img.get("filename") is None:
+            raise ValueError(f"image outputs[{index}] missing data or filename")
 
 
-
-
-async def call_llm_provider(
+async def stream_task_events(
     worker_url: str,
-    workflow: dict,
+    payload: dict,
     job_id: str,
+    *,
+    task_type: str,
     job_service,
     timeout: float,
     provider_id: str = "",
-    provider_type: str = "modal",
-) -> dict:
-    """
-    Call the LLM provider worker with the workflow.
-    Returns the final result on success, raises ProviderCallError on failure.
+    total_nodes: int = 0,
+    reducer=None,
+):
+    """Single, unified reader for ALL worker streams.
+
+    Workers emit a unified ``TaskEvent`` NDJSON schema (see
+    provider_core.models.TaskEvent). This coroutine resolves the HTTP stream,
+    parses each line into a TaskEvent, and delegates handling to ``reducer``
+    (per task_type). Returns whatever ``reducer`` returns on ``completed``.
     """
     import httpx
 
-    # --- LLM ADAPTER ---
     async with get_streaming_client(timeout=timeout) as client:
         try:
-            from core.events import EventType, emit_job_event
-            
             async with client.stream(
                 "POST",
                 f"{worker_url}/inference",
-                json={"workflow": workflow, "job_id": job_id, "timeout_seconds": timeout},
+                json=payload,
                 timeout=timeout,
             ) as response:
-                if response.status_code == 200:
-                    await job_service.update_job(job_id, status=JobStatus.GENERATING, message="Generating text...")
-                    full_content = ""
-                    last_progress_emit = 0.0
-
-                    async for chunk in response.aiter_lines():
-                        if not chunk: continue
-                        try:
-                            data = json.loads(chunk)
-                            chunk_type = data.get("type")
-
-                            if chunk_type == "progress":
-                                msg = data.get("message", "")
-                                full_content += msg
-                                # Throttle: emit at most once per LLM_PROGRESS_THROTTLE_SECONDS
-                                # (≈60fps). Suppressed deltas are still accumulated into
-                                # full_content and flushed on completion (lossless).
-                                now = time.monotonic()
-                                if now - last_progress_emit >= LLM_PROGRESS_THROTTLE_SECONDS:
-                                    last_progress_emit = now
-                                    await emit_job_event(EventType.JOB_PROGRESS, {
-                                        "id": job_id,
-                                        "status": "generating",
-                                        "stream_chunk": msg,
-                                        "text": full_content,
-                                        "metadata_": {
-                                            "chat_id": workflow.get("chat_id"),
-                                            "story_id": workflow.get("story_id"),
-                                            "chapter_id": workflow.get("chapter_id"),
-                                            "type": workflow.get("type"),
-                                        }
-                                    })
-                            elif chunk_type == "completed":
-                                # Flush any tokens accumulated since the last throttled
-                                # emit so the streaming bubble ends with complete text.
-                                if full_content:
-                                    await emit_job_event(EventType.JOB_PROGRESS, {
-                                        "id": job_id,
-                                        "status": "generating",
-                                        "stream_chunk": "",
-                                        "text": full_content,
-                                        "metadata_": {
-                                            "chat_id": workflow.get("chat_id"),
-                                            "story_id": workflow.get("story_id"),
-                                            "chapter_id": workflow.get("chapter_id"),
-                                            "type": workflow.get("type"),
-                                        }
-                                    })
-                                outputs = data.get("outputs", [])
-                                first_output = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
-                                cancelled = (
-                                    data.get("status") == "cancelled"
-                                    or bool(first_output.get("cancelled"))
-                                )
-                                if cancelled:
-                                    raise JobCancelledError(
-                                        data.get("message") or "Job cancelled by user"
-                                    )
-                                return {
-                                    "status": "success",
-                                    "type": "text",
-                                    "outputs": outputs,
-                                    "chat_id": workflow.get("chat_id")
-                                }
-                            elif data.get("status") == "error":
-                                raise ProviderCallError(
-                                    data.get("message", "Unknown error"),
-                                    provider_id=provider_id,
-                                    is_retryable=data.get("retryable", False)
-                                )
-                        except json.JSONDecodeError:
-                            pass
-                            
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    is_retryable = response.status_code >= 500
+                    try:
+                        p = json.loads(error_text.decode())
+                        if isinstance(p, dict) and "retryable" in p:
+                            is_retryable = bool(p["retryable"])
+                    except Exception:
+                        pass
                     raise ProviderCallError(
-                        "No success response received from worker",
+                        format_worker_http_error(response.status_code, error_text.decode()),
                         provider_id=provider_id,
-                        is_retryable=True,
+                        is_retryable=is_retryable,
                     )
-                    
-                error_text = await response.aread()
-                raise ProviderCallError(
-                    f"LLM worker returned {response.status_code}: {error_text.decode()}",
-                    provider_id=provider_id,
-                    is_retryable=response.status_code >= 500,
-                )
+
+                await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to provider...")
+
+                buffer = ""
+
+                async def process_line(raw: str) -> None:
+                    line = raw.strip()
+                    if not line:
+                        return
+                    try:
+                        update = json.loads(line)
+                    except json.JSONDecodeError as error:
+                        logger.warning("job_parse_error", job_id=job_id, error=str(error))
+                        return
+                    result = await reducer(update)
+                    if result is not None:
+                        # Reducers return a value on terminal ``completed`` events
+                        # (e.g. the LLM reducer). Capture it so it isn't lost when
+                        # we also call finalize() below.
+                        nonlocal _terminal_result
+                        _terminal_result = result
+
+                _terminal_result = None
+                async for chunk in response.aiter_bytes():
+                    buffer += chunk.decode("utf-8")
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        await process_line(line)
+                if buffer.strip():
+                    await process_line(buffer)
+
+                if _terminal_result is not None:
+                    return _terminal_result
+                return reducer.finalize()
+
         except httpx.TimeoutException:
             raise JobTimeoutError(f"Job timed out after {timeout}s")
         except httpx.ConnectError as error:
-            raise ProviderCallError(f"Failed to connect to LLM worker: {error}", provider_id=provider_id, is_retryable=True)
+            raise ProviderCallError(f"Failed to connect to worker: {error}", provider_id=provider_id, is_retryable=True)
         except httpx.HTTPError as error:
-            raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=True)
+            is_retryable = not isinstance(error, httpx.LocalProtocolError)
+            raise ProviderCallError(f"HTTP error: {error}", provider_id=provider_id, is_retryable=is_retryable)
+
+
+class _ImageReducer:
+    """Reduce unified TaskEvents into image-job state + final result."""
+
+    def __init__(self, job_id, job_service, total_nodes, provider_id):
+        self.job_id = job_id
+        self.job_service = job_service
+        self.total_nodes = total_nodes
+        self.provider_id = provider_id
+        self.executed_nodes = set()
+        self.final_result = None
+
+    async def __call__(self, ev: dict) -> None:
+        event = ev.get("event")
+        if event == "started":
+            await self.job_service.update_job(self.job_id, status=JobStatus.PRE_GENERATION, message="Queued in worker...")
+        elif event == "progress":
+            val = ev.get("value") or 0
+            percent = int(val * 100) if val and val <= 1 else int(val)
+            overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else percent
+            await self.job_service.update_job(
+                self.job_id, status=JobStatus.GENERATING, progress=percent,
+                overall_progress=overall, message=f"Rendering: {percent}%",
+            )
+        elif event == "node":
+            node_id = ev.get("node")
+            if node_id:
+                self.executed_nodes.add(node_id)
+            overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else 0
+            await self.job_service.update_job(
+                self.job_id, status=JobStatus.GENERATING, overall_progress=overall,
+                message=f"Executing node {len(self.executed_nodes)}/{self.total_nodes}...",
+            )
+        elif event == "completed":
+            try:
+                validate_image_outputs(ev)
+            except ValueError as error:
+                raise ProviderCallError(f"Invalid success payload: {error}", provider_id=self.provider_id, is_retryable=True) from error
+            self.final_result = ev
+        elif event == "failed":
+            raise ProviderCallError(ev.get("message", "Image generation failed"), provider_id=self.provider_id,
+                                    is_retryable=bool(ev.get("retryable", False)))
+        elif event == "cancelled":
+            raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)
+
+    def finalize(self):
+        if self.final_result:
+            return self.final_result
+        raise ProviderCallError("No completed event received from worker", provider_id=self.provider_id, is_retryable=True)
+
+
+class _LLMReducer:
+    """Reduce unified TaskEvents into LLM-job state + final result (text/tool_calls)."""
+
+    def __init__(self, job_id, job_service, provider_id, workflow):
+        self.job_id = job_id
+        self.job_service = job_service
+        self.provider_id = provider_id
+        self.workflow = workflow
+        self.full_content = ""
+        self.last_emit = 0.0
+
+    async def __call__(self, ev: dict) -> None:
+        event = ev.get("event")
+        import time
+        if event == "delta":
+            msg = ev.get("text") or ""
+            self.full_content += msg
+            now = time.monotonic()
+            if now - self.last_emit >= LLM_PROGRESS_THROTTLE_SECONDS:
+                self.last_emit = now
+                await emit_job_event(EventType.JOB_PROGRESS, {
+                    "id": self.job_id, "status": "generating", "stream_chunk": msg, "text": self.full_content,
+                    "metadata_": {
+                        "chat_id": self.workflow.get("chat_id"),
+                        "story_id": self.workflow.get("story_id"),
+                        "chapter_id": self.workflow.get("chapter_id"),
+                        "type": self.workflow.get("type"),
+                    },
+                })
+        elif event == "completed":
+            if self.full_content:
+                await emit_job_event(EventType.JOB_PROGRESS, {
+                    "id": self.job_id, "status": "generating", "stream_chunk": "", "text": self.full_content,
+                    "metadata_": {
+                        "chat_id": self.workflow.get("chat_id"),
+                        "story_id": self.workflow.get("story_id"),
+                        "chapter_id": self.workflow.get("chapter_id"),
+                        "type": self.workflow.get("type"),
+                    },
+                })
+            outputs = ev.get("outputs") or []
+            first = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
+            cancelled = ev.get("status") == "cancelled" or bool(first.get("cancelled"))
+            if cancelled:
+                raise JobCancelledError(ev.get("message") or "Job cancelled by user")
+            return {
+                "status": "success",
+                "type": "text",
+                "outputs": outputs,
+                "chat_id": self.workflow.get("chat_id"),
+            }
+        elif event == "failed":
+            raise ProviderCallError(ev.get("message", "Unknown error"), provider_id=self.provider_id,
+                                    is_retryable=bool(ev.get("retryable", False)))
+        elif event == "cancelled":
+            raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)
+
+    def finalize(self):
+        raise ProviderCallError("No completed event received from worker", provider_id=self.provider_id, is_retryable=True)
 
 
 async def call_image_provider(
@@ -217,166 +280,44 @@ async def call_image_provider(
     use_snapshot: bool = False,
     provider_id: str = "",
 ) -> dict:
-    """
-    Call the image provider worker with the workflow.
-    Returns the final result on success, raises ProviderCallError on failure.
-    """
-    import httpx
-    # --- DEFAULT COMFYUI ADAPTER ---
-    async with get_streaming_client(timeout=timeout) as client:
-        try:
-            async with client.stream(
-                "POST",
-                f"{worker_url}/inference",
-                json={
-                    "workflow": workflow,
-                    "use_snapshot": use_snapshot,
-                    "job_id": job_id,
-                    "timeout_seconds": timeout,
-                },
-                timeout=timeout,
-            ) as response:
+    reducer = _ImageReducer(job_id, job_service, total_nodes, provider_id)
+    return await stream_task_events(
+        worker_url,
+        {"workflow": workflow, "use_snapshot": use_snapshot, "job_id": job_id, "timeout_seconds": timeout},
+        job_id,
+        task_type="image",
+        job_service=job_service,
+        timeout=timeout,
+        provider_id=provider_id,
+        total_nodes=total_nodes,
+        reducer=reducer,
+    )
 
-                if response.status_code == 200:
-                    await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to provider...")
-                    final_result = None
-                    buffer = ""
-                    executed_nodes = set()
 
-                    async def handle_update(update: dict) -> None:
-                        nonlocal final_result
-
-                        status = update.get("status")
-
-                        if status == "progress":
-                            val = update.get("value", 0)
-                            max_val = update.get("max", 1)
-                            percent = int((val / max_val) * 100) if max_val > 0 else 0
-                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                            await job_service.update_job(
-                                job_id,
-                                status=JobStatus.GENERATING,
-                                progress=percent,
-                                overall_progress=overall,
-                                message=f"Rendering: {percent}%",
-                            )
-                        elif status == "executing":
-                            node_id = update.get("node")
-                            if node_id:
-                                executed_nodes.add(node_id)
-
-                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                            await job_service.update_job(
-                                job_id,
-                                status=JobStatus.GENERATING,
-                                overall_progress=overall,
-                                message=f"Executing node {len(executed_nodes)}/{total_nodes}...",
-                            )
-                        elif status == "execution_cached":
-                            nodes = update.get("nodes", [])
-                            for node in nodes:
-                                executed_nodes.add(node)
-
-                            overall = int((len(executed_nodes) / total_nodes) * 100) if total_nodes > 0 else 0
-                            await job_service.update_job(
-                                job_id,
-                                overall_progress=overall,
-                                message=f"Restored {len(nodes)} cached nodes...",
-                            )
-                        elif status == "queued":
-                            await job_service.update_job(job_id, status=JobStatus.PRE_GENERATION, message="Queued in ComfyUI...")
-                        elif status == "success":
-                            try:
-                                validate_success_payload(update)
-                            except ValueError as error:
-                                raise ProviderCallError(
-                                    f"Invalid success payload: {error}",
-                                    provider_id=provider_id,
-                                    # Treat success payload validation as retryable to allow
-                                    # fallback across transient provider/schema mismatches.
-                                    is_retryable=True,
-                                ) from error
-                            final_result = update
-                        elif status == "error":
-                            error_message = extract_worker_error_message(update)
-                            raise ProviderCallError(
-                                error_message,
-                                provider_id=provider_id,
-                                is_retryable=bool(update.get("retryable", False)),
-                            )
-                        elif status == "cancelled":
-                            raise JobCancelledError(
-                                update.get("message") or "Job cancelled by user",
-                                provider_id=provider_id,
-                            )
-
-                    async def process_line(raw_line: str, source: str) -> None:
-                        line = raw_line.strip()
-                        if not line:
-                            return
-
-                        try:
-                            update = json.loads(line)
-                        except json.JSONDecodeError as error:
-                            logger.warning(
-                                "job_parse_error",
-                                job_id=job_id,
-                                source=source,
-                                line_length=len(line),
-                                error=str(error),
-                            )
-                            return
-
-                        await handle_update(update)
-
-                    async for chunk in response.aiter_bytes():
-                        buffer += chunk.decode("utf-8")
-
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            await process_line(line, source="stream")
-
-                    # Some workers can end streams without a trailing newline.
-                    # Parse any remaining buffered JSON so terminal payloads aren't lost.
-                    if buffer.strip():
-                        await process_line(buffer, source="stream_tail")
-
-                    if final_result:
-                        return final_result
-
-                    raise ProviderCallError(
-                        "No success response received from worker",
-                        provider_id=provider_id,
-                        is_retryable=True,
-                    )
-
-                error_text = await response.aread()
-                is_retryable = response.status_code >= 500
-                try:
-                    payload = json.loads(error_text.decode())
-                    if isinstance(payload, dict) and "retryable" in payload:
-                        is_retryable = bool(payload["retryable"])
-                except Exception:
-                    pass
-
-                raise ProviderCallError(
-                    format_worker_http_error(response.status_code, error_text.decode()),
-                    provider_id=provider_id,
-                    is_retryable=is_retryable,
-                )
-
-        except httpx.TimeoutException:
-            raise JobTimeoutError(f"Job timed out after {timeout}s")
-        except httpx.ConnectError as error:
-            raise ProviderCallError(
-                f"Failed to connect to worker: {error}",
-                provider_id=provider_id,
-                is_retryable=True,
-            )
-        except httpx.HTTPError as error:
-            is_retryable = not isinstance(error, httpx.LocalProtocolError)
-            raise ProviderCallError(
-                f"HTTP error: {error}",
-                provider_id=provider_id,
-                is_retryable=is_retryable,
-            )
+async def call_llm_provider(
+    worker_url: str,
+    workflow: dict,
+    job_id: str,
+    job_service,
+    timeout: float,
+    provider_id: str = "",
+    provider_type: str = "modal",
+) -> dict:
+    reducer = _LLMReducer(job_id, job_service, provider_id, workflow)
+    payload = {
+        "messages": workflow.get("messages"),
+        "tools": workflow.get("tools"),
+        "model": workflow.get("model"),
+        "job_id": job_id,
+        "timeout_seconds": timeout,
+    }
+    return await stream_task_events(
+        worker_url,
+        payload,
+        job_id,
+        task_type="llm",
+        job_service=job_service,
+        timeout=timeout,
+        provider_id=provider_id,
+        reducer=reducer,
+    )

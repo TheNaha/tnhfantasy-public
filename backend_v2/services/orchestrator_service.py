@@ -118,6 +118,30 @@ AGENTIC_TOOLS = [
 ]
 
 
+def filter_agentic_tools(
+    tools: list[dict[str, Any]] | None,
+    allow_image: bool = True,
+    allow_narration: bool = True,
+) -> list[dict[str, Any]]:
+    """Return the subset of AGENTIC_TOOLS the chat is permitted to use.
+
+    AGENTIC_TOOLS is a list of dicts, so it must never be passed through
+    ``set()`` (dicts are unhashable -> TypeError). Filter with a list
+    comprehension instead.
+    """
+    if not tools:
+        return []
+    allowed: list[dict[str, Any]] = []
+    for tool in tools:
+        name = tool.get("function", {}).get("name")
+        if name == "generate_image" and not allow_image:
+            continue
+        if name == "narrate_scene" and not allow_narration:
+            continue
+        allowed.append(tool)
+    return allowed
+
+
 def has_tool_calls(assistant_output: dict[str, Any]) -> bool:
     """Check if an LLM output dict contains tool calls."""
     return bool(assistant_output.get("tool_calls"))
@@ -460,7 +484,7 @@ async def _tool_generate_image(
         filename_prefix="AgenticGen",
     )
 
-    metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image"}
+    metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "roleplay"}
     if chat_id:
         metadata["chat_id"] = chat_id
     if character_id:

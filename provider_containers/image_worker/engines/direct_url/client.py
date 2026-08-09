@@ -11,6 +11,7 @@ from provider_core import (
     UploadFileRequest, ValidateModelsRequest, build_status_response, build_error_response
 )
 from provider_core.base_client import BaseProviderClient
+from provider_core.utils import translate_task_events, TaskEvent
 
 PROVIDER_ID = os.getenv("PROVIDER_ID", "direct-url-worker")
 
@@ -70,9 +71,9 @@ class DirectUrlProviderClient(BaseProviderClient):
                     yield json.dumps(payload) + "\n"
             except Exception as e:
                 self.logger.exception("Inference failed")
-                yield json.dumps(build_error_response(str(e), retryable=False, code=500)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e))).to_ndjson()
 
-        return StreamingResponse(stream(), media_type="application/x-ndjson")
+        return StreamingResponse(translate_task_events(stream(), job_id=job_id), media_type="application/x-ndjson")
 
     async def setup_models(self) -> Dict[str, Any]:
         return build_status_response("success", "Setup not needed for direct_url provider", provider=PROVIDER_ID)
