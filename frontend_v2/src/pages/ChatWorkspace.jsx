@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { thumbUrl } from '../utils/assetUrl';
 import {
@@ -998,12 +998,31 @@ export default function ChatWorkspace() {
     const listContainerRef = useRef(null);
     const textareaRef = useRef(null);
     const location = useLocation();
+    const navigate = useNavigate();
+    const { chatId: urlChatId } = useParams();
 
     const settings = useSettings();
     
     const queryClient = useQueryClient();
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
     const setActiveChatId = useWorldVaultStore(state => state.setActiveChat);
+
+    // Deep-linking: /chat/:chatId is the source of truth for the active chat.
+    // URL change -> store, store change -> URL. replace() keeps back/forward
+    // history clean when hopping between chats.
+    useEffect(() => {
+        if (urlChatId && urlChatId !== activeChatId) {
+            setActiveChatId(urlChatId);
+        }
+    }, [urlChatId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (activeChatId && activeChatId !== urlChatId) {
+            navigate(`/chat/${activeChatId}`, { replace: true });
+        } else if (!activeChatId && urlChatId) {
+            navigate('/chat', { replace: true });
+        }
+    }, [activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const activeStreamEntries = useActiveChatStreams(activeChatId);
     const activeStreams = useMemo(
@@ -1041,9 +1060,40 @@ export default function ChatWorkspace() {
         setIsGeneratingTitle(false);
     }, [activeChatId]);
 
-    const { data: chats, isLoading: isChatsLoading } = useChats();
+    const CHAT_PAGE_SIZE = 50;
+    const [chatOffset, setChatOffset] = useState(0);
+    const { data: chats, isLoading: isChatsLoading } = useChats({ limit: CHAT_PAGE_SIZE, offset: chatOffset });
+    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE;
+
+    // Message pagination: page 0 is the newest 100 messages (ascending order,
+    // newest last). Older pages are appended above them on demand.
+    const MESSAGE_PAGE_SIZE = 100;
+    const MAX_MESSAGE_PAGES = 5;
+    const [messagePageCount, setMessagePageCount] = useState(1);
+    const messagePageQueries = [];
+    for (let pageIndex = 0; pageIndex < MAX_MESSAGE_PAGES; pageIndex += 1) {
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        messagePageQueries.push(useMessages(
+            activeChatId,
+            { limit: MESSAGE_PAGE_SIZE, offset: pageIndex * MESSAGE_PAGE_SIZE },
+            { enabled: pageIndex < messagePageCount }
+        ));
+    }
+    const messages = useMemo(
+        () => {
+            const merged = [];
+            for (let pageIndex = messagePageCount - 1; pageIndex >= 0; pageIndex -= 1) {
+                merged.push(...(messagePageQueries[pageIndex].data || []));
+            }
+            return merged;
+        },
+        [messagePageCount, ...messagePageQueries.map(q => q.data)] // eslint-disable-line react-hooks/exhaustive-deps
+    );
+    const lastLoadedPageFull = (messagePageQueries[messagePageCount - 1]?.data?.length ?? 0) === MESSAGE_PAGE_SIZE;
+    const hasMoreMessages = messagePageCount < MAX_MESSAGE_PAGES && lastLoadedPageFull;
+    const loadOlderMessages = () => setMessagePageCount(c => Math.min(c + 1, MAX_MESSAGE_PAGES));
+
     const { data: activeChat } = useChat(activeChatId);
-    const { data: messages = [] } = useMessages(activeChatId);
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
     const { data: availableModels = [] } = useLLMAvailableModels();
@@ -1906,6 +1956,14 @@ export default function ChatWorkspace() {
                             )}
                         </div>
                     ))}
+                    {hasMoreChats && (
+                        <button
+                            onClick={() => setChatOffset(o => o + CHAT_PAGE_SIZE)}
+                            className="w-full py-2 text-xs text-gray-500 hover:text-blue-300 hover:bg-white/5 rounded-lg transition-colors"
+                        >
+                            Load more chats
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -2000,6 +2058,16 @@ export default function ChatWorkspace() {
                         </div>
                     ) : (
                         <>
+                            {hasMoreMessages && (
+                                <div className="flex justify-center pb-3">
+                                    <button
+                                        onClick={loadOlderMessages}
+                                        className="px-3 py-1.5 text-xs text-gray-400 hover:text-blue-300 hover:bg-blue-500/10 border border-white/5 rounded-lg transition-colors"
+                                    >
+                                        Load older messages
+                                    </button>
+                                </div>
+                            )}
                             <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
                                 {rowVirtualizer.getVirtualItems().map(virtualItem => (
                                     <div

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight, Images } from 'lucide-react';
-import clsx from 'clsx';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { assetUrl, thumbUrl } from '../utils/assetUrl';
 
 function buildUrl(filename) {
@@ -15,10 +15,65 @@ function buildThumbUrl(filename) {
     return thumbUrl(filename);
 }
 
+function findScrollParent(startEl) {
+    let el = startEl;
+    while (el && el !== document.body) {
+        const style = window.getComputedStyle(el);
+        if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+            return el;
+        }
+        el = el.parentElement;
+    }
+    return null;
+}
+
+function SceneCell({ filename, onOpen }) {
+    return (
+        <button
+            onClick={() => onOpen(filename)}
+            className="aspect-square rounded bg-gray-800/50 border border-white/5 overflow-hidden hover:border-blue-500/40 transition-colors group relative"
+            title={filename}
+        >
+            <img
+                src={buildThumbUrl(filename)}
+                alt=""
+                className="w-full h-full object-cover"
+                loading="lazy"
+                onError={(e) => { e.target.style.display = 'none'; }}
+            />
+            <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
+        </button>
+    );
+}
+
 export default function SceneGallery({ title, images, compact, lightboxAction }) {
     const [selectedIdx, setSelectedIdx] = useState(null);
+    const gridRef = useRef(null);
+    const [scrollEl, setScrollEl] = useState(null);
 
-    if (!images || images.length === 0) {
+    const cols = compact ? 3 : 4;
+
+    const imagesList = useMemo(() => (Array.isArray(images) ? images : []), [images]);
+
+    // Resolve the nearest scrollable ancestor so rows can be virtualized
+    // against the real scroll container (modal body, side panel…). Re-run
+    // when the image count changes so late-loading lists pick up scrolling.
+    useLayoutEffect(() => {
+        if (!gridRef.current) return;
+        setScrollEl(findScrollParent(gridRef.current));
+    }, [imagesList.length]);
+
+    const rowCount = Math.ceil(imagesList.length / cols);
+
+    // eslint-disable-next-line react-hooks/incompatible-library -- React Compiler not used; virtualizer values stay local
+    const rowVirtualizer = useVirtualizer({
+        count: rowCount,
+        getScrollElement: () => scrollEl,
+        estimateSize: () => 96,
+        overscan: 4,
+    });
+
+    if (imagesList.length === 0) {
         return (
             <div className="text-[10px] text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
                 No scenes generated yet
@@ -28,27 +83,46 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
 
     const open = (idx) => setSelectedIdx(idx);
 
-    return (
-        <div>
-            <div className={clsx('grid gap-1', compact ? 'grid-cols-3' : 'grid-cols-4')}>
-                {images.map((filename, idx) => (
-                    <button
+    const renderRow = (rowIndex) => {
+        const start = rowIndex * cols;
+        const rowImages = imagesList.slice(start, Math.min(start + cols, imagesList.length));
+        return (
+            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+                {rowImages.map((filename) => (
+                    <SceneCell
                         key={filename}
-                        onClick={() => open(idx)}
-                        className="aspect-square rounded bg-gray-800/50 border border-white/5 overflow-hidden hover:border-blue-500/40 transition-colors group relative"
-                        title={filename}
-                    >
-                        <img
-                            src={buildThumbUrl(filename)}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                        />
-                        <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
-                    </button>
+                        filename={filename}
+                        onOpen={(f) => open(imagesList.indexOf(f))}
+                    />
                 ))}
             </div>
+        );
+    };
+
+    const hasScrollEl = scrollEl && rowCount > 0;
+
+    return (
+        <div>
+            {hasScrollEl ? (
+                <div ref={gridRef} style={{ position: 'relative', height: `${rowVirtualizer.getTotalSize()}px` }}>
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => (
+                        <div
+                            key={virtualRow.key}
+                            ref={rowVirtualizer.measureElement}
+                            data-index={virtualRow.index}
+                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                        >
+                            {renderRow(virtualRow.index)}
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div ref={gridRef} className="grid gap-1">
+                    {imagesList.map((filename, idx) => (
+                        <SceneCell key={filename} filename={filename} onOpen={() => open(idx)} />
+                    ))}
+                </div>
+            )}
 
             {selectedIdx !== null && (
                 <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedIdx(null)}>
@@ -57,7 +131,7 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                         <div className="flex items-center gap-2">
                             {lightboxAction && (
                                 <span onClick={(e) => e.stopPropagation()}>
-                                    {lightboxAction(images[selectedIdx], selectedIdx)}
+                                    {lightboxAction(imagesList[selectedIdx], selectedIdx)}
                                 </span>
                             )}
                             <button className="p-2 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors" onClick={() => setSelectedIdx(null)}>
@@ -67,21 +141,21 @@ export default function SceneGallery({ title, images, compact, lightboxAction })
                     </div>
                     <button
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors mr-2"
-                        onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx - 1 + images.length) % images.length); }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx - 1 + imagesList.length) % imagesList.length); }}
                     >
                         <ChevronLeft size={22} />
                     </button>
                     <div className="max-h-full max-w-full" onClick={(e) => e.stopPropagation()}>
                         <img
-                            src={buildUrl(images[selectedIdx])}
+                            src={buildUrl(imagesList[selectedIdx])}
                             alt=""
                             className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
                         />
-                        <p className="text-[10px] text-gray-500 text-center mt-2 truncate">{images[selectedIdx]}</p>
+                        <p className="text-[10px] text-gray-500 text-center mt-2 truncate">{imagesList[selectedIdx]}</p>
                     </div>
                     <button
                         className="p-2.5 text-gray-300 hover:text-white rounded-xl hover:bg-white/10 transition-colors ml-2"
-                        onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx + 1) % images.length); }}
+                        onClick={(e) => { e.stopPropagation(); setSelectedIdx((selectedIdx + 1) % imagesList.length); }}
                     >
                         <ChevronRight size={22} />
                     </button>

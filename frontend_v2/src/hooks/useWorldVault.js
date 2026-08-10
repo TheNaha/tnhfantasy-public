@@ -24,7 +24,7 @@ export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     });
 };
 
-export const useMessages = (chatId, { limit = 100, offset = 0 } = {}) => {
+export const useMessages = (chatId, { limit = 100, offset = 0 } = {}, options = {}) => {
     return useQuery({
         queryKey: ['world_vault', 'messages', chatId, limit, offset],
         queryFn: () => {
@@ -34,7 +34,8 @@ export const useMessages = (chatId, { limit = 100, offset = 0 } = {}) => {
             if (offset) params.offset = offset;
             return api.get(`/api/v2/chats/${chatId}/messages`, { params });
         },
-        enabled: !!chatId
+        enabled: !!chatId,
+        ...options,
     });
 };
 
