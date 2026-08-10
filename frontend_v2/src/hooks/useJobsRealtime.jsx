@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
 import toast from 'react-hot-toast';
-import { useSettingsStore } from '../store/settingsStore';
+import useSettingsStore from '../store/settingsStore';
 
 export function useJobsRealtime() {
     const queryClient = useQueryClient();

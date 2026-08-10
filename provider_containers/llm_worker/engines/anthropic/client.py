@@ -15,6 +15,87 @@ from provider_core.models import (
 )
 
 
+def _parse_json(value: Any) -> Any:
+    """Best-effort parse of a JSON string; returns raw value on failure."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
+def translate_tools(tools: Any) -> list[dict[str, Any]]:
+    """Translate OpenAI-style tool definitions into Anthropic tool format."""
+    if not tools:
+        return []
+    result = []
+    for tool in tools:
+        fn = tool.get("function", {}) if isinstance(tool, dict) else {}
+        result.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", "") or "",
+            "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return result
+
+
+def translate_messages(raw_messages: Any) -> tuple[list[dict[str, Any]], str]:
+    """Translate OpenAI-style messages into Anthropic message format.
+
+    Handles assistant messages carrying ``tool_calls`` (converted to
+    ``tool_use`` content blocks) and ``role == "tool"`` results (converted to
+    ``tool_result`` blocks on a user turn).
+    """
+    system_prompt = ""
+    messages: list[dict[str, Any]] = []
+    for m in raw_messages:
+        if m.get("role") == "system":
+            content = m.get("content", "")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            system_prompt += block.get("text", "") + "\n"
+            elif isinstance(content, str):
+                system_prompt += content + "\n"
+            continue
+
+        if m.get("role") == "assistant":
+            content = m.get("content", "")
+            tool_calls = m.get("tool_calls")
+            if tool_calls:
+                blocks = []
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                for tc in tool_calls:
+                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": fn.get("name", ""),
+                        "input": _parse_json(fn.get("arguments")),
+                    })
+                messages.append({"role": "assistant", "content": blocks})
+            else:
+                messages.append({"role": "assistant", "content": content})
+            continue
+
+        if m.get("role") == "tool":
+            messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": m.get("tool_call_id", ""),
+                    "content": m.get("content", ""),
+                }],
+            })
+            continue
+
+        messages.append(m)
+    return messages, system_prompt
+
+
 class AnthropicProviderClient(BaseProviderClient):
     """
     Provider Client for LLM generation via Anthropic endpoints (Claude).
@@ -51,22 +132,9 @@ class AnthropicProviderClient(BaseProviderClient):
                 # at the top level. Support both shapes.
                 workflow = request.workflow or {}
                 raw_messages = request.messages or workflow.get("messages", [])
+                tools = request.tools or workflow.get("tools")
 
-                # Extract system prompt if any
-                system_prompt = ""
-                messages = []
-                for m in raw_messages:
-                    if m.get("role") == "system":
-                        content = m.get("content", "")
-                        if isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict):
-                                    if block.get("type") == "text":
-                                        system_prompt += block.get("text", "") + "\n"
-                        elif isinstance(content, str):
-                            system_prompt += content + "\n"
-                    else:
-                        messages.append(m)
+                messages, system_prompt = translate_messages(raw_messages)
 
                 model_id = (request.model or workflow.get("model") or "claude-3-haiku-20240307")
 
@@ -76,6 +144,8 @@ class AnthropicProviderClient(BaseProviderClient):
                     "stream": True,
                     "max_tokens": 4096,
                 }
+                if tools:
+                    payload["tools"] = translate_tools(tools)
                 if request.temperature is not None:
                     payload["temperature"] = request.temperature
                 if system_prompt:
@@ -90,9 +160,6 @@ class AnthropicProviderClient(BaseProviderClient):
                 timeout = request.timeout_seconds or 120.0
                 client = await get_http_client().get_client()
 
-                async def check_cancel():
-                    return job_id and await self.job_tracker.is_cancelled(job_id)
-
                 async with client.stream(
                     "POST",
                     "https://api.anthropic.com/v1/messages",
@@ -103,6 +170,7 @@ class AnthropicProviderClient(BaseProviderClient):
                     response.raise_for_status()
 
                     full_content = ""
+                    tool_blocks: dict[int, dict[str, str]] = {}
 
                     async for line in response.aiter_lines():
                         line = line.strip()
@@ -123,20 +191,45 @@ class AnthropicProviderClient(BaseProviderClient):
                                 data = json.loads(data_str)
                                 type_ = data.get("type")
 
-                                if type_ == "content_block_delta":
-                                    delta = data.get("delta", {})
-                                    text = delta.get("text", "")
-                                    if text:
-                                        full_content += text
-                                        yield TaskEvent(
-                                            event="delta",
-                                            job_id=job_id,
-                                            text=text,
-                                        ).to_ndjson()
+                                if type_ == "content_block_start":
+                                    content_block = data.get("content_block") or {}
+                                    if content_block.get("type") == "tool_use":
+                                        index = data.get("index", 0)
+                                        tool_blocks[index] = {
+                                            "id": content_block.get("id", ""),
+                                            "name": content_block.get("name", ""),
+                                            "input_json": "",
+                                        }
+                                elif type_ == "content_block_delta":
+                                    delta = data.get("delta", {}) or {}
+                                    if delta.get("type") == "input_json_delta":
+                                        index = data.get("index", 0)
+                                        entry = tool_blocks.setdefault(
+                                            index, {"id": "", "name": "", "input_json": ""}
+                                        )
+                                        entry["input_json"] += delta.get("partial_json", "")
+                                    else:
+                                        text = delta.get("text", "")
+                                        if text:
+                                            full_content += text
+                                            yield TaskEvent(
+                                                event="delta",
+                                                job_id=job_id,
+                                                text=text,
+                                            ).to_ndjson()
                             except json.JSONDecodeError:
                                 pass
 
                 output = {"role": "assistant", "content": full_content}
+                if tool_blocks:
+                    output["tool_calls"] = [
+                        {
+                            "id": block["id"],
+                            "type": "function",
+                            "function": {"name": block["name"], "arguments": block["input_json"]},
+                        }
+                        for block in (tool_blocks[i] for i in sorted(tool_blocks))
+                    ]
 
                 yield TaskEvent(
                     event="completed",

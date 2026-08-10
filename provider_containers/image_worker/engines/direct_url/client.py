@@ -43,8 +43,37 @@ class DirectUrlProviderClient(BaseProviderClient):
         self.comfy_url = os.getenv("COMFYUI_URL", "http://localhost:8188")
         self._http = httpx.AsyncClient(base_url=self.comfy_url, timeout=30.0)
 
-    async def _close(self):
+    async def close(self):
         await self._http.aclose()
+
+    def _iter_object_info_model_paths(self, object_info: Dict[str, Any], directory: str = "") -> list[str]:
+        """Walk /object_info and yield model file paths for the given directory.
+
+        Shared by list_models and validate_models so the NODE_TO_DIRECTORY /
+        MODEL_INPUT_NAMES parsing logic lives in exactly one place.
+        """
+        paths: list[str] = []
+        for node_type, node_info in object_info.items():
+            target_dir = NODE_TO_DIRECTORY.get(node_type)
+            if not target_dir:
+                continue
+            if directory and target_dir != directory:
+                continue
+            node_input = node_info.get("input", {}) or {}
+            inputs = list(node_input.get("required", []) or []) + list(node_input.get("optional", []) or [])
+            for input_def in inputs:
+                if not isinstance(input_def, (list, tuple)) or len(input_def) < 2:
+                    continue
+                input_name = input_def[0]
+                if input_name not in MODEL_INPUT_NAMES:
+                    continue
+                model_list = input_def[1]
+                if isinstance(model_list, list) and model_list:
+                    choices = model_list[0] if isinstance(model_list[0], list) else model_list
+                    for model_name in choices:
+                        if isinstance(model_name, str) and model_name:
+                            paths.append(f"{target_dir}/{model_name}")
+        return sorted(set(paths))
 
     async def get_health(self) -> Dict[str, Any]:
         # Local-only health check per VISION #4: never probe the remote
@@ -96,36 +125,10 @@ class DirectUrlProviderClient(BaseProviderClient):
             self.logger.warning(f"Failed to fetch /object_info: {e}")
             return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
 
-        files_by_name: Dict[str, Dict[str, Any]] = {}
-        for node_type, node_info in object_info.items():
-            target_dir = NODE_TO_DIRECTORY.get(node_type)
-            if not target_dir:
-                continue
-            if directory and target_dir != directory:
-                continue
-            inputs = node_info.get("input", {}).get("required", []) + node_info.get("input", {}).get("optional", [])
-            for input_def in inputs:
-                if len(input_def) < 2:
-                    continue
-                input_name = input_def[0]
-                if input_name not in MODEL_INPUT_NAMES:
-                    continue
-                model_list = input_def[1]
-                if isinstance(model_list, list) and model_list:
-                    choices = model_list[0] if isinstance(model_list[0], list) else model_list
-                    for model_name in choices:
-                        if not isinstance(model_name, str) or not model_name:
-                            continue
-                        file_path = f"{target_dir}/{model_name}"
-                        if file_path not in files_by_name:
-                            files_by_name[file_path] = {
-                                "name": model_name,
-                                "path": file_path,
-                                "type": "file",
-                                "size": 0,
-                            }
-
-        files = sorted(files_by_name.values(), key=lambda f: f["path"])
+        files = [
+            {"name": path.split("/", 1)[-1], "path": path, "type": "file", "size": 0}
+            for path in self._iter_object_info_model_paths(object_info, directory)
+        ]
         return build_status_response("success", f"Listed {len(files)} models", provider=PROVIDER_ID, files=files)
 
     async def delete_model(self, request: DeleteModelRequest) -> Dict[str, Any]:
@@ -159,32 +162,13 @@ class DirectUrlProviderClient(BaseProviderClient):
             return build_error_response(f"Failed to query ComfyUI: {e}", retryable=True, code=502)
 
         target_dir = request.directory if isinstance(request.directory, str) else ""
-        available = set()
-        for node_type, node_info in object_info.items():
-            expected_dir = NODE_TO_DIRECTORY.get(node_type)
-            if not expected_dir:
-                continue
-            if target_dir and expected_dir != target_dir:
-                continue
-            inputs = node_info.get("input", {}).get("required", []) + node_info.get("input", {}).get("optional", [])
-            for input_def in inputs:
-                if len(input_def) < 2:
-                    continue
-                input_name = input_def[0]
-                if input_name not in MODEL_INPUT_NAMES:
-                    continue
-                model_list = input_def[1]
-                if isinstance(model_list, list) and model_list:
-                    choices = model_list[0] if isinstance(model_list[0], list) else model_list
-                    for model_name in choices:
-                        if isinstance(model_name, str) and model_name:
-                            available.add(f"{expected_dir}/{model_name}")
+        available = self._iter_object_info_model_paths(object_info, target_dir)
 
         return build_status_response(
             "success",
             f"Found {len(available)} models available on ComfyUI server",
             provider=PROVIDER_ID,
-            available=list(available),
+            available=available,
         )
 
     async def validate_all_models(self) -> Dict[str, Any]:

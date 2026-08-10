@@ -15,6 +15,94 @@ from provider_core.models import (
 )
 
 
+def _parse_json(value: Any) -> Any:
+    """Best-effort parse of a JSON string; returns raw value on failure."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
+def translate_tools(tools: Any) -> list[dict[str, Any]]:
+    """Translate OpenAI-style tool definitions into Gemini tools format."""
+    if not tools:
+        return []
+    declarations = []
+    for tool in tools:
+        fn = tool.get("function", {}) if isinstance(tool, dict) else {}
+        declarations.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", "") or "",
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return [{"functionDeclarations": declarations}]
+
+
+def translate_messages(raw_messages: Any) -> tuple[list[dict[str, Any]], str]:
+    """Translate OpenAI-style messages into Gemini ``contents``.
+
+    Assistant messages carrying ``tool_calls`` become ``functionCall`` parts;
+    ``role == "tool"`` results become ``functionResponse`` parts on a user turn.
+    Returns ``(contents, system_prompt)``.
+    """
+    system_prompt = ""
+    contents: list[dict[str, Any]] = []
+    for m in raw_messages:
+        role = m.get("role")
+        if role == "system":
+            content = m.get("content", "")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        system_prompt += block.get("text", "") + "\n"
+            elif isinstance(content, str):
+                system_prompt += content + "\n"
+            continue
+
+        if role == "assistant":
+            content = m.get("content", "")
+            parts = []
+            if isinstance(content, str) and content:
+                parts.append({"text": content})
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                        parts.append({"text": block["text"]})
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                args = _parse_json(fn.get("arguments"))
+                if not isinstance(args, dict):
+                    args = {"value": args}
+                parts.append({
+                    "functionCall": {"name": fn.get("name", ""), "args": args},
+                })
+            contents.append({"role": "model", "parts": parts})
+            continue
+
+        if role == "tool":
+            parsed = _parse_json(m.get("content", ""))
+            response = parsed if isinstance(parsed, dict) else {"result": str(parsed)}
+            contents.append({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {"name": m.get("name", ""), "response": response},
+                }],
+            })
+            continue
+
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        g_role = "model" if role == "assistant" else "user"
+        contents.append({"role": g_role, "parts": [{"text": content}]})
+    return contents, system_prompt
+
+
 class GoogleProviderClient(BaseProviderClient):
     """
     Provider Client for LLM generation via Google Gemini API.
@@ -51,39 +139,19 @@ class GoogleProviderClient(BaseProviderClient):
                 # at the top level. Support both shapes.
                 workflow = request.workflow or {}
                 raw_messages = request.messages or workflow.get("messages", [])
+                tools = request.tools or workflow.get("tools")
 
                 # Gemini format expects {"role": "user"|"model", "parts": [{"text": "..."}]}
                 # system instructions are sent separately.
-                system_prompt = ""
-                contents = []
-                for m in raw_messages:
-                    role = m.get("role")
-                    if role == "system":
-                        content = m.get("content", "")
-                        if isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    system_prompt += block.get("text", "") + "\n"
-                        elif isinstance(content, str):
-                            system_prompt += content + "\n"
-                    else:
-                        content = m.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(
-                                b.get("text", "") for b in content
-                                if isinstance(b, dict) and b.get("type") == "text"
-                            )
-                        g_role = "model" if role == "assistant" else "user"
-                        contents.append({
-                            "role": g_role,
-                            "parts": [{"text": content}]
-                        })
+                contents, system_prompt = translate_messages(raw_messages)
 
                 model_id = (request.model or workflow.get("model") or "gemini-1.5-flash")
 
                 payload = {
                     "contents": contents,
                 }
+                if tools:
+                    payload["tools"] = translate_tools(tools)
 
                 if request.temperature is not None:
                     payload["generationConfig"] = {"temperature": request.temperature}
@@ -103,9 +171,6 @@ class GoogleProviderClient(BaseProviderClient):
                 timeout = request.timeout_seconds or 120.0
                 client = await get_http_client().get_client()
 
-                async def check_cancel():
-                    return job_id and await self.job_tracker.is_cancelled(job_id)
-
                 async with client.stream(
                     "POST",
                     url,
@@ -116,6 +181,7 @@ class GoogleProviderClient(BaseProviderClient):
                     response.raise_for_status()
 
                     full_content = ""
+                    tool_calls = []
 
                     async for line in response.aiter_lines():
                         line = line.strip()
@@ -137,8 +203,8 @@ class GoogleProviderClient(BaseProviderClient):
                                 candidates = data.get("candidates", [])
                                 if candidates:
                                     content_parts = candidates[0].get("content", {}).get("parts", [])
-                                    if content_parts:
-                                        text = content_parts[0].get("text", "")
+                                    for part in content_parts or []:
+                                        text = part.get("text", "")
                                         if text:
                                             full_content += text
                                             yield TaskEvent(
@@ -146,10 +212,23 @@ class GoogleProviderClient(BaseProviderClient):
                                                 job_id=job_id,
                                                 text=text,
                                             ).to_ndjson()
+                                        function_call = part.get("functionCall")
+                                        if function_call:
+                                            name = function_call.get("name", "")
+                                            tool_calls.append({
+                                                "id": name,
+                                                "type": "function",
+                                                "function": {
+                                                    "name": name,
+                                                    "arguments": json.dumps(function_call.get("args") or {}),
+                                                },
+                                            })
                             except json.JSONDecodeError:
                                 pass
 
                 output = {"role": "assistant", "content": full_content}
+                if tool_calls:
+                    output["tool_calls"] = tool_calls
 
                 yield TaskEvent(
                     event="completed",

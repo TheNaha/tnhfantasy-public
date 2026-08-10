@@ -293,10 +293,10 @@ class VLLMModalProviderClient(BaseProviderClient):
             for directory in ["models"]:
                 try:
                     files = await storage.list_directory.remote.aio(directory)
-                    by_directory[directory] = {"count": len(files), "files": files}
+                    by_directory[directory] = len(files)
                     total += len(files)
                 except Exception:
-                    by_directory[directory] = {"count": 0, "files": []}
+                    by_directory[directory] = 0
 
             return {
                 "provider_id": self.provider_id,
