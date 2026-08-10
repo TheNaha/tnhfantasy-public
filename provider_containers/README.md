@@ -1,8 +1,8 @@
-# Phase 3: Container-Based Multi-Profile Setup Guide
+# Provider Containers — Setup Guide
 
 ## Overview
 
-Phase 3 enables TRUE multi-profile support by running each provider profile in its own Docker container with isolated credentials.
+Each provider profile runs in its own Docker container with isolated credentials. Workers are unified into two images: **`image_worker`** (ComfyUI image generation via `ENGINE=modal|beam|direct_url`) and **`llm_worker`** (text generation via `ENGINE=openai_compat|anthropic|google|modal`), sharing the `provider_core` package. Env files live at the repo root (`.env.modal-*`, `.env.llm-local`, etc.).
 
 ## Prerequisites
 
@@ -53,23 +53,13 @@ Save the `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` for each account.
 
 For each provider profile, create an `.env` file:
 
-**`provider_containers/modal_worker/.env.modal1`:**
+**`.env.modal-zetsuke` / `.env.modal-stepmania` (repo root):**
 ```bash
 MODAL_TOKEN_ID=ak-xxx...
 MODAL_TOKEN_SECRET=as-xxx...
 MODAL_USERNAME=account1
 MODAL_APP_NAME=comfy-modal-stack
 PROVIDER_ID=modal-account1
-PORT=8000
-```
-
-**`provider_containers/modal_worker/.env.modal2`:**
-```bash
-MODAL_TOKEN_ID=ak-yyy...
-MODAL_TOKEN_SECRET=as-yyy...
-MODAL_USERNAME=account2
-MODAL_APP_NAME=comfy-modal-stack
-PROVIDER_ID=modal-account2
 PORT=8000
 ```
 
@@ -100,8 +90,8 @@ Add provider blocks to `docker-compose.yml` with unique `PROVIDER_ID` and `conta
 ### 4. Build Docker Image
 
 ```bash
-cd provider_containers/modal_worker
-docker build -t comfy-provider-modal:latest .
+cd provider_containers/image_worker
+docker build -t comfy-provider-image:latest .
 ```
 
 Or let the system build it automatically when using `docker compose up -d`.
@@ -197,7 +187,7 @@ curl http://localhost:8000/health
   - Deploy/build context did not include the sibling `provider_core` package.
 - Fix:
   - Use `provider_containers/` as deploy/build context so `provider_core` is available.
-  - For Modal cloud functions, keep explicit image packaging for `provider_core` in `modal_worker/modal_app.py`.
+  - For Modal cloud functions, keep explicit image packaging for `provider_core` in `image_worker/engines/modal/modal_app.py`.
 
 ### Provider Shows "Inactive"
 
@@ -268,7 +258,7 @@ Beam.cloud is now supported as an alternative to Modal.
 Note: worker `/deploy` endpoints are compatibility-only. Trigger deploys through the backend orchestrator (`POST /api/providers/{provider_id}/deploy`) or the Providers UI.
 
 ```bash
-cd provider_containers/beam_worker
+cd provider_containers/image_worker/engines/beam
 beam deploy beam_app.py
 ```
 
@@ -277,7 +267,7 @@ This deploys the inference, model download, and file management endpoints.
 ### 3. Create Environment File
 
 ```bash
-cd provider_containers/beam_worker
+cd provider_containers/image_worker/engines/beam
 cp .env.example .env.beam
 # Edit .env.beam with your credentials
 ```
@@ -294,15 +284,15 @@ BACKEND_URL=http://backend_v2:8002
 
 ```bash
 # Build
-cd provider_containers/beam_worker
-docker build -t comfy-provider-beam:latest .
+cd provider_containers/image_worker
+docker build -t comfy-provider-image:latest .
 
 # Run (or use docker-compose)
 docker run -d \
   --name comfy-provider-beam-primary \
   --env-file .env.beam \
   --network tnhcomfy \
-  comfy-provider-beam:latest
+  comfy-provider-image:latest
 ```
 
 ### 5. Add Provider via UI
@@ -320,7 +310,7 @@ docker run -d \
 ## Next Steps
 
 - [x] Add Beam.cloud provider implementation
-- [ ] Add RunPod provider implementation  
+- [x] Unify image + LLM workers on the TaskEvent protocol (openai_compat / anthropic / google / modal-vLLM)
 - [ ] Implement storage sync across providers
 - [ ] Add cost tracking per provider
 - [ ] Monitor container resource usage

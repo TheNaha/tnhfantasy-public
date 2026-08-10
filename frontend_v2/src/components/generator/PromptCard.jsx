@@ -1,5 +1,6 @@
 import { Star, Trash2, Copy, Edit2, TrendingUp, Check } from 'lucide-react';
 import { useState } from 'react';
+import { copyToClipboard } from '../../utils/clipboard';
 
 /**
  * Individual Prompt Card Component
@@ -9,8 +10,8 @@ export const PromptCard = ({ prompt, onUse, onEdit, onDelete, onToggleFavorite }
     const [showFullText, setShowFullText] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
 
-    const handleCopyToClipboard = () => {
-        navigator.clipboard.writeText(prompt.text);
+    const handleCopyToClipboard = async () => {
+        await copyToClipboard(prompt.text);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
     };

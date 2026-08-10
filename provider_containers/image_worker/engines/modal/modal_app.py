@@ -15,6 +15,7 @@ from pathlib import Path
 # image (see image_base.add_local_dir below).
 from provider_core.utils import get_safe_path
 from provider_core.downloads import download_model_to_path
+from provider_core.http_client import get_http_client
 from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
@@ -121,15 +122,26 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
         while True:
             try: message = await asyncio.wait_for(websocket.recv(), timeout=effective_stall_timeout)
             except asyncio.TimeoutError:
+                # ComfyUI occasionally deadlocks mid-run on long-lived containers.
+                # Probe history once before failing the request as stalled.
                 history_probe, _ = await _get_history(server_address, prompt_id)
                 if history_probe is not None: break
-                yield {"status": "error", "message": "Workflow stalled", "code": 408, "retryable": True, "details": {"reason": "workflow_stalled", "prompt_id": prompt_id, "last_node": last_prompt_node}}
+                stalled_message = (
+                    f"Workflow stalled after {int(effective_stall_timeout)}s "
+                    f"without websocket updates"
+                )
+                if last_prompt_node:
+                    stalled_message += f" (last node: {last_prompt_node})"
+                _log(logger, logging.ERROR, stalled_message)
+                yield {"status": "error", "message": stalled_message, "code": 408, "retryable": True, "details": {"reason": "workflow_stalled", "prompt_id": prompt_id, "last_node": last_prompt_node}}
                 return
             except websockets_mod.exceptions.ConnectionClosed as error:
-                from provider_core.http_client import get_http_client
-                try: await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
-                except: pass
-                yield {"status": "error", "message": f"WebSocket closed: {error}", "code": 1006, "retryable": True, "details": {"reason": "websocket_closed", "prompt_id": prompt_id}}
+                _log(logger, logging.ERROR, f"Workflow websocket closed unexpectedly: {error}")
+                try:
+                    await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
+                except Exception as e:
+                    _log(logger, logging.ERROR, f"Failed to send interrupt after connection closed: {e}")
+                yield {"status": "error", "message": f"WebSocket connection closed: {error}", "code": 1006, "retryable": True, "details": {"reason": "websocket_closed", "prompt_id": prompt_id}}
                 return
             except Exception as error:
                 yield {"status": "error", "message": f"WebSocket error: {error}", "code": 500, "retryable": False, "details": {"reason": "websocket_error", "prompt_id": prompt_id}}
@@ -137,7 +149,7 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
                 
             if not isinstance(message, str): continue
             try: payload = json.loads(message)
-            except: continue
+            except json.JSONDecodeError: continue
             
             msg_type = payload.get("type")
             msg_data = payload.get("data", {})
@@ -156,13 +168,18 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
             elif msg_type == "execution_error":
                 yield {"status": "error", "message": str(msg_data)}; return
     except asyncio.CancelledError:
-        from provider_core.http_client import get_http_client
-        try: await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
-        except: pass
+        _log(logger, logging.INFO, "Workflow execution cancelled. Interrupting ComfyUI.")
+        try:
+            await get_http_client().post(f"{server_address}/interrupt", timeout=5.0)
+        except Exception as e:
+            _log(logger, logging.ERROR, f"Failed to send interrupt: {e}")
         raise
     finally:
         await websocket.close()
-        
+
+    if not prompt_id:
+        yield {"status": "error", "message": "Missing prompt_id"}; return
+
     history_data, history_error = await _get_history(server_address, prompt_id)
     if history_error:
         yield {"status": "error", "message": history_error}; return

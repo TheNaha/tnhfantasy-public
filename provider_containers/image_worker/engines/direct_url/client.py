@@ -47,18 +47,18 @@ class DirectUrlProviderClient(BaseProviderClient):
         await self._http.aclose()
 
     async def get_health(self) -> Dict[str, Any]:
-        try:
-            resp = await self._http.get("/system_stats")
-            resp.raise_for_status()
-            return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True, "engine": "direct_url", "comfy_url": self.comfy_url}
-        except Exception:
-            return {"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "engine": "direct_url", "comfy_url": self.comfy_url}
+        # Local-only health check per VISION #4: never probe the remote
+        # engine on health checks. The worker assumes the remote URL is
+        # alive until an actual job is dispatched.
+        return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True, "engine": "direct_url", "comfy_url": self.comfy_url}
 
     async def get_info(self) -> Dict[str, Any]:
         return {"provider_id": PROVIDER_ID, "type": "direct_url", "containerized": True, "comfy_url": self.comfy_url}
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         from image_worker.comfy.workflow_executor import execute_comfy_workflow, IMAGE_FETCH_VIEW_API
+
+        job_id = request.job_id
 
         async def stream():
             try:

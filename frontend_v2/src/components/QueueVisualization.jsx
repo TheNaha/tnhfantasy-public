@@ -18,7 +18,13 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
     const { data } = useQuery({
         queryKey: ['jobs', 'queue'],
         queryFn: () => jobsApi.getQueueStatus(),
-        refetchInterval: QUEUE_REFETCH_INTERVAL_MS,
+        // Poll only while a queue exists (WS invalidations keep it fresh
+        // otherwise) — stops the forever-10s poll on idle dashboards.
+        refetchInterval: (query) => {
+            const q = query.state.data;
+            const hasQueue = Array.isArray(q?.queue) && q.queue.length > 0;
+            return hasQueue ? QUEUE_REFETCH_INTERVAL_MS : false;
+        },
     });
 
     const { queue, stats, runningJobs, pendingJobs } = useMemo(() => {

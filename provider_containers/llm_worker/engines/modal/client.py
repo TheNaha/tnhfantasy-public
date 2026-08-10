@@ -11,7 +11,7 @@ from provider_core.base_client import BaseProviderClient
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response,
+    build_status_response, build_error_response, TaskEvent,
 )
 
 logger = logging.getLogger("provider_core.engines.vllm_modal")
@@ -106,10 +106,11 @@ class VLLMModalProviderClient(BaseProviderClient):
                         except asyncio.TimeoutError:
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 task.cancel()
-                                yield json.dumps({
-                                    "type": "completed",
-                                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
-                                }) + "\n"
+                                yield TaskEvent(
+                                    event="cancelled",
+                                    job_id=job_id,
+                                    outputs=[{"role": "assistant", "content": "", "cancelled": True}],
+                                ).to_ndjson()
                                 return
                             continue
 
@@ -121,26 +122,32 @@ class VLLMModalProviderClient(BaseProviderClient):
 
                         if job_id and await self.job_tracker.is_cancelled(job_id):
                             task.cancel()
-                            yield json.dumps({
-                                "type": "completed",
-                                "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
-                            }) + "\n"
+                            yield TaskEvent(
+                                event="cancelled",
+                                job_id=job_id,
+                                outputs=[{"role": "assistant", "content": "", "cancelled": True}],
+                            ).to_ndjson()
                             return
 
-                        yield item + "\n"
+                        yield self._translate_remote_event(item, job_id) + "\n"
 
             except asyncio.TimeoutError:
-                yield json.dumps(build_error_response(
-                    f"Inference timed out after {int(inference_timeout)}s",
-                    retryable=True, code=408,
-                )) + "\n"
+                yield TaskEvent(
+                    event="failed",
+                    job_id=job_id,
+                    message=f"Inference timed out after {int(inference_timeout)}s",
+                    retryable=True,
+                ).to_ndjson()
             except modal.exception.ConnectionError as ce:
-                yield json.dumps(build_error_response(
-                    f"Modal connection error: {ce}", retryable=True,
-                )) + "\n"
+                yield TaskEvent(
+                    event="failed",
+                    job_id=job_id,
+                    message=f"Modal connection error: {ce}",
+                    retryable=True,
+                ).to_ndjson()
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
             finally:
                 if task is not None:
                     task.cancel()
@@ -148,6 +155,34 @@ class VLLMModalProviderClient(BaseProviderClient):
                     await self.job_tracker.end_job(job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+    def _translate_remote_event(self, raw, job_id) -> str:
+        """Translate a remote VLLMEngine dict into a unified TaskEvent line.
+
+        The deployed remote may still emit the legacy {"type": ...} dialect
+        until `modal deploy` is re-run; translate it locally so the backend
+        always receives TaskEvent NDJSON. TaskEvent-shaped dicts pass through.
+        """
+        if isinstance(raw, dict) and raw.get("event"):
+            return json.dumps(raw)
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": True})
+        if not isinstance(data, dict):
+            return json.dumps({"event": "failed", "job_id": job_id, "message": f"Malformed remote event: {raw}", "retryable": True})
+
+        msg_type = data.get("type") or data.get("status")
+        if msg_type == "progress":
+            return TaskEvent(event="delta", job_id=job_id, text=data.get("message") or data.get("text") or "").to_ndjson()
+        if msg_type == "completed":
+            cancelled = bool(data.get("cancelled")) or bool((data.get("outputs") or [{}])[0].get("cancelled"))
+            if cancelled:
+                return TaskEvent(event="cancelled", job_id=job_id, outputs=data.get("outputs")).to_ndjson()
+            return TaskEvent(event="completed", job_id=job_id, outputs=data.get("outputs")).to_ndjson()
+        if msg_type == "error":
+            return TaskEvent(event="failed", job_id=job_id, message=data.get("message", "Unknown error"), retryable=True).to_ndjson()
+        return json.dumps(data)
 
     async def setup_models(self) -> Dict[str, Any]:
         try:

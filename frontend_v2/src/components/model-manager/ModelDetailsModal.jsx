@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../../api';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
+import { copyToClipboard } from '../../utils/clipboard';
 
 export default function ModelDetailsModal({ file, onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
@@ -283,8 +284,8 @@ export default function ModelDetailsModal({ file, onClose }) {
                                     <div className="flex flex-wrap gap-2">
                                         {trainedWords.map(word => (
                                             <span key={word} className="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs border border-blue-500/30 select-all cursor-pointer hover:bg-blue-500/30"
-                                                onClick={() => {
-                                                    navigator.clipboard.writeText(word);
+                                                onClick={async () => {
+                                                    await copyToClipboard(word);
                                                     toast.success("Copied!");
                                                 }}
                                             >

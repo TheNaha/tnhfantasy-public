@@ -326,6 +326,7 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
     session.commit()
     session.refresh(branch)
     return branch
+@router.post("/{story_id}/chapters/{chapter_id}/illustrate")
 async def illustrate_chapter(
     story_id: str,
     chapter_id: str,

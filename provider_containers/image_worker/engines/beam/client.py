@@ -69,16 +69,8 @@ class BeamProviderClient(BaseProviderClient):
                 detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "missing": missing},
             )
 
-        try:
-            http_client = get_http_client()
-            response = await http_client.get(f"{BEAM_STORAGE_URL}/health", headers=get_beam_headers(), timeout=10.0)
-            response.raise_for_status()
-        except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "unhealthy", "provider_id": PROVIDER_ID, "ready": False, "message": f"Remote ping failed: {e}"}
-            )
-
+        # Local-only health check per VISION #4: never ping the remote
+        # serverless deployment from health checks (serverless billing risk).
         return {"status": "healthy", "provider_id": PROVIDER_ID, "ready": True}
 
     async def get_info(self) -> Dict[str, Any]:

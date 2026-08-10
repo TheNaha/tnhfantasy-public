@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from core.entities import LorebookEntry, MessageKind, MessageRole
+from core.entities import Character, LorebookEntry, MessageKind, MessageRole
 
 logger = logging.getLogger("context_builder")
 
@@ -570,8 +570,6 @@ def build_chat_context(
             meta = getattr(msg, "message_metadata", None) or {}
             if meta.get("source") == "world_state":
                 continue
-            if meta.get("pinned"):
-                pass
             if msg.role == MessageRole.USER:
                 role = "user"
             elif msg.role == MessageRole.CHAR:

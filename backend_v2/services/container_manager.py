@@ -113,7 +113,7 @@ class ContainerManager:
         Build Docker image for provider worker.
         
         Args:
-            provider_type: Type of provider (modal, beam, runpod)
+            provider_type: Type of provider (modal, beam, direct_url, openai_compat, anthropic, google)
             
         Returns:
             Image tag

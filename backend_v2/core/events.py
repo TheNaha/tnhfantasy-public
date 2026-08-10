@@ -423,6 +423,7 @@ async def wait_for_job_completion(
     terminal = {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}
     result: dict | None = None
     final_status: str = "failed"
+    timed_out = False
 
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     async with event_bus._lock:
@@ -447,6 +448,7 @@ async def wait_for_job_completion(
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
+                timed_out = True
                 break
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=min(remaining, poll_interval))
@@ -479,4 +481,6 @@ async def wait_for_job_completion(
             if queue in event_bus._subscribers.get("job", []):
                 event_bus._subscribers["job"].remove(queue)
 
+    if timed_out:
+        return "timed_out", None
     return final_status, result

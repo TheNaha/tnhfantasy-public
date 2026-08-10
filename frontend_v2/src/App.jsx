@@ -26,6 +26,7 @@ import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import useSettingsStore from './store/settingsStore';
 import { useSettings } from './store/settingsStore';
+import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { api } from './api';
@@ -78,6 +79,15 @@ function GlobalHooks() {
     
     // Initialize global job notifications and WebSocket sync
     useJobsRealtime();
+
+    // One-time legacy localStorage -> API collections migration (runs at most
+    // once; flag-gated inside). Kept out of the query path so collection
+    // refetches never re-trigger migration work.
+    useEffect(() => {
+        migrateLegacyCollections().catch((error) => {
+            console.warn('Failed to migrate legacy collections:', error);
+        });
+    }, []);
 
     // Gate to ensure provider wake is only called once per mount
     const hasRequestedProviderWake = useRef(false);

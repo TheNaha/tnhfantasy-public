@@ -24,6 +24,7 @@ import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
 import { assetMetadataUrl, assetUrl } from "../../utils/assetUrl";
 import { formatTimestamp } from "../../utils/dateTime";
+import { copyToClipboard } from "../../utils/clipboard";
 import {
   applyGeneratorStateFromMetadata,
 } from "../../utils/reuseParameters";
@@ -313,7 +314,7 @@ const FeedCard = memo(function FeedCard({
         onCopySeed: async () => {
           const meta = await ensureMetadata();
           if (meta?.seed) {
-              navigator.clipboard.writeText(String(meta.seed));
+              await copyToClipboard(String(meta.seed));
               toast.success(`Seed copied: ${meta.seed}`, { icon: "📋" });
             } else {
               toast.error("Seed not available");

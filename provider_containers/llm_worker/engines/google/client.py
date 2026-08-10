@@ -11,7 +11,7 @@ from provider_core.http_client import get_http_client
 from provider_core.models import (
     InferenceRequest, DownloadRequest, ListModelsRequest, DeleteModelRequest,
     UploadFileRequest, ValidateModelsRequest,
-    build_status_response, build_error_response
+    build_status_response, build_error_response, TaskEvent
 )
 
 
@@ -40,13 +40,18 @@ class GoogleProviderClient(BaseProviderClient):
         }
 
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
+        job_id = request.job_id
+
         async def stream():
             try:
+                if job_id:
+                    await self.job_tracker.start_job(job_id)
+
+                # Unified InferenceRequest: LLM jobs carry `messages`/`tools`/`model`
+                # at the top level. Support both shapes.
                 workflow = request.workflow or {}
-                messages = request.messages or workflow.get("messages", [])
-                
-                raw_messages = workflow.get("messages", [])
-                
+                raw_messages = request.messages or workflow.get("messages", [])
+
                 # Gemini format expects {"role": "user"|"model", "parts": [{"text": "..."}]}
                 # system instructions are sent separately.
                 system_prompt = ""
@@ -73,13 +78,13 @@ class GoogleProviderClient(BaseProviderClient):
                             "role": g_role,
                             "parts": [{"text": content}]
                         })
-                
+
                 model_id = (request.model or workflow.get("model") or "gemini-1.5-flash")
-                
+
                 payload = {
                     "contents": contents,
                 }
-                
+
                 if system_prompt:
                     payload["systemInstruction"] = {
                         "role": "user",
@@ -93,12 +98,10 @@ class GoogleProviderClient(BaseProviderClient):
                 }
 
                 timeout = request.timeout_seconds or 120.0
-                if request.job_id:
-                    await self.job_tracker.start_job(request.job_id)
                 client = await get_http_client().get_client()
 
                 async def check_cancel():
-                    return request.job_id and await self.job_tracker.is_cancelled(request.job_id)
+                    return job_id and await self.job_tracker.is_cancelled(job_id)
 
                 async with client.stream(
                     "POST",
@@ -112,15 +115,17 @@ class GoogleProviderClient(BaseProviderClient):
                     full_content = ""
 
                     async for line in response.aiter_lines():
-                        if await check_cancel():
-                            yield json.dumps({
-                                "type": "completed",
-                                "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
-                            }) + "\n"
-                            return
                         line = line.strip()
                         if not line:
                             continue
+
+                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                            yield TaskEvent(
+                                event="cancelled",
+                                job_id=job_id,
+                                outputs=[{"role": "assistant", "content": full_content, "cancelled": True}],
+                            ).to_ndjson()
+                            return
 
                         if line.startswith("data: "):
                             data_str = line[6:]
@@ -133,33 +138,34 @@ class GoogleProviderClient(BaseProviderClient):
                                         text = content_parts[0].get("text", "")
                                         if text:
                                             full_content += text
-                                            event = {
-                                                "type": "progress",
-                                                "progress": 0,
-                                                "message": text,
-                                            }
-                                            yield json.dumps(event) + "\n"
+                                            yield TaskEvent(
+                                                event="delta",
+                                                job_id=job_id,
+                                                text=text,
+                                            ).to_ndjson()
                             except json.JSONDecodeError:
                                 pass
 
                 output = {"role": "assistant", "content": full_content}
 
-                yield json.dumps({
-                    "type": "completed",
-                    "outputs": [output],
-                }) + "\n"
+                yield TaskEvent(
+                    event="completed",
+                    job_id=job_id,
+                    outputs=[output],
+                ).to_ndjson()
 
             except asyncio.CancelledError:
-                yield json.dumps({
-                    "type": "completed",
-                    "outputs": [{"role": "assistant", "content": "", "cancelled": True}],
-                }) + "\n"
+                yield TaskEvent(
+                    event="cancelled",
+                    job_id=job_id,
+                    outputs=[{"role": "assistant", "content": "", "cancelled": True}],
+                ).to_ndjson()
             except Exception as e:
                 self.logger.error(f"Error during inference: {str(e)}")
-                yield json.dumps(build_error_response(str(e), retryable=True, code=500)) + "\n"
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
             finally:
-                if request.job_id:
-                    await self.job_tracker.end_job(request.job_id)
+                if job_id:
+                    await self.job_tracker.end_job(job_id)
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 

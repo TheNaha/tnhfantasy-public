@@ -272,6 +272,8 @@ class _LLMReducer:
                 "type": "text",
                 "outputs": outputs,
                 "chat_id": self.workflow.get("chat_id"),
+                "story_id": self.workflow.get("story_id"),
+                "chapter_id": self.workflow.get("chapter_id"),
             }
         elif event == "failed":
             raise ProviderCallError(ev.get("message", "Unknown error"), provider_id=self.provider_id,

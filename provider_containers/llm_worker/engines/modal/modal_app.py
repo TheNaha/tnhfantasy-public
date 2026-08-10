@@ -142,11 +142,10 @@ class VLLMEngine:
                 delta = new_text[last_text_len:]
                 full_text = new_text
                 last_text_len = len(new_text)
-                yield json.dumps({
-                    "type": "progress",
-                    "progress": 0,
-                    "message": delta,
-                })
+                yield {
+                    "event": "delta",
+                    "text": delta,
+                }
 
             if output.tool_calls:
                 for tc in output.tool_calls:
@@ -170,19 +169,19 @@ class VLLMEngine:
                 output_dict: Dict[str, Any] = {"role": "assistant", "content": full_text}
                 if tool_calls:
                     output_dict["tool_calls"] = tool_calls
-                yield json.dumps({
-                    "type": "completed",
+                yield {
+                    "event": "completed",
                     "outputs": [output_dict]
-                })
+                }
                 return
 
         output_dict = {"role": "assistant", "content": full_text}
         if tool_calls:
             output_dict["tool_calls"] = tool_calls
-        yield json.dumps({
-            "type": "completed",
+        yield {
+            "event": "completed",
             "outputs": [output_dict]
-        })
+        }
 
 
 @app.function(

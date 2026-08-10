@@ -196,6 +196,10 @@ export default function StorySandbox() {
     // without being listed in effect deps (avoids re-registering on every render).
     const isStreamingRef = useRef(false);
     useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+    // Safety net: if the terminal WS event is missed (reconnect gap, WS down),
+    // don't leave Continue/textarea/Save locked forever. LLM jobs time out at
+    // 180s and image jobs well under 5 min, so this only fires on real gaps.
+    const streamSafetyTimerRef = useRef(null);
 
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
@@ -386,6 +390,24 @@ export default function StorySandbox() {
     // NOTE: editorContent intentionally excluded — we use refs for live values
     // inside the WebSocket handlers to avoid stale closure overwrites.
     }, [subscribe, activeStoryId, activeChapterId, queryClient]);
+
+    // Safety valve for the streaming lock: arm whenever streaming starts,
+    // clear whenever it stops (terminal WS event or manual reset).
+    useEffect(() => {
+        if (!isStreaming) return;
+        streamSafetyTimerRef.current = window.setTimeout(() => {
+            setIsStreaming(false);
+            setIsIllustrating(false);
+            streamingRef.current = '';
+            toast.error('Connection lost — streaming stopped. Your story is saved.');
+        }, 300000);
+        return () => {
+            if (streamSafetyTimerRef.current) {
+                window.clearTimeout(streamSafetyTimerRef.current);
+                streamSafetyTimerRef.current = null;
+            }
+        };
+    }, [isStreaming]);
 
     // Auto-resize textarea — debounced to avoid layout thrashing on mobile
     useEffect(() => {

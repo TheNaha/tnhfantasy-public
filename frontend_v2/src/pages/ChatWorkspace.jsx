@@ -491,6 +491,9 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     {msg.kind === 'image' && msg.image_path && (
                         <span className="ml-1.5 text-pink-400/80">· 🖼️ Image</span>
                     )}
+                    {msg.kind === 'tool' && (
+                        <span className="ml-1.5 text-purple-400/80">· 🔧 Tool</span>
+                    )}
                 </div>
                 {editing ? (
                     <div className="flex flex-col gap-2">
@@ -586,6 +589,33 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                         <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
+                            </div>
+                        ) : msg.kind === 'tool' ? (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {Array.isArray(msg.tool_calls) && msg.tool_calls.map((tc, idx) => {
+                                    const fn = tc.function || {};
+                                    let argsPreview = '';
+                                    try {
+                                        const args = typeof fn.arguments === 'string'
+                                            ? JSON.parse(fn.arguments)
+                                            : (fn.arguments || {});
+                                        argsPreview = Object.values(args)
+                                            .filter(Boolean).map(String).join(' · ').slice(0, 80);
+                                    } catch {
+                                        argsPreview = '';
+                                    }
+                                    return (
+                                        <span
+                                            key={tc.id || idx}
+                                            title="Agentic tool call"
+                                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-[10px] text-purple-300 font-mono"
+                                        >
+                                            <Activity size={10} />
+                                            {fn.name || 'tool'}
+                                            {argsPreview ? `: ${argsPreview}` : ''}
+                                        </span>
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className={clsx("px-3 sm:px-4 py-3 rounded-2xl text-sm leading-relaxed break-words", isNarrator ? "bg-purple-500/10 text-purple-100/90 border border-purple-500/20 rounded-tl-sm italic" : "bg-yellow-500/10 text-yellow-200/80 border border-yellow-500/15 rounded-tl-sm text-xs italic")}>
@@ -949,6 +979,7 @@ export default function ChatWorkspace() {
     const hasCreatedChatRef = useRef(false);
     const [isGeneratingScene, setIsGeneratingScene] = useState(false);
     const [sceneJobId, setSceneJobId] = useState(null);
+    const sceneJobIdRef = useRef(null);
     const [pendingAttachment, setPendingAttachment] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
     const [agenticMode, setAgenticMode] = useState(true);
@@ -1203,7 +1234,8 @@ export default function ChatWorkspace() {
             }
 
             // Clear scene generation state when the scene job completes
-            if (eventId === sceneJobId) {
+            if (eventId === sceneJobIdRef.current) {
+                sceneJobIdRef.current = null;
                 setSceneJobId(null);
                 setIsGeneratingScene(false);
             }
@@ -1225,7 +1257,8 @@ export default function ChatWorkspace() {
             }
 
             // Clear scene generation state when the scene job fails
-            if (eventId === sceneJobId) {
+            if (eventId === sceneJobIdRef.current) {
+                sceneJobIdRef.current = null;
                 setSceneJobId(null);
                 setIsGeneratingScene(false);
             }
@@ -1424,6 +1457,7 @@ export default function ChatWorkspace() {
         try {
             const data = await api.post(`/api/v2/chats/${activeChatId}/scene`, {});
             if (data.job_id) {
+                sceneJobIdRef.current = data.job_id;
                 setSceneJobId(data.job_id);
                 setStreamingJob(queryClient, data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });
             }

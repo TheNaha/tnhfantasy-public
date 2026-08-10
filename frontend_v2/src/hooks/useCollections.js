@@ -4,35 +4,37 @@ import collectionsApi from '../api/collectionsApi';
 const MIGRATION_KEY = 'comfy-collections-migrated';
 const OLD_STORAGE_KEY = 'comfy-storage';
 
-async function migrateIfNeeded() {
+// One-time bootstrap migration: imports collections from the legacy
+// pre-API localStorage store. Runs once per page load from App.jsx —
+// deliberately NOT inside the query function, so the (already-completed)
+// migration can't re-trigger on every collection refetch.
+export async function migrateLegacyCollections() {
     const migrated = localStorage.getItem(MIGRATION_KEY);
-    if (migrated !== 'true') {
-        const oldData = localStorage.getItem(OLD_STORAGE_KEY);
-        if (oldData) {
-            try {
-                const parsed = JSON.parse(oldData);
-                const oldCollections = parsed.state?.collections;
+    if (migrated === 'true' || migrated === 'failed') return;
 
-                if (oldCollections && Object.keys(oldCollections).length > 0) {
+    const oldData = localStorage.getItem(OLD_STORAGE_KEY);
+    if (!oldData) {
+        localStorage.setItem(MIGRATION_KEY, 'true');
+        return;
+    }
 
-                    // Format for API
-                    const collectionsToMigrate = Object.values(oldCollections).map(c => ({
-                        name: c.name || 'Untitled',
-                        color: c.color || '#3B82F6',
-                        description: null,
-                        images: c.images || []
-                    }));
+    try {
+        const parsed = JSON.parse(oldData);
+        const oldCollections = parsed.state?.collections;
 
-                    await collectionsApi.importCollections(collectionsToMigrate);
-                }
-                localStorage.setItem(MIGRATION_KEY, 'true');
-            } catch (e) {
-                console.warn('[Store] Collection migration failed:', e);
-                localStorage.setItem(MIGRATION_KEY, 'failed');
-            }
-        } else {
-            localStorage.setItem(MIGRATION_KEY, 'true');
+        if (oldCollections && Object.keys(oldCollections).length > 0) {
+            const collectionsToMigrate = Object.values(oldCollections).map(c => ({
+                name: c.name || 'Untitled',
+                color: c.color || '#3B82F6',
+                description: null,
+                images: c.images || []
+            }));
+            await collectionsApi.importCollections(collectionsToMigrate);
         }
+        localStorage.setItem(MIGRATION_KEY, 'true');
+    } catch (e) {
+        console.warn('[Store] Collection migration failed:', e);
+        localStorage.setItem(MIGRATION_KEY, 'failed');
     }
 }
 
@@ -40,7 +42,6 @@ export function useCollections(workspace = null) {
     return useQuery({
         queryKey: ['collections', workspace],
         queryFn: async () => {
-            await migrateIfNeeded();
             const { collections } = await collectionsApi.listCollections(workspace);
             // Convert to collections map keyed by id to be compatible with older store design
             const collectionsMap = {};

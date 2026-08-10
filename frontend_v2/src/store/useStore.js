@@ -20,7 +20,9 @@ const useStore = create(
             setActiveCollection: (id) => set({ activeCollection: id }),
         }),
         {
-            name: 'comfy-storage',
+            // NOTE: renamed from 'comfy-storage' — that legacy key is reserved
+            // for the one-time collections migration (see useCollections.js).
+            name: 'comfy-ui-state',
             partialize: (state) => ({
                 activeCollection: state.activeCollection,
             }),

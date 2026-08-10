@@ -48,24 +48,21 @@ export function setStreamingJob(queryClient, jobId, data) {
 
 /**
  * Remove a finished/errored streaming job from the cache.
- * Passing `chatId` makes this O(1); omitting it scans every active-chat list
- * (used by the page-level WS effects that only know the job id).
+ * Passing `chatId` makes this O(1); omitting it falls back to the chatId
+ * captured from the per-job payload before removal (used by the page-level
+ * WS effects that only know the job id).
  */
 export function clearStreamingJob(queryClient, jobId, chatId) {
     if (!queryClient || !jobId) return;
 
+    const resolvedChatId = chatId || queryClient.getQueryData(JOB_KEY(jobId))?.chatId;
+
     queryClient.removeQueries({ queryKey: JOB_KEY(jobId) });
 
-    if (chatId) {
-        queryClient.setQueryData(ACTIVE_KEY(chatId), (old = []) =>
+    if (resolvedChatId) {
+        queryClient.setQueryData(ACTIVE_KEY(resolvedChatId), (old = []) =>
             old.filter((j) => j._jobId !== jobId)
         );
-    } else {
-        // Fallback: scan the active-chat lists we know about. React Query can't
-        // enumerate all keys, so we purge from both likely chats by reading the
-        // just-deleted job's chatId from the (now removed) per-job cache. This
-        // is a best-effort cleanup for events that carry only a job id.
-        const _ = queryClient.getQueryData(JOB_KEY(jobId));
     }
 }
 

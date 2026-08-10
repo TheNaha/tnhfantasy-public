@@ -31,10 +31,9 @@ from api.deps import (
     get_session,
 )
 from config import settings
-from core.entities import Asset, AssetKind
+from core.entities import Asset
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from infrastructure.database import Session as DBSession, engine as db_engine
-from services.asset_reconciler import DEFAULT_USER_ID
 from services.provider_service import ProviderService
 
 

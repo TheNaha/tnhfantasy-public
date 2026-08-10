@@ -5,3 +5,10 @@ tools:
             - head *
             - echo *
             - sort
+            - cd *
+            - ls *
+            - grep *
+            - git log *
+            - docker ps
+            - git status *
+            - tail *

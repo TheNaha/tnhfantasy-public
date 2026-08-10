@@ -21,6 +21,9 @@ export function useDashboardModals({ queryClient, filters }) {
     const retryJob = useCallback(async (jobId) => {
         try {
             const result = await jobsApi.retry(jobId);
+            // A retried job is re-enqueued — refresh the job cache, the active
+            // list and the queue panel, not just the gallery.
+            queryClient.invalidateQueries({ queryKey: ['jobs'] });
             queryClient.invalidateQueries({ queryKey: ['gallery', filters], exact: false });
             return result;
         } catch (error) {

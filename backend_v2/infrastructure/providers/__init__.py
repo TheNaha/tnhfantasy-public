@@ -12,8 +12,10 @@ from .provider_registry import (
 clean_dict = clean_registry_dict  # backward compat alias
 # Import provider configs to trigger auto-registration
 from . import (
+    anthropic_config,  # noqa: F401 - Registers Anthropic provider type
     beam_config,  # noqa: F401 - Registers Beam provider type
     direct_url_config,  # noqa: F401 - Registers Direct URL provider type
+    google_config,  # noqa: F401 - Registers Google provider type
     modal_config,  # noqa: F401 - Registers Modal provider type
     modal_llm_config,  # noqa: F401 - Registers Modal LLM provider type
     openai_compat_config,  # noqa: F401 - Registers OpenAI Compat provider type

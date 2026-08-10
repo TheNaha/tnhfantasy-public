@@ -632,13 +632,16 @@ async def process_tool_calls_and_chain(
     }
 
     try:
-        from services.job_queue import queue_manager
         followup_job = await job_service.create_job(
             task_type="llm",
             workflow=followup_workflow,
             metadata=followup_metadata,
         )
-        await queue_manager.enqueue(followup_job.id, task_type="llm")
+        if enqueue_fn is not None:
+            await enqueue_fn(followup_job.id)
+        else:
+            from services.job_queue import queue_manager
+            await queue_manager.enqueue(followup_job.id, task_type="llm")
         logger.info(
             "agentic_followup_enqueued",
             parent_job_id=job.id,

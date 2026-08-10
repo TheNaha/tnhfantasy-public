@@ -69,7 +69,7 @@ class HttpFileProxy:
 class ProviderTypeConfig:
     """
     Configuration schema for a provider type.
-    Each provider type (modal, beam, runpod, etc.) registers one of these.
+    Each provider type (modal, beam, direct_url, openai_compat, anthropic, google) registers one of these.
     """
     type_name: str
     

@@ -46,14 +46,14 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 4.  **Health Checks & Cost Mitigation:**
     *   To avoid expensive serverless billing from continuous polling, the backend will only health-check the local worker container itself. The worker assumes the remote URL/engine is alive until an actual job is dispatched.
     *   The UI will feature a manual "Test Connection" button for providers so users can validate their endpoints on demand.
- 5. **Streaming Standardization (The Unified Protocol) — IMPLEMENTED:**
-     *   Parsing responsibility is shifted to the Worker. All workers (image + LLM) now translate their native stream into a single `provider_core.models.TaskEvent` NDJSON schema (`event` ∈ started/progress/delta/node/artifact/completed/failed/cancelled, plus `text`, `tool_calls`, `outputs`, `value`). The backend has ONE reader (`services/provider_client.stream_task_events`) with thin per-task reducers instead of two divergent dialects.
- 6. **Codebase Merger & Standalone Deployments — IMPLEMENTED:**
-     *   `modal_worker`/`beam_worker` were merged into `image_worker` + `llm_worker` + shared `provider_core`. Standalone `modal_app.py`/`beam_app.py` deploy scripts live in the worker `deploy/` dirs. The orphaned `runpod` engine was removed (no backend registration ever existed).
+  5. **Streaming Standardization (The Unified Protocol) — IMPLEMENTED:**
+     *   Parsing responsibility is shifted to the Worker. All workers (image + LLM) translate their native stream into a single `provider_core.models.TaskEvent` NDJSON schema (`event` ∈ started/progress/delta/node/completed/failed/cancelled, plus `text`, `tool_calls`, `outputs`, `value`, `retryable`). The backend has ONE reader (`services/provider_client.stream_task_events`) with thin per-task reducers instead of two divergent dialects. All engines (image modal/beam/direct_url, LLM openai_compat/anthropic/google/modal-vLLM) now emit this protocol; legacy dialects are translated at the worker edge.
+  6. **Codebase Merger & Standalone Deployments — IMPLEMENTED:**
+     *   `modal_worker`/`beam_worker` were merged into `image_worker` + `llm_worker` + shared `provider_core`. Standalone deploy apps `modal_app.py`/`beam_app.py` live at the engine roots (`image_worker/engines/{modal,beam}/`); deploy commands are hardcoded in the engine clients (`modal deploy /app/.../modal_app.py`). The orphaned `runpod` engine was removed (no backend registration ever existed).
  7. **Context Management (Backend-Authoritative) — CORRECTED:**
      *   The backend (`services/context_builder.py`) owns context assembly. This is intentional and correct: semantic lorebook retrieval needs `pgvector` server-side, and shipping the whole lorebook to the frontend to build a prompt would be wasteful and lose retrieval quality. The frontend sends text + flags (narrate/agentic/etc.); the backend builds, prunes (token budget), and injects lore. The frontend remains stateful for UI sync (React Query + optimistic updates) but does NOT assemble the final payload.
- 8. **Asset Storage (Filesystem First, Partitioned in Phase 2) — PARTIAL:**
-     *   All generated artifacts are stored on the filesystem in a `YYYY/MM/DD` tree; `metadata["workspace"]` (`main`/`roleplay`/`story`) scopes them for workspace galleries (VISION #13). The physical `/{user_id}/` root partition and a DB-backed `assets` indexer are planned for Phase 2 (deferred only because a same-device rename is cheap later; metadata scoping already works today). The database remains the indexer/tracker.
+  8. **Asset Storage (Filesystem First + DB Indexer) — IMPLEMENTED:**
+     *   All generated artifacts are stored on the filesystem in a `default_user/YYYY/MM/DD` tree (`/{user_id}/` partition live, single-user `default_user`), with a DB-backed `assets` indexer (`infrastructure/asset_reconciler.py` + keyset-paginated `_query_gallery_files`) as the tracker. `metadata["workspace"]` (`main`/`roleplay`/`story`) + `character_id`/`story_id` scopes assets for workspace galleries (VISION #13); re-scan can't resurrect tombstoned deletes.
  9. **Multi-Tenancy (Future-Proofing) — DEFERRED:**
      *   The core platform is a single-user private sandbox. Audio/TTS and multi-tenancy are explicitly deferred for now (see Future Frontiers). `metadata["workspace"]` + the planned `/{user_id}/` layout leave room for a future "Guest/Ephemeral" mode, but no auth/multi-tenant code is being built yet.
 10. **Database Expansion (PostgreSQL + pgvector):**
@@ -72,24 +72,26 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 
 ---
 
-## Implementation Status (as of 2026-08-09)
+## Implementation Status (as of 2026-08-10)
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Pillar 1 — Image Gen | ✅ Working | Modal + Beam + direct_url engines; 115 image jobs completed in last 7 days |
-| Pillar 2 — Roleplay | ✅ Working (fixed) | Agentic mode was crashing (regression), now fixed; narrator + tool-calls persisted as `Message.kind` |
-| Pillar 3 — Story | ✅ Working | Story continue + illustrate implemented |
+| Pillar 1 — Image Gen | ✅ Working | Modal + Beam + direct_url engines; direct_url crash (NameError) fixed, health checks local-only |
+| Pillar 2 — Roleplay | ✅ Working | Agentic mode, narrator, tool-calls as `Message.kind`; chat Illustrate route wired, UI button pending |
+| Pillar 3 — Story | ✅ Working | Story continue + illustrate + branching (retry from beat) implemented |
 | Pillar 4 — World Vault | ✅ Working | Characters, lorebooks (pgvector), semantic retrieval |
-| #5 Unified Protocol | ✅ Implemented | `provider_core.models.TaskEvent`; single backend reader; image + LLM workers emit it |
+| #5 Unified Protocol | ✅ Implemented | `provider_core.models.TaskEvent`; all engines emit it (LLM anthropic/google/modal fixed 2026-08-10); single backend reader |
 | #7 Context (backend-owned) | ✅ Implemented | `context_builder.py` authoritative; frontend sends text + flags |
-| #8 Asset storage | 🟡 Partial | `metadata["workspace"]` scoping works; `/{user_id}/` + DB `assets` indexer deferred to Phase 2 |
+| #8 Asset storage | ✅ Implemented | DB `assets` indexer + keyset gallery; `default_user/` partition; workspace/character/story scoping |
+| #13 Story branching | ✅ Implemented | `parent_beat_id` + "retry from here" |
 | #9 Multi-tenancy | ⏸️ Deferred | No auth/multi-tenant code yet (single-user by design) |
 | Audio / TTS | ⏸️ Deferred | Not started |
 | Video/Animation, Visual Novel | 🔮 Future | Post-core expansion |
 
 **Known gaps being addressed (roadmap):**
-- Phase 2: DB-backed `assets` indexer (kills the 15s in-memory gallery scan), `/{user_id}/` partition, frontend consolidation (`useJobStatus`, shared `assetUrl`, virtualized `SceneGallery`, `GeneratorShell`), perf (keyset pagination).
-- Phase 3: Story branching (parent beat + "retry from here"), in-chat "Illustrate" button, agentic tool-call transcript rendering.
+- In-chat "Illustrate" UI button (route + backend complete; StorySandbox equivalent exists), virtualized `SceneGallery`, `GeneratorShell` consolidation (deferred), tool-call transcript chips.
+- Per-engine integration tests inside `provider_containers` (protocol tests added; engine-level parity for beam/modal clients next).
+- LLM context/token heuristics (`estimate_tokens`) remain approximate — acceptable for single user.
 
 ---
 *Note to AI Agents: This document dictates the macro-level trajectory of the project. Any architectural decisions, database changes, or frontend refactors should keep this multimodal, unrestricted end-goal in mind.*

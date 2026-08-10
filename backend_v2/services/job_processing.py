@@ -598,6 +598,8 @@ async def _finalize_llm_job(
                     allowed_tools=allowed_tools,
                 )
                 if chained:
+                    if provider_id:
+                        await load_balancer.report_success(provider_id)
                     await load_balancer.release_job(provider_id)
                     try:
                         from core.entities import JobStatus
