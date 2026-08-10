@@ -69,6 +69,116 @@ Behavior:
 
 - `POST /api/v2/models/external/parse`: Parse a model URL from CivitAI or HuggingFace.
 - `GET /api/v2/models/external/civitai`: Search CivitAI.
+
+## World Vault v2 (`/api/v2`)
+
+The World Vault is the single PostgreSQL + pgvector index for TNHComfy's three fantasy pillars — **Image Generation** (assets), **Roleplay Chat** (chats), and **Story Sandbox** (stories) — plus characters, lorebooks, and scenarios. All endpoints return JSON. Read filters (`workspace`, `character_id`, `story_id`) let the three pillars stay visually/logically separate while sharing one index.
+
+### Assets (`/api/v2/assets`)
+
+DB-backed gallery index (replaces the old in-memory `GalleryIndexer`). The asset's `workspace` (`main` / `roleplay` / `story`) is derived from its source generator at save time by `asset_reconciler._derived_workspace()`.
+
+- `GET /api/v2/assets` — List assets. Query: `limit` (24), `cursor` (keyset pagination), `workspace` (`main|roleplay|story`), `character_id`, `story_id`, `search` (matches `filename` or JSON `metadata_`). Each item carries `id`, `filename`, `relative_path`, `workspace`, `character_id`, `story_id`, `thumbnail` (`/api/thumbnail/medium/{relative_path}`), `file_url` (`/api/v2/assets/{id}/file`), `thumb_url` (`/api/v2/assets/{id}/thumb` when a thumbnail exists), `metadata`, dimensions, `blurhash`, `created_at`.
+- `GET /api/v2/assets/{asset_id}/file` — Serve the full asset file.
+- `GET /api/v2/assets/{asset_id}/thumb` — Serve the asset's (pre-generated) thumbnail; falls back to `/file` when no thumbnail exists.
+
+### Chats (`/api/v2/chats`) — Roleplay pillar
+
+- `GET /api/v2/chats` — List chats. Query: `workspace=roleplay` selects roleplay chats (`chat_type == workspace`).
+- `POST /api/v2/chats` — Create a chat. Body: `{character_id, title?, chat_type?}`; auto-creates a root message.
+- `GET /api/v2/chats/{chat_id}` — Fetch a chat + its character.
+- `DELETE /api/v2/chats/{chat_id}` — Delete a chat (cascades messages).
+- `GET /api/v2/chats/{chat_id}/messages` — All messages (DB-backed conversation; `metadata_` JSON + `tool_calls` columns).
+- `POST /api/v2/chats/{chat_id}/messages` — Append a user message; server-side context assembled by `context_builder` (backend-owned, per VISION #7) → enqueues an LLM task and returns the created message.
+- `DELETE /api/v2/chats/{chat_id}/messages/{message_id}` — Delete a message.
+- `GET /api/v2/chats/{chat_id}/system-prompt` — Resolved system prompt (character card + active lorebook context).
+- `POST /api/v2/chats/{chat_id}/impersonate` — Generate an assistant turn without a user message (`no_reply`).
+- `POST /api/v2/chats/{chat_id}/suggest` — Suggest a user reply (RAG over lorebooks).
+- `POST /api/v2/chats/{chat_id}/scene` — Generate the next scene/continuation.
+- `POST /api/v2/chats/{chat_id}/illustrate` — Illustrate the current turn (queues an image-generation task into the `roleplay` workspace).
+- `GET /api/v2/chats/{chat_id}/images` — Gallery of images attached to this chat's messages.
+- `GET /api/v2/chats/{chat_id}/jobs` — List jobs tied to a chat.
+- `POST /api/v2/chats/{chat_id}/messages/{message_id}/swipe` — Swipe to a regenerated variant (returns `Message`).
+- `POST /api/v2/chats/{chat_id}/rollback` — Rollback the conversation to a prior message.
+- `POST /api/v2/chats/{chat_id}/regenerate` — Regenerate the last assistant turn.
+
+> Agentic mode: the orchestrator (`MAX_AGENTIC_DEPTH = 5`) exposes tools `generate_image` / `narrate_scene` / `update_world_state`. A chat turn may issue tool calls that fan out to image + lorebook updates; remaining depth is surfaced in the transcript.
+
+### Stories (`/api/v2/stories`) — Story pillar
+
+- `GET /api/v2/stories` — List stories.
+- `POST /api/v2/stories` — Create a story. Body: `{title, description, genre?}`.
+- `GET /api/v2/stories/{story_id}` — Fetch a story.
+- `PUT /api/v2/stories/{story_id}` — Update title/description/genre.
+- `DELETE /api/v2/stories/{story_id}` — Delete (cascades chapters + assets).
+- `GET /api/v2/stories/{story_id}/chapters` — List chapters (ordered).
+- `POST /api/v2/stories/{story_id}/chapters` — Create a chapter (server-side context assembled by `context_builder` → LLM task).
+- `GET /api/v2/stories/{story_id}/chapters/{chapter_id}` — Fetch a chapter.
+- `PUT /api/v2/stories/{story_id}/chapters/{chapter_id}` — Update a chapter.
+- `DELETE /api/v2/stories/{story_id}/chapters/{chapter_id}` — Delete a chapter.
+- `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/continue` — Continue the story (enqueues LLM continuation; `metadata_["workspace"] == "story"`).
+- `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/beats` — Add a story beat.
+- `POST /api/v2/stories/{story_id}/chapters/{chapter_id}/branch` — Branch the chapter from a message index (returns the new `StoryChapter`).
+- `GET /api/v2/stories/{story_id}/images` — Gallery of images across the story's chapters (workspace-scoped).
+
+### Lorebooks (`/api/v2/lorebooks`)
+
+pgvector-backed semantic knowledge entries (`LorebookEntry.embedding` is `Vector(384)`).
+
+- `GET /api/v2/lorebooks` — List lorebooks.
+- `POST /api/v2/lorebooks` — Create a lorebook.
+- `GET /api/v2/lorebooks/{lorebook_id}` — Fetch a lorebook.
+- `PUT /api/v2/lorebooks/{lorebook_id}` — Update a lorebook.
+- `DELETE /api/v2/lorebooks/{lorebook_id}` — Delete (cascades entries).
+- `GET /api/v2/lorebooks/{lorebook_id}/search` — **Semantic search** (pgvector cosine similarity over `embedding`); query `q` + optional `top_k`.
+- `GET /api/v2/lorebooks/{lorebook_id}/entries` — List entries.
+- `POST /api/v2/lorebooks/{lorebook_id}/entries` — Create an entry (embedding computed server-side).
+- `PUT /api/v2/lorebooks/{lorebook_id}/entries/{entry_id}` — Update an entry.
+- `DELETE /api/v2/lorebooks/{lorebook_id}/entries/{entry_id}` — Delete an entry.
+
+### Characters (`/api/v2/characters`)
+
+- `GET /api/v2/characters` — List characters.
+- `POST /api/v2/characters` — Create a character (character-card JSON).
+- `POST /api/v2/characters/import` — Import a character from a URL/card.
+- `GET /api/v2/characters/{character_id}` — Fetch a character.
+- `PUT /api/v2/characters/{character_id}` — Update a character.
+- `DELETE /api/v2/characters/{character_id}` — Delete a character.
+- `POST /api/v2/characters/{character_id}/avatar` — Upload/set an avatar.
+- `GET /api/v2/characters/{character_id}/avatar` — Serve the avatar.
+- `POST /api/v2/characters/{character_id}/clone` — Clone a character (returns `Character`).
+- `GET /api/v2/characters/{character_id}/export` — Export a character card.
+
+### Scenarios (`/api/v2/scenarios`)
+
+- `GET /api/v2/scenarios` — List scenarios.
+- `POST /api/v2/scenarios` — Create a scenario.
+- `GET /api/v2/scenarios/{scenario_id}` — Fetch a scenario.
+- `PUT /api/v2/scenarios/{scenario_id}` — Update a scenario.
+- `DELETE /api/v2/scenarios/{scenario_id}` — Delete a scenario.
+
+### LLM Config (`/api/v2/llm-config`)
+
+- `GET /api/v2/llm-config/default-provider` — Currently configured default LLM provider for roleplay/story.
+- `PUT /api/v2/llm-config/default-provider` — Set the default LLM provider.
+- `GET /api/v2/llm-config/available-models` — Models exposed by the configured LLM provider.
+- `GET /api/v2/llm-config/providers` — Available LLM providers for chat/story narration.
+- `POST /api/v2/llm-config/providers/{provider_id}/test` — **Test Connection**: pings the provider worker's local health endpoint (Vision #4: checks the LOCAL worker `worker_url`, never a remote engine) and returns health + available models.
+
+## Files & Media
+
+- `GET /api/view/{path:path}` — Serve a source/output file (URL-decoded server-side).
+- `GET /api/thumbnail/{size}/{filename:path}` — Serve a pre-generated thumbnail (`size=medium`); falls back to the full image.
+- `GET /api/files/events` — Server-Sent Events stream of file/job lifecycle events (also bridged over Socket.IO).
+
+## WebSocket / Socket.IO (`/socket.io`)
+
+Real-time job lifecycle, downloads, reconciliation, and provider status (replaces SSE for these streams).
+
+- `job.progress` / `job.completed` / `job.failed` / `job.cancelled` — per-`job_id` updates (primary transport for `useJobStatus` / `useLLMJobResult`; JS polling fallback).
+- `provider.status` — live provider-worker alive checks (worker-only, per Vision #4).
+- `reconciliation.update` — asset-reconciliation progress.
+- `download.progress` — file download progress.
 - `GET /api/v2/models/external/huggingface`: Search HuggingFace.
 
 ### Providers (`/api/providers`)

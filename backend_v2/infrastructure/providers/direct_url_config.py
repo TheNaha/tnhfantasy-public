@@ -1,13 +1,11 @@
 # Direct URL Provider Type Configuration
 # This module contains all Direct URL-specific logic for bypassing serverless platforms.
 
-from collections.abc import AsyncIterator
 from typing import Any
 
 from infrastructure.http_client import get_http_client
 
 from .base import FileProxyProvider, ServerlessProvider
-from .ndjson import iter_ndjson_payloads
 from .provider_registry import HttpFileProxy, ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url, provider_container_name
 
@@ -33,26 +31,6 @@ class DirectUrlProvider(ServerlessProvider):
         self._file_proxy = HttpFileProxy(provider_id, config, self.worker_url)
         
         self.comfy_url = self.config.get("comfy_url", "http://localhost:8188")
-    
-    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        """
-        Run ComfyUI inference via worker container.
-        """
-        from infrastructure.http_client import get_streaming_client
-        
-        url = f"{self.worker_url}/inference"
-        
-        async with get_streaming_client(timeout=600.0) as client:
-            async with client.stream("POST", url, json={"workflow": workflow}) as response:
-                if response.status_code != 200:
-                    yield {"status": "error", "error": f"Worker returned {response.status_code}"}
-                    return
-
-                async for payload in iter_ndjson_payloads(
-                    response.aiter_bytes(),
-                    source=f"direct_url_provider:{self.provider_id}",
-                ):
-                    yield payload
     
     async def download_model(
         self,

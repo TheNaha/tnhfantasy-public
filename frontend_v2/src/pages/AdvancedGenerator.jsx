@@ -5,7 +5,7 @@ import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import useGenerationPreflight from '../hooks/useGenerationPreflight';
 import useProvidersPageData from '../hooks/useProvidersPageData';
-import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
+import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { generateApi, createIdempotencyKey } from '../api';
 import ReactFlowEditor from '../components/generator/ReactFlowEditor';
 import { compileReactFlowToComfy } from '../utils/WorkflowCompiler';
@@ -31,7 +31,7 @@ export default function AdvancedGenerator() {
         setProgress,
         generating,
         setGenerating,
-    } = useTrackGenerationJob();
+    } = useGeneratorJob({ setGeneratingOnQueue: true });
 
     const handleGraphChange = useCallback((nodes, edges) => {
         setReactFlowState({ nodes, edges });

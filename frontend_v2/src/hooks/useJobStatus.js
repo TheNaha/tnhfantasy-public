@@ -7,7 +7,7 @@
  * polling the REST endpoint so progress never freezes.
  *
  * Replaces the previous useTrackJob (poll-only, stale after 30s) and unifies
- * job tracking for the generator pages (useTrackGenerationJob) and JobCard.
+ * job tracking for the generator pages (useGeneratorJob) and JobCard.
  */
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';

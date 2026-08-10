@@ -7,7 +7,6 @@ from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
-from core.events import wait_for_job_completion
 from core.workflow_builder import build_image_workflow
 from services.job_queue import queue_manager
 

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-TNHComfy is designed around a decoupled, microservices-style architecture tailored for generative AI inference workflows. The system is split into three main components:
+TNHComfy is designed around a decoupled, microservices-style architecture tailored for generative AI inference workflows. The system is split into four main components (frontend, backend, provider worker containers, and PostgreSQL):
 
 ## 1. Frontend (tnhcomfy-frontend)
 - **Framework:** React + Vite
@@ -10,7 +10,7 @@ TNHComfy is designed around a decoupled, microservices-style architecture tailor
 ## 2. Backend (tnhcomfy-backend)
 - **Framework:** FastAPI (Python)
 - **Role:** Acts as the central orchestrator. It manages the custom job queuing system, exposes REST endpoints for the frontend, coordinates real-time updates via WebSockets, and handles the local model management system without permanently storing large checkpoints on the backend.
-- **Data Storage:** Uses a localized SQLite database (`backend_v2/data/comfy.db`) for tracking application state, jobs, and metadata. Output images are stored on the filesystem but not tracked in version control.
+- **Data Storage:** PostgreSQL (+ pgvector for Lorebook/character semantic embeddings) is the single indexer of application state, jobs, metadata, and assets. Output images are stored on the filesystem (synced via the Asset table) and not tracked in version control.
 
 ## 3. Provider Workers
 - **Providers:** Serverless instances running on Modal or Beam.
@@ -18,7 +18,7 @@ TNHComfy is designed around a decoupled, microservices-style architecture tailor
 
 ## High-Level Flow
 1. **User Request:** A user submits a generation request via the Frontend.
-2. **Job Queue:** The Frontend sends an API request to the Backend, which queues the job in the local SQLite database.
+2. **Job Queue:** The Frontend sends an API request to the Backend, which queues the job in PostgreSQL and dispatches it to an available provider worker.
 3. **Dispatch:** The Backend dispatches the job payload to an available Provider Worker (Modal/Beam).
 4. **Processing:** The Provider Worker executes the ComfyUI workflow and generates the image.
 5. **Completion:** The worker returns the results to the Backend. The Backend saves the output, updates the job status, and triggers a WebSocket event.

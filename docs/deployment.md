@@ -31,7 +31,7 @@ The `./data` directory is mounted into all containers at `/data`. This shared vo
 - Models (`data/models/`)
 - Input files (`data/input/`)
 - Output images (`data/output/`)
-- Database (`data/db/comfy.db`)
+- Database (`data/db` — PostgreSQL volume)
 
 ### Start the Application
 There are two ways to run the application: Production and Development.
@@ -71,7 +71,7 @@ docker compose down
 ```
 
 ## Production Considerations
-- **Security:** Ensure that `.env`, `backend_v2/data/db/comfy.db`, and generated images (`output` directory) are protected and not publicly accessible.
+- **Security:** Ensure that `.env`, the PostgreSQL volume (`data/db`), and generated images (`output` directory) are protected and not publicly accessible.
 - **Reverse Proxy:** The `docker-compose.yml` includes Traefik labels for routing. Configure Traefik according to your domain setup.
 - **Persistent Data:** The `./data` directory is mapped to the host filesystem via volumes, ensuring data persists across container restarts.
 - **Frontend Polling:** Docker frontend file watching requires polling mode (`usePolling: true` in `vite.config.js`).

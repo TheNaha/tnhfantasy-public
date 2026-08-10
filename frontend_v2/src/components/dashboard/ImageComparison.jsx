@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, ArrowLeftRight, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { assetUrl } from '../../utils/assetUrl';
 
 export const ImageComparison = ({ images, onClose }) => {
     const [sliderPosition, setSliderPosition] = useState(50);
@@ -58,7 +59,7 @@ export const ImageComparison = ({ images, onClose }) => {
                         <div className="relative w-full max-w-4xl aspect-square max-h-[80vh] select-none group">
                             {/* Image B (Background) */}
                             <img
-                                src={`/api/view/output/${images[1].name}`}
+                                src={assetUrl(images[1].name)}
                                 alt="B"
                                 className="absolute inset-0 w-full h-full object-contain"
                             />
@@ -68,7 +69,7 @@ export const ImageComparison = ({ images, onClose }) => {
                                 style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
                             >
                                 <img
-                                    src={`/api/view/output/${images[0].name}`}
+                                    src={assetUrl(images[0].name)}
                                     alt="A"
                                     className="absolute inset-0 w-full h-full object-contain"
                                 />
@@ -108,7 +109,7 @@ export const ImageComparison = ({ images, onClose }) => {
                             {images.map((img, idx) => (
                                 <div key={idx} className="relative border border-gray-800 rounded-lg overflow-hidden bg-gray-900/50 flex items-center justify-center">
                                     <img
-                                        src={`/api/view/output/${img.name}`}
+                                        src={assetUrl(img.name)}
                                         alt={img.name}
                                         className="max-w-full max-h-full object-contain"
                                     />

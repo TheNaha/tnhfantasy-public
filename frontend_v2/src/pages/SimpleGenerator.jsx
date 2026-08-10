@@ -7,7 +7,7 @@ import { generateApi, createIdempotencyKey } from '../api';
 
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import { useActiveJobs } from '../hooks/useActiveJobs';
-import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
+import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
@@ -30,7 +30,7 @@ export default function SimpleGenerator() {
     const navigate = useNavigate();
     const [viewingMetadata, setViewingMetadata] = useState(null);
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
-    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
+
 
     const {
         store: {
@@ -128,52 +128,27 @@ export default function SimpleGenerator() {
         return { workflow, metadata };
     };
 
-    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
-        if (trackQueuedJob) {
-            setGenerating(true);
-            setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
-        }
-
-        try {
-            const { workflow, metadata } = buildSimpleWorkflowPayload();
-            const submission = await runWithPreflight(workflow, {
-                onValid: async () => generateApi.workflow(workflow, metadata, {
-                    idempotencyKey: createIdempotencyKey('generate-simple')
-                }),
-            });
-
-            if (!submission.ok) {
-                if (trackQueuedJob) {
-                    setGenerating(false);
-                    setProgress(null);
-                }
-                return;
-            }
-
-            const data = submission.submissionResult;
-
-            if (data && data.id) {
-                if (trackQueuedJob) {
-                    setCurrentJobId(data.id);
-                    setGenerating(true);
-                    setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
-                    toast.success('Job queued!', { icon: '⏳' });
-                } else {
-                    toast.success('Added to queue!', { icon: '➕' });
-                }
-
-                if (shouldRedirect) navigate('/');
-                if (autoRandomizeSeed) randomizeSeed();
-            }
-
-        } catch (e) {
-            toast.error("Error: " + e.message);
-            if (trackQueuedJob) {
-                setGenerating(false);
-                setProgress(null);
-            }
-        }
+    const runSubmission = async () => {
+        const { workflow, metadata } = buildSimpleWorkflowPayload();
+        return runWithPreflight(workflow, {
+            onValid: async () => generateApi.workflow(workflow, metadata, {
+                idempotencyKey: createIdempotencyKey('generate-simple')
+            }),
+        });
     };
+
+    const {
+        progress,
+        generating,
+        setGenerating,
+        handleGenerate,
+    } = useGeneratorJob({
+        runSubmission,
+        type: 'simple',
+        setGeneratingOnQueue: false,
+        randomizeSeed,
+        autoRandomizeSeed,
+    });
 
     const handleGenerateVariations = async (count) => {
         setGenerating(true);

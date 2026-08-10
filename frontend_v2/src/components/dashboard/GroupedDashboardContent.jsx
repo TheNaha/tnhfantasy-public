@@ -8,6 +8,7 @@ import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
 import ProgressiveImage from '../ProgressiveImage';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { assetUrl, thumbUrl } from '../../utils/assetUrl';
 import { formatTimestamp } from '../../utils/dateTime';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
@@ -39,8 +40,8 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
             <div className="w-full h-full relative">
                 <ProgressiveImage
                     blurhash={item.blurhash}
-                    src={`/api/view/output/${item.name}`}
-                    medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
+                    src={assetUrl(item.name)}
+                    medium={item.thumbnail_medium || thumbUrl(item.name)}
                     alt={item.name}
                     size="medium"
                     className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
@@ -119,8 +120,8 @@ const ListImageGroupCard = memo(function ListImageGroupCard({ item, selected, se
                 <div className="relative bg-[#0B0E14] rounded-xl overflow-hidden group-hover:ring-2 ring-blue-500/30 transition-all">
                     <ProgressiveImage
                         blurhash={item.images[0].blurhash}
-                        src={`/api/view/output/${item.images[0].name}`}
-                        medium={item.images[0].thumbnail_medium || `/api/thumbnail/medium/${item.images[0].name}`}
+                        src={assetUrl(item.images[0].name)}
+                        medium={item.images[0].thumbnail_medium || thumbUrl(item.images[0].name)}
                         alt={item.images[0].name}
                         size="medium"
                         aspectRatio="auto"
@@ -179,8 +180,8 @@ const ListSingleImageCard = memo(function ListSingleImageCard({ item, selected, 
             >
                 <ProgressiveImage
                     blurhash={item.blurhash}
-                    src={`/api/view/output/${item.name}`}
-                    medium={item.thumbnail_medium || `/api/thumbnail/medium/${item.name}`}
+                    src={assetUrl(item.name)}
+                    medium={item.thumbnail_medium || thumbUrl(item.name)}
                     alt={item.name}
                     size="medium"
                     aspectRatio="auto"
@@ -213,8 +214,8 @@ const DefaultImageGroupImageCard = memo(function DefaultImageGroupImageCard({ im
         >
             <ProgressiveImage
                 blurhash={image.blurhash}
-                src={`/api/view/output/${image.name}`}
-                medium={image.thumbnail_medium || `/api/thumbnail/medium/${image.name}`}
+                src={assetUrl(image.name)}
+                medium={image.thumbnail_medium || thumbUrl(image.name)}
                 alt={image.name}
                 size="medium"
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"

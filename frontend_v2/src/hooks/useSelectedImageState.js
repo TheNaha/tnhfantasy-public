@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
+import { assetMetadataUrl } from '../utils/assetUrl';
 
 export function useSelectedImageState() {
     const [selectedImage, setSelectedImage] = useState(null);
@@ -8,7 +9,7 @@ export function useSelectedImageState() {
     const { data: serverMetadata, isFetching } = useQuery({
         queryKey: ['metadata', selectedImage?.name],
         queryFn: async () => {
-            const data = await api.get(`/api/view/output/${encodeURIComponent(selectedImage.name)}.json`);
+            const data = await api.get(assetMetadataUrl(selectedImage.name));
             return data;
         },
         enabled: !!selectedImage,

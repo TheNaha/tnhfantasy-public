@@ -5,7 +5,7 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 ## Phases
 
 ### Phase 1: Foundation ✓
-- FastAPI backend with SQLite, manual migrations, domain-driven structure
+- FastAPI backend with PostgreSQL + pgvector, SQLModel, auto-run migrations at startup (no Alembic), domain-driven structure
 - React frontend with Zustand (UI) + React Query (server data), Vite on 5174
 - Docker Compose stack (backend → frontend → providers)
 - Provider container system for ComfyUI inference workers
@@ -25,7 +25,7 @@ See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. Se
 
 ### Phase 4: The World Vault (Data Layer & State) [COMPLETED]
 *Focus: Laying the groundwork for Characters, Chats, and Storytelling without breaking existing Image Generation.*
-- [x] **Database Migration (SQLite -> PostgreSQL):** Write a migration script to move existing data to PostgreSQL, and integrate `pgvector` for Lorebook embeddings.
+- [x] **Database Migration (SQLite -> PostgreSQL):** Migrated to PostgreSQL with `pgvector` for Lorebook/character semantic embeddings. Migrations run automatically at backend startup via `infrastructure/migrations/steps.py` (no Alembic).
 - [x] **Database Schema:** Expand PostgreSQL `core/entities.py` to include `Characters` (indexing only), `Chats`, `Messages`, `Lorebooks`, and `Scenarios`.
 - [x] **Job & Provider Schemas:** Update `Job` entity to support `task_type` (`image`, `text`, `audio`) and decouple `workflow` from ComfyUI. Update `Provider` entity with `worker_type`.
 - [x] **Backend API:** Implement CRUD endpoints for the new World Vault entities (`/api/v2/characters`, `/api/v2/chats`, etc.).

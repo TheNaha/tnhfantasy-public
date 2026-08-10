@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { Images } from 'lucide-react';
 
 import ProgressiveImage from '../ProgressiveImage';
+import { thumbUrl } from '../../utils/assetUrl';
 
 /**
  * ImageGroup component displays multiple images from a single job as a stacked effect.
@@ -25,7 +26,7 @@ const ImageGroup = memo(function ImageGroup({
     // Get thumbnail URL for an image
     const getThumbnail = (img) => {
         if (img.thumbnails?.medium) return img.thumbnails.medium;
-        return `/api/thumbnail/medium/${encodeURIComponent(img.name)}`;
+        return thumbUrl(img.name);
     };
 
     return (

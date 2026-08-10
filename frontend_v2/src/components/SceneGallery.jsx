@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { X, ChevronLeft, ChevronRight, Images } from 'lucide-react';
 import clsx from 'clsx';
+import { assetUrl, thumbUrl } from '../utils/assetUrl';
 
 function buildUrl(filename) {
     if (!filename) return '';
     if (filename.startsWith('/')) return filename;
-    return `/api/view/output/${filename}`;
+    return assetUrl(filename);
 }
 
 function buildThumbUrl(filename) {
     if (!filename) return '';
     if (filename.startsWith('/')) return filename;
-    return `/api/thumbnail/medium/${filename}`;
+    return thumbUrl(filename);
 }
 
 export default function SceneGallery({ title, images, compact, lightboxAction }) {

@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="ComfyUI Modal Stack - Backend V2",
-    description="Refactored backend with SQLite, event-driven SSE, and clean architecture",
+    description="Unified AI Fantasy Engine: PostgreSQL + pgvector World Vault (images, roleplay chat, stories) with a unified TaskEvent provider-protocol over Socket.IO/WebSocket.",
     version="2.0.0",
     lifespan=lifespan,
 )

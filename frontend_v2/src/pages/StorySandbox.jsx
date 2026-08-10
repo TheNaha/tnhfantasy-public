@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { api } from '../api';
+import { assetUrl } from '../utils/assetUrl';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -1029,7 +1030,7 @@ export default function StorySandbox() {
                                     <div className="space-y-2">
                                         {activeChapter.image_paths.map((path, idx) => (
                                             <div key={idx} className="rounded-lg overflow-hidden border border-white/10">
-                                                <img src={`/api/view/output/${path}`} alt={`Scene ${idx + 1}`} loading="lazy" decoding="async" className="w-full h-auto" />
+                                                <img src={assetUrl(path)} alt={`Scene ${idx + 1}`} loading="lazy" decoding="async" className="w-full h-auto" />
                                             </div>
                                         ))}
                                     </div>

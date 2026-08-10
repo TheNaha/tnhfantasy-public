@@ -22,6 +22,7 @@ import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
 import { getCheckpointDisplayName } from "../../utils/modelDisplay";
+import { assetMetadataUrl, assetUrl } from "../../utils/assetUrl";
 import { formatTimestamp } from "../../utils/dateTime";
 import {
   applyGeneratorStateFromMetadata,
@@ -42,9 +43,8 @@ const FeedCard = memo(function FeedCard({
   const reuseLockRef = useRef(false);
   const navigate = useNavigate();
   const settings = useSettingsStore((state) => state.settings);
-  const encodedName = encodeURIComponent(item.name);
-  const metadataEndpoint = `/api/view/output/${encodedName}.json`;
-  const imageEndpoint = `/api/view/output/${encodedName}`;
+  const metadataEndpoint = assetMetadataUrl(item.name);
+  const imageEndpoint = assetUrl(item.name);
   const detailsId = useId();
 
   // Lazy-load full metadata using React Query when user expands details, reuses, or remixes

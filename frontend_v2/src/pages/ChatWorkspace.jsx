@@ -12,6 +12,7 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation } from 'react-router-dom';
 import api from '../api/client';
+import { thumbUrl } from '../utils/assetUrl';
 import {
     useMessages, useChats, useSendMessage, useChat,
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
@@ -512,7 +513,17 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                             <div className="flex flex-col gap-1.5 w-full">
                                 {msg.content && <TavernMessage content={msg.content} />}
                                 {msg.tool_calls?.length > 0 && (
-                                    <div className="flex flex-wrap gap-1.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        {/* MAX_AGENTIC_DEPTH (5) mirrors backend orchestrator_service.py:21 */}
+                                        {typeof msg.depth === 'number' && (
+                                            <span
+                                                title={`Agentic loop depth ${msg.depth} / 5 (${5 - msg.depth} remaining)`}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-800/40 border border-gray-700 text-[10px] text-gray-400 font-mono"
+                                            >
+                                                <Activity size={9} />
+                                                Step {msg.depth}/{5}
+                                            </span>
+                                        )}
                                         {msg.tool_calls.map((tc, idx) => {
                                             const fn = tc.function || {};
                                             let argsPreview = '';
@@ -541,7 +552,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 )}
                                 {msg.image_path && (
                                     <div className="mt-1">
-                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-2xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                                 {/* Swipe controls — only shown when alternates exist */}
@@ -572,7 +583,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <TavernMessage content={msg.content} alignRight />
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>
@@ -581,7 +592,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 <span className="whitespace-pre-wrap">{msg.content}</span>
                                 {msg.image_path && (
                                     <div className="mt-3">
-                                        <img src={`/api/thumbnail/medium/${msg.image_path}`} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
+                                        <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
                                     </div>
                                 )}
                             </div>

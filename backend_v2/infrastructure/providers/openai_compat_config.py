@@ -1,10 +1,8 @@
 # OpenAI Compat Provider Type Configuration
 
-from collections.abc import AsyncIterator
 from typing import Any
 
 from .base import ServerlessProvider
-from .ndjson import iter_ndjson_payloads
 from .provider_registry import ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url, provider_container_name
 
@@ -24,34 +22,6 @@ class OpenAICompatProvider(ServerlessProvider):
         
         self.api_base = self.config.get("api_base", "http://localhost:11434/v1")
         self.api_key = self.config.get("api_key", "")
-    
-    async def run_inference(self, workflow: dict[str, Any], job_id: str = "", timeout_seconds: int = 180) -> AsyncIterator[dict[str, Any]]:
-        """
-        Run LLM generation via worker container.
-        """
-        from infrastructure.http_client import get_streaming_client
-        
-        url = f"{self.worker_url}/inference"
-        
-        async with get_streaming_client(timeout=timeout_seconds) as client:
-            async with client.stream(
-                "POST",
-                url,
-                json={
-                    "workflow": workflow,
-                    "job_id": job_id,
-                    "timeout_seconds": timeout_seconds,
-                },
-            ) as response:
-                if response.status_code != 200:
-                    yield {"status": "error", "error": f"Worker returned {response.status_code}"}
-                    return
-
-                async for payload in iter_ndjson_payloads(
-                    response.aiter_bytes(),
-                    source=f"openai_compat_provider:{self.provider_id}",
-                ):
-                    yield payload
     
     def get_provider_info(self) -> dict[str, Any]:
         return {

@@ -1,6 +1,7 @@
 import { X, FolderOpen } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
+import { assetUrl } from '../../utils/assetUrl';
 
 const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
     const collectionList = Object.values(collections);
@@ -61,7 +62,7 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
                                             {/* Thumbnail or Icon */}
                                             {collection.thumbnail ? (
                                                 <img
-                                                    src={`/api/view/output/${collection.thumbnail}`}
+                                                    src={assetUrl(collection.thumbnail)}
                                                     alt={collection.name}
                                                     className="w-12 h-12 rounded object-cover"
                                                 />

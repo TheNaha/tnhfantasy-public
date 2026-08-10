@@ -6,7 +6,6 @@ from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session
 from core.entities import Chat, Character, Message, MessageRole
-from core.events import wait_for_job_completion
 
 router = APIRouter()
 

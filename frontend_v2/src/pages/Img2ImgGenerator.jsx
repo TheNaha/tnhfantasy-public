@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { ImageIcon, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { generateApi, createIdempotencyKey } from '../api';
@@ -22,15 +22,13 @@ import SamplingSettings from '../components/generator/SamplingSettings';
 import PresetManager from '../components/generator/PresetManager';
 import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
-import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
+import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 
 export default function Img2ImgGenerator() {
-    const navigate = useNavigate();
     const location = useLocation();
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
     const {
@@ -65,8 +63,6 @@ export default function Img2ImgGenerator() {
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
 
-    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
-
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
     // Check for pre-loaded image from navigation state
@@ -76,116 +72,77 @@ export default function Img2ImgGenerator() {
         }
     }, [location.state, setSourceImage]);
 
-    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
-        if (!sourceImage?.filename) {
-            toast.error("Please upload a source image first");
-            return;
-        }
-
-        if (!selectedCheckpoint?.name) {
-            toast.error("Please select a checkpoint");
-            return;
-        }
-
-        if (trackQueuedJob) {
-            setGenerating(true);
-            setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
-        } else {
-            setGenerating(true);
-        }
-
-        try {
-            const builder = new WorkflowBuilder();
-            const workflow = builder.buildImg2Img({
-                inputImage: sourceImage.filename,
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                denoise,
-                checkpoint: selectedCheckpoint.name,
-                loras: selectedLoras,
-                vae: selectedVae,
-                clipSkip,
-                enableFreeU,
-                enablePAG,
-                pagScale,
-                enableLatentUpscale,
-                latentUpscaleMultiplier,
-                ipAdapters,
-                controlnets: controlnets
-            });
-
-            const metadata = {
-                type: 'img2img',
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                denoise,
-                width: sourceImage.width,
-                height: sourceImage.height,
-                sourceImage: sourceImage.filename,
-                checkpoint: selectedCheckpoint,
-                vae: selectedVae,
-                loras: selectedLoras,
-                clipSkip,
-                enableFreeU,
-                enablePAG,
-                pagScale,
-                enableLatentUpscale,
-                ipAdapters,
-                controlnets
-            };
-
-            const submission = await runWithPreflight(workflow, {
-                onValid: async () => generateApi.workflow(workflow, metadata, {
-                    idempotencyKey: createIdempotencyKey('generate-img2img')
-                }),
-            });
-            if (!submission.ok) {
-                if (trackQueuedJob) {
-                    setGenerating(false);
-                    setProgress(null);
-                }
-                return;
-            }
-
-            const data = submission.submissionResult;
-
-            if (data && data.id) {
-                if (trackQueuedJob) {
-                    setCurrentJobId(data.id);
-                    setGenerating(true);
-                    setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
-                    toast.success('Job queued!', { icon: '⏳' });
-                } else {
-                    toast.success('Added to queue!', { icon: '➕' });
-                }
-
-                if (shouldRedirect) navigate('/');
-                if (autoRandomizeSeed) randomizeSeed();
-            }
-
-        } catch (e) {
-            console.error(e);
-            toast.error("Error: " + e.message);
-            if (trackQueuedJob) {
-                setGenerating(false);
-                setProgress(null);
-            }
-        } finally {
-            if (!trackQueuedJob) {
-                setGenerating(false);
-            }
-        }
+    const validateImg2Img = () => {
+        if (!sourceImage?.filename) return 'Please upload a source image first';
+        if (!selectedCheckpoint?.name) return 'Please select a checkpoint';
+        return null;
     };
+
+    const runSubmission = async () => {
+        const builder = new WorkflowBuilder();
+        const workflow = builder.buildImg2Img({
+            inputImage: sourceImage.filename,
+            prompt,
+            negativePrompt,
+            seed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            denoise,
+            checkpoint: selectedCheckpoint.name,
+            loras: selectedLoras,
+            vae: selectedVae,
+            clipSkip,
+            enableFreeU,
+            enablePAG,
+            pagScale,
+            enableLatentUpscale,
+            latentUpscaleMultiplier,
+            ipAdapters,
+            controlnets: controlnets
+        });
+
+        const metadata = {
+            type: 'img2img',
+            prompt,
+            negativePrompt,
+            seed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            denoise,
+            width: sourceImage.width,
+            height: sourceImage.height,
+            sourceImage: sourceImage.filename,
+            checkpoint: selectedCheckpoint,
+            vae: selectedVae,
+            loras: selectedLoras,
+            clipSkip,
+            enableFreeU,
+            enablePAG,
+            pagScale,
+            enableLatentUpscale,
+            ipAdapters,
+            controlnets
+        };
+
+        return runWithPreflight(workflow, {
+            onValid: async () => generateApi.workflow(workflow, metadata, {
+                idempotencyKey: createIdempotencyKey('generate-img2img')
+            }),
+        });
+    };
+
+    const { progress, generating, handleGenerate } = useGeneratorJob({
+        runSubmission,
+        type: 'img2img',
+        setGeneratingOnQueue: true,
+        validate: validateImg2Img,
+        randomizeSeed,
+        autoRandomizeSeed,
+    });
 
     return (
         <div className="pb-24">

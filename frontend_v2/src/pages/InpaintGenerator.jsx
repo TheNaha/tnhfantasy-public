@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Paintbrush, Settings2, Play, Trash2, Plus, Loader2, Sparkles } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
@@ -24,21 +24,17 @@ import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
 import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
-import { useTrackGenerationJob } from '../hooks/useTrackGenerationJob';
+import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import toast from 'react-hot-toast';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 
 const EMPTY_MODELS = [];
 
 export default function InpaintGenerator() {
-    const navigate = useNavigate();
     const location = useLocation();
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
-    const [showCanvas, setShowCanvas] = useState(false);
-
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
@@ -62,6 +58,10 @@ export default function InpaintGenerator() {
         }
     } = useGeneratorCore();
 
+    // Canvas visibility is derived from the presence of a source image (it is
+    // only ever opened when an image is loaded and closed on Clear), so there is
+    // no separate state to keep in sync — avoids setState-in-effect lint errors.
+    const showCanvas = !!sourceImage?.filename;
     const { data: activeJobs = [] } = useActiveJobs();
     const activeJobCount = activeJobs.length;
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
@@ -69,14 +69,12 @@ export default function InpaintGenerator() {
     const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
 
-    const { setCurrentJobId, progress, setProgress, generating, setGenerating } = useTrackGenerationJob();
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
         if (location.state?.sourceImage) {
             setSourceImage(location.state.sourceImage);
-            setShowCanvas(true);
         }
     }, [location.state, setSourceImage]);
 
@@ -97,148 +95,94 @@ export default function InpaintGenerator() {
         return inpaintVariant || null;
     }, [selectedCheckpoint, checkpoints]);
 
-    // When source image is loaded, show canvas
-    useEffect(() => {
-        if (sourceImage?.filename && !showCanvas) {
-            setShowCanvas(true);
-        }
-    }, [sourceImage, showCanvas]);
-
-    const handleGenerate = async ({ shouldRedirect = true, trackQueuedJob = true } = {}) => {
-        if (!sourceImage?.filename) {
-            toast.error("Please upload a source image first");
-            return;
-        }
-
-        if (!maskImage) {
-            toast.error("Please draw a mask on the image");
-            return;
-        }
-
-        if (!selectedCheckpoint?.name) {
-            toast.error("Please select a checkpoint");
-            return;
-        }
-
-        if (trackQueuedJob) {
-            setGenerating(true);
-            setProgress({ value: 0, max: 100, status: 'starting', node: 'Uploading mask...' });
-        } else {
-            setGenerating(true);
-        }
-
-        try {
-            // Use inpaint model if detected, otherwise use selected
-            const checkpointToUse = inpaintCheckpoint?.name || selectedCheckpoint.name;
-
-            // First, upload the mask to the backend
-            const maskResult = await filesApi.uploadMask(
-                maskImage,
-                sourceImage.filename,
-            );
-
-            if (trackQueuedJob) {
-                setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
-            }
-
-            const builder = new WorkflowBuilder();
-            const workflow = builder.buildInpaint({
-                inputImage: sourceImage.filename,
-                maskImage: maskResult.filename,
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                denoise,
-                checkpoint: checkpointToUse,
-                loras: selectedLoras,
-                vae: selectedVae,
-                maskBlur,
-                growMask: 6,
-                clipSkip,
-                enableFreeU,
-                enablePAG,
-                pagScale,
-                enableLatentUpscale,
-                latentUpscaleMultiplier,
-                ipAdapters,
-                controlnets: []
-            });
-
-            const metadata = {
-                type: 'inpaint',
-                prompt,
-                negativePrompt,
-                seed,
-                steps,
-                cfg,
-                sampler,
-                scheduler,
-                denoise,
-                maskBlur,
-                width: sourceImage.width,
-                height: sourceImage.height,
-                sourceImage: sourceImage.filename,
-                maskImage: maskResult.filename,
-                checkpoint: inpaintCheckpoint || selectedCheckpoint,
-                vae: selectedVae,
-                loras: selectedLoras,
-                clipSkip,
-                enableFreeU,
-                enablePAG,
-                pagScale,
-                usedInpaintModel: !!inpaintCheckpoint
-            };
-
-            const submission = await runWithPreflight(workflow, {
-                onValid: async () => generateApi.workflow(workflow, metadata, {
-                    idempotencyKey: createIdempotencyKey('generate-inpaint')
-                }),
-            });
-            if (!submission.ok) {
-                if (trackQueuedJob) {
-                    setGenerating(false);
-                    setProgress(null);
-                }
-                return;
-            }
-
-            const data = submission.submissionResult;
-
-            if (data && data.id) {
-                if (trackQueuedJob) {
-                    setCurrentJobId(data.id);
-                    setGenerating(true);
-                    setProgress({ value: 0, max: 100, status: 'queued', node: 'Job queued...' });
-                    toast.success('Job queued!', { icon: '⏳' });
-                } else {
-                    toast.success('Added to queue!', { icon: '➕' });
-                }
-
-                if (shouldRedirect) navigate('/');
-                if (autoRandomizeSeed) randomizeSeed();
-            }
-
-        } catch (e) {
-            console.error(e);
-            toast.error("Error: " + e.message);
-            if (trackQueuedJob) {
-                setGenerating(false);
-                setProgress(null);
-            }
-        } finally {
-            if (!trackQueuedJob) {
-                setGenerating(false);
-            }
-        }
+    const validateInpaint = () => {
+        if (!sourceImage?.filename) return 'Please upload a source image first';
+        if (!maskImage) return 'Please draw a mask on the image';
+        if (!selectedCheckpoint?.name) return 'Please select a checkpoint';
+        return null;
     };
+
+    const runSubmission = async ({ setProgress }) => {
+        const checkpointToUse = inpaintCheckpoint?.name || selectedCheckpoint.name;
+
+        const maskResult = await filesApi.uploadMask(
+            maskImage,
+            sourceImage.filename,
+        );
+
+        setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
+
+        const builder = new WorkflowBuilder();
+        const workflow = builder.buildInpaint({
+            inputImage: sourceImage.filename,
+            maskImage: maskResult.filename,
+            prompt,
+            negativePrompt,
+            seed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            denoise,
+            checkpoint: checkpointToUse,
+            loras: selectedLoras,
+            vae: selectedVae,
+            maskBlur,
+            growMask: 6,
+            clipSkip,
+            enableFreeU,
+            enablePAG,
+            pagScale,
+            enableLatentUpscale,
+            latentUpscaleMultiplier,
+            ipAdapters,
+            controlnets: []
+        });
+
+        const metadata = {
+            type: 'inpaint',
+            prompt,
+            negativePrompt,
+            seed,
+            steps,
+            cfg,
+            sampler,
+            scheduler,
+            denoise,
+            maskBlur,
+            width: sourceImage.width,
+            height: sourceImage.height,
+            sourceImage: sourceImage.filename,
+            maskImage: maskResult.filename,
+            checkpoint: inpaintCheckpoint || selectedCheckpoint,
+            vae: selectedVae,
+            loras: selectedLoras,
+            clipSkip,
+            enableFreeU,
+            enablePAG,
+            pagScale,
+            usedInpaintModel: !!inpaintCheckpoint
+        };
+
+        return runWithPreflight(workflow, {
+            onValid: async () => generateApi.workflow(workflow, metadata, {
+                idempotencyKey: createIdempotencyKey('generate-inpaint')
+            }),
+        });
+    };
+
+    const { progress, generating, handleGenerate } = useGeneratorJob({
+        runSubmission,
+        type: 'inpaint',
+        setGeneratingOnQueue: true,
+        startingNode: 'Uploading mask...',
+        validate: validateInpaint,
+        randomizeSeed,
+        autoRandomizeSeed,
+    });
 
     const handleClearAll = () => {
         clearSourceImage();
-        setShowCanvas(false);
     };
 
     return (
@@ -286,7 +230,6 @@ export default function InpaintGenerator() {
                                 image={sourceImage}
                                 onImageSelect={(img) => {
                                     setSourceImage(img);
-                                    setShowCanvas(true);
                                 }}
                                 onClear={handleClearAll}
                             />

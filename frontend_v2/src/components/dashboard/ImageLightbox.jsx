@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
+import { assetUrl } from '../../utils/assetUrl';
 
 import { memo } from 'react';
 
@@ -109,7 +110,7 @@ export default memo(function ImageLightbox({
                     )}
                     <ProgressiveImage
                         blurhash={displayImage.blurhash}
-                        src={`/api/view/output/${displayImage.name}`}
+                        src={assetUrl(displayImage.name)}
                         thumb={displayImage.thumb ? `${displayImage.thumb}` : null}
                         medium={displayImage.medium ? `${displayImage.medium}` : null}
                         alt={displayImage.name}
@@ -175,7 +176,7 @@ export default memo(function ImageLightbox({
 
                         <div className="flex gap-2">
                             <a
-                                href={`/api/view/output/${displayImage.name}`}
+                                href={assetUrl(displayImage.name)}
                                 download
                                 aria-label="Download image"
                                 className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"

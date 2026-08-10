@@ -73,7 +73,7 @@ def configure_app(app: FastAPI):
         duration_seconds = time.time() - start_time
         duration_ms = round(duration_seconds * 1000, 2)
         path = request.url.path
-        skip_paths = ["/health", "/api/files/events", "/metrics"]
+        skip_paths = ["/api/health", "/api/files/events", "/metrics"]
 
         if not any(path.startswith(skip) for skip in skip_paths):
             log = api_logger()

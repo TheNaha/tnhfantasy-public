@@ -5,6 +5,7 @@ import ProgressiveImage from '../ProgressiveImage';
 import JobCard from './JobCard';
 import { getItemTimelineDate } from '../../utils/dateTime';
 import { getCheckpointDisplayName } from '../../utils/modelDisplay';
+import { assetUrl } from '../../utils/assetUrl';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 
 /**
@@ -242,7 +243,7 @@ const TimelineImageCard = memo(function TimelineImageCard({
                 <div className="relative flex-shrink-0 w-32 h-32 bg-gray-900 rounded-lg overflow-hidden">
                     <ProgressiveImage
                         blurhash={item.blurhash}
-                        src={`/api/view/output/${item.name}`}
+                        src={assetUrl(item.name)}
                         thumb={item.thumb ? `${item.thumb}` : null}
                         medium={item.medium ? `${item.medium}` : null}
                         alt={item.name}

@@ -1,6 +1,5 @@
 # Base provider interface for serverless platforms
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
 from typing import Any
 
 
@@ -11,15 +10,6 @@ class ServerlessProvider(ABC):
         self.provider_id = provider_id
         self.config = config
         self.provider_type = config.get("type", "unknown")
-    
-    @abstractmethod
-    async def run_inference(self, workflow: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        """
-        Execute a ComfyUI workflow and yield progress updates.
-        
-        Yields:
-            Progress updates: {status, progress, message, etc.}
-        """
     
     @abstractmethod
     async def download_model(

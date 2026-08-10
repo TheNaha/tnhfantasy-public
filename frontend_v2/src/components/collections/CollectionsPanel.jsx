@@ -10,6 +10,7 @@ import {
 } from '../../hooks/useCollections';
 import CreateCollectionModal from './CreateCollectionModal';
 import { useConfirmation } from '../../store/confirmationStore';
+import { assetUrl } from '../../utils/assetUrl';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
@@ -152,7 +153,7 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                                                 {/* Thumbnail or Icon */}
                                                 {collection.thumbnail ? (
                                                     <img
-                                                        src={`/api/view/output/${collection.thumbnail}`}
+                                                        src={assetUrl(collection.thumbnail)}
                                                         alt={collection.name}
                                                         className="w-12 h-12 rounded object-cover"
                                                     />

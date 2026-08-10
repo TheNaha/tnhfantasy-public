@@ -1,6 +1,5 @@
 """Tests for infrastructure/providers/base.py, beam_provider.py, and modal_provider.py"""
 import base64
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,54 +10,10 @@ from infrastructure.providers.modal_provider import ModalProvider
 from infrastructure.providers.provider_registry import HttpFileProxy
 
 
-class _FakeStreamResponse:
-    def __init__(self, status_code=200, chunks=None):
-        self.status_code = status_code
-        self._chunks = chunks or []
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    async def aiter_bytes(self):
-        for chunk in self._chunks:
-            yield chunk
-
-
-class _FakeStreamingClient:
-    def __init__(self, response, recorder=None):
-        self._response = response
-        self._recorder = recorder
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
-
-    def stream(self, *args, **kwargs):
-        if self._recorder is not None:
-            self._recorder["args"] = args
-            self._recorder["kwargs"] = kwargs
-        return self._response
-
-
-def _install_streaming_client(monkeypatch, response, recorder=None):
-    @asynccontextmanager
-    async def fake_get_streaming_client(timeout=600.0):
-        yield _FakeStreamingClient(response, recorder=recorder)
-
-    monkeypatch.setattr("infrastructure.http_client.get_streaming_client", fake_get_streaming_client)
-
-
 # ===== BASE PROVIDER TESTS =====
 
 class ConcreteProvider(ServerlessProvider):
     """Concrete implementation of ServerlessProvider for testing."""
-    async def run_inference(self, workflow):
-        pass
 
     async def download_model(self, url, path, token=None, preview_url=None, metadata=None):
         return {}
@@ -247,34 +202,6 @@ class TestBeamProvider:
         provider = self.get_provider()
         assert provider.provider_type == "beam"
 
-    async def test_run_inference_parses_tail_without_newline(self, monkeypatch):
-        response = _FakeStreamResponse(
-            chunks=[
-                b'{"status":"progress","value":1,"max":2}\n',
-                b'{"status":"success","images":[{"filename":"beam-tail.png"}]}'
-            ]
-        )
-        _install_streaming_client(monkeypatch, response)
-
-        provider = self.get_provider()
-        updates = [update async for update in provider.run_inference({"nodes": {}})]
-
-        assert updates[-1]["status"] == "success"
-        assert updates[-1]["images"][0]["filename"] == "beam-tail.png"
-
-    async def test_run_inference_uses_canonical_inference_endpoint(self, monkeypatch):
-        response = _FakeStreamResponse(
-            chunks=[b'{"status":"success","images":[]}\n']
-        )
-        recorder = {}
-        _install_streaming_client(monkeypatch, response, recorder=recorder)
-
-        provider = self.get_provider()
-        _ = [update async for update in provider.run_inference({"nodes": {}})]
-
-        assert recorder["args"][0] == "POST"
-        assert recorder["args"][1] == "http://tnhcomfy-beam-primary:8000/inference"
-
     async def test_delete_model_uses_delete_first(self):
         provider = self.get_provider()
 
@@ -440,30 +367,3 @@ class TestModalProvider:
         info = provider.get_provider_info()
         assert info["id"] == "modal-primary"
 
-    async def test_run_inference_parses_tail_without_newline(self, monkeypatch):
-        response = _FakeStreamResponse(
-            chunks=[
-                b'{"status":"queued"}\n',
-                b'{"status":"success","images":[{"filename":"modal-tail.png"}]}'
-            ]
-        )
-        _install_streaming_client(monkeypatch, response)
-
-        provider = self.get_provider()
-        updates = [update async for update in provider.run_inference({"nodes": {}})]
-
-        assert updates[-1]["status"] == "success"
-        assert updates[-1]["images"][0]["filename"] == "modal-tail.png"
-
-    async def test_run_inference_uses_canonical_inference_endpoint(self, monkeypatch):
-        response = _FakeStreamResponse(
-            chunks=[b'{"status":"success","images":[]}\n']
-        )
-        recorder = {}
-        _install_streaming_client(monkeypatch, response, recorder=recorder)
-
-        provider = self.get_provider()
-        _ = [update async for update in provider.run_inference({"nodes": {}})]
-
-        assert recorder["args"][0] == "POST"
-        assert recorder["args"][1] == "http://tnhcomfy-modal-primary:8000/inference"
