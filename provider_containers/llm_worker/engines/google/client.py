@@ -85,6 +85,9 @@ class GoogleProviderClient(BaseProviderClient):
                     "contents": contents,
                 }
 
+                if request.temperature is not None:
+                    payload["generationConfig"] = {"temperature": request.temperature}
+
                 if system_prompt:
                     payload["systemInstruction"] = {
                         "role": "user",

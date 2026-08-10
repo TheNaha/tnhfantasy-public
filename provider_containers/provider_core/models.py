@@ -21,6 +21,7 @@ class InferenceRequest(BaseModel):
     messages: Optional[List[Dict[str, Any]]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     model: Optional[str] = None
+    temperature: Optional[float] = None
     use_snapshot: bool = False
     job_id: Optional[str] = None
     timeout_seconds: Optional[float] = None

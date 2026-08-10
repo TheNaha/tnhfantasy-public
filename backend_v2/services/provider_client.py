@@ -319,10 +319,18 @@ async def call_llm_provider(
     provider_type: str = "modal",
 ) -> dict:
     reducer = _LLMReducer(job_id, job_service, provider_id, workflow)
+    temperature = workflow.get("temperature")
+    if temperature is None:
+        try:
+            from config import get_config
+            temperature = (get_config() or {}).get("ai", {}).get("temperature")
+        except Exception:
+            temperature = None
     payload = {
         "messages": workflow.get("messages"),
         "tools": workflow.get("tools"),
         "model": workflow.get("model"),
+        "temperature": temperature,
         "job_id": job_id,
         "timeout_seconds": timeout,
     }

@@ -81,6 +81,8 @@ class OpenAICompatProviderClient(BaseProviderClient):
                 }
                 if tools:
                     payload["tools"] = tools
+                if request.temperature is not None:
+                    payload["temperature"] = request.temperature
 
                 headers = {"Content-Type": "application/json"}
                 if self.api_key:

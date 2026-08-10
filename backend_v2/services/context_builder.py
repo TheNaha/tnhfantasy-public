@@ -112,7 +112,6 @@ def parse_mes_example(mes_example: str, char_name: str = "Character", user_name:
 def inject_lorebooks_into_system_prompt(
     system_prompt: str,
     lorebook_entries: list[dict],
-    injection_mode: str = "system_prompt",
 ) -> str:
     """Inject relevant lorebook entries into system prompt."""
     if not lorebook_entries:
@@ -469,7 +468,6 @@ def build_chat_context(
     messages: list,
     character=None,
     lorebook_ids: list[str] = None,
-    injection_mode: str = "system_prompt",
     max_context_tokens: int = DEFAULT_MAX_TOKENS,
     persona_name: str | None = None,
     persona_description: str | None = None,

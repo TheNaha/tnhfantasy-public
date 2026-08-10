@@ -739,7 +739,6 @@ function AISettings({ settings, onUpdate, onReset }) {
     useEffect(() => {
         if (llmStatus.defaultProvider) {
             // syncing form state from fetched provider config (external system)
-            /* eslint-disable-next-line react-hooks/set-state-in-effect */
             setProviderId(llmStatus.defaultProvider.provider_id || '');
             setModelId(llmStatus.defaultProvider.model_id || '');
         }
@@ -754,13 +753,58 @@ function AISettings({ settings, onUpdate, onReset }) {
         }
     };
 
+    const [aiSyncState, setAiSyncState] = useState('idle');
+
+    // Seed local sliders from backend config (config.json `ai` block) so the
+    // UI reflects the values actually used by chat/story generation.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await api.get('/api/settings');
+                const ai = res?.settings?.ai;
+                if (ai && !cancelled) {
+                    if (ai.maxContextTokens) onUpdate('maxContextTokens', Number(ai.maxContextTokens));
+                    if (ai.temperature != null) onUpdate('temperature', Number(ai.temperature));
+                }
+            } catch {
+                // Backend unreachable — keep local defaults.
+            }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleSaveAiBackend = async () => {
+        setAiSyncState('saving');
+        try {
+            await api.put('/api/settings', {
+                ai: {
+                    maxContextTokens: Number(settings.maxContextTokens),
+                    temperature: Number(settings.temperature),
+                }
+            });
+            toast.success('AI settings saved to backend');
+            setAiSyncState('saved');
+        } catch {
+            toast.error('Failed to save AI settings');
+            setAiSyncState('idle');
+        }
+    };
+
     return (
         <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
                 <h2 className="text-2xl font-bold tracking-wide text-white">AI / LLM Settings</h2>
-                <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
-                    <RotateCcw size={16} /> Reset
-                </button>
+                <div className="flex items-center gap-3">
+                    <button onClick={handleSaveAiBackend} disabled={aiSyncState === 'saving'} className="px-4 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-xl text-blue-300 hover:text-blue-200 font-bold tracking-wide flex items-center gap-2 transition-all duration-300 disabled:opacity-50">
+                        {aiSyncState === 'saving' ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        {aiSyncState === 'saved' ? 'Saved' : 'Save'}
+                    </button>
+                    <button onClick={onReset} className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-gray-300 hover:text-white font-bold tracking-wide flex items-center gap-2 transition-all duration-300 shadow-inner">
+                        <RotateCcw size={16} /> Reset
+                    </button>
+                </div>
             </div>
 
             <div className="grid gap-6">
@@ -886,24 +930,6 @@ function AISettings({ settings, onUpdate, onReset }) {
                     </div>
                 </SettingGroup>
 
-                <SettingGroup title="Chat System Prompt" description="Default system prompt used for the Roleplay Chatbot workspace">
-                    <textarea
-                        value={settings.chatSystemPrompt || ''}
-                        onChange={(e) => onUpdate('chatSystemPrompt', e.target.value)}
-                        placeholder="e.g. You are a highly descriptive AI character..."
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
-                <SettingGroup title="Story System Prompt" description="Default system prompt used for the Story Sandbox workspace">
-                    <textarea
-                        value={settings.storySystemPrompt || ''}
-                        onChange={(e) => onUpdate('storySystemPrompt', e.target.value)}
-                        placeholder="e.g. You are a creative co-author helping write a story..."
-                        className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
-                    />
-                </SettingGroup>
-
                 <SettingGroup title="CharGen: Description Prompt" description="System prompt for generating character description">
                     <textarea
                         value={settings.charGenDescriptionPrompt || ''}
@@ -958,17 +984,6 @@ function AISettings({ settings, onUpdate, onReset }) {
                         onChange={(e) => onUpdate('charGenVisualTagsPrompt', e.target.value)}
                         className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 min-h-[100px] resize-y"
                     />
-                </SettingGroup>
-
-                <SettingGroup title="Lorebook Injection Mode" description="How lorebook entries are injected into context">
-                    <select
-                        value={settings.lorebookInjectionMode}
-                        onChange={(e) => onUpdate('lorebookInjectionMode', e.target.value)}
-                        className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                    >
-                        <option value="system_prompt">System Prompt</option>
-                        <option value="messages">Separate Messages</option>
-                    </select>
                 </SettingGroup>
 
                 {/* System Prompt Blocks (config-driven) */}

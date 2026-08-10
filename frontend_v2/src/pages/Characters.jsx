@@ -204,14 +204,15 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
         }
         
         let sysPrompt = '';
+        const aiSettings = settings.ai || {};
         switch(fieldKey) {
-            case 'description': sysPrompt = settings.charGenDescriptionPrompt; break;
-            case 'personality': sysPrompt = settings.charGenPersonalityPrompt; break;
-            case 'scenario': sysPrompt = settings.charGenScenarioPrompt; break;
-            case 'first_mes': sysPrompt = settings.charGenFirstMesPrompt; break;
-            case 'mes_example': sysPrompt = settings.charGenMesExamplePrompt; break;
-            case 'system_prompt': sysPrompt = settings.charGenSystemPromptPrompt; break;
-            case 'visual_tags': sysPrompt = settings.charGenVisualTagsPrompt; break;
+            case 'description': sysPrompt = aiSettings.charGenDescriptionPrompt; break;
+            case 'personality': sysPrompt = aiSettings.charGenPersonalityPrompt; break;
+            case 'scenario': sysPrompt = aiSettings.charGenScenarioPrompt; break;
+            case 'first_mes': sysPrompt = aiSettings.charGenFirstMesPrompt; break;
+            case 'mes_example': sysPrompt = aiSettings.charGenMesExamplePrompt; break;
+            case 'system_prompt': sysPrompt = aiSettings.charGenSystemPromptPrompt; break;
+            case 'visual_tags': sysPrompt = aiSettings.charGenVisualTagsPrompt; break;
             default: return;
         }
         
@@ -257,7 +258,7 @@ function CharacterModal({ isOpen, onClose, character, onSave }) {
             return;
         }
 
-        const sysPrompt = settings.charGenEnrichPrompt || 'You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: "description", "personality", "scenario", "first_mes", "mes_example", "default_time", "default_location". Do not include markdown code blocks, just raw JSON.';
+        const sysPrompt = settings.ai?.charGenEnrichPrompt || 'You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: "description", "personality", "scenario", "first_mes", "mes_example", "default_time", "default_location". Do not include markdown code blocks, just raw JSON.';
         let context = `Name: ${form.name}\n`;
         if (form.description) context += `Description: ${form.description}\n`;
         if (form.personality) context += `Personality: ${form.personality}\n`;

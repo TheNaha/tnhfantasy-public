@@ -76,6 +76,8 @@ class AnthropicProviderClient(BaseProviderClient):
                     "stream": True,
                     "max_tokens": 4096,
                 }
+                if request.temperature is not None:
+                    payload["temperature"] = request.temperature
                 if system_prompt:
                     payload["system"] = system_prompt.strip()
 

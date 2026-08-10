@@ -302,6 +302,7 @@ class SettingsUpdate(BaseModel):
     jobs: dict[str, Any] | None = None
     api: dict[str, Any] | None = None
     generator: dict[str, Any] | None = None
+    ai: dict[str, Any] | None = None
 
 
 @router.put("")
