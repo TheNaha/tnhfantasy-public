@@ -216,37 +216,6 @@ def build_job_outputs(job, images: list[dict[str, Any]], provider_id: str, durat
     return outputs
 
 
-def build_text_outputs(job, text_content: str, provider_id: str) -> list[dict[str, Any]]:
-    """Persist text output and return normalized job outputs."""
-    import os
-
-    from infrastructure.image_processor import get_output_path
-    
-    base_output_dir = settings.output_dir
-    final_output_dir = get_output_path(base_output_dir, subdir="text")
-    os.makedirs(final_output_dir, exist_ok=True)
-    
-    filename = f"Generated_Text_{job.id[:8]}.txt"
-    output_path = os.path.join(final_output_dir, filename)
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(text_content)
-        
-    rel_subfolder = os.path.relpath(final_output_dir, base_output_dir).replace("\\", "/")
-    if rel_subfolder == ".":
-        rel_subfolder = ""
-        
-    output = {
-        "type": "text",
-        "filename": filename,
-        "subfolder": rel_subfolder,
-        "relative_path": os.path.relpath(output_path, base_output_dir).replace("\\", "/"),
-        "path": output_path,
-    }
-    
-    return [output]
-
-
 async def mark_job_post_processing(
     *,
     job_service,

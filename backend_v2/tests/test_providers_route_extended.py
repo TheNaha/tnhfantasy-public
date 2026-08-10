@@ -109,31 +109,6 @@ class TestProvidersRouteLoadBalancing:
         assert response.status_code == 200
 
 
-class TestProvidersRouteSaveImage:
-    def test_save_image_no_data(self, client):
-        response = client.post("/api/providers/save-image", json={})
-        assert response.status_code in (200, 400, 422)
-
-    def test_save_image_with_data(self, client):
-        import base64
-        import io
-
-        from PIL import Image
-        img = Image.new("RGB", (10, 10))
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
-        response = client.post(
-            "/api/providers/save-image",
-            json={
-                "image_data": img_b64,
-                "filename": "test.png",
-                "job_id": "test-job-id"
-            }
-        )
-        assert response.status_code in (200, 400, 422, 500)
-
-
 class TestProvidersRouteContainers:
     def test_list_containers_no_manager(self, client):
         response = client.get("/api/providers/containers/list")

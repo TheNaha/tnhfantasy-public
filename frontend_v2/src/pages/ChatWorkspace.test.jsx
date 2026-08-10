@@ -10,17 +10,12 @@ Element.prototype.scrollIntoView = vi.fn();
 
 const mockActiveChatId = vi.hoisted(() => vi.fn(() => 'chat-1'));
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
-const mockSelectedLorebooks = vi.hoisted(() => vi.fn(() => []));
-const mockToggleLorebook = vi.hoisted(() => vi.fn());
 
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
         sel({
             activeChatId: mockActiveChatId(),
             setActiveChat: mockSetActiveChat,
-            contextBuilder: { selectedLorebooks: [], systemPromptOverride: null, maxContextTokens: 4096 },
-            selectedLorebooks: mockSelectedLorebooks(),
-            toggleLorebook: mockToggleLorebook,
         }),
 }));
 

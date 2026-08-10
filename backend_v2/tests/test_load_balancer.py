@@ -94,19 +94,6 @@ class TestLoadBalancer:
         provider_stats = {item["id"]: item for item in stats["provider_stats"]}
         assert provider_stats["provider-2"]["jobs_assigned"] == 1
     
-    async def test_fallback_on_failure(self, session: Session, providers):
-        """Test fallback provides alternative when provider fails."""
-        lb = LoadBalancer(session, strategy="priority")
-        
-        # Simulate failure
-        await lb.report_failure("provider-1")
-        await lb.report_failure("provider-1")  # Multiple failures
-        
-        fallback = await lb.get_fallback_provider("provider-1")
-        
-        assert fallback is not None
-        assert fallback.id != "provider-1"
-
     async def test_get_next_provider_excludes_exhausted(self, session: Session, providers):
         lb = LoadBalancer(session, strategy="round-robin")
 
@@ -115,13 +102,6 @@ class TestLoadBalancer:
         assert provider is not None
         assert provider.id == "provider-2"
 
-    async def test_fallback_excludes_multiple_providers(self, session: Session, providers):
-        lb = LoadBalancer(session, strategy="priority")
-
-        fallback = await lb.get_fallback_provider("provider-1", exclude_provider_ids={"provider-2"})
-
-        assert fallback is None
-    
     async def test_no_enabled_providers(self, session: Session):
         """Test returns None when no providers are enabled."""
         lb = LoadBalancer(session, strategy="round-robin")

@@ -11,10 +11,7 @@ from infrastructure.scheduler import (
     get_scheduler,
     remove_job,
     schedule_cleanup,
-    schedule_model_sync,
     schedule_preview_prefetch,
-    schedule_reconciliation,
-    schedule_stats_refresh,
     schedule_vacuum,
     start_scheduler,
     stop_scheduler,
@@ -220,26 +217,6 @@ class TestGetJobsStatus:
 
 
 class TestScheduleConvenienceFunctions:
-    async def test_schedule_reconciliation(self):
-        start_scheduler()
-
-        async def dummy():
-            pass
-
-        schedule_reconciliation(dummy, interval_seconds=120)
-        scheduler = get_scheduler()
-        assert scheduler.get_job("reconciliation") is not None
-
-    async def test_schedule_model_sync(self):
-        start_scheduler()
-
-        async def dummy():
-            pass
-
-        schedule_model_sync(dummy, interval_seconds=300)
-        scheduler = get_scheduler()
-        assert scheduler.get_job("model_sync") is not None
-
     async def test_schedule_cleanup(self):
         start_scheduler()
 
@@ -249,16 +226,6 @@ class TestScheduleConvenienceFunctions:
         schedule_cleanup(dummy, interval_seconds=3600)
         scheduler = get_scheduler()
         assert scheduler.get_job("cleanup") is not None
-
-    async def test_schedule_stats_refresh(self):
-        start_scheduler()
-
-        async def dummy():
-            pass
-
-        schedule_stats_refresh(dummy, interval_seconds=600)
-        scheduler = get_scheduler()
-        assert scheduler.get_job("stats_refresh") is not None
 
     async def test_schedule_vacuum(self):
         start_scheduler()

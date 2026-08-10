@@ -1,9 +1,7 @@
 import asyncio
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 from api.deps import get_session_sync
-from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import provider_container_name
 
@@ -117,51 +115,6 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         status="unavailable",
         healthy=False,
     )
-
-
-async def run_reconciliation_for_all_providers():
-    """Trigger reconciliation for all enabled containerized providers."""
-    logger.info("reconciliation_periodic")
-
-    session = get_session_sync()
-    try:
-        from services.provider_service import ProviderService
-
-        service = ProviderService(session)
-        providers_list = await service.list_providers()
-        http_client = get_http_client()
-
-        for provider in providers_list:
-            if not provider.get("enabled", True):
-                continue
-
-            runtime = resolve_provider_runtime(SimpleNamespace(**provider))
-            if runtime.mode not in ("container_http", "discovery"):
-                continue
-
-            # LLM workers have no filesystem to reconcile — skip them.
-            if provider.get("worker_type", "image") == "llm":
-                continue
-
-            provider_id = provider.get("id")
-
-            try:
-                response = await http_client.post(
-                    f"{runtime.worker_url}/reconcile",
-                    timeout=5.0,
-                )
-                if response.status_code == 200:
-                    logger.info("reconciliation_triggered", provider=provider_id)
-                else:
-                    logger.warning(
-                        "reconciliation_failed",
-                        provider=provider_id,
-                        status=response.status_code,
-                    )
-            except Exception as exc:
-                logger.debug("reconciliation_unreachable", provider=provider_id, error=str(exc))
-    finally:
-        session.close()
 
 
 async def monitor_provider_changes():

@@ -14,11 +14,8 @@ const mockSetActiveStory = vi.hoisted(() => vi.fn());
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) =>
         sel({
-            activeStoryId: mockActiveStoryId(),
-            setActiveStory: mockSetActiveStory,
-            contextBuilder: { selectedLorebooks: [], systemPromptOverride: null, maxContextTokens: 4096 },
-            selectedLorebooks: [],
-            toggleLorebook: vi.fn(),
+            activeChatId: mockActiveStoryId(),
+            setActiveChat: mockSetActiveStory,
         }),
 }));
 

@@ -8,7 +8,6 @@ import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapte
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { api } from '../api';
 import { assetUrl } from '../utils/assetUrl';
-import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearStreamingJob } from '../hooks/useStreamingJobs';
@@ -165,12 +164,6 @@ export default function StorySandbox() {
     const navigate = useNavigate();
     const activeStoryId = urlStoryId || null;
     const activeChapterId = urlChapterId || null;
-
-    const setGlobalActiveStory = useWorldVaultStore(state => state.setActiveStory);
-
-    useEffect(() => {
-        if (activeStoryId) setGlobalActiveStory(activeStoryId);
-    }, [activeStoryId, setGlobalActiveStory]);
 
     const { data: stories = [], isLoading: storiesLoading } = useStories();
     const { data: activeStory } = useStory(activeStoryId);

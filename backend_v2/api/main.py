@@ -11,7 +11,7 @@
 # REQUEST FLOW (simplified):
 #   Client → POST /api/jobs → jobs.py → JobService.create_job → job_queue.enqueue
 #     → Worker coroutine picks job → _process_job() → _call_provider()
-#       → Modal/Beam worker HTTP/WS → images returned → ImageService.save()
+#       → Modal/Beam worker HTTP/WS → images returned → job_processing save
 #       → job.status = COMPLETED → WebSocket event → frontend gallery refresh
 #
 # RETRY STRATEGY (for provider calls):

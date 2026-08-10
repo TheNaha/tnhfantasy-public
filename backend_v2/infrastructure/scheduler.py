@@ -173,42 +173,12 @@ def get_jobs_status() -> list:
 
 
 
-def schedule_reconciliation(func: Callable, interval_seconds: int = 120):
-    """Schedule the reconciliation task."""
-    add_interval_job(
-        func,
-        interval_seconds=interval_seconds,
-        job_id="reconciliation",
-        start_immediately=False,
-    )
-
-
-def schedule_model_sync(func: Callable, interval_seconds: int = 300):
-    """Schedule the model sync task."""
-    add_interval_job(
-        func,
-        interval_seconds=interval_seconds,
-        job_id="model_sync",
-        start_immediately=True,
-    )
-
-
 def schedule_cleanup(func: Callable, interval_seconds: int = 3600):
     """Schedule the cleanup task (jobs, downloads, etc.)."""
     add_interval_job(
         func,
         interval_seconds=interval_seconds,
         job_id="cleanup",
-        start_immediately=False,
-    )
-
-
-def schedule_stats_refresh(func: Callable, interval_seconds: int = 600):
-    """Schedule statistics cache refresh."""
-    add_interval_job(
-        func,
-        interval_seconds=interval_seconds,
-        job_id="stats_refresh",
         start_immediately=False,
     )
 

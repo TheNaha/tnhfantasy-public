@@ -514,12 +514,11 @@ async def test_finalize_successful_job_routes_by_task_type(session: Session, mon
     async def fake_finalize_image(**kwargs):
         image_calls.append(kwargs)
 
-    # build_text_outputs writes a .txt to disk + gallery-indexes it; it must NEVER
-    # be reached for LLM jobs (the assistant text stays in memory).
+    # LLM assistant text stays in memory — it must never be written to a
+    # text file on disk or reach the image-file path.
     def _forbid_text_file(job, text, provider_id):
-        raise AssertionError("build_text_outputs must not run for LLM jobs")
+        raise AssertionError("LLM text must not be written to a text file")
 
-    monkeypatch.setattr("services.job_processing.build_text_outputs", _forbid_text_file)
     monkeypatch.setattr("services.job_processing._finalize_llm_job", fake_finalize_llm)
     monkeypatch.setattr("services.job_processing._finalize_image_job", fake_finalize_image)
 

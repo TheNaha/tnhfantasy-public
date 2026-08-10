@@ -67,8 +67,6 @@ from .scheduler import (
     get_scheduler,
     remove_job,
     schedule_cleanup,
-    schedule_model_sync,
-    schedule_reconciliation,
     start_scheduler,
     stop_scheduler,
 )
@@ -115,8 +113,6 @@ __all__ = [
     "add_cron_job",
     "remove_job",
     "get_jobs_status",
-    "schedule_reconciliation",
-    "schedule_model_sync",
     "schedule_cleanup",
     # Providers
     "ServerlessProvider", "FileProxyProvider",

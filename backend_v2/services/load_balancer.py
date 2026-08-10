@@ -59,7 +59,7 @@ _provider_health_cache = TTLCache(
 # Modal direct URLs) — NOT ComfyUI containers, so the HTTP /health + cold-start
 # path in the image branch does not apply to them. We still skip providers that
 # are in a failure streak before honouring the configured strategy, mirroring the
-# failure-aware selection already used by get_fallback_provider.
+# failure-aware selection used by the preferred/warm-cold routing paths.
 LLM_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
     os.getenv("COMFY_LLM_FAILURE_STREAK_THRESHOLD"),
     3,
@@ -720,40 +720,6 @@ class LoadBalancer:
                 active_jobs = 0
 
         logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
-    
-    async def get_fallback_provider(self, failed_provider_id: str, exclude_provider_ids: set[str] | None = None, task_type: str | None = None) -> Provider | None:
-        """
-        Get a fallback provider when one fails.
-        
-        Args:
-            failed_provider_id: ID of provider that failed
-            task_type: Optional worker_type to filter by (e.g. "image", "llm")
-            
-        Returns:
-            Alternative provider or None
-        """
-        providers = self.repo.get_enabled()
-        excluded = set(exclude_provider_ids or set())
-        excluded.add(failed_provider_id)
-        
-        # Filter out the failed provider
-        available = [p for p in providers if p.id not in excluded]
-        
-        # Filter by worker_type if specified
-        if task_type:
-            available = [p for p in available if p.worker_type == task_type]
-        
-        if not available:
-            return None
-        
-        # Return provider with fewest failures
-        async with self.runtime_state.get_lock():
-            best = min(
-                available,
-                key=lambda p: (self.runtime_state.provider_failures.get(p.id, 0), p.priority, p.id)
-            )
-        
-        return best
     
     async def get_stats(self) -> dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""
