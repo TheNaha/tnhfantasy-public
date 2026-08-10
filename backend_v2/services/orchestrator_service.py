@@ -302,95 +302,98 @@ async def _tool_narrate_scene(
     narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
     session = get_session_sync()
-
-    messages: list[dict[str, Any]] = [{"role": "system", "content": narrator_prompt}]
-
-    source_context: list[dict[str, Any]] = []
-    source_meta: dict[str, Any] = {}
-    if source_job_id:
-        from core.entities import Job
-        source_job = session.get(Job, source_job_id)
-        if source_job:
-            source_meta = getattr(source_job, "metadata_", None) or {}
-            source_context = source_meta.get("original_messages", []) or []
-            if not source_context and isinstance(source_job.workflow, dict):
-                source_context = source_job.workflow.get("messages", [])
-
-    if source_context:
-        messages.extend(source_context[-12:])
-    elif chat_id:
-        from sqlmodel import select
-        from core.entities import Message, MessageRole
-        from datetime import datetime, timedelta, timezone
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-        recent = session.exec(
-            select(Message)
-            .where(Message.chat_id == chat_id, Message.created_at >= cutoff)
-            .order_by(Message.created_at)
-        ).all()
-        for m in recent[-20:]:
-            if m.role == MessageRole.SYSTEM and (m.message_metadata or {}).get("source") == "narrator":
-                continue
-            messages.append({"role": "user" if m.role == MessageRole.USER else "assistant", "content": m.content})
-
-    if scene_direction:
-        messages.append({"role": "user", "content": f"[Narrate: {scene_direction}]"})
-
-    character_system_prompt = source_meta.get("character_system_prompt")
-    if not character_system_prompt and chat_id:
-        # Re-build the character system prompt fresh from DB so the narrator
-        # always has the full character identity even in deeply-chained agentic jobs.
-        try:
-            from infrastructure.database import get_session_sync as _gsync
-            from core.entities import Chat as _Chat, Character as _Char
-            from services.context_builder import build_system_prompt_sections
-            _s = _gsync()
-            try:
-                _chat = _s.get(_Chat, chat_id)
-                if _chat:
-                    _char = _s.get(_Char, _chat.character_id) if _chat.character_id else None
-                    _sections = build_system_prompt_sections(
-                        _s,
-                        character=_char,
-                        system_prompt_override=_chat.system_prompt_override,
-                        append_system_prompt=_chat.append_system_prompt,
-                        persona_name=_chat.persona_name,
-                        story_time=_chat.story_time,
-                        story_location=_chat.story_location,
-                        lorebook_ids=_chat.active_lorebook_ids or None,
-                        # Don't include roleplay_default in the narrator context —
-                        # the narrator has its own dedicated system prompt.
-                        include_roleplay_default=False,
-                    )
-                    character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
-            finally:
-                _s.close()
-        except Exception as _e:
-            logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
-
-    from services.llm_workflow import build_llm_workflow
-
-    workflow, metadata = build_llm_workflow(
-        messages=messages,
-        type_="narrator",
-        chat_id=chat_id,
-        character_id=character_id,
-        character_system_prompt=character_system_prompt,
-        model=source_meta.get("model"),
-        source="narrator",
-        parent_job_id=source_job_id,
-    )
-
-    submission = JobSubmissionService(session)
     try:
-        job = await submission.create_and_enqueue_job(
-            workflow=workflow,
-            metadata=metadata,
-            task_type="llm",
+        submission = JobSubmissionService(session)
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": narrator_prompt}]
+
+        source_context: list[dict[str, Any]] = []
+        source_meta: dict[str, Any] = {}
+        if source_job_id:
+            from core.entities import Job
+            source_job = session.get(Job, source_job_id)
+            if source_job:
+                source_meta = getattr(source_job, "metadata_", None) or {}
+                source_context = source_meta.get("original_messages", []) or []
+                if not source_context and isinstance(source_job.workflow, dict):
+                    source_context = source_job.workflow.get("messages", [])
+
+        if source_context:
+            messages.extend(source_context[-12:])
+        elif chat_id:
+            from sqlmodel import select
+            from core.entities import Message, MessageRole
+            from datetime import datetime, timedelta, timezone
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            recent = session.exec(
+                select(Message)
+                .where(Message.chat_id == chat_id, Message.created_at >= cutoff)
+                .order_by(Message.created_at)
+            ).all()
+            for m in recent[-20:]:
+                if m.role == MessageRole.SYSTEM and (m.message_metadata or {}).get("source") == "narrator":
+                    continue
+                messages.append({"role": "user" if m.role == MessageRole.USER else "assistant", "content": m.content})
+
+        if scene_direction:
+            messages.append({"role": "user", "content": f"[Narrate: {scene_direction}]"})
+
+        character_system_prompt = source_meta.get("character_system_prompt")
+        if not character_system_prompt and chat_id:
+            # Re-build the character system prompt fresh from DB so the narrator
+            # always has the full character identity even in deeply-chained agentic jobs.
+            try:
+                from infrastructure.database import get_session_sync as _gsync
+                from core.entities import Chat as _Chat, Character as _Char
+                from services.context_builder import build_system_prompt_sections
+                _s = _gsync()
+                try:
+                    _chat = _s.get(_Chat, chat_id)
+                    if _chat:
+                        _char = _s.get(_Char, _chat.character_id) if _chat.character_id else None
+                        _sections = build_system_prompt_sections(
+                            _s,
+                            character=_char,
+                            system_prompt_override=_chat.system_prompt_override,
+                            append_system_prompt=_chat.append_system_prompt,
+                            persona_name=_chat.persona_name,
+                            story_time=_chat.story_time,
+                            story_location=_chat.story_location,
+                            lorebook_ids=_chat.active_lorebook_ids or None,
+                            # Don't include roleplay_default in the narrator context —
+                            # the narrator has its own dedicated system prompt.
+                            include_roleplay_default=False,
+                        )
+                        character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
+                finally:
+                    _s.close()
+            except Exception as _e:
+                logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
+
+        from services.llm_workflow import build_llm_workflow
+
+        workflow, metadata = build_llm_workflow(
+            messages=messages,
+            type_="narrator",
+            chat_id=chat_id,
+            character_id=character_id,
+            character_system_prompt=character_system_prompt,
+            model=source_meta.get("model"),
+            source="narrator",
+            parent_job_id=source_job_id,
         )
-    except Exception as e:
-        logger.error("tool_narrate_scene_enqueue_failed", error=str(e))
-        return {"status": "error", "error": f"Failed to start narrator job: {e}"}
+
+        try:
+            job = await submission.create_and_enqueue_job(
+                workflow=workflow,
+                metadata=metadata,
+                task_type="llm",
+            )
+        except Exception as e:
+            logger.error("tool_narrate_scene_enqueue_failed", error=str(e))
+            return {"status": "error", "error": f"Failed to start narrator job: {e}"}
+    finally:
+        session.close()
 
     try:
         from core.events import wait_for_job_completion
@@ -428,93 +431,96 @@ async def _tool_generate_image(
     logger.info("tool_generate_image", prompt=prompt[:80], chat_id=chat_id)
 
     session = get_session_sync()
-    submission = JobSubmissionService(session)
-
-    # 1. Start with system default checkpoint
-    import config as app_config
-    default_ckpt = app_config.get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
-    
-    ckpt_name = default_ckpt
-    lora_name = None
-    
-    # 2. Override with frontend user setting if provided via the parent LLM job metadata
-    if source_job_id:
-        from core.entities import Job
-        source_job = session.get(Job, source_job_id)
-        if source_job and getattr(source_job, "metadata_", None):
-            frontend_ckpt = source_job.metadata_.get("generator_checkpoint")
-            if frontend_ckpt:
-                ckpt_name = frontend_ckpt
-
-    # 3. Override with character's preferred models if set
-    if character_id:
-        from core.entities import Character
-        char = session.get(Character, character_id)
-        if char:
-            if char.checkpoint:
-                ckpt_name = char.checkpoint
-            if char.lora:
-                lora_name = char.lora
-
-    # 4. Ensure the chosen models are actually installed on an enabled provider
-    resolved_ckpt = _available_checkpoint(session, ckpt_name)
-    if not resolved_ckpt:
-        logger.error(
-            "tool_generate_image_no_checkpoint",
-            preferred=ckpt_name,
-        )
-        return {
-            "status": "error",
-            "error": (
-                "No image checkpoints are installed on any provider. "
-                "Install a checkpoint before using the image generation tool."
-            ),
-        }
-    if resolved_ckpt != ckpt_name:
-        logger.warning("tool_generate_image_ckpt_fallback", preferred=ckpt_name, used=resolved_ckpt)
-    resolved_lora = _available_lora(session, lora_name)
-    if lora_name and resolved_lora is None:
-        logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
-
-    workflow = build_image_workflow(
-        prompt=prompt,
-        negative=negative,
-        checkpoint=resolved_ckpt,
-        lora=resolved_lora,
-        filename_prefix="AgenticGen",
-    )
-
-    metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "roleplay"}
-    if chat_id:
-        metadata["chat_id"] = chat_id
-    if character_id:
-        metadata["character_id"] = character_id
-    if source_job_id:
-        metadata["parent_job_id"] = source_job_id
-
-    # Persist generation parameters so the details panel shows real values
-    # instead of "Model Unknown".
-    metadata["prompt"] = prompt
-    metadata["negativePrompt"] = negative
-    metadata["checkpoint"] = resolved_ckpt
-    if resolved_lora:
-        metadata["loras"] = [resolved_lora]
-    metadata["steps"] = 20
-    metadata["cfg"] = 7
-    metadata["sampler"] = "euler"
-    metadata["scheduler"] = "normal"
-    metadata["width"] = 1024
-    metadata["height"] = 1024
-    metadata["seed"] = 0
-
     try:
-        job = await submission.create_and_enqueue_job(
-            workflow=workflow,
-            metadata=metadata,
+        submission = JobSubmissionService(session)
+
+        # 1. Start with system default checkpoint
+        import config as app_config
+        default_ckpt = app_config.get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
+        
+        ckpt_name = default_ckpt
+        lora_name = None
+        
+        # 2. Override with frontend user setting if provided via the parent LLM job metadata
+        if source_job_id:
+            from core.entities import Job
+            source_job = session.get(Job, source_job_id)
+            if source_job and getattr(source_job, "metadata_", None):
+                frontend_ckpt = source_job.metadata_.get("generator_checkpoint")
+                if frontend_ckpt:
+                    ckpt_name = frontend_ckpt
+
+        # 3. Override with character's preferred models if set
+        if character_id:
+            from core.entities import Character
+            char = session.get(Character, character_id)
+            if char:
+                if char.checkpoint:
+                    ckpt_name = char.checkpoint
+                if char.lora:
+                    lora_name = char.lora
+
+        # 4. Ensure the chosen models are actually installed on an enabled provider
+        resolved_ckpt = _available_checkpoint(session, ckpt_name)
+        if not resolved_ckpt:
+            logger.error(
+                "tool_generate_image_no_checkpoint",
+                preferred=ckpt_name,
+            )
+            return {
+                "status": "error",
+                "error": (
+                    "No image checkpoints are installed on any provider. "
+                    "Install a checkpoint before using the image generation tool."
+                ),
+            }
+        if resolved_ckpt != ckpt_name:
+            logger.warning("tool_generate_image_ckpt_fallback", preferred=ckpt_name, used=resolved_ckpt)
+        resolved_lora = _available_lora(session, lora_name)
+        if lora_name and resolved_lora is None:
+            logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
+
+        workflow = build_image_workflow(
+            prompt=prompt,
+            negative=negative,
+            checkpoint=resolved_ckpt,
+            lora=resolved_lora,
+            filename_prefix="AgenticGen",
         )
-    except Exception as e:
-        logger.error("tool_generate_image_failed", error=str(e))
-        return {"status": "error", "error": str(e)}
+
+        metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "roleplay"}
+        if chat_id:
+            metadata["chat_id"] = chat_id
+        if character_id:
+            metadata["character_id"] = character_id
+        if source_job_id:
+            metadata["parent_job_id"] = source_job_id
+
+        # Persist generation parameters so the details panel shows real values
+        # instead of "Model Unknown".
+        metadata["prompt"] = prompt
+        metadata["negativePrompt"] = negative
+        metadata["checkpoint"] = resolved_ckpt
+        if resolved_lora:
+            metadata["loras"] = [resolved_lora]
+        metadata["steps"] = 20
+        metadata["cfg"] = 7
+        metadata["sampler"] = "euler"
+        metadata["scheduler"] = "normal"
+        metadata["width"] = 1024
+        metadata["height"] = 1024
+        metadata["seed"] = 0
+
+        try:
+            job = await submission.create_and_enqueue_job(
+                workflow=workflow,
+                metadata=metadata,
+            )
+        except Exception as e:
+            logger.error("tool_generate_image_failed", error=str(e))
+            return {"status": "error", "error": str(e)}
+    finally:
+        session.close()
 
     try:
         from core.events import wait_for_job_completion

@@ -259,10 +259,6 @@ class Asset(SQLModel, table=True):
 
 # Core domain entities for normalized model metadata (V2 Schema)
 # Replaces flat metadata_ JSON with proper relational tables
-from datetime import datetime
-from enum import Enum
-from typing import Any
-
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Text
 

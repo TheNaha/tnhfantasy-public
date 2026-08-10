@@ -1656,7 +1656,7 @@ export default function ChatWorkspace() {
             const res = await regenerateMutation.mutateAsync({ chatId: activeChatId, messageId: msgId });
             if (res?.job_id) setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
         } catch { toast.error('Failed to regenerate'); }
-    }, [activeChatId, regenerateMutation]);
+    }, [activeChatId, regenerateMutation, queryClient]);
 
     const handleImpersonate = useCallback(async (hint = '') => {
         if (!activeChatId) return;
@@ -1667,7 +1667,7 @@ export default function ChatWorkspace() {
                 toast('Impersonating...', { icon: '👤' });
             }
         } catch { toast.error('Impersonation failed'); }
-    }, [activeChatId, impersonateMutation]);
+    }, [activeChatId, impersonateMutation, queryClient]);
 
     const handlePinMessage = useCallback(async (msgId, currentlyPinned) => {
         try {

@@ -293,28 +293,16 @@ def build_system_prompt_sections(
 
     if sections:
         # Apply SillyTavern template variable substitution to character/override blocks
-        import re
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        _replacements = {
-            "char": (character.name if character else "") or "",
-            "user": persona_name or "User",
-            "time": now.strftime("%H:%M"),
-            "date": now.strftime("%Y-%m-%d"),
-        }
-
-        def _replace(m):
-            key = m.group(1).strip().lower()
-            if key.startswith("random::"):
-                import random
-                opts = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
-                return random.choice(opts) if opts else m.group(0)
-            return _replacements.get(key, m.group(0))
+        from services.chat_utils import substitute_tavern_vars
 
         substitutable = {"character", "override", "char_append", "chat_append", "persona"}
         for section in sections:
             if section["source"] in substitutable:
-                section["content"] = re.sub(r"\{\{([^}]+)\}\}", _replace, section["content"])
+                section["content"] = substitute_tavern_vars(
+                    section["content"],
+                    char=(character.name if character else "") or "",
+                    user=persona_name or "User",
+                )
 
     if lorebook_ids:
         # Build a query string from the most recent context for semantic matching.

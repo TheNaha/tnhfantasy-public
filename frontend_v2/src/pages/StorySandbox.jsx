@@ -445,7 +445,7 @@ export default function StorySandbox() {
             }
         }, 2000);
         return () => clearTimeout(autoSaveTimerRef.current);
-    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter]);
+    }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter, activeChapter?.content]);
 
     const handleContinue = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isStreaming) return;

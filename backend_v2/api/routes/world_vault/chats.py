@@ -102,32 +102,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
     return chat
 
 
-def _substitute_tavern_vars(text: str, *, char: str = "", user: str = "User") -> str:
-    """Apply SillyTavern-compatible template variable substitution on the backend.
-    Handles {{char}}, {{user}} at minimum. Extend as needed."""
-    import re
-    from datetime import date as _date
-
-    now = datetime.now(timezone.utc)
-    replacements = {
-        "char": char,
-        "user": user,
-        "time": now.strftime("%H:%M"),
-        "date": now.strftime("%Y-%m-%d"),
-    }
-
-    def replace_match(m):
-        key = m.group(1).strip().lower()
-        # {{random::a::b}} — pick randomly
-        if key.startswith("random::"):
-            options = [o.strip() for o in key[len("random::"):].split("::") if o.strip()]
-            if options:
-                import random
-                return random.choice(options)
-            return m.group(0)
-        return replacements.get(key, m.group(0))
-
-    return re.sub(r"\{\{([^}]+)\}\}", replace_match, text)
+from services.chat_utils import substitute_tavern_vars as _substitute_tavern_vars
 
 @router.get("/{chat_id}", response_model=Chat)
 def get_chat(chat_id: str, session: Session = Depends(get_session)):
@@ -254,22 +229,7 @@ from services.llm_config import get_default_llm_model as _get_default_llm_model
 # ---------------------------------------------------------------------------
 # Helper: resolve effective context window for a chat
 # ---------------------------------------------------------------------------
-_DEFAULT_CONTEXT_TOKENS = 4096
-
-def _resolve_context_tokens(chat) -> int:
-    """Return the effective max context tokens: per-chat → global setting → 4096."""
-    if chat.max_context_tokens and chat.max_context_tokens > 0:
-        return chat.max_context_tokens
-    try:
-        from config import get_config
-        cfg = get_config() or {}
-        ai_cfg = cfg.get("ai", {})
-        val = ai_cfg.get("maxContextTokens") or ai_cfg.get("max_context_tokens")
-        if val and int(val) > 0:
-            return int(val)
-    except Exception:
-        pass
-    return _DEFAULT_CONTEXT_TOKENS
+from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
 
 
 def _insert_world_state_marker(
@@ -795,7 +755,7 @@ class SuggestReplyRequest(BaseModel):
 
 @router.post("/{chat_id}/suggest")
 async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session)) -> dict:
-    from services.context_builder import build_chat_context
+
     from services.job_queue import queue_manager
     
     chat = session.get(Chat, chat_id)
@@ -836,13 +796,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             "Rewrite the draft to be more descriptive, in-character, and engaging, while keeping the original intent. "
             "Write only the raw text of the final response — no labels, no quotes around the whole reply, no meta-commentary."
         )
-        suggest_instruction = (
-            suggest_instruction
-            .replace("{user}", user_name)
-            .replace("{{user}}", user_name)
-            .replace("{char}", char_name)
-            .replace("{{char}}", char_name)
-        )
+        suggest_instruction = _substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to rewrite and improve {user_name}'s rough draft of the next message.\n\n"
@@ -860,13 +814,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
                 "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
             )
         )
-        suggest_instruction = (
-            suggest_instruction
-            .replace("{user}", user_name)
-            .replace("{{user}}", user_name)
-            .replace("{char}", char_name)
-            .replace("{{char}}", char_name)
-        )
+        suggest_instruction = _substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"

@@ -78,7 +78,6 @@ export function useGeneratorJob(opts = {}) {
         const progressValue = jobData.overall_progress ?? jobData.progress ?? 0;
 
         if (jobData.status === 'completed') {
-            /* eslint-disable-next-line react-hooks/exhaustive-deps */
             setGenerating(false);
             setProgress(null);
             setCurrentJobId(null);

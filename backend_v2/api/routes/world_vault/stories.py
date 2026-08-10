@@ -35,6 +35,29 @@ class StoryBranchRequest(BaseModel):
     prompt: str = ""
 
 
+class CreateStoryRequest(BaseModel):
+    title: str
+    description: str | None = None
+    genre: str | None = None
+    character_ids: list[str] = []
+    lorebook_ids: list[str] = []
+    scenario_id: str | None = None
+    llm_model: str | None = None
+    memory: str | None = None
+
+
+class UpdateStoryRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    genre: str | None = None
+    character_ids: list[str] | None = None
+    lorebook_ids: list[str] | None = None
+    scenario_id: str | None = None
+    llm_model: str | None = None
+    memory: str | None = None
+    is_archived: bool | None = None
+
+
 def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
     """Assign stable ids to beats that predate branching support.
 
@@ -66,7 +89,17 @@ def list_stories(session: Session = Depends(get_session)):
     return session.exec(select(Story).where(Story.is_archived == False).order_by(Story.updated_at.desc())).all()
 
 @router.post("", response_model=Story)
-def create_story(story: Story, session: Session = Depends(get_session)):
+def create_story(req: CreateStoryRequest, session: Session = Depends(get_session)):
+    story = Story(
+        title=req.title,
+        description=req.description,
+        genre=req.genre,
+        character_ids=req.character_ids,
+        lorebook_ids=req.lorebook_ids,
+        scenario_id=req.scenario_id,
+        llm_model=req.llm_model,
+        memory=req.memory,
+    )
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at
     session.add(story)
@@ -82,14 +115,15 @@ def get_story(story_id: str, session: Session = Depends(get_session)):
     return story
 
 @router.put("/{story_id}", response_model=Story)
-def update_story(story_id: str, story_update: Story, session: Session = Depends(get_session)):
+def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
     
-    update_data = story_update.model_dump(exclude_unset=True)
+    update_data = req.model_dump(exclude_unset=True)
+    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived'}
     for key, value in update_data.items():
-        if key in ['title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model', 'memory', 'scenario_id']:
+        if key in allowed:
             setattr(story, key, value)
             
     story.updated_at = datetime.now(timezone.utc)
@@ -334,7 +368,6 @@ async def illustrate_chapter(
     session: Session = Depends(get_session),
 ):
     from services.job_service import JobService
-    from services.job_submission_service import JobSubmissionService
 
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
@@ -398,6 +431,9 @@ async def illustrate_chapter(
         if characters_content:
             system_prompt += "\n\nStory Characters (Use these details for illustration):\n" + "\n".join(characters_content)
 
+    # NOTE: Lorebook context is loaded directly here for the art-director prompt.
+    # For high-fidelity semantic retrieval, consider routing through
+    # build_system_prompt_sections_async (which uses pgvector top-K retrieval).
     if story and story.lorebook_ids:
         lorebooks_content = []
         for lb_id in story.lorebook_ids:
