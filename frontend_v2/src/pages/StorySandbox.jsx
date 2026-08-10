@@ -154,6 +154,8 @@ export default function StorySandbox() {
     const [isPanelOpen, setIsPanelOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
     const [editorContent, setEditorContent] = useState('');
     const [beatInput, setBeatInput] = useState('');
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [newStoryTitle, setNewStoryTitle] = useState('');
     const textareaRef = useRef(null);
     const streamingRef = useRef('');
     const streamingBaseRef = useRef('');
@@ -535,6 +537,18 @@ export default function StorySandbox() {
         return createStory.mutateAsync(data);
     };
 
+    const handleCreateStoryFromModal = async () => {
+        const title = newStoryTitle.trim();
+        if (!title) return;
+        try {
+            await handleCreateStory({ title });
+            setNewStoryTitle('');
+            setShowCreateModal(false);
+        } catch {
+            toast.error('Failed to create story');
+        }
+    };
+
     const handleCreateChapter = async (data) => {
         return createChapter.mutateAsync({ storyId: activeStoryId, data });
     };
@@ -675,17 +689,53 @@ export default function StorySandbox() {
                 {/* Mobile top tab strip removed — replaced by the shared
                     <BottomTabBar> fixed to the bottom of the viewport. */}
                 {!activeStoryId ? (
-                    <div className="flex-1 flex items-center justify-center">
-                        <EmptyState
-                            title="No Story Selected"
-                            description="Select a story from the sidebar or create a new one to start writing."
-                            primaryLabel="Create Story"
-                            primaryAction={() => {
-                                const title = prompt('Story title:');
-                                if (title) handleCreateStory({ title });
-                            }}
-                        />
-                    </div>
+                    <>
+                        <div className="flex-1 flex items-center justify-center">
+                            <EmptyState
+                                title="No Story Selected"
+                                description="Select a story from the sidebar or create a new one to start writing."
+                                primaryLabel="Create Story"
+                                primaryAction={() => setShowCreateModal(true)}
+                            />
+                        </div>
+                        {showCreateModal && (
+                            <div
+                                className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+                                onClick={() => { setShowCreateModal(false); setNewStoryTitle(''); }}
+                            >
+                                <div
+                                    className="glass-panel p-6 rounded-2xl border border-white/10 w-full max-w-sm mx-4 space-y-4"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <h3 className="text-lg font-bold text-white">Create Story</h3>
+                                    <input
+                                        autoFocus
+                                        type="text"
+                                        value={newStoryTitle}
+                                        onChange={(e) => setNewStoryTitle(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateStoryFromModal(); }}
+                                        placeholder="Story title..."
+                                        className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                                    />
+                                    <div className="flex justify-end gap-2">
+                                        <button
+                                            onClick={() => { setShowCreateModal(false); setNewStoryTitle(''); }}
+                                            className="px-4 py-2 text-sm rounded-lg text-gray-400 hover:bg-white/10 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            onClick={handleCreateStoryFromModal}
+                                            disabled={!newStoryTitle.trim()}
+                                            className="px-4 py-2 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40"
+                                        >
+                                            Create
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </>
                 ) : (
                     <>
                         <div className="flex-1 flex min-h-0 relative">

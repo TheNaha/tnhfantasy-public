@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Wand2, BookOpen, Sparkles, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useGeneratorStore } from '../../store/generatorStore';
+import { magicPrompt } from '../../api/promptsApi';
 import PromptLibrary from './PromptLibrary';
 
 export default function PromptPanel() {
@@ -19,14 +20,8 @@ export default function PromptPanel() {
         if (!prompt.trim()) return;
         setIsMagicLoading(true);
         try {
-            const response = await fetch('/api/prompts/magic', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt })
-            });
-            if (!response.ok) throw new Error('Magic prompt failed');
-            const data = await response.json();
-            if (data.enriched_prompt) {
+            const data = await magicPrompt(prompt);
+            if (data?.enriched_prompt) {
                 setPrompt(data.enriched_prompt);
                 toast.success('Prompt enriched!', { icon: '✨' });
             }

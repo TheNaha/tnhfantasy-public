@@ -67,6 +67,13 @@ export async function exportPrompts() {
     return api.get(`${API_BASE}/export`);
 }
 
+/**
+ * Enrich a prompt via the LLM magic-prompt endpoint
+ */
+export async function magicPrompt(prompt) {
+    return api.post(`${API_BASE}/magic`, { prompt });
+}
+
 export default {
     listPrompts,
     getCategories,
@@ -76,5 +83,6 @@ export default {
     deletePrompt,
     incrementUsage,
     importPrompts,
-    exportPrompts
+    exportPrompts,
+    magicPrompt
 };

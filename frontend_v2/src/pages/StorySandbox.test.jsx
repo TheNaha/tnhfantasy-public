@@ -142,7 +142,7 @@ describe('StorySandbox page', () => {
         mockUpdateStory.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockCreateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: 'new-ch' }) });
         mockDeleteChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
-        mockUpdateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
+        mockUpdateChapter.mockReturnValue({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}) });
         mockContinueChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }) });
         mockBranchChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: 'branch-ch' }), isPending: false });
         mockAddStoryBeat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });

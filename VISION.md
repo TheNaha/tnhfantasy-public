@@ -77,7 +77,7 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 | Area | Status | Notes |
 |------|--------|-------|
 | Pillar 1 — Image Gen | ✅ Working | Modal + Beam + direct_url engines; direct_url crash (NameError) fixed, health checks local-only |
-| Pillar 2 — Roleplay | ✅ Working | Agentic mode, narrator, tool-calls as `Message.kind`; chat Illustrate route wired, UI button pending |
+| Pillar 2 — Roleplay | ✅ Working | Agentic mode, narrator, tool-calls as `Message.kind`; chat Illustrate route + UI button present |
 | Pillar 3 — Story | ✅ Working | Story continue + illustrate + branching (retry from beat) implemented |
 | Pillar 4 — World Vault | ✅ Working | Characters, lorebooks (pgvector), semantic retrieval |
 | #5 Unified Protocol | ✅ Implemented | `provider_core.models.TaskEvent`; all engines emit it (LLM anthropic/google/modal fixed 2026-08-10); single backend reader |
@@ -89,9 +89,15 @@ To support this multimodal future and maximize flexibility, we are overhauling h
 | Video/Animation, Visual Novel | 🔮 Future | Post-core expansion |
 
 **Known gaps being addressed (roadmap):**
-- In-chat "Illustrate" UI button (route + backend complete; StorySandbox equivalent exists), virtualized `SceneGallery`, `GeneratorShell` consolidation (deferred), tool-call transcript chips.
-- Per-engine integration tests inside `provider_containers` (protocol tests added; engine-level parity for beam/modal clients next).
+- `GeneratorShell` consolidation (Simple/Img2Img/Inpaint/Advanced still share duplicated shell + 2 workflow-building paths) — deferred.
 - LLM context/token heuristics (`estimate_tokens`) remain approximate — acceptable for single user.
+- Beam engine client currently lacks the protocol/engine parity of modal/direct_url (no streaming standardization test yet).
+
+**Resolved in the 2026-08-10 hardening pass:**
+- In-chat "Illustrate" UI button exists (roleplay + story); tool-call transcript chips render in chat.
+- `SceneGallery` is now virtualized (row-based `@tanstack/react-virtual`).
+- `provider_containers` gained engine-level tests: `test_engine_translation.py` (anthropic/google tool-call translation) and `test_direct_url_models.py` (model path enumeration).
+- anthropic/google LLM engines now translate tool calls → agentic mode works on any engine (not just openai_compat/modal-vLLM).
 
 ---
 *Note to AI Agents: This document dictates the macro-level trajectory of the project. Any architectural decisions, database changes, or frontend refactors should keep this multimodal, unrestricted end-goal in mind.*
