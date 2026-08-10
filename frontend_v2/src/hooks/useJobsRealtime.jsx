@@ -22,6 +22,15 @@ export function useJobsRealtime() {
         connectionToastIdRef.current = null;
     }, []);
 
+    // Full refresh of the server-backed state after reconnect / refocus. The
+    // per-job/per-active caches are already updated incrementally via
+    // setQueryData on live events; this covers anything that raced a gap.
+    const refreshServerState = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+        queryClient.invalidateQueries({ queryKey: ['statistics'] });
+    }, [queryClient]);
+
     // Replay events missed during a disconnect. lastSequenceNumberRef is the
     // highest sequence number already applied, so the server only replays
     // what the client actually missed — safe to call on every reconnect.
@@ -150,9 +159,7 @@ export function useJobsRealtime() {
                 const wasConnected = connectedRef.current;
                 connectedRef.current = true;
                 dismissConnectionToast();
-                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-                queryClient.invalidateQueries({ queryKey: ['gallery'] });
-                queryClient.invalidateQueries({ queryKey: ['statistics'] });
+                refreshServerState();
                 // Real (re)connection: catch up on events missed during the gap.
                 if (wasConnected || lastSequenceNumberRef.current > 0) {
                     void replayMissedEvents();
@@ -191,9 +198,7 @@ export function useJobsRealtime() {
                     });
                 }
 
-                queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-                queryClient.invalidateQueries({ queryKey: ['gallery'] });
-                queryClient.invalidateQueries({ queryKey: ['statistics'] });
+                refreshServerState();
             }
         };
 
@@ -205,9 +210,7 @@ export function useJobsRealtime() {
                     console.warn('[useJobsRealtime] Reconnect failed:', error?.message || error);
                 });
             }
-            queryClient.invalidateQueries({ queryKey: ['jobs', 'active'] });
-            queryClient.invalidateQueries({ queryKey: ['gallery'] });
-            queryClient.invalidateQueries({ queryKey: ['statistics'] });
+            refreshServerState();
         };
 
         document.addEventListener('visibilitychange', onVisibilityChange);
@@ -224,7 +227,7 @@ export function useJobsRealtime() {
             document.removeEventListener('visibilitychange', onVisibilityChange);
             window.removeEventListener('online', onOnline);
         };
-    }, [queryClient, replayMissedEvents, dismissConnectionToast, markEventReceived]);
+    }, [queryClient, replayMissedEvents, dismissConnectionToast, markEventReceived, refreshServerState]);
 }
 
 export default useJobsRealtime;

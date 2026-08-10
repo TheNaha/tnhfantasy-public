@@ -33,6 +33,7 @@ export function useJobStatus(jobId, { pollInterval = 2000, enabled = true } = {}
         },
         enabled: !!jobId && enabled,
         staleTime: 30_000,
+        refetchOnWindowFocus: false, // useJobsRealtime refreshes on visibility change
         refetchInterval: (query) => {
             if (!jobId || wsConnected) return false;
             const job = query.state.data;
