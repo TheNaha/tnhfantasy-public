@@ -8,14 +8,7 @@ const API_BASE = '/api/prompts';
  * List prompts with optional search and filtering
  */
 export async function listPrompts({ q, category, favorite, limit = 100, offset = 0 } = {}) {
-    const params = new URLSearchParams();
-    if (q) params.append('q', q);
-    if (category) params.append('category', category);
-    if (favorite !== undefined) params.append('favorite', favorite);
-    params.append('limit', limit);
-    params.append('offset', offset);
-
-    return api.get(`${API_BASE}?${params}`);
+    return api.get(API_BASE, { params: { q, category, favorite, limit, offset } });
 }
 
 /**

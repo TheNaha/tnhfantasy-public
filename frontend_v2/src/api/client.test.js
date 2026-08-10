@@ -144,6 +144,61 @@ describe('ApiClient', () => {
             expect(call[1].headers['Content-Type']).toBeUndefined();
             expect(call[1].body).toBe(formData);
         });
+
+        it('should append params to the query string', async () => {
+            fetch.mockResolvedValue({
+                ok: true,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ success: true }),
+            });
+
+            await api.get('/api/v2/chats', { params: { workspace: 'roleplay', limit: 25, offset: 50 } });
+
+            const [url, config] = fetch.mock.calls[0];
+            expect(url).toBe('/api/v2/chats?workspace=roleplay&limit=25&offset=50');
+            // params must NOT leak into the fetch config
+            expect(config.params).toBeUndefined();
+        });
+
+        it('should append params to an endpoint that already has a query string', async () => {
+            fetch.mockResolvedValue({
+                ok: true,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ success: true }),
+            });
+
+            await api.get('/api/files?directory=output', { params: { limit: 20 } });
+
+            const [url] = fetch.mock.calls[0];
+            expect(url).toBe('/api/files?directory=output&limit=20');
+        });
+
+        it('should serialize array params as comma-joined values', async () => {
+            fetch.mockResolvedValue({
+                ok: true,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ success: true }),
+            });
+
+            await api.get('/api/test', { params: { ids: ['a', 'b'] } });
+
+            const [url] = fetch.mock.calls[0];
+            expect(url).toBe('/api/test?ids=a%2Cb');
+        });
+
+        it('should skip undefined/null params and support URLSearchParams', async () => {
+            fetch.mockResolvedValue({
+                ok: true,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ success: true }),
+            });
+
+            await api.get('/api/test', { params: { a: undefined, b: null, c: 'x' } });
+            expect(fetch.mock.calls[0][0]).toBe('/api/test?c=x');
+
+            await api.get('/api/test', { params: new URLSearchParams({ d: '1', e: '2' }) });
+            expect(fetch.mock.calls[1][0]).toBe('/api/test?d=1&e=2');
+        });
     });
 
     describe('helper methods', () => {

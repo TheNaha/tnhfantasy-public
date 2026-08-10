@@ -7,10 +7,7 @@ import api from './client';
 
 export const jobsApi = {
     // List jobs with pagination
-    list: (params = {}) => {
-        const query = new URLSearchParams(params).toString();
-        return api.get(`/api/jobs${query ? `?${query}` : ''}`);
-    },
+    list: (params = {}) => api.get('/api/jobs', { params }),
 
     // Get single job
     get: (jobId) => api.get(`/api/jobs/${jobId}`),

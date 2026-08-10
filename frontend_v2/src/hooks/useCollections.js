@@ -4,6 +4,13 @@ import collectionsApi from '../api/collectionsApi';
 const MIGRATION_KEY = 'comfy-collections-migrated';
 const OLD_STORAGE_KEY = 'comfy-storage';
 
+// Invalidates every workspace-scoped collections query. The list endpoint is
+// keyed by workspace ('image' | 'chat' | 'story' | null), so a mutation must
+// clear all variants, not just the prefix or the null-scope one.
+function invalidateAllCollections(queryClient) {
+    queryClient.invalidateQueries({ queryKey: ['collections'] });
+}
+
 // One-time bootstrap migration: imports collections from the legacy
 // pre-API localStorage store. Runs once per page load from App.jsx —
 // deliberately NOT inside the query function, so the (already-completed)
@@ -83,8 +90,7 @@ export function useCreateCollection() {
             return collectionsApi.createCollection({ name, color, workspace });
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            queryClient.invalidateQueries({ queryKey: ['collections', null] });
+            invalidateAllCollections(queryClient);
         }
     });
 }
@@ -96,8 +102,7 @@ export function useDeleteCollection() {
             return collectionsApi.deleteCollection(id);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            queryClient.invalidateQueries({ queryKey: ['collections', null] });
+            invalidateAllCollections(queryClient);
         }
     });
 }
@@ -109,8 +114,7 @@ export function useRenameCollection() {
             return collectionsApi.updateCollection(id, { name });
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            queryClient.invalidateQueries({ queryKey: ['collections', null] });
+            invalidateAllCollections(queryClient);
         }
     });
 }
@@ -122,8 +126,7 @@ export function useAddImagesToCollection() {
             return collectionsApi.addImagesToCollection(collectionId, images);
         },
         onSuccess: (_, { collectionId }) => {
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            queryClient.invalidateQueries({ queryKey: ['collections', null] });
+            invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
         }
     });
@@ -136,8 +139,7 @@ export function useRemoveImagesFromCollection() {
             return collectionsApi.removeImagesFromCollection(collectionId, images);
         },
         onSuccess: (_, { collectionId }) => {
-            queryClient.invalidateQueries({ queryKey: ['collections'] });
-            queryClient.invalidateQueries({ queryKey: ['collections', null] });
+            invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
         }
     });

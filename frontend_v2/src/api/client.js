@@ -72,9 +72,25 @@ export function createIdempotencyKey(scope = 'request') {
  * Base fetch wrapper with error handling
  */
 async function request(endpoint, options = {}) {
-    const url = `${getBaseUrl()}${endpoint}`;
+    let url = `${getBaseUrl()}${endpoint}`;
 
-    const { idempotencyKey, timeout, signal: userSignal, ...requestOptions } = options;
+    const { idempotencyKey, timeout, signal: userSignal, params, ...requestOptions } = options;
+
+    // Merge `params` into the query string. `params` is a data property, not a
+    // fetch option — it must never be spread into the request config.
+    if (params) {
+        const query = params instanceof URLSearchParams ? params : new URLSearchParams();
+        if (!(params instanceof URLSearchParams)) {
+            for (const [key, value] of Object.entries(params)) {
+                if (value === undefined || value === null) continue;
+                query.append(key, Array.isArray(value) ? value.join(',') : value);
+            }
+        }
+        const queryString = query.toString();
+        if (queryString) {
+            url += (url.includes('?') ? '&' : '?') + queryString;
+        }
+    }
 
     const config = {
         ...requestOptions,
