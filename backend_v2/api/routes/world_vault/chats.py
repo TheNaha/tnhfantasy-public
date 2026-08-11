@@ -963,7 +963,7 @@ async def illustrate_chat(
             select(Message)
             .where(
                 Message.chat_id == chat_id,
-                Message.role.in_(["char", "assistant"]),
+                Message.role.in_(["char", "user"]),
                 Message.content.is_not(None),
             )
             .order_by(Message.created_at.desc())
