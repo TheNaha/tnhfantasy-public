@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 from typing import Any, Dict, Optional
@@ -88,19 +89,41 @@ class DirectUrlProviderClient(BaseProviderClient):
         from image_worker.comfy.workflow_executor import execute_comfy_workflow, IMAGE_FETCH_VIEW_API
 
         job_id = request.job_id
+        inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
+
+        if job_id:
+            await self.job_tracker.start_job(job_id)
 
         async def stream():
             try:
-                async for payload in execute_comfy_workflow(
-                    workflow_json=request.workflow,
-                    comfy_api_url=self.comfy_url,
-                    image_fetch_mode=IMAGE_FETCH_VIEW_API,
-                    logger=self.logger,
-                ):
-                    yield json.dumps(payload) + "\n"
+                async with asyncio.timeout(inference_timeout):
+                    async for payload in execute_comfy_workflow(
+                        workflow_json=request.workflow,
+                        comfy_api_url=self.comfy_url,
+                        image_fetch_mode=IMAGE_FETCH_VIEW_API,
+                        logger=self.logger,
+                    ):
+                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                            try:
+                                await self._http.post("/interrupt", timeout=5.0)
+                            except Exception as e:
+                                self.logger.warning(f"Failed to interrupt ComfyUI after cancel: {e}")
+                            yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
+                            return
+                        yield json.dumps(payload) + "\n"
+            except TimeoutError:
+                yield TaskEvent(
+                    event="failed",
+                    job_id=job_id,
+                    message=f"Inference timed out after {int(inference_timeout)}s",
+                    retryable=True,
+                ).to_ndjson()
             except Exception as e:
                 self.logger.exception("Inference failed")
-                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e)), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(e), retryable=True).to_ndjson()
+            finally:
+                if job_id:
+                    await self.job_tracker.end_job(job_id)
 
         return StreamingResponse(translate_task_events(stream(), job_id=job_id), media_type="application/x-ndjson")
 

@@ -4,6 +4,10 @@ from typing import Any, AsyncIterator, Dict, Iterable, Optional
 
 from provider_core.models import TaskEvent
 
+_TASK_EVENT_KINDS = {
+    "started", "progress", "delta", "node", "artifact", "completed", "failed", "cancelled",
+}
+
 
 def get_safe_path(base_dir: str, requested_path: str) -> str:
     """
@@ -134,9 +138,9 @@ async def translate_task_events(
 ) -> AsyncIterator[str]:
     """Wrap a legacy ComfyUI NDJSON stream and re-emit it as TaskEvent NDJSON.
 
-    Each item from ``source`` is either already a TaskEvent JSON string or a
-    legacy ``{"status": ...}`` dict (string or dict). Emits unified
-    ``TaskEvent.to_ndjson()`` lines for every meaningful update.
+    Each item from ``source`` is either already a TaskEvent (instance or JSON
+    string) or a legacy ``{"status": ...}`` dict (string or dict). Emits
+    unified ``TaskEvent.to_ndjson()`` lines for every meaningful update.
     """
     async for item in source:
         if isinstance(item, TaskEvent):
@@ -150,6 +154,15 @@ async def translate_task_events(
                 continue
         else:
             parsed = item
+        if isinstance(parsed, dict) and parsed.get("event") in _TASK_EVENT_KINDS:
+            # Already a TaskEvent payload (e.g. beam's cancellation events);
+            # pass through unchanged instead of misreading it as a legacy
+            # {"status": ...} update.
+            try:
+                yield TaskEvent(**{k: v for k, v in parsed.items() if k in TaskEvent.model_fields}).to_ndjson()
+            except Exception:
+                continue
+            continue
         te = comfy_status_to_task_event(parsed, job_id=job_id)
         if te is not None:
             yield te.to_ndjson()

@@ -100,7 +100,7 @@ class ModalProviderClient(BaseProviderClient):
                             except asyncio.TimeoutError:
                                 if job_id and await self.job_tracker.is_cancelled(job_id):
                                     task.cancel()
-                                    yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                    yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
                                     return
                                 continue
                             
@@ -114,7 +114,7 @@ class ModalProviderClient(BaseProviderClient):
 
                             if job_id and await self.job_tracker.is_cancelled(job_id):
                                 task.cancel()
-                                yield json.dumps({"status": "cancelled", "message": "Job cancelled"}) + "\n"
+                                yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
                                 return
 
                             # Backwards compatibility for old Modal deployments

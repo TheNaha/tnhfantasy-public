@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
+from core.exceptions import NotFoundError
 from core.workflow_builder import build_image_workflow
 from services.job_queue import queue_manager
 
@@ -111,14 +112,14 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
 def get_story(story_id: str, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise NotFoundError("Story", story_id)
     return story
 
 @router.put("/{story_id}", response_model=Story)
 def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise NotFoundError("Story", story_id)
     
     update_data = req.model_dump(exclude_unset=True)
     allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived'}
@@ -136,7 +137,7 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
 def delete_story(story_id: str, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise NotFoundError("Story", story_id)
     
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
     for ch in chapters:
@@ -157,7 +158,7 @@ def list_chapters(story_id: str, session: Session = Depends(get_session)):
 def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise NotFoundError("Story", story_id)
         
     max_chapter = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number.desc())).first()
     chapter.chapter_number = max_chapter.chapter_number + 1 if max_chapter else 1
@@ -174,7 +175,7 @@ def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depe
 def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
     _ensure_beat_ids(session, chapter)
     return chapter
 
@@ -182,7 +183,7 @@ def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_s
 def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
         
     if chapter_update.content is not None:
         chapter.content = chapter_update.content
@@ -199,7 +200,7 @@ def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter,
 def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
         
     session.delete(chapter)
     session.commit()
@@ -213,7 +214,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
 
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
 
     story = session.get(Story, story_id)
         
@@ -274,7 +275,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
 def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session)):
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
         
     content = data.content
     role = data.role
@@ -307,7 +308,7 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
     """
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
 
     _ensure_beat_ids(session, chapter)
     beats = chapter.beats or []
@@ -318,7 +319,7 @@ def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, ses
             idx = i
             break
     if idx is None:
-        raise HTTPException(status_code=404, detail="Beat not found")
+        raise NotFoundError("StoryBeat", chapter_id)
 
     prefix = [dict(b) for b in beats[: idx + 1]]
 
@@ -371,7 +372,7 @@ async def illustrate_chapter(
 
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise NotFoundError("StoryChapter", chapter_id)
 
     story = session.get(Story, story_id)
 
@@ -482,7 +483,7 @@ def list_story_images(story_id: str, session: Session = Depends(get_session)):
     """List all images across the story's chapters (workspace gallery)."""
     story = session.get(Story, story_id)
     if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
+        raise NotFoundError("Story", story_id)
 
     chapters = session.exec(
         select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.created_at)

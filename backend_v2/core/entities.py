@@ -92,7 +92,7 @@ class Job(SQLModel, table=True):
 class Provider(SQLModel, table=True):
     """
     Represents a serverless compute provider configuration.
-    Currently supports Modal, extensible to Beam, RunPod, etc.
+    Image: Modal, Beam, direct_url. LLM: openai_compat, anthropic, google, modal_llm.
     """
     __tablename__ = "providers"
     

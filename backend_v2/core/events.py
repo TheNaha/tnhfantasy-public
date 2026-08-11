@@ -442,8 +442,8 @@ async def wait_for_job_completion(
                     final_status = job.status.value
                     result = job.outputs[0] if job.outputs else None
                     return final_status, result
-        except Exception:
-            pass
+        except Exception as _db_exc:
+            logger.warning("wait_for_job_completion_initial_poll_failed", job_id=job_id, error=str(_db_exc))
 
         deadline = time.monotonic() + timeout
         while True:
@@ -465,8 +465,8 @@ async def wait_for_job_completion(
                             final_status = job2.status.value
                             result = job2.outputs[0] if job2.outputs else None
                             return final_status, result
-                except Exception:
-                    pass
+                except Exception as _db_exc2:
+                    logger.warning("wait_for_job_completion_poll_failed", job_id=job_id, error=str(_db_exc2))
                 continue
 
             job_data = event.data.get("job", {})

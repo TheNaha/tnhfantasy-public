@@ -24,7 +24,7 @@ The provided `docker-compose.yml` orchestrates the backend, frontend, and provid
 ### Architecture
 - **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Health check hits `/api/health`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
-- **provider-modal** (and other providers): Serverless worker containers. Container names must be `comfy-provider-{PROVIDER_ID}` for backend auto-detection. Depends on backend health.
+- **provider-modal** (and other providers): Serverless worker containers. Container names must be `tnhcomfy-{PROVIDER_ID}` for backend auto-detection. Depends on backend health.
 
 ### Data Volumes
 The `./data` directory is mounted into all containers at `/data`. This shared volume contains:
@@ -62,7 +62,7 @@ The application should now be accessible.
 ### Adding a Provider
 1. Copy the `provider-modal` block in `docker-compose.yml`.
 2. Set a unique `PROVIDER_ID` environment variable.
-3. Set `container_name` to `comfy-provider-{PROVIDER_ID}` (required for backend detection).
+3. Set `container_name` to `tnhcomfy-{PROVIDER_ID}` (required for backend detection).
 
 ### Stop the Application
 To gracefully shut down the application:

@@ -50,5 +50,7 @@ provider_fixes.patch
 .env.modal-zetsuke
 .env.zetsuke
 .env.modal-*
+.env.beam
 .env.beam-*
+.env.direct-url
 .env.llm-*

@@ -8,12 +8,15 @@ Works as a post-completion processor inside job_processing.py:
   3. Repeat until plain text response (max depth enforced)
 """
 
+import asyncio
 import json
 import logging
 from typing import Any
 
+from core.entities import JobStatus
 from core.workflow_builder import build_image_workflow
 from infrastructure.logging import get_logger
+from services.job_service import JobService
 from services.model_availability_service import ModelAvailabilityService
 
 logger = get_logger("orchestrator")
@@ -204,7 +207,8 @@ async def execute_tool(
         )
 
     if name == "update_world_state":
-        return _tool_update_world_state(
+        return await asyncio.to_thread(
+            _tool_update_world_state,
             args,
             chat_id=chat_id,
             source_job_id=source_job_id,
@@ -384,34 +388,96 @@ async def _tool_narrate_scene(
         )
 
         try:
-            job = await submission.create_and_enqueue_job(
+            job = await submission.job_service.create_job(
+                task_type="llm",
                 workflow=workflow,
                 metadata=metadata,
-                task_type="llm",
             )
         except Exception as e:
-            logger.error("tool_narrate_scene_enqueue_failed", error=str(e))
-            return {"status": "error", "error": f"Failed to start narrator job: {e}"}
+            logger.error("tool_narrate_scene_create_failed", error=str(e))
+            return {"status": "error", "error": f"Failed to create narrator job: {e}"}
     finally:
         session.close()
 
+    # Inline execution: run the narrator call directly against a load-balanced
+    # LLM provider instead of enqueueing and waiting. The agentic chain holds
+    # the parent job's queue slot, so a queued narrator job could never be
+    # claimed by the single LLM worker (deadlock / 180s timeout). The job row
+    # is created (not enqueued) so the _LLMReducer streams status/events and
+    # the completion event persists the narration via world_integration.
     try:
-        from core.events import wait_for_job_completion
-        final_status, output = await wait_for_job_completion(job.id, timeout=180.0)
-    except Exception as e:
-        logger.error("tool_narrate_scene_wait_failed", error=str(e))
-        return {"status": "error", "error": f"Failed waiting for narrator job: {e}"}
+        from services.job_queue import queue_manager
+        from services.load_balancer_factory import create_load_balancer
+        from services.provider_runtime import resolve_provider_runtime
+        from services.provider_client import (
+            call_llm_provider,
+            JobCancelledError,
+            JobTimeoutError,
+            ProviderCallError,
+        )
+        from config import get_job_timeout
 
-    if final_status == "completed":
-        content = ""
-        if output:
-            content = output.get("content") or output.get("text") or ""
-        return {"status": "success", "narration": content, "job_id": job.id}
+        _session = get_session_sync()
+        try:
+            _job_service = JobService(_session)
+            load_balancer = create_load_balancer(_session, task_type="llm")
 
-    if final_status in ("failed", "cancelled"):
-        return {"status": "error", "error": f"Narration {final_status}"}
+            provider = await load_balancer.get_next_provider(
+                required_models=None,
+                task_type="llm",
+            )
+            if provider is None:
+                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
+                return {"status": "error", "error": "No available LLM providers for narration"}
 
-    return {"status": "error", "error": f"Narration ended with status: {final_status}"}
+            runtime = resolve_provider_runtime(provider)
+            if runtime.mode not in ("container_http", "discovery"):
+                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
+                await load_balancer.report_failure(provider.id)
+                await load_balancer.release_job(provider.id)
+                return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
+
+            timeout = get_job_timeout("llm")
+            final_result = await call_llm_provider(
+                worker_url=runtime.worker_url,
+                workflow=workflow,
+                job_id=job.id,
+                job_service=_job_service,
+                timeout=timeout,
+                provider_id=provider.id,
+                provider_type=provider.type,
+            )
+
+            await load_balancer.report_success(provider.id)
+            await load_balancer.release_job(provider.id)
+
+            content = ""
+            outputs = final_result.get("outputs") or []
+            if outputs and isinstance(outputs[0], dict):
+                content = outputs[0].get("content", "")
+            if not content:
+                content = final_result.get("text", "")
+            return {"status": "success", "narration": content, "job_id": job.id}
+        finally:
+            _session.close()
+    except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
+        logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
+        try:
+            _s2 = get_session_sync()
+            try:
+                await JobService(_s2).update_job(
+                    job.id,
+                    status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
+                    error=str(exc),
+                )
+            finally:
+                _s2.close()
+        except Exception as update_exc:
+            logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
+        return {"status": "error", "error": f"Narration failed: {exc}"}
+    except Exception as exc:
+        logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
+        return {"status": "error", "error": f"Failed waiting for narrator job: {exc}"}
 
 
 async def _tool_generate_image(

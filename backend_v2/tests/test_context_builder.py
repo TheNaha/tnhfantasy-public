@@ -309,3 +309,22 @@ def test_build_chat_context_pins_narrator_as_prunable(session):
     assert any(m["content"] == "Narrator: rain falls" for m in all_msgs)
     narrator = next(m for m in all_msgs if m["content"] == "Narrator: rain falls")
     assert narrator["role"] == "system"
+
+
+def test_build_chat_context_strips_internal_keys(session):
+    """The _pinned/_kind helper keys must never leak into provider-bound payloads."""
+    msg = Message(
+        chat_id="chat-x",
+        role=MessageRole.SYSTEM,
+        content="Narrator: storm brewing",
+        kind=MessageKind.NARRATOR,
+        pinned=True,
+    )
+    user_msg = Message(chat_id="chat-x", role=MessageRole.USER, content="I stay inside")
+    session.add_all([msg, user_msg])
+    session.commit()
+
+    _, all_msgs = build_chat_context(session, [msg, user_msg], max_context_tokens=100000)
+    for m in all_msgs:
+        assert "_pinned" not in m
+        assert "_kind" not in m

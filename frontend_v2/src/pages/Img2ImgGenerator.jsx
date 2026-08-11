@@ -6,13 +6,12 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ImageIcon, Settings2, Play, Trash2, Plus, Loader2, Link as LinkIcon } from 'lucide-react';
+import { ImageIcon, Settings2, Link as LinkIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
-import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import ControlNetSection from '../components/generator/ControlNetSection';
 import IPAdapterSection from '../components/generator/IPAdapterSection';
@@ -23,10 +22,14 @@ import PresetManager from '../components/generator/PresetManager';
 import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
-import GeneratorTabs from '../components/generator/GeneratorTabs';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
+import GeneratorShell from '../components/generator/GeneratorShell';
+import VaeLoraSection from '../components/generator/VaeLoraSection';
+import GenerateActionBar from '../components/generator/GenerateActionBar';
+
+const EMPTY_MODELS = [];
 
 export default function Img2ImgGenerator() {
     const location = useLocation();
@@ -55,15 +58,14 @@ export default function Img2ImgGenerator() {
     } = useGeneratorCore();
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
-    const checkpoints = modelsByKey.checkpoints || [];
-    const vaeModels = modelsByKey.vaeModels || [];
-    const controlNetModels = modelsByKey.controlNetModels || [];
-    const adetailerModels = modelsByKey.adetailerModels || [];
-
-    const { data: activeJobs = [] } = useActiveJobs();
-    const activeJobCount = activeJobs.length;
+    const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
+    const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
+    const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
+    const adetailerModels = modelsByKey.adetailerModels ?? EMPTY_MODELS;
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
+    const { data: activeJobs = [] } = useActiveJobs();
+    const activeJobCount = activeJobs.length;
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
@@ -144,29 +146,17 @@ export default function Img2ImgGenerator() {
         autoRandomizeSeed,
     });
 
+    const canGenerate = generating || !sourceImage?.filename || !selectedCheckpoint?.name;
+
     return (
-        <div className="pb-24">
-            {/* Header with Tabs */}
-            <div className="max-w-6xl mx-auto mb-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-orange-400 to-red-500">
-                        Create
-                    </h1>
-                    {activeJobCount > 0 && (
-                        <div className="flex items-center gap-2 bg-blue-900/30 text-blue-200 px-3 py-1.5 rounded-full text-sm border border-blue-800/50 backdrop-blur-sm">
-                            <Loader2 className="animate-spin" size={14} />
-                            <span>{activeJobCount} in queue</span>
-                        </div>
-                    )}
-                </div>
-                {/* Tab Navigation */}
-                <GeneratorTabs />
-            </div>
-
-            <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-8">
-                {/* Left Column: Image & Settings */}
-                <div className="lg:col-span-2 space-y-4 lg:space-y-4 md:space-y-6">
-
+        <GeneratorShell
+            accentClass="from-orange-400 to-red-500"
+            activeJobCount={activeJobCount}
+            isMissingModelsOpen={isMissingModelsOpen}
+            setIsMissingModelsOpen={setIsMissingModelsOpen}
+            validationResult={validationResult}
+            leftColumn={(
+                <>
                     {/* Source Image */}
                     <div className="space-y-3 pb-4 border-b border-gray-800">
                         <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
@@ -200,7 +190,7 @@ export default function Img2ImgGenerator() {
                         />
 
                         <ControlNetSection
-                            controlnets={[]}
+                            controlnets={controlnets}
                             addControlNet={addControlNet}
                             removeControlNet={removeControlNet}
                             updateControlNet={updateControlNet}
@@ -230,85 +220,22 @@ export default function Img2ImgGenerator() {
                             setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
                         />
 
-                        {/* VAE Selector */}
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-gray-500">VAE</label>
-                            <select
-                                value={selectedVae}
-                                onChange={(e) => setSelectedVae(e.target.value)}
-                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white text-sm"
-                            >
-                                <option value="Baked in">Baked in (Default)</option>
-                                {vaeModels.map(v => (
-                                    <option key={v.name} value={v.name}>{v.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* LoRAs */}
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="block text-xs font-medium text-gray-500">LoRAs</label>
-                                <button
-                                    onClick={() => {
-                                        addLora();
-                                        setAutoOpenLoraIndex(selectedLoras.length);
-                                    }}
-                                    className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                                >
-                                    <Plus size={14} /> Add LoRA
-                                </button>
-                            </div>
-
-                            {selectedLoras.map((lora, idx) => (
-                                <div key={idx} className="bg-gray-900/50 p-3 rounded-lg border border-gray-700 space-y-2">
-                                    <ModelSelector
-                                        label={`LoRA ${idx + 1}`}
-                                        value={lora.name}
-                                        selectedModel={lora}
-                                        onChange={(m) => updateLora(idx, 'model', m)}
-                                        directory="models/loras"
-                                        autoOpen={autoOpenLoraIndex === idx}
-                                        onAutoOpenComplete={() => setAutoOpenLoraIndex(null)}
-                                    />
-                                    <div className="flex gap-2 items-center">
-                                        <div className="flex-1">
-                                            <label className="text-xs text-gray-500">Strength</label>
-                                            <div className="flex gap-2 items-center">
-                                                <input
-                                                    type="range"
-                                                    min="-4"
-                                                    max="4"
-                                                    step="0.1"
-                                                    className="flex-1"
-                                                    value={lora.strength}
-                                                    onChange={(e) => updateLora(idx, 'strength', parseFloat(e.target.value))}
-                                                />
-                                                <input
-                                                    type="number"
-                                                    step="0.1"
-                                                    className="w-16 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-white text-center"
-                                                    value={lora.strength}
-                                                    onChange={(e) => updateLora(idx, 'strength', parseFloat(e.target.value))}
-                                                />
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => removeLora(idx)}
-                                            className="text-red-400 hover:text-red-300 p-2 bg-gray-800 rounded-lg self-end"
-                                            title="Remove LoRA"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <VaeLoraSection
+                            selectedVae={selectedVae}
+                            setSelectedVae={setSelectedVae}
+                            vaeModels={vaeModels}
+                            selectedLoras={selectedLoras}
+                            addLora={addLora}
+                            removeLora={removeLora}
+                            updateLora={updateLora}
+                            autoOpenLoraIndex={autoOpenLoraIndex}
+                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
+                        />
                     </div>
-                </div>
-
-                {/* Right Column: Parameters */}
-                <div className="space-y-4 lg:space-y-4 md:space-y-6">
+                </>
+            )}
+            rightColumn={(
+                <>
                     <GeneratorReadinessPanel
                         providers={providers}
                         providersLoading={providersLoading}
@@ -351,45 +278,16 @@ export default function Img2ImgGenerator() {
 
                     <SamplingSettings />
 
-                    {/* Generate Button */}
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                            disabled={generating || !sourceImage?.filename || !selectedCheckpoint?.name}
-                            className={`flex-1 h-14 rounded-xl font-bold text-base shadow-lg transition-all border border-gray-700 flex items-center justify-center ${generating || !sourceImage?.filename || !selectedCheckpoint?.name
-                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                : 'bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white'
-                                }`}
-                            title="Add to queue"
-                        >
-                            <Plus size={20} />
-                        </button>
-
-                        <button
-                            onClick={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
-                            disabled={generating || !sourceImage?.filename || !selectedCheckpoint?.name}
-                            className={`flex-[4] relative overflow-hidden h-14 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all
-                                ${generating || !sourceImage?.filename || !selectedCheckpoint?.name
-                                    ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white shadow-lg shadow-orange-900/30'}
-                            `}
-                        >
-                            {generating ? (
-                                <>
-                                    <Loader2 className="animate-spin" size={20} />
-                                    {progress?.node || 'Generating...'}
-                                </>
-                            ) : (
-                                <>
-                                    <Play size={20} />
-                                    Generate Img2Img
-                                </>
-                            )}
-                            {generating && progress && (
-                                <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-orange-400 to-yellow-400 transition-all duration-300 ease-out" style={{ width: `${progress.value}%` }} />
-                            )}
-                        </button>
-                    </div>
+                    <GenerateActionBar
+                        generating={generating}
+                        progress={progress}
+                        disabled={canGenerate}
+                        onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                        onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                        label="Generate Img2Img"
+                        gradientClass="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white shadow-lg shadow-orange-900/30"
+                        progressBarClass="from-orange-400 to-yellow-400"
+                    />
 
                     {/* Quick Info */}
                     {sourceImage && (
@@ -403,14 +301,8 @@ export default function Img2ImgGenerator() {
                             </p>
                         </div>
                     )}
-                </div>
-            </div>
-
-            <MissingModelsDialog
-                isOpen={isMissingModelsOpen}
-                onClose={() => setIsMissingModelsOpen(false)}
-                validationResult={validationResult}
-            />
-        </div>
+                </>
+            )}
+        />
     );
 }

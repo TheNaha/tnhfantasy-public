@@ -425,7 +425,7 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
 
     if metadata_source == "story_illustrate_prompt":
         return "story_illustrate_prompt"
-    if (job.metadata_ or {}).get("is_impersonation") is True:
+    if (job.metadata_ or {}).get("is_impersonation") is True or metadata_source == "impersonation":
         return "impersonation"
 
     for candidate in (result_type, workflow_type):

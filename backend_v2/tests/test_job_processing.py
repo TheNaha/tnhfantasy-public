@@ -12,6 +12,7 @@ from sqlmodel import Session
 
 from api.main import process_job
 from core.entities import JobStatus, Provider
+from services.job_processing import _classify_llm_job_type
 from services.job_service import JobService
 from services.load_balancer import LoadBalancer
 from services.provider_client import JobTimeoutError, ProviderCallError
@@ -558,3 +559,40 @@ async def test_finalize_successful_job_routes_by_task_type(session: Session, mon
     )
     assert len(image_calls) == 1, "image job must reach _finalize_image_job"
     assert len(llm_calls) == 1, "image job must not reach _finalize_llm_job"
+
+
+# ── _classify_llm_job_type ──────────────────────────────────────────────────
+
+def _llm_job(workflow=None, metadata=None):
+    return SimpleNamespace(workflow=workflow or {}, metadata_=metadata or {})
+
+
+def test_classify_impersonation_by_flag():
+    job = _llm_job(metadata={"type": "impersonate", "source": "impersonation", "is_impersonation": True})
+    assert _classify_llm_job_type(job, {}) == "impersonation"
+
+
+def test_classify_impersonation_by_source():
+    """Route builds type_='impersonate'/source='impersonation' — the source alone must classify."""
+    job = _llm_job(workflow={"type": "impersonate"}, metadata={"type": "impersonate", "source": "impersonation"})
+    assert _classify_llm_job_type(job, {"type": "text"}) == "impersonation"
+
+
+def test_classify_chat_reply_default():
+    job = _llm_job(workflow={"type": "chat_reply"}, metadata={"type": "chat_reply", "source": "chat"})
+    assert _classify_llm_job_type(job, {"type": "text"}) == "chat_reply"
+
+
+def test_classify_narrator_from_result():
+    job = _llm_job(workflow={"type": "narrator"}, metadata={"source": "narrator"})
+    assert _classify_llm_job_type(job, {"type": "narrator"}) == "narrator"
+
+
+def test_classify_story_illustrate_prompt():
+    job = _llm_job(metadata={"source": "story_illustrate_prompt"})
+    assert _classify_llm_job_type(job, {}) == "story_illustrate_prompt"
+
+
+def test_classify_suggest_reply():
+    job = _llm_job(workflow={"type": "suggest_reply"}, metadata={"type": "suggest_reply"})
+    assert _classify_llm_job_type(job, {}) == "suggest_reply"

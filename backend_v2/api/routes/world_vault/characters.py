@@ -6,7 +6,7 @@ import struct
 import zlib
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from io import BytesIO
 from PIL import Image, PngImagePlugin
@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Character
+from core.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -122,7 +123,7 @@ def parse_character_card(png_bytes: bytes) -> dict:
                 break
 
     if not payload:
-        raise HTTPException(status_code=400, detail="Could not parse character card data from PNG")
+        raise ValidationError("Could not parse character card data from PNG")
 
     # V2/V3 has a data wrapper; V1 is flat
     data = payload.get("data", payload) if isinstance(payload, dict) else {}
@@ -195,18 +196,18 @@ def import_character_card(
     session: Session = Depends(get_session),
 ):
     if not file.filename or not file.filename.lower().endswith(".png"):
-        raise HTTPException(status_code=400, detail="Only PNG files are supported")
+        raise ValidationError("Only PNG files are supported")
 
     png_bytes = file.file.read()
     if len(png_bytes) < 8 or png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
-        raise HTTPException(status_code=400, detail="Invalid PNG file")
+        raise ValidationError("Invalid PNG file")
 
     result = parse_character_card(png_bytes)
     char_data = result["character"]
     avatar_bytes = result["avatar_bytes"]
 
     if not char_data.get("name"):
-        raise HTTPException(status_code=400, detail="Character card must have a name")
+        raise ValidationError("Character card must have a name")
 
     character = Character(**{k: v for k, v in char_data.items() if v})
     character.created_at = datetime.now(timezone.utc)
@@ -242,7 +243,7 @@ def import_character_card(
 def get_character(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
     return _character_to_dict(character)
 
 @router.put("/{character_id}")
@@ -250,7 +251,7 @@ def update_character(character_id: str, character_update: CharacterUpdateRequest
     """Full update — replaces all provided fields (omitted fields are left unchanged)."""
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
 
     update_data = character_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -268,7 +269,7 @@ def patch_character(character_id: str, character_update: CharacterUpdateRequest,
     """Partial update — only updates fields explicitly provided (non-None values)."""
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
 
     update_data = character_update.model_dump(exclude_unset=True)
     # For PATCH, also skip None values so we never overwrite with null
@@ -286,7 +287,7 @@ def patch_character(character_id: str, character_update: CharacterUpdateRequest,
 def delete_character(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
     
     session.delete(character)
     session.commit()
@@ -296,7 +297,7 @@ def delete_character(character_id: str, session: Session = Depends(get_session))
 async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
 
     os.makedirs(f"/data/characters/{character_id}", exist_ok=True)
     avatar_path = f"/data/characters/{character_id}/avatar.png"
@@ -316,7 +317,7 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
 def get_avatar(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character or not character.avatar_path or not os.path.exists(character.avatar_path):
-        raise HTTPException(status_code=404, detail="Avatar not found")
+        raise NotFoundError("Avatar", character_id)
         
     return FileResponse(character.avatar_path)
 
@@ -325,7 +326,7 @@ def get_avatar(character_id: str, session: Session = Depends(get_session)):
 def clone_character(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
         
     char_dict = character.model_dump(exclude={"id", "created_at", "updated_at", "avatar_path"})
     char_dict["name"] = f"{character.name} (Copy)"
@@ -364,10 +365,10 @@ def clone_character(character_id: str, session: Session = Depends(get_session)):
 def export_character(character_id: str, session: Session = Depends(get_session)):
     character = session.get(Character, character_id)
     if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+        raise NotFoundError("Character", character_id)
         
     if not character.avatar_path or not os.path.exists(character.avatar_path):
-        raise HTTPException(status_code=400, detail="Character must have an avatar to export as a PNG card")
+        raise ValidationError("Character must have an avatar to export as a PNG card")
         
     # Format as V2 character card
     v2_data = {

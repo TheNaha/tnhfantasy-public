@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
 from core.entities import Provider
+from core.exceptions import NotFoundError
 from infrastructure.http_client import get_http_client
 from services.llm_config import resolve_default_provider, set_default_provider
 from services.provider_runtime import resolve_provider_runtime
@@ -18,7 +19,7 @@ class DefaultProviderResponse(BaseModel):
 def get_default_provider(session: Session = Depends(get_session)):
     resolved = resolve_default_provider(session)
     if not resolved:
-        raise HTTPException(status_code=404, detail="No LLM providers available")
+        raise NotFoundError("LLM provider", "default")
     return DefaultProviderResponse(provider_id=resolved[0], model_id=resolved[1])
 
 class UpdateProviderRequest(BaseModel):
@@ -40,7 +41,7 @@ async def get_available_models(session: Session = Depends(get_session)):
     """
     try:
         default = get_default_provider(session)
-    except HTTPException:
+    except NotFoundError:
         return []
 
     provider = session.get(Provider, default.provider_id)
@@ -117,7 +118,7 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
     """Test connectivity to an LLM provider worker. Returns health status and available models."""
     provider = session.get(Provider, provider_id)
     if not provider or provider.worker_type != "llm":
-        raise HTTPException(status_code=404, detail="LLM provider not found")
+        raise NotFoundError("LLM provider", provider_id)
 
     runtime = resolve_provider_runtime(provider)
     if not runtime.worker_url:

@@ -29,7 +29,7 @@ Each container:
 - Runs an HTTP server (`worker.py`)
 - Has its own provider credentials (env vars)
 - Exposes port 8000 internally
-- Backend communicates via HTTP using the container name `comfy-provider-{PROVIDER_ID}`
+- Backend communicates via HTTP using the container name `tnhcomfy-{PROVIDER_ID}`
 
 ---
 
@@ -123,7 +123,7 @@ docker ps
 You should see:
 ```
 CONTAINER ID   IMAGE                      PORTS
-abc123...      comfy-provider-modal       0.0.0.0:8001->8000/tcp
+abc123...      tnhcomfy-modal-account1   0.0.0.0:8001->8000/tcp
 ```
 
 ### 7. Test Multi-Profile
@@ -161,7 +161,7 @@ The backend will automatically:
 
 ```bash
 # Check container logs
-docker logs comfy-provider-modal-account2
+docker logs tnhcomfy-modal-account2
 
 # Common issues:
 # - Invalid Modal credentials
@@ -212,7 +212,7 @@ curl -X POST http://localhost:8000/inference \
 
 ```bash
 docker run -d \
-  --name comfy-provider-modal-test \
+  --name tnhcomfy-modal-test \
   --env-file .env.modal1 \
   --network tnhcomfy \
   comfy-provider-modal:latest
@@ -221,13 +221,13 @@ docker run -d \
 ### Stop All Provider Containers
 
 ```bash
-docker ps | grep comfy-provider | awk '{print $1}' | xargs docker stop
+docker ps | grep tnhcomfy- | awk '{print $1}' | xargs docker stop
 ```
 
 ### Remove All Provider Containers
 
 ```bash
-docker ps -a | grep comfy-provider | awk '{print $1}' | xargs docker rm
+docker ps -a | grep tnhcomfy- | awk '{print $1}' | xargs docker rm
 ```
 
 ---
@@ -266,9 +266,11 @@ This deploys the inference, model download, and file management endpoints.
 
 ### 3. Create Environment File
 
+Create `.env.beam` at the repo root (docker-compose reads it from there):
+
 ```bash
-cd provider_containers/image_worker/engines/beam
-cp .env.example .env.beam
+cd /path/to/repo/root
+cp .env.example.provider .env.beam
 # Edit .env.beam with your credentials
 ```
 
@@ -289,7 +291,7 @@ docker build -t comfy-provider-image:latest .
 
 # Run (or use docker-compose)
 docker run -d \
-  --name comfy-provider-beam-primary \
+  --name tnhcomfy-beam-primary \
   --env-file .env.beam \
   --network tnhcomfy \
   comfy-provider-image:latest

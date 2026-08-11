@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session
 from core.entities import Chat, Character, Message, MessageRole
+from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import substitute_tavern_vars
 
 router = APIRouter()
@@ -107,7 +108,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
 def get_chat(chat_id: str, session: Session = Depends(get_session)):
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
     return chat
 
 @router.delete("/{chat_id}")
@@ -116,7 +117,7 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     # Issue a direct SQL DELETE for messages first so the FK constraint is
     # satisfied before the chat row is removed.  The ORM unit-of-work can
@@ -148,7 +149,7 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     past_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -199,7 +200,7 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depends(get_session)):
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
     update_fields = data.model_dump(exclude_unset=True)
     changed_state = {}
     if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
@@ -263,7 +264,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
         
     message = Message(
         chat_id=chat_id,
@@ -307,7 +308,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
 
             if request.narrate:
                 if not chat.allow_narration:
-                    raise HTTPException(status_code=400, detail="Narration is disabled for this chat")
+                    raise ValidationError("Narration is disabled for this chat")
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
                 from services.llm_workflow import build_llm_workflow
@@ -363,7 +364,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             job_id = job.id
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise ComfyError(str(e))
 
     return {"user_message_id": message.id, "job_id": job_id}
 
@@ -371,7 +372,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
 def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session)):
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message", message_id)
         
     session.delete(message)
     session.commit()
@@ -385,7 +386,7 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     jobs = session.exec(
         select(Job)
@@ -449,9 +450,9 @@ def swipe_message(
     """
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message", message_id)
     if message.role != MessageRole.CHAR:
-        raise HTTPException(status_code=400, detail="Only character messages support swipe")
+        raise ValidationError("Only character messages support swipe")
 
     meta = message.message_metadata or {}
     alternates: list[str] = meta.get("alternates", [message.content])
@@ -466,10 +467,10 @@ def swipe_message(
         active_index = (active_index - 1) % n
     elif data.direction == "select":
         if data.index is None or data.index < 0 or data.index >= n:
-            raise HTTPException(status_code=400, detail=f"Invalid index {data.index} (0–{n-1})")
+            raise ValidationError(f"Invalid index {data.index} (0–{n-1})")
         active_index = data.index
     else:
-        raise HTTPException(status_code=400, detail="direction must be left | right | select")
+        raise ValidationError("direction must be left | right | select")
 
     message.content = alternates[active_index]
     message.message_metadata = {**meta, "alternates": alternates, "active_index": active_index}
@@ -493,7 +494,7 @@ def pin_message(
     """Toggle the pinned state of a message. Pinned messages survive context pruning."""
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message", message_id)
     message.pinned = data.pinned
     message.updated_at = datetime.now(timezone.utc)
     session.add(message)
@@ -516,9 +517,9 @@ def edit_message(
 ):
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message", message_id)
     if message.role not in (MessageRole.USER, MessageRole.CHAR):
-        raise HTTPException(status_code=400, detail="Only user and character messages can be edited")
+        raise ValidationError("Only user and character messages can be edited")
     message.content = data.content
     message.updated_at = datetime.now(timezone.utc)
     session.add(message)
@@ -535,11 +536,11 @@ def rollback_chat(
     """Delete the target message and everything after it (undo mistakes)."""
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     anchor = session.get(Message, req.message_id)
     if not anchor or anchor.chat_id != chat_id:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise NotFoundError("Message", message_id)
 
     all_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -567,7 +568,7 @@ async def regenerate_reply(
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     all_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -577,7 +578,7 @@ async def regenerate_reply(
     if req.message_id:
         anchor = session.get(Message, req.message_id)
         if not anchor or anchor.chat_id != chat_id:
-            raise HTTPException(status_code=404, detail="Message not found")
+            raise NotFoundError("Message", message_id)
     else:
         for m in reversed(all_messages):
             if m.role == MessageRole.USER:
@@ -585,7 +586,7 @@ async def regenerate_reply(
                 break
 
     if not anchor:
-        raise HTTPException(status_code=400, detail="No user message to regenerate")
+        raise ValidationError("No user message to regenerate")
 
     anchor_index = next(i for i, m in enumerate(all_messages) if m.id == anchor.id)
     trailing = all_messages[anchor_index + 1:]
@@ -655,7 +656,7 @@ async def regenerate_reply(
         job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(job.id, task_type="llm")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
     return {"job_id": job.id, "removed_messages": len(trailing)}
 
@@ -677,7 +678,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     past_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -738,7 +739,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
             model=chat.llm_model or _get_default_llm_model(),
             workspace="chat",
             source="impersonation",
-            extra_metadata={"hint": req.hint},
+            extra_metadata={"hint": req.hint, "is_impersonation": True},
         )
 
         imp_job = await job_service.create_job(
@@ -749,7 +750,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         await queue_manager.enqueue(imp_job.id, task_type="llm")
         return {"job_id": imp_job.id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 
 class SuggestReplyRequest(BaseModel):
@@ -762,7 +763,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
         
     past_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -870,7 +871,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
         return {"job_id": job.id}
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ComfyError(str(e))
 
 @router.post("/{chat_id}/scene")
 async def generate_scene(
@@ -883,11 +884,11 @@ async def generate_scene(
     
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
         
     past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
     if not past_messages:
-        raise HTTPException(status_code=400, detail="No messages in chat to base scene on")
+        raise ValidationError("No messages in chat to base scene on")
         
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
     
@@ -976,9 +977,9 @@ async def illustrate_chat(
 
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
     if not chat.allow_image_generation:
-        raise HTTPException(status_code=400, detail="Image generation is disabled for this chat")
+        raise ValidationError("Image generation is disabled for this chat")
 
     image_prompt = (request.image_prompt or "").strip()
     if not image_prompt:
@@ -994,7 +995,7 @@ async def illustrate_chat(
         if last_char and last_char.content.strip():
             image_prompt = last_char.content.strip()
     if not image_prompt:
-        raise HTTPException(status_code=400, detail="No prompt and no character reply to illustrate")
+        raise ValidationError("No prompt and no character reply to illustrate")
 
     character = session.get(Character, chat.character_id) if chat.character_id else None
 
@@ -1047,7 +1048,7 @@ def list_chat_images(chat_id: str, session: Session = Depends(get_session)):
     """List all images attached to messages in this chat (workspace gallery)."""
     chat = session.get(Chat, chat_id)
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise NotFoundError("Chat", chat_id)
 
     rows = session.exec(
         select(Message)

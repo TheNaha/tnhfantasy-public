@@ -239,8 +239,8 @@ class TestJobServiceUpdate:
             service = JobService(session)
             job = await service.create_job(workflow=sample_workflow, metadata={})
             mock_emit.reset_mock()
-            # The tightened FSM (no PENDING->FAILED) requires the job to be
-            # SENT_TO_PROVIDER before it can transition to FAILED.
+            # PENDING->FAILED is allowed so the runner can fail jobs with no
+            # remaining providers; here we exercise FAILED from SENT_TO_PROVIDER.
             await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
             mock_emit.reset_mock()
             await service.update_job(job.id, status=JobStatus.FAILED, error="timeout")
@@ -263,6 +263,52 @@ class TestJobServiceUpdate:
             assert updated.completed_at is not None
             mock_emit.assert_called_once()
             assert mock_emit.call_args[0][0] == EventType.JOB_CANCELLED
+
+
+class TestJobServiceFsm:
+    """FSM retry/failover transitions — the job_runner resets in-flight jobs
+    back to PENDING during retries and provider failover."""
+
+    @pytest.mark.asyncio
+    async def test_in_flight_can_reset_to_pending(self, session: Session, sample_workflow):
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+        updated = await service.update_job(job.id, status=JobStatus.PENDING, message="Retrying...")
+        assert updated.status == JobStatus.PENDING
+
+    @pytest.mark.asyncio
+    async def test_generating_can_reset_to_pending(self, session: Session, sample_workflow):
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+        await service.update_job(job.id, status=JobStatus.CONNECTED)
+        await service.update_job(job.id, status=JobStatus.GENERATING)
+        updated = await service.update_job(job.id, status=JobStatus.PENDING)
+        assert updated.status == JobStatus.PENDING
+
+    @pytest.mark.asyncio
+    async def test_pending_can_fail_when_no_providers(self, session: Session, sample_workflow):
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        updated = await service.update_job(job.id, status=JobStatus.FAILED, error="No available providers")
+        assert updated.status == JobStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_completed_is_terminal(self, session: Session, sample_workflow):
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+        await service.update_job(job.id, status=JobStatus.COMPLETED)
+        updated = await service.update_job(job.id, status=JobStatus.PENDING, message="should be ignored")
+        assert updated.status == JobStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_cancelled_is_terminal(self, session: Session, sample_workflow):
+        service = JobService(session)
+        job = await service.create_job(workflow=sample_workflow, metadata={})
+        updated = await service.update_job(job.id, status=JobStatus.CANCELLED)
+        assert updated.status == JobStatus.CANCELLED
 
 
 class TestJobServiceDelete:

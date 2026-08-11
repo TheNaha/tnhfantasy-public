@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_embedding_service, get_session
 from core.entities import Lorebook, LorebookEntry
+from core.exceptions import NotFoundError
 from services.embedding_service import EmbeddingService
 
 router = APIRouter()
@@ -37,14 +38,14 @@ def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session))
 def get_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
-        raise HTTPException(status_code=404, detail="Lorebook not found")
+        raise NotFoundError("Lorebook", lorebook_id)
     return lorebook
 
 @router.put("/{lorebook_id}", response_model=Lorebook)
 def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Session = Depends(get_session)):
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
-        raise HTTPException(status_code=404, detail="Lorebook not found")
+        raise NotFoundError("Lorebook", lorebook_id)
     
     update_dict = update_data.model_dump(exclude_unset=True)
     if "name" in update_dict:
@@ -62,7 +63,7 @@ def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Sess
 def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
-        raise HTTPException(status_code=404, detail="Lorebook not found")
+        raise NotFoundError("Lorebook", lorebook_id)
         
     entries = session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)).all()
     for entry in entries:
@@ -87,7 +88,7 @@ def search_entries(
     """Semantic search for lorebook entries based on a query string."""
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
-        raise HTTPException(status_code=404, detail="Lorebook not found")
+        raise NotFoundError("Lorebook", lorebook_id)
         
     if not q or not q.strip():
         return []
@@ -139,7 +140,7 @@ def create_entry(
 ):
     lorebook = session.get(Lorebook, lorebook_id)
     if not lorebook:
-        raise HTTPException(status_code=404, detail="Lorebook not found")
+        raise NotFoundError("Lorebook", lorebook_id)
         
     entry.lorebook_id = lorebook_id
     
@@ -167,7 +168,7 @@ def update_entry(
 ):
     entry = session.get(LorebookEntry, entry_id)
     if not entry or entry.lorebook_id != lorebook_id:
-        raise HTTPException(status_code=404, detail="Entry not found")
+        raise NotFoundError("LorebookEntry", entry_id)
         
     needs_embedding_update = False
     update_dict = update_data.model_dump(exclude_unset=True)
@@ -196,7 +197,7 @@ def update_entry(
 def delete_entry(lorebook_id: str, entry_id: str, session: Session = Depends(get_session)):
     entry = session.get(LorebookEntry, entry_id)
     if not entry or entry.lorebook_id != lorebook_id:
-        raise HTTPException(status_code=404, detail="Entry not found")
+        raise NotFoundError("LorebookEntry", entry_id)
         
     session.delete(entry)
     session.commit()

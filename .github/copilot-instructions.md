@@ -79,6 +79,6 @@ npm test
   `api.deps.get_session` and `infrastructure.database.get_session` (see `backend_v2/tests/conftest.py`).
 - Vite uses proxy fallbacks in `frontend_v2/vite.config.js`:
   `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:8002`.
-- Docker frontend file watching depends on polling (`CHOKIDAR_USEPOLLING=true`).
+- Docker frontend file watching uses Vite polling (`usePolling: true` in `frontend_v2/vite.config.js`); no `CHOKIDAR_USEPOLLING` needed.
 - `LoadBalancer` currently uses class-level state in `backend_v2/services/load_balancer.py`; avoid introducing more shared mutable globals.
 - Startup recovers pending/running jobs from DB and re-enqueues them; preserve that behavior when changing lifecycle code.

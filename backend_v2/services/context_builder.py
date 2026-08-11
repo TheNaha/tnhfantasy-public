@@ -591,9 +591,11 @@ def build_chat_context(
 
     all_msgs = prune_context(all_msgs, system_prompt, [], max_context_tokens)
 
-    # Strip the internal _pinned helper key before returning
+    # Strip the internal _pinned/_kind helper keys before returning so
+    # unknown fields never leak into provider-bound LLM payloads.
     for m in all_msgs:
         m.pop("_pinned", None)
+        m.pop("_kind", None)
 
     return system_prompt, all_msgs
 

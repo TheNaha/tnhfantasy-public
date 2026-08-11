@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, Loader2 } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
@@ -10,10 +10,8 @@ import { useActiveJobs } from '../hooks/useActiveJobs';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import ModelMetadataModal from '../components/ModelMetadataModal';
-import MissingModelsDialog from '../components/generator/MissingModelsDialog';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import PromptPanel from '../components/generator/PromptPanel';
-import GeneratorTabs from '../components/generator/GeneratorTabs';
 import ModelSection from '../components/generator/ModelSection';
 import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
 import ControlNetSection from '../components/generator/ControlNetSection';
@@ -25,6 +23,7 @@ import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 import { useNavigate } from 'react-router-dom';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
+import GeneratorShell from '../components/generator/GeneratorShell';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -185,134 +184,130 @@ export default function SimpleGenerator() {
     };
 
     return (
-        <div className="pb-24">
-            <div className="max-w-6xl mx-auto mb-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-                        Create
-                    </h1>
-                    {activeJobCount > 0 && (
-                        <div className="flex items-center gap-2 bg-blue-900/30 text-blue-200 px-3 py-1.5 rounded-full text-sm border border-blue-800/50 backdrop-blur-sm">
-                            <Loader2 className="animate-spin" size={14} />
-                            <span>{activeJobCount} in queue</span>
-                        </div>
-                    )}
-                </div>
-                <GeneratorTabs />
-            </div>
+        <>
+            <GeneratorShell
+                accentClass="from-blue-400 to-purple-500"
+                activeJobCount={activeJobCount}
+                gapClass="gap-3 lg:gap-8"
+                leftColumnClass="order-last lg:order-none"
+                rightColumnClass="order-first lg:order-none"
+                isMissingModelsOpen={isMissingModelsOpen}
+                setIsMissingModelsOpen={setIsMissingModelsOpen}
+                validationResult={validationResult}
+                leftColumn={(
+                    <>
+                        <PromptPanel />
 
-            <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-3 lg:gap-8">
-                <div className="lg:col-span-2 space-y-3 lg:space-y-4 md:space-y-6 order-last lg:order-none">
-                    <PromptPanel />
-
-                    <ModelSection
-                        selectedCheckpoint={selectedCheckpoint}
-                        setSelectedCheckpoint={setSelectedCheckpoint}
-                        selectedVae={selectedVae}
-                        setSelectedVae={setSelectedVae}
-                        selectedClip={selectedClip}
-                        setSelectedClip={setSelectedClip}
-                        selectedClip2={selectedClip2}
-                        setSelectedClip2={setSelectedClip2}
-                        selectedLoras={selectedLoras}
-                        addLora={addLora}
-                        removeLora={removeLora}
-                        updateLora={updateLora}
-                        addTriggerWords={addTriggerWords}
-                        prompt={prompt}
-                        negativePrompt={negativePrompt}
-                        setPrompt={setPrompt}
-                        setNegativePrompt={setNegativePrompt}
-                        checkpoints={checkpoints}
-                        unetModels={unetModels}
-                        vaeModels={vaeModels}
-                        clipModels={clipModels}
-                        embeddingModels={embeddingModels}
-                        setViewingMetadata={setViewingMetadata}
-                        providers={providers}
-                        providersLoading={providersLoading}
-                        autoOpenLoraIndex={autoOpenLoraIndex}
-                        setAutoOpenLoraIndex={setAutoOpenLoraIndex}
-                    />
-
-                    <ControlNetSection
-                        controlnets={controlnets}
-                        addControlNet={addControlNet}
-                        removeControlNet={removeControlNet}
-                        updateControlNet={updateControlNet}
-                        controlNetModels={controlNetModels}
-                    />
-
-                    <IPAdapterSection
-                        ipAdapters={ipAdapters}
-                        addIpAdapter={addIpAdapter}
-                        removeIpAdapter={removeIpAdapter}
-                        updateIpAdapter={updateIpAdapter}
-                    />
-
-                    <EnhancementsSection
-                        hiresFix={hiresFix}
-                        setHiresFix={setHiresFix}
-                        hiresUpscaler={hiresUpscaler}
-                        setHiresUpscaler={setHiresUpscaler}
-                        hiresDenoise={hiresDenoise}
-                        setHiresDenoise={setHiresDenoise}
-                        hiresUpscale={hiresUpscale}
-                        setHiresUpscale={setHiresUpscale}
-                        hiresSteps={hiresSteps}
-                        setHiresSteps={setHiresSteps}
-                        upscalerModels={upscalerModels}
-                        adetailer={adetailer}
-                        setAdetailer={setAdetailer}
-                        adetailerModel={adetailerModel}
-                        setAdetailerModel={setAdetailerModel}
-                        adetailerPrompt={adetailerPrompt}
-                        setAdetailerPrompt={setAdetailerPrompt}
-                        adetailerSteps={adetailerSteps}
-                        setAdetailerSteps={setAdetailerSteps}
-                        adetailerDenoise={adetailerDenoise}
-                        setAdetailerDenoise={setAdetailerDenoise}
-                        adetailerInpaintMasked={adetailerInpaintMasked}
-                        setAdetailerInpaintMasked={setAdetailerInpaintMasked}
-                        adetailerModels={adetailerModels}
-                        enableFreeU={enableFreeU}
-                        setEnableFreeU={setEnableFreeU}
-                        enablePAG={enablePAG}
-                        setEnablePAG={setEnablePAG}
-                        pagScale={pagScale}
-                        setPagScale={setPagScale}
-                        enableLatentUpscale={enableLatentUpscale}
-                        setEnableLatentUpscale={setEnableLatentUpscale}
-                        latentUpscaleMultiplier={latentUpscaleMultiplier}
-                        setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                    />
-                </div>
-
-                <div className="order-first lg:order-none space-y-4 lg:space-y-4 md:space-y-6">
-                    <GeneratorReadinessPanel
-                        providers={providers}
-                        providersLoading={providersLoading}
-                        validationSummary={validationSummary}
-                        isChecking={preflightChecking}
-                        title="Generation Runway"
-                        hint="Provider health and model checks before you commit a generation."
-                    />
-
-                    <ResolutionSettings />
-                    <SamplingSettings />
-
-                    <div className="hidden md:block">
-                        <GenerateButtonBar
-                            generating={generating}
-                            progress={progress}
+                        <ModelSection
+                            selectedCheckpoint={selectedCheckpoint}
+                            setSelectedCheckpoint={setSelectedCheckpoint}
+                            selectedVae={selectedVae}
+                            setSelectedVae={setSelectedVae}
+                            selectedClip={selectedClip}
+                            setSelectedClip={setSelectedClip}
+                            selectedClip2={selectedClip2}
+                            setSelectedClip2={setSelectedClip2}
+                            selectedLoras={selectedLoras}
+                            addLora={addLora}
+                            removeLora={removeLora}
+                            updateLora={updateLora}
+                            addTriggerWords={addTriggerWords}
                             prompt={prompt}
-                            onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
-                            onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                            onGenerateVariations={handleGenerateVariations}
+                            negativePrompt={negativePrompt}
+                            setPrompt={setPrompt}
+                            setNegativePrompt={setNegativePrompt}
+                            checkpoints={checkpoints}
+                            unetModels={unetModels}
+                            vaeModels={vaeModels}
+                            clipModels={clipModels}
+                            embeddingModels={embeddingModels}
+                            setViewingMetadata={setViewingMetadata}
+                            providers={providers}
+                            providersLoading={providersLoading}
+                            autoOpenLoraIndex={autoOpenLoraIndex}
+                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                         />
-                    </div>
-                </div>
-            </div>
+
+                        <ControlNetSection
+                            controlnets={controlnets}
+                            addControlNet={addControlNet}
+                            removeControlNet={removeControlNet}
+                            updateControlNet={updateControlNet}
+                            controlNetModels={controlNetModels}
+                        />
+
+                        <IPAdapterSection
+                            ipAdapters={ipAdapters}
+                            addIpAdapter={addIpAdapter}
+                            removeIpAdapter={removeIpAdapter}
+                            updateIpAdapter={updateIpAdapter}
+                        />
+
+                        <EnhancementsSection
+                            hiresFix={hiresFix}
+                            setHiresFix={setHiresFix}
+                            hiresUpscaler={hiresUpscaler}
+                            setHiresUpscaler={setHiresUpscaler}
+                            hiresDenoise={hiresDenoise}
+                            setHiresDenoise={setHiresDenoise}
+                            hiresUpscale={hiresUpscale}
+                            setHiresUpscale={setHiresUpscale}
+                            hiresSteps={hiresSteps}
+                            setHiresSteps={setHiresSteps}
+                            upscalerModels={upscalerModels}
+                            adetailer={adetailer}
+                            setAdetailer={setAdetailer}
+                            adetailerModel={adetailerModel}
+                            setAdetailerModel={setAdetailerModel}
+                            adetailerPrompt={adetailerPrompt}
+                            setAdetailerPrompt={setAdetailerPrompt}
+                            adetailerSteps={adetailerSteps}
+                            setAdetailerSteps={setAdetailerSteps}
+                            adetailerDenoise={adetailerDenoise}
+                            setAdetailerDenoise={setAdetailerDenoise}
+                            adetailerInpaintMasked={adetailerInpaintMasked}
+                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
+                            adetailerModels={adetailerModels}
+                            enableFreeU={enableFreeU}
+                            setEnableFreeU={setEnableFreeU}
+                            enablePAG={enablePAG}
+                            setEnablePAG={setEnablePAG}
+                            pagScale={pagScale}
+                            setPagScale={setPagScale}
+                            enableLatentUpscale={enableLatentUpscale}
+                            setEnableLatentUpscale={setEnableLatentUpscale}
+                            latentUpscaleMultiplier={latentUpscaleMultiplier}
+                            setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
+                        />
+                    </>
+                )}
+                rightColumn={(
+                    <>
+                        <GeneratorReadinessPanel
+                            providers={providers}
+                            providersLoading={providersLoading}
+                            validationSummary={validationSummary}
+                            isChecking={preflightChecking}
+                            title="Generation Runway"
+                            hint="Provider health and model checks before you commit a generation."
+                        />
+
+                        <ResolutionSettings />
+                        <SamplingSettings />
+
+                        <div className="hidden md:block">
+                            <GenerateButtonBar
+                                generating={generating}
+                                progress={progress}
+                                prompt={prompt}
+                                onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                                onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                                onGenerateVariations={handleGenerateVariations}
+                            />
+                        </div>
+                    </>
+                )}
+            />
 
             <div className="h-20 md:hidden"></div>
 
@@ -336,12 +331,6 @@ export default function SimpleGenerator() {
                 />
             )}
 
-            <MissingModelsDialog
-                isOpen={isMissingModelsOpen}
-                onClose={() => setIsMissingModelsOpen(false)}
-                validationResult={validationResult}
-            />
-
             <button
                 onClick={() => navigate('/')}
                 className="fixed bottom-6 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
@@ -349,6 +338,6 @@ export default function SimpleGenerator() {
             >
                 <FolderOpen size={24} />
             </button>
-        </div>
+        </>
     );
 }

@@ -123,6 +123,23 @@ class TestTranslateTaskEvents:
         out = [line async for line in translate_task_events(source, job_id="job-5")]
         assert out == []
 
+    @pytest.mark.asyncio
+    async def test_task_event_json_string_passthrough(self):
+        # Engines (e.g. beam) emit TaskEvent JSON strings inside their raw
+        # stream; these must round-trip unchanged, not be misread as legacy
+        # {"status": ...} updates (which would degrade cancelled -> progress).
+        for te in (
+            TaskEvent(event="cancelled", job_id="job-6", message="Job cancelled"),
+            TaskEvent(event="failed", job_id="job-6", message="boom", retryable=True),
+            TaskEvent(event="completed", job_id="job-6", outputs=[]),
+        ):
+            source = _async_iter([te.to_ndjson()])
+            out = [line async for line in translate_task_events(source, job_id="job-6")]
+            assert len(out) == 1
+            parsed = json.loads(out[0])
+            assert parsed["event"] == te.event
+            assert parsed["job_id"] == "job-6"
+
 
 class TestVLLMModalRemoteEventTranslation:
     """Covers llm_worker.engines.modal.client._translate_remote_event."""
@@ -362,6 +379,78 @@ class TestDirectUrlInferenceJobId:
         assert events[0]["event"] == "node"
         assert events[1]["event"] == "completed"
         assert events[1]["job_id"] == "job-direct-1"
+
+    @pytest.mark.asyncio
+    async def test_cancellation_emits_task_event(self, monkeypatch):
+        import sys
+        import types
+        from image_worker.engines.direct_url import client as direct_client
+
+        monkeypatch.setattr(direct_client, "PROVIDER_ID", "direct-test")
+
+        client = direct_client.DirectUrlProviderClient(runtime_config={})
+        req = InferenceRequest(workflow={"nodes": []}, job_id="job-direct-cancel")
+
+        async def fake_execute(workflow_json, comfy_api_url, image_fetch_mode, logger):
+            yield {"status": "executing", "node": "KSampler"}
+
+        monkeypatch.setitem(
+            sys.modules,
+            "image_worker.comfy.workflow_executor",
+            types.SimpleNamespace(
+                execute_comfy_workflow=fake_execute,
+                IMAGE_FETCH_VIEW_API="view_api",
+            ),
+        )
+
+        await client.job_tracker.start_job("job-direct-cancel")
+        await client.job_tracker.cancel_job("job-direct-cancel")
+
+        response = await client.inference(req)
+        chunks = [c async for c in response.body_iterator]
+        body = "".join(chunks)
+
+        events = [json.loads(l) for l in body.strip().split("\n") if l.strip()]
+        assert events[0]["event"] == "cancelled"
+        assert events[0]["job_id"] == "job-direct-cancel"
+        # Tracker must be cleaned up when the job ends.
+        assert not await client.job_tracker.is_active("job-direct-cancel")
+
+    @pytest.mark.asyncio
+    async def test_timeout_emits_retryable_failure(self, monkeypatch):
+        import sys
+        import types
+        import asyncio
+        from image_worker.engines.direct_url import client as direct_client
+
+        monkeypatch.setattr(direct_client, "PROVIDER_ID", "direct-test")
+
+        client = direct_client.DirectUrlProviderClient(runtime_config={})
+
+        async def fake_execute(workflow_json, comfy_api_url, image_fetch_mode, logger):
+            await asyncio.sleep(300)
+            yield {"status": "error", "message": "unreachable"}
+
+        monkeypatch.setitem(
+            sys.modules,
+            "image_worker.comfy.workflow_executor",
+            types.SimpleNamespace(
+                execute_comfy_workflow=fake_execute,
+                IMAGE_FETCH_VIEW_API="view_api",
+            ),
+        )
+
+        req = InferenceRequest(
+            workflow={"nodes": []}, job_id="job-direct-timeout", timeout_seconds=0.01
+        )
+        response = await client.inference(req)
+        chunks = [c async for c in response.body_iterator]
+        body = "".join(chunks)
+
+        events = [json.loads(l) for l in body.strip().split("\n") if l.strip()]
+        assert events[0]["event"] == "failed"
+        assert events[0]["retryable"] is True
+        assert "timed out" in events[0]["message"]
 
 
 def _async_iter(items):
