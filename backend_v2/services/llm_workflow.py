@@ -11,7 +11,7 @@ def build_llm_workflow(
     character_id: str | None = None,
     character_system_prompt: str | None = None,
     model: str | None = None,
-    workspace: str = "roleplay",
+    workspace: str = "chat",
     source: str | None = None,
     parent_job_id: str | None = None,
     extra_metadata: dict[str, Any] | None = None,

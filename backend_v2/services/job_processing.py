@@ -413,6 +413,28 @@ async def finalize_persisted_job_outputs(
     )
 
 
+def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
+    """Classify an LLM job into a single semantic type.
+
+    Returns one of: "chat_reply", "story_continue", "narrator",
+    "story_illustrate_prompt", "impersonation", "suggest_reply".
+    """
+    workflow_type = (job.workflow or {}).get("type") if isinstance(job.workflow, dict) else None
+    result_type = final_result.get("type")
+    metadata_source = (job.metadata_ or {}).get("source") if isinstance(job.metadata_, dict) else None
+
+    if metadata_source == "story_illustrate_prompt":
+        return "story_illustrate_prompt"
+    if (job.metadata_ or {}).get("is_impersonation") is True:
+        return "impersonation"
+
+    for candidate in (result_type, workflow_type):
+        if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply"}:
+            return candidate
+
+    return "chat_reply"
+
+
 async def _finalize_llm_job(
     *,
     job,
@@ -423,34 +445,9 @@ async def _finalize_llm_job(
     final_result: dict,
     outputs: list,
 ) -> None:
-    is_chat_reply = job.task_type == 'llm' and (
-        final_result.get('type') == 'chat_reply'
-        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "chat_reply")
-    )
-    is_story_continue = job.task_type == 'llm' and (
-        final_result.get('type') == 'story_continue'
-        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "story_continue")
-    )
-    is_narrator = job.task_type == 'llm' and (
-        final_result.get('type') == 'narrator'
-        or (isinstance(job.workflow, dict) and job.workflow.get("type") == "narrator")
-    )
+    job_type = _classify_llm_job_type(job, final_result)
 
-    is_illustrate_prompt = (
-        job.task_type == 'llm'
-        and isinstance(job.metadata_, dict)
-        and job.metadata_.get("source") == "story_illustrate_prompt"
-    )
-
-    is_impersonation = (
-        job.task_type == 'llm'
-        and isinstance(job.metadata_, dict)
-        and job.metadata_.get("is_impersonation") is True
-    )
-
-    event_extra: dict[str, Any] | None = None
-
-    if is_impersonation:
+    if job_type == "impersonation":
         imp_text = ""
         if final_result.get("outputs") and isinstance(final_result["outputs"], list):
             imp_text = (final_result["outputs"][0] or {}).get("content", "")
@@ -476,12 +473,12 @@ async def _finalize_llm_job(
         )
         return
 
-    if is_illustrate_prompt:
+    if job_type == "story_illustrate_prompt":
         generated_prompt = ""
-        if final_result.get("outputs") and isinstance(final_result["outputs"], list):
-            generated_prompt = (final_result["outputs"][0] or {}).get("content", "")
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            generated_prompt = (final_result.get("outputs")[0] or {}).get("content", "")
         if not generated_prompt and final_result.get("text"):
-            generated_prompt = final_result["text"]
+            generated_prompt = final_result.get("text")
         generated_prompt = generated_prompt.strip()
 
         story_id   = job.metadata_.get("story_id")
@@ -511,7 +508,7 @@ async def _finalize_llm_job(
         )
         return
 
-    if is_narrator:
+    if job_type == "narrator":
         narrator_content = ""
         if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
             narrator_content = (final_result.get("outputs")[0] or {}).get("content", "")
@@ -528,7 +525,32 @@ async def _finalize_llm_job(
             "chat_id": narrator_chat_id,
             "content": narrator_content,
         }
-    elif is_chat_reply or is_story_continue:
+    elif job_type == "suggest_reply":
+        # Suggestions are returned to the frontend only (via the JOB_COMPLETED
+        # event that useLLMJobResult polls). They must NOT be persisted as a
+        # Message in the chat — the world_integration_service dispatcher has no
+        # handler for "suggest_reply", so emitting type="suggest_reply" is
+        # a no-op there and the text reaches the caller via outputs/content.
+        assistant_content = ""
+        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
+            assistant_output: dict[str, Any] = final_result.get("outputs")[0] or {}
+            assistant_content = assistant_output.get("content", "")
+        else:
+            assistant_output = {}
+        if not assistant_content and final_result.get("text"):
+            assistant_content = final_result.get("text")
+
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        if not chat_id:
+            chat_id = final_result.get("chat_id")
+
+        event_extra = {
+            "type": "suggest_reply",
+            "metadata": {"chat_id": chat_id, "type": "suggest_reply"},
+            "chat_id": chat_id,
+            "content": assistant_content,
+        }
+    elif job_type in ("chat_reply", "story_continue"):
         assistant_content = ""
         assistant_output: dict[str, Any] = {}
         if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
@@ -545,10 +567,10 @@ async def _finalize_llm_job(
         if not story_id:
             story_id = final_result.get("story_id")
 
-        entity_id = chat_id if is_chat_reply else story_id
+        entity_id = chat_id if job_type == "chat_reply" else story_id
 
         # --- Agentic tool-call handling ---
-        if is_chat_reply and assistant_output.get("tool_calls"):
+        if job_type == "chat_reply" and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
                 # Decoupled DB checks; grant basic safe tool access by default.
@@ -620,8 +642,8 @@ async def _finalize_llm_job(
             )
             return
 
-        event_type_str = "chat_reply" if is_chat_reply else "story_continue"
-        if is_chat_reply:
+        event_type_str = job_type
+        if job_type == "chat_reply":
             event_extra = {
                 "type": event_type_str,
                 "metadata": {"chat_id": entity_id, "type": event_type_str, "regenerated": job.metadata_.get("regenerated") if job.metadata_ else False},

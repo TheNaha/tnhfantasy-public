@@ -105,7 +105,8 @@ services:
 
   # Provider containers - managed by compose (backend autostart is disabled).
   # To add a provider: copy this block, set a unique PROVIDER_ID and container_name.
-  # container_name MUST be "comfy-provider-{PROVIDER_ID}" so the backend can detect it.
+  # container_name MUST be "tnhcomfy-{PROVIDER_ID}" so the backend can detect it
+  # (see infrastructure/providers/runtime.py:provider_container_name).
   provider-modal-zetsuke:
     build:
       context: ./provider_containers
@@ -181,6 +182,8 @@ services:
       context: ./provider_containers
       dockerfile: llm_worker/Dockerfile
     container_name: tnhcomfy-llm-local
+    profiles:
+      - providers
     env_file:
       - .env.llm-local
     depends_on:
@@ -209,6 +212,7 @@ services:
       retries: 5
       start_period: 30s
 
+  # Note: Keep this provider commented out as i am not using it. but keep it supported for future use.
   # provider-beam:
   #   build:
   #     context: ./provider_containers
@@ -243,7 +247,6 @@ services:
   #     timeout: 10s
   #     retries: 5
   #     start_period: 30s
-
   # provider-direct-url:
   #   build:
   #     context: ./provider_containers

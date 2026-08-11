@@ -63,6 +63,8 @@ class ConnectedWorker:
 connected_workers: dict[str, ConnectedWorker] = {}  # provider_id -> worker
 pending_job_futures: dict[str, asyncio.Future] = {}
 WORKER_HEARTBEAT_TIMEOUT_SECONDS = 90
+_workers_lock = asyncio.Lock()
+_futures_lock = asyncio.Lock()
 
 
 def _is_socket_connected(worker: ConnectedWorker) -> bool:
@@ -72,7 +74,19 @@ def _is_socket_connected(worker: ConnectedWorker) -> bool:
     return getattr(state, "name", "").upper() == "CONNECTED"
 
 
-def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
+async def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
+    async with _workers_lock:
+        return _get_live_worker_unlocked(provider_id)
+
+
+def _get_live_worker_unlocked(provider_id: str) -> ConnectedWorker | None:
+    """Synchronous worker lookup. Caller may hold _workers_lock or not.
+
+    Dict .get() and .pop() are atomic in CPython for a single key, and the only
+    mutation here (pop on stale/heartbeat-timeout) is the same operation the
+    async path performs under the lock — the race window is negligible for a
+    read-only health check.
+    """
     worker = connected_workers.get(provider_id)
     if not worker:
         return None
@@ -98,7 +112,7 @@ def get_connected_workers() -> dict[str, dict]:
     """Get info about all connected workers."""
     workers: dict[str, dict] = {}
     for provider_id in list(connected_workers.keys()):
-        worker = _get_live_worker(provider_id)
+        worker = _get_live_worker_unlocked(provider_id)
         if worker:
             workers[provider_id] = worker.to_dict()
     return workers
@@ -106,12 +120,12 @@ def get_connected_workers() -> dict[str, dict]:
 
 def is_worker_connected(provider_id: str) -> bool:
     """Check if a worker is connected for this provider."""
-    return _get_live_worker(provider_id) is not None
+    return _get_live_worker_unlocked(provider_id) is not None
 
 
 async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: float) -> dict:
     """Send a job to a connected external worker and await its terminal result."""
-    worker = _get_live_worker(provider_id)
+    worker = await _get_live_worker(provider_id)
     if not worker:
         raise ProviderCallError(
             f"No external worker connected for provider {provider_id}",
@@ -125,7 +139,8 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
 
     loop = asyncio.get_running_loop()
     future = loop.create_future()
-    pending_job_futures[job_id] = future
+    async with _futures_lock:
+        pending_job_futures[job_id] = future
 
     try:
         await worker.ws.send_json({
@@ -134,7 +149,8 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
         })
         worker.current_job = job_id
     except Exception as exc:
-        pending_job_futures.pop(job_id, None)
+        async with _futures_lock:
+            pending_job_futures.pop(job_id, None)
         raise ProviderCallError(
             f"Failed to dispatch job to external worker: {exc}",
             provider_id=provider_id,
@@ -144,13 +160,14 @@ async def dispatch_job_to_worker(provider_id: str, job_data: dict, timeout: floa
     try:
         return await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError as exc:
-        pending_job_futures.pop(job_id, None)
+        async with _futures_lock:
+            pending_job_futures.pop(job_id, None)
         raise exc
 
 
 async def request_worker_job_cancel(provider_id: str, job_id: str) -> bool:
     """Request cancellation from a connected external worker."""
-    worker = _get_live_worker(provider_id)
+    worker = await _get_live_worker(provider_id)
     if not worker:
         return False
 
@@ -203,7 +220,8 @@ async def worker_websocket(
     
     # Register worker
     worker = ConnectedWorker(websocket, provider_id)
-    connected_workers[provider_id] = worker
+    async with _workers_lock:
+        connected_workers[provider_id] = worker
     
     logger.info("worker_connected", provider_id=provider_id)
     
@@ -304,7 +322,8 @@ async def worker_websocket(
                             provider_id=provider_id,
                         )
                 finally:
-                    future = pending_job_futures.pop(job_id, None)
+                    async with _futures_lock:
+                        future = pending_job_futures.pop(job_id, None)
                     if future and not future.done():
                         future.set_result({
                             "__handled_by_external_worker": True,
@@ -328,7 +347,8 @@ async def worker_websocket(
                             error=error
                         )
                 finally:
-                    future = pending_job_futures.pop(job_id, None)
+                    async with _futures_lock:
+                        future = pending_job_futures.pop(job_id, None)
                     if future and not future.done():
                         future.set_exception(
                             ProviderCallError(
@@ -357,18 +377,19 @@ async def worker_websocket(
         logger.error("worker_error", provider_id=provider_id, error=str(e))
     finally:
         # Cleanup
-        if worker.current_job:
+        async with _futures_lock:
             future = pending_job_futures.pop(worker.current_job, None)
-            if future and not future.done():
-                future.set_exception(
-                    ProviderCallError(
-                        f"External worker {provider_id} disconnected during job execution",
-                        provider_id=provider_id,
-                        is_retryable=True,
-                    )
+        if future and not future.done():
+            future.set_exception(
+                ProviderCallError(
+                    f"External worker {provider_id} disconnected during job execution",
+                    provider_id=provider_id,
+                    is_retryable=True,
                 )
-        if connected_workers.get(provider_id) is worker:
-            del connected_workers[provider_id]
+            )
+        async with _workers_lock:
+            if connected_workers.get(provider_id) is worker:
+                del connected_workers[provider_id]
 
 
 # ============================================================================
@@ -387,7 +408,7 @@ async def list_connected_workers():
 @router.get("/api/workers/{provider_id}/status")
 async def get_worker_status(provider_id: str):
     """Get status of a specific worker."""
-    worker = _get_live_worker(provider_id)
+    worker = await _get_live_worker(provider_id)
     if worker is None:
         return {"connected": False}
 

@@ -254,7 +254,7 @@ def test_illustrate_chat_queues_image_job(client, session, monkeypatch):
     assert job is not None
     assert job.task_type == "image"
     assert job.metadata_["source"] == "chat_image"
-    assert job.metadata_["workspace"] == "roleplay"
+    assert job.metadata_["workspace"] == "chat"
     assert job.metadata_["chat_id"] == chat.id
     assert job.metadata_["checkpoint"] == "aria_checkpoint.safetensors"
     assert job.metadata_["loras"] == ["aria_lora"]

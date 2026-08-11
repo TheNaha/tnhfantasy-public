@@ -488,7 +488,7 @@ async def _tool_generate_image(
             filename_prefix="AgenticGen",
         )
 
-        metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "roleplay"}
+        metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "chat"}
         if chat_id:
             metadata["chat_id"] = chat_id
         if character_id:
@@ -618,24 +618,28 @@ async def process_tool_calls_and_chain(
     context.append(assistant_output)
     context.extend(tool_results)
 
-    followup_metadata: dict[str, Any] = {
-        "chat_id": chat_id,
-        "character_id": character_id,
-        "type": "chat_reply",
-        "agentic": True,
-        "orchestrator_depth": depth + 1,
-        "parent_job_id": job.id,
-        "workspace": "roleplay",
-        "original_messages": context,
-    }
+    from services.llm_workflow import build_llm_workflow
 
-    followup_workflow: dict[str, Any] = {
-        "messages": context,
-        "chat_id": chat_id,
-        "character_system_prompt": metadata.get("character_system_prompt"),
-        "type": "chat_reply",
-        "tools": AGENTIC_TOOLS,
-    }
+    followup_model = (
+        (job.workflow if isinstance(job.workflow, dict) else {}).get("model")
+    )
+
+    followup_workflow, followup_metadata = build_llm_workflow(
+        messages=context,
+        type_="chat_reply",
+        chat_id=chat_id,
+        character_id=character_id,
+        character_system_prompt=metadata.get("character_system_prompt"),
+        model=followup_model,
+        workspace="chat",
+        parent_job_id=job.id,
+        extra_metadata={
+            "agentic": True,
+            "orchestrator_depth": depth + 1,
+            "original_messages": context,
+        },
+    )
+    followup_workflow["tools"] = AGENTIC_TOOLS
 
     try:
         followup_job = await job_service.create_job(

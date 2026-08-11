@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session
 from core.entities import Chat, Character, Message, MessageRole
+from services.chat_utils import substitute_tavern_vars
 
 router = APIRouter()
 
@@ -83,7 +84,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         if character and (req.override_greeting or character.first_mes):
             # Apply basic template variable substitution before persisting
             raw_mes = req.override_greeting or character.first_mes
-            first_mes = _substitute_tavern_vars(
+            first_mes = substitute_tavern_vars(
                 raw_mes,
                 char=character.name or "",
                 user=chat.persona_name or chat.name or "User",
@@ -101,8 +102,6 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
 
     return chat
 
-
-from services.chat_utils import substitute_tavern_vars as _substitute_tavern_vars
 
 @router.get("/{chat_id}", response_model=Chat)
 def get_chat(chat_id: str, session: Session = Depends(get_session)):
@@ -729,20 +728,23 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     try:
         job_service = get_job_service(session)
+        from services.llm_workflow import build_llm_workflow
+
+        workflow, metadata = build_llm_workflow(
+            messages=all_msgs,
+            type_="impersonate",
+            chat_id=chat_id,
+            character_id=chat.character_id,
+            model=chat.llm_model or _get_default_llm_model(),
+            workspace="chat",
+            source="impersonation",
+            extra_metadata={"hint": req.hint},
+        )
+
         imp_job = await job_service.create_job(
             task_type="llm",
-            workflow={
-                "messages": all_msgs,
-                "chat_id": chat_id,
-                "type": "impersonate",
-                "model": chat.llm_model or _get_default_llm_model(),
-            },
-            metadata={
-                "chat_id": chat_id,
-                "workspace": "roleplay",
-                "is_impersonation": True,
-                "hint": req.hint,
-            },
+            workflow=workflow,
+            metadata=metadata,
         )
         await queue_manager.enqueue(imp_job.id, task_type="llm")
         return {"job_id": imp_job.id}
@@ -796,7 +798,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             "Rewrite the draft to be more descriptive, in-character, and engaging, while keeping the original intent. "
             "Write only the raw text of the final response — no labels, no quotes around the whole reply, no meta-commentary."
         )
-        suggest_instruction = _substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
+        suggest_instruction = substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to rewrite and improve {user_name}'s rough draft of the next message.\n\n"
@@ -814,7 +816,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
                 "Write only the raw text — no labels, no quotes around the whole reply, no meta-commentary."
             )
         )
-        suggest_instruction = _substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
+        suggest_instruction = substitute_tavern_vars(suggest_instruction, char=char_name, user=user_name)
         suggest_system = (
             f"You are {user_name}, the human participant in the following roleplay conversation "
             f"with {char_name}. Your job is to suggest what {user_name} might say or do next.\n\n"
@@ -847,18 +849,17 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 
     try:
         job_service = get_job_service(session)
-        workflow: dict = {
-            "messages": all_msgs,
-            "chat_id": chat_id,
-            "type": "suggest_reply",
-            "model": chat.llm_model or _get_default_llm_model(),
-        }
-        metadata: dict = {
-            "chat_id": chat_id,
-            "character_id": chat.character_id,
-            "workspace": "roleplay",
-            "is_suggestion": True,
-        }
+        from services.llm_workflow import build_llm_workflow
+
+        workflow, metadata = build_llm_workflow(
+            messages=all_msgs,
+            type_="suggest_reply",
+            chat_id=chat_id,
+            character_id=chat.character_id,
+            model=chat.llm_model or _get_default_llm_model(),
+            workspace="chat",
+            extra_metadata={"is_suggestion": True},
+        )
 
         job = await job_service.create_job(
             task_type="llm",
@@ -916,27 +917,32 @@ async def generate_scene(
 
     job_service = JobService(session)
     from services.orchestrator_service import AGENTIC_TOOLS
-    prompt_job = await job_service.create_job(
-        task_type="llm",
-        workflow={
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context:\n{context_text}"}
-            ],
-            "model": chat.llm_model or _get_default_llm_model(),
-            "type": "chat_reply",
-            "tools": AGENTIC_TOOLS,
-        },
-        metadata={
-            "source": "scene_prompt",
-            "chat_id": chat_id,
-            "character_id": chat.character_id,
+    from services.llm_workflow import build_llm_workflow
+
+    workflow, metadata = build_llm_workflow(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context:\n{context_text}"}
+        ],
+        type_="chat_reply",
+        chat_id=chat_id,
+        character_id=chat.character_id,
+        model=chat.llm_model or _get_default_llm_model(),
+        workspace="roleplay",
+        source="scene_prompt",
+        extra_metadata={
             "scene_checkpoint": checkpoint,
             "generator_checkpoint": checkpoint,
             "agentic": True,
             "orchestrator_depth": 0,
-            "workspace": "roleplay",
-        }
+        },
+    )
+    workflow["tools"] = AGENTIC_TOOLS
+
+    prompt_job = await job_service.create_job(
+        task_type="llm",
+        workflow=workflow,
+        metadata=metadata,
     )
     await queue_manager.enqueue(prompt_job.id, task_type="llm")
     
@@ -1011,7 +1017,7 @@ async def illustrate_chat(
         "source": "chat_image",
         "chat_id": chat_id,
         "character_id": chat.character_id,
-        "workspace": "roleplay",
+        "workspace": "chat",
         "image_context": image_prompt,
         "prompt": image_prompt,
         "checkpoint": checkpoint,

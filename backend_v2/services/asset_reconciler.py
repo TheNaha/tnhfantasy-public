@@ -170,7 +170,7 @@ def _derived_workspace(job_metadata: dict | None, png_meta: dict) -> str:
         return job_metadata["workspace"]
     src = (job_metadata or {}).get("source") or ""
     if src in ("roleplay_scene", "scene_illustrate", "agentic_tool", "chat_image", "narrator"):
-        return "roleplay"
+        return "chat"
     if src in ("story_illustrate", "story_illustrate_prompt", "story"):
         return "story"
     if png_meta.get("workspace"):
@@ -370,6 +370,21 @@ def move_existing_assets(output_dir: str, db_session_factory, *, user_id: str = 
     root = output_dir
     if not os.path.isdir(root):
         return 0
+
+    # Fast-path: if the partitioned layout already exists and contains PNGs,
+    # skip the expensive os.walk on every startup. Set
+    # COMFY_ASSET_MIGRATION_FORCE=1 to force a full re-scan.
+    if os.environ.get("COMFY_ASSET_MIGRATION_FORCE") != "1":
+        user_partition = os.path.join(root, user_id)
+        if os.path.isdir(user_partition):
+            existing_pngs = 0
+            for _dirpath, _dirnames, filenames in os.walk(user_partition):
+                existing_pngs += sum(1 for fn in filenames if fn.lower().endswith(".png"))
+                if existing_pngs > 0:
+                    break
+            if existing_pngs > 0:
+                logger.info("asset_migration_skip_existing_partition", user_id=user_id)
+                return 0
 
     # Collect PNGs without descending into the thumb tree.
     png_files = []

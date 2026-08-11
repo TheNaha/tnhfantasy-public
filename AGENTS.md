@@ -108,7 +108,7 @@ Proxy falls back: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:800
 
 ## Docker gotchas
 
-- Container name for providers must be `comfy-provider-{PROVIDER_ID}` so the backend can detect them.
+- Container name for providers must be `tnhcomfy-{PROVIDER_ID}` so the backend can detect them (see `infrastructure/providers/runtime.py`).
 - Backend runs as `user: "1000:1000"`.
 - Frontend file watching in Docker requires polling: `CHOKIDAR_USEPOLLING=true`.
 - `docker compose up -d` starts backend, then frontend (depends_on with healthcheck), then providers.

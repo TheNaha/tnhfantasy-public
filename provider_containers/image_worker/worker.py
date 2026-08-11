@@ -42,6 +42,7 @@ runtime_config = {
 }
 
 _background_tasks: list[asyncio.Task] = []
+client = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,7 +84,7 @@ async def lifespan(app: FastAPI):
         if _background_tasks:
             await asyncio.gather(*_background_tasks, return_exceptions=True)
         _background_tasks.clear()
-        if hasattr(client, "close"):
+        if client is not None and hasattr(client, "close"):
             try:
                 await client.close()
             except Exception:

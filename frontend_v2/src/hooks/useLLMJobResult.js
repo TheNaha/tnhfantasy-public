@@ -84,17 +84,9 @@ export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 300 } =
             };
 
             (async () => {
-                // WebSocket-first: when connected we rely on JOB_COMPLETED/FAILED
-                // events and only poll as a genuine last-resort fallback. When
-                // disconnected, poll immediately so the hook still resolves.
                 const wsConnected = getConnectionStatus();
-                // Long overall ceiling (300s) so slow jobs (e.g. Modal cold
-                // starts) never get a false "LLM job failed" rejection.
                 const max = maxPolls ?? defaultMaxPollsRef.current;
-                const initialDelay = wsConnected ? 5000 : 0;
 
-                // Check the cache first — the job may have completed between
-                // submission and the first WS event / poll tick.
                 const cached = queryClient?.getQueryData(['jobs', jobId]);
                 if (cached?.status === 'completed' && cached.outputs?.length > 0) {
                     onCompleted({ job: cached });
@@ -110,7 +102,10 @@ export function useLLMJobResult({ pollInterval = 1000, defaultMaxPolls = 300 } =
                         onCancelled();
                         return;
                     }
-                    const delay = i === 0 ? initialDelay : pollIntervalRef.current;
+                    if (i === 0 && wsConnected) {
+                        continue;
+                    }
+                    const delay = pollIntervalRef.current;
                     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
                     try {
                         const job = await fetchJob();

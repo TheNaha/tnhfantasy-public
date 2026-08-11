@@ -3,6 +3,7 @@ from typing import Any
 from sqlmodel import Session
 
 from core.exceptions import JobError, MissingModelsError
+from core.workflow_builder import build_image_workflow
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_queue import queue_manager
@@ -87,8 +88,6 @@ class JobSubmissionService:
         except Exception as exc:
             logger.error("job_enqueue_failed", job_id=job.id, error=str(exc))
 
-            # Compensating action: best-effort delete so callers don't leave
-            # orphaned pending jobs that never execute.
             try:
                 self.job_service.repo.delete(job.id)
             except Exception as cleanup_exc:
@@ -98,3 +97,44 @@ class JobSubmissionService:
 
         logger.info("job_enqueued", job_id=job.id)
         return job
+
+    async def build_image_job(
+        self,
+        prompt: str,
+        *,
+        negative_prompt: str | None = None,
+        checkpoint: str | None = None,
+        filename_prefix: str = "ComfyUI",
+        workspace: str = "main",
+        character_id: str | None = None,
+        story_id: str | None = None,
+        source: str | None = None,
+        extra_metadata: dict[str, Any] | None = None,
+        preferred_provider_id: str | None = None,
+    ) -> Any:
+        """Build an image workflow, validate models, create and enqueue the job.
+
+        Returns the created Job.
+        """
+        workflow = build_image_workflow(
+            prompt,
+            negative_prompt=negative_prompt,
+            checkpoint=checkpoint,
+            filename_prefix=filename_prefix,
+        )
+        metadata: dict[str, Any] = {
+            "prompt": prompt,
+            "workspace": workspace,
+            "character_id": character_id,
+            "story_id": story_id,
+            "source": source,
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        return await self.create_and_enqueue_job(
+            workflow,
+            metadata=metadata,
+            task_type="image",
+            preferred_provider_id=preferred_provider_id,
+        )

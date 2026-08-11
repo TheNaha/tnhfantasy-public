@@ -189,7 +189,13 @@ class TestLoadBalancer:
         isolated_provider_stats_after = {item["id"]: item for item in isolated_stats_after["provider_stats"]}
         assert isolated_provider_stats_after[isolated_selected.id]["jobs_assigned"] == 1
 
-    async def test_release_job_persists_state(self, session: Session, providers):
+    async def test_release_job_decrements_job_count(self, session: Session, providers):
+        """release_job decrements the in-memory active-job count.
+
+        State persistence is now throttled (every 20 jobs) rather than on every
+        release, so this test asserts in-memory state via get_stats() instead of
+        a DB row.
+        """
         lb = LoadBalancer(session, strategy="round-robin")
 
         selected = await lb.get_next_provider()
@@ -197,10 +203,9 @@ class TestLoadBalancer:
 
         await lb.release_job(selected.id)
 
-        persisted = session.get(LoadBalancerState, 1)
-        assert persisted is not None
-        provider_job_counts = persisted.provider_job_counts or {}
-        assert provider_job_counts.get(selected.id, 0) == 0
+        stats = await lb.get_stats()
+        provider_stats = {item["id"]: item for item in stats["provider_stats"]}
+        assert provider_stats[selected.id]["jobs_assigned"] == 0
 
     async def test_model_availability_filter_is_memoized(self, session: Session, providers, monkeypatch):
         lb = LoadBalancer(session, strategy="round-robin")

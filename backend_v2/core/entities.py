@@ -241,7 +241,7 @@ class Asset(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(default="default_user", index=True)
     filename: str = Field(index=True)
-    relative_path: str  # path relative to OUTPUT_DIR, e.g. default_user/roleplay/2026/08/09/foo.png
+    relative_path: str  # path relative to OUTPUT_DIR, e.g. default_user/chat/2026/08/09/foo.png
     kind: AssetKind = Field(default=AssetKind.IMAGE)
     workspace: str = Field(default="main", index=True)
     character_id: str | None = Field(default=None, index=True)

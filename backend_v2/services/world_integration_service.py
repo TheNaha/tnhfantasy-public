@@ -85,20 +85,21 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     max_context_tokens=_resolve_context_tokens(_chat),
                 )
                 _reply_job_svc = JobService(session)
+                from services.llm_workflow import build_llm_workflow
+
+                _workflow, _metadata = build_llm_workflow(
+                    messages=_ctx,
+                    type_="chat_reply",
+                    chat_id=imp_chat_id,
+                    character_id=_chat.character_id,
+                    character_system_prompt=_sp or None,
+                    model=_chat.llm_model or get_default_llm_model(),
+                    workspace="chat",
+                )
                 _reply_job = await _reply_job_svc.create_job(
                     task_type="llm",
-                    workflow={
-                        "messages": _ctx,
-                        "chat_id": imp_chat_id,
-                        "character_system_prompt": _sp or None,
-                        "type": "chat_reply",
-                        "model": _chat.llm_model or get_default_llm_model(),
-                    },
-                    metadata={
-                        "chat_id": imp_chat_id,
-                        "character_id": _chat.character_id,
-                        "workspace": "roleplay",
-                    },
+                    workflow=_workflow,
+                    metadata=_metadata,
                 )
                 await queue_manager.enqueue(_reply_job.id, task_type="llm")
                 logger.info("impersonate_reply_enqueued", imp_job=job_data.get("id"), reply_job=_reply_job.id)
@@ -250,13 +251,17 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
     # deleted, pushing regenerated output above the prompt.
     with Session(engine) as session:
         try:
+            metadata = job_data.get("metadata", {}) or {}
+            msg_metadata = {"agentic": bool(tool_calls)}
+            if "orchestrator_depth" in metadata:
+                msg_metadata["orchestrator_depth"] = metadata["orchestrator_depth"]
             msg = Message(
                 role=MessageRole.CHAR,
                 kind=MessageKind.CHAR,
                 content=content,
                 chat_id=chat_id,
                 tool_calls=tool_calls,
-                message_metadata={"agentic": bool(tool_calls)},
+                message_metadata=msg_metadata,
             )
             session.add(msg)
             session.commit()

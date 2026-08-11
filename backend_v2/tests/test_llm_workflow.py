@@ -12,7 +12,7 @@ def test_build_llm_workflow_chat_reply():
     assert workflow["type"] == "chat_reply"
     assert workflow["chat_id"] == "chat-1"
     assert workflow["model"] == "llm-local"
-    assert metadata["workspace"] == "roleplay"
+    assert metadata["workspace"] == "chat"
     assert metadata["chat_id"] == "chat-1"
     assert metadata["type"] == "chat_reply"
 

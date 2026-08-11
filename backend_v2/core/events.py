@@ -6,6 +6,7 @@
 # - Events are typed and include structured data payloads
 # - Event replay: Last 100 events buffered for debugging
 import asyncio
+import time
 from collections import deque
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -444,9 +445,9 @@ async def wait_for_job_completion(
         except Exception:
             pass
 
-        deadline = asyncio.get_event_loop().time() + timeout
+        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break

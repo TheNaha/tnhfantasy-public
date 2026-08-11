@@ -452,21 +452,25 @@ async def illustrate_chapter(
             system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
 
     job_service = JobService(session)
+    from services.llm_workflow import build_llm_workflow
+
+    workflow, metadata = build_llm_workflow(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
+        ],
+        type_="story_illustrate_prompt",
+        story_id=story_id,
+        chapter_id=chapter_id,
+        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        workspace="story",
+        source="story_illustrate_prompt",
+        extra_metadata={"scene_checkpoint": checkpoint},
+    )
     prompt_job = await job_service.create_job(
         task_type="llm",
-        workflow={
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Chapter text:\n{chapter.content[-3000:]}"}
-            ],
-            "model": (story.llm_model if story else None) or _get_default_llm_model(),
-        },
-        metadata={
-            "source": "story_illustrate_prompt",
-            "story_id": story_id,
-            "chapter_id": chapter_id,
-            "scene_checkpoint": checkpoint,
-        }
+        workflow=workflow,
+        metadata=metadata,
     )
     await queue_manager.enqueue(prompt_job.id, task_type="llm")
 

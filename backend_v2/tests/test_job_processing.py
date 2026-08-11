@@ -302,12 +302,12 @@ async def test_process_job_timeout_signals_provider_cancel(session: Session, sam
 @pytest.mark.asyncio
 async def test_process_job_persists_base64_image_to_workspace_partition(session: Session, sample_workflow, monkeypatch, tmp_path):
     """Base64 worker artifacts must be written to disk in the workspace-partitioned
-    directory (job.metadata_.workspace), not flat 'main' — roleplay/story images
+    directory (job.metadata_.workspace), not flat 'main' — chat/story images
     would otherwise land in default_user/main."""
     LoadBalancer.reset_state()
     _add_provider(session, "provider-1", 1, {"port": 8000})
 
-    metadata = {"prompt": "hello", "seed": 42, "workspace": "roleplay"}
+    metadata = {"prompt": "hello", "seed": 42, "workspace": "chat"}
     job_service = JobService(session)
     job = await job_service.create_job(workflow=sample_workflow, metadata=metadata)
 
@@ -344,7 +344,7 @@ async def test_process_job_persists_base64_image_to_workspace_partition(session:
 
     await process_job(job.id)
 
-    output_path = tmp_path / "roleplay" / "result.png"
+    output_path = tmp_path / "chat" / "result.png"
     assert output_path.exists(), f"image must be written under the workspace partition: {output_path}"
 
     updated_job = await _get_job_from_fresh_session(session, job.id)

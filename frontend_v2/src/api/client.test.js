@@ -152,10 +152,10 @@ describe('ApiClient', () => {
                 json: async () => ({ success: true }),
             });
 
-            await api.get('/api/v2/chats', { params: { workspace: 'roleplay', limit: 25, offset: 50 } });
+            await api.get('/api/v2/chats', { params: { workspace: 'chat', limit: 25, offset: 50 } });
 
             const [url, config] = fetch.mock.calls[0];
-            expect(url).toBe('/api/v2/chats?workspace=roleplay&limit=25&offset=50');
+            expect(url).toBe('/api/v2/chats?workspace=chat&limit=25&offset=50');
             // params must NOT leak into the fetch config
             expect(config.params).toBeUndefined();
         });

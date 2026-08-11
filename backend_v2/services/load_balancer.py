@@ -52,7 +52,14 @@ _model_availability_cache = TTLCache(
 
 _provider_health_cache = TTLCache(
     maxsize=100,
-    ttl=5.0
+    ttl=15.0
+)
+
+# Circuit-breaker: after N consecutive failures a provider is skipped until
+# its failure streak is reset by a successful job.
+_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
+    os.getenv("COMFY_FAILURE_STREAK_THRESHOLD"),
+    3,
 )
 
 # LLM workers are always-running API endpoints (OpenAI-compat, Anthropic, Google,
@@ -282,8 +289,12 @@ class LoadBalancer:
         LoadBalancer.load_state_from_db(session, self.runtime_state, state_id=self.state_id)
     
     async def _check_provider_health(self, provider: Provider) -> bool:
-        """Probe the container's status or health endpoint, caching the result for 5 seconds."""
+        """Probe the container's status or health endpoint, caching the result for 15 seconds."""
         cache_key = provider.id
+        
+        # Circuit-breaker: skip providers with a long failure streak.
+        if self.runtime_state.provider_failures.get(cache_key, 0) >= _FAILURE_STREAK_THRESHOLD:
+            return False
         
         # Check cache
         if cache_key in _provider_health_cache:
@@ -559,9 +570,9 @@ class LoadBalancer:
                 self.runtime_state.provider_job_counts[provider_id] = 0
             self.runtime_state.provider_job_counts[provider_id] += 1
                 
-            # Persist state periodically (every 5 jobs)
+            # Persist state periodically (every 20 jobs)
             total_jobs = sum(self.runtime_state.provider_job_counts.values())
-            if total_jobs % 5 == 0:
+            if total_jobs % 20 == 0:
                 LoadBalancer.save_state_to_db(self.session, self.runtime_state, state_id=self.state_id)
     
     async def _round_robin(self, providers: list[Provider]) -> Provider:
@@ -682,13 +693,9 @@ class LoadBalancer:
     
     async def report_success(self, provider_id: str):
         """Report successful job completion for a provider."""
-        persist_needed = False
         async with self.runtime_state.get_lock():
             if provider_id in self.runtime_state.provider_failures:
                 self.runtime_state.provider_failures[provider_id] = 0
-                persist_needed = True
-        if persist_needed:
-            LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state, state_id=self.state_id)
     
     async def report_failure(self, provider_id: str):
         """Report job failure for a provider."""
@@ -699,7 +706,6 @@ class LoadBalancer:
             self.runtime_state.provider_failures[provider_id] += 1
             failures = self.runtime_state.provider_failures[provider_id]
         logger.warning("lb_provider_failure", provider_id=provider_id, total_failures=failures)
-        LoadBalancer.save_state_to_db(self.session, runtime_state=self.runtime_state, state_id=self.state_id)
     
     async def release_job(self, provider_id: str):
         """
@@ -709,17 +715,11 @@ class LoadBalancer:
         """
         async with self.runtime_state.get_lock():
             if provider_id in self.runtime_state.provider_job_counts:
-                previous_count = self.runtime_state.provider_job_counts[provider_id]
                 self.runtime_state.provider_job_counts[provider_id] = max(
                     0, self.runtime_state.provider_job_counts[provider_id] - 1
                 )
-                active_jobs = self.runtime_state.provider_job_counts[provider_id]
-                if active_jobs != previous_count:
-                    LoadBalancer.save_state_to_db(self.session, self.runtime_state, state_id=self.state_id)
-            else:
-                active_jobs = 0
 
-        logger.debug("lb_job_released", provider_id=provider_id, active_jobs=active_jobs)
+        logger.debug("lb_job_released", provider_id=provider_id)
     
     async def get_stats(self) -> dict[str, Any]:
         """Get load balancer statistics including per-provider job counts."""

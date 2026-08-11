@@ -517,14 +517,13 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 {msg.content && <TavernMessage content={msg.content} />}
                                 {msg.tool_calls?.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                        {/* MAX_AGENTIC_DEPTH (5) mirrors backend orchestrator_service.py:21 */}
-                                        {typeof msg.depth === 'number' && (
+                                        {typeof meta.orchestrator_depth === 'number' && (
                                             <span
-                                                title={`Agentic loop depth ${msg.depth} / 5 (${5 - msg.depth} remaining)`}
+                                                title={`Agentic loop depth ${meta.orchestrator_depth} / 5 (${5 - meta.orchestrator_depth} remaining)`}
                                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-gray-800/40 border border-gray-700 text-[10px] text-gray-400 font-mono"
                                             >
                                                 <Activity size={9} />
-                                                Step {msg.depth}/{5}
+                                                Step {meta.orchestrator_depth}/{5}
                                             </span>
                                         )}
                                         {msg.tool_calls.map((tc, idx) => {

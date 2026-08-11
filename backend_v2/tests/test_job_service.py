@@ -233,11 +233,15 @@ class TestJobServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_failed_emits_failed_event(self, session: Session, sample_workflow):
-        """Updating to failed status emits JOB_FAILED event."""
+        """Updating to failed status (from SENT_TO_PROVIDER) emits JOB_FAILED event."""
         from core.events import EventType
         with patch("services.job_service.emit_job_event", new_callable=AsyncMock) as mock_emit:
             service = JobService(session)
             job = await service.create_job(workflow=sample_workflow, metadata={})
+            mock_emit.reset_mock()
+            # The tightened FSM (no PENDING->FAILED) requires the job to be
+            # SENT_TO_PROVIDER before it can transition to FAILED.
+            await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
             mock_emit.reset_mock()
             await service.update_job(job.id, status=JobStatus.FAILED, error="timeout")
             mock_emit.assert_called_once()
