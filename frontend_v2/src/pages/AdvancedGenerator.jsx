@@ -92,7 +92,13 @@ export default function AdvancedGenerator() {
                             Visual Graph
                         </button>
                         <button
-                            onClick={() => setEditorMode('json')}
+                            onClick={() => {
+                                if (editorMode !== 'json') {
+                                    const workflow = compileReactFlowToComfy(reactFlowState.nodes, reactFlowState.edges);
+                                    setWorkflowJson(JSON.stringify(workflow, null, 2));
+                                    setEditorMode('json');
+                                }
+                            }}
                             className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${editorMode === 'json' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-gray-200'}`}
                         >
                             Raw JSON

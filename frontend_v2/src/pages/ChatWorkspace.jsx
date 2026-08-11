@@ -11,7 +11,6 @@ import {
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import api from '../api/client';
 import {
     useMessages, useChats, useSendMessage, useChat,
     useCreateChat, useDeleteChat, useLorebooks, useCharacters,
@@ -20,7 +19,7 @@ import {
     useCharacterCollection, useEditMessage, useRollbackChat,
     useRegenerateReply, useChatJobs, usePatchCharacter,
     useImpersonateMessage, usePinMessage, useSwipeMessage, useChatImages,
-    useIllustrateChat
+    useIllustrateChat, useGenerateScene
 } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -162,26 +161,14 @@ export default function ChatWorkspace() {
     const MESSAGE_PAGE_SIZE = 100;
     const MAX_MESSAGE_PAGES = 5;
     const [messagePageCount, setMessagePageCount] = useState(1);
-    const messagePageQueries = [];
-    for (let pageIndex = 0; pageIndex < MAX_MESSAGE_PAGES; pageIndex += 1) {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        messagePageQueries.push(useMessages(
-            activeChatId,
-            { limit: MESSAGE_PAGE_SIZE, offset: pageIndex * MESSAGE_PAGE_SIZE },
-            { enabled: pageIndex < messagePageCount }
-        ));
-    }
-    const messages = useMemo(
-        () => {
-            const merged = [];
-            for (let pageIndex = messagePageCount - 1; pageIndex >= 0; pageIndex -= 1) {
-                merged.push(...(messagePageQueries[pageIndex].data || []));
-            }
-            return merged;
-        },
-        [messagePageCount, ...messagePageQueries.map(q => q.data)] // eslint-disable-line react-hooks/exhaustive-deps
+    
+    const { data: messagesData = [] } = useMessages(
+        activeChatId,
+        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0 }
     );
-    const lastLoadedPageFull = (messagePageQueries[messagePageCount - 1]?.data?.length ?? 0) === MESSAGE_PAGE_SIZE;
+    
+    const messages = messagesData;
+    const lastLoadedPageFull = messagesData.length === messagePageCount * MESSAGE_PAGE_SIZE;
     const hasMoreMessages = messagePageCount < MAX_MESSAGE_PAGES && lastLoadedPageFull;
     const loadOlderMessages = () => setMessagePageCount(c => Math.min(c + 1, MAX_MESSAGE_PAGES));
 
@@ -233,6 +220,7 @@ export default function ChatWorkspace() {
     const pinMessageMutation = usePinMessage();
     const swipeMessageMutation = useSwipeMessage();
     const illustrateMutation = useIllustrateChat();
+    const generateSceneMutation = useGenerateScene();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
@@ -597,8 +585,8 @@ export default function ChatWorkspace() {
         setIsGeneratingScene(true);
         toast.success('Generating scene...', { icon: '📸' });
         try {
-            const data = await api.post(`/api/v2/chats/${activeChatId}/scene`, {});
-            if (data.job_id) {
+            const data = await generateSceneMutation.mutateAsync({ chatId: activeChatId });
+            if (data?.job_id) {
                 sceneJobIdRef.current = data.job_id;
                 setSceneJobId(data.job_id);
                 setStreamingJob(queryClient, data.job_id, { text: 'Generating scene image...', status: 'running', chatId: activeChatId, type: 'roleplay', taskType: 'llm' });

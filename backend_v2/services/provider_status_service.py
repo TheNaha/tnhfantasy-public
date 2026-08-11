@@ -208,7 +208,8 @@ class ProviderStatusService:
         if reconciliation_state is None:
             try:
                 reconciliation_state = await self.provider_service.get_provider_reconciliation_state(provider_id)
-            except Exception:
+            except Exception as exc:
+                logger.warning("provider_reconciliation_fetch_failed", provider_id=provider_id, error=str(exc))
                 reconciliation_state = None
 
         state_payload = self._storage_payload_from_reconciliation_state(provider_id, reconciliation_state)

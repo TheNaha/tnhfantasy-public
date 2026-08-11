@@ -114,7 +114,17 @@ export const useRenameChat = () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
         }
     });
-};export const useSuggestReply = () => {
+};export const useGenerateScene = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId }) => api.post(`/api/v2/chats/${chatId}/scene`, {}),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
+export const useSuggestReply = () => {
     return useMutation({
         mutationFn: ({ chatId, draft }) => api.post(`/api/v2/chats/${chatId}/suggest`, { draft }),
     });

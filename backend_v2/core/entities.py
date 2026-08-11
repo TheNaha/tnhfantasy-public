@@ -809,7 +809,10 @@ class MessageKind(str, Enum):
 
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
-    __table_args__ = (Index('idx_message_chat_id', 'chat_id'),)
+    __table_args__ = (
+        Index('idx_message_chat_id', 'chat_id'),
+        Index('idx_message_chat_created', 'chat_id', 'created_at'),
+    )
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     chat_id: str = Field(foreign_key="chats.id", index=True)
     role: MessageRole
@@ -874,12 +877,13 @@ class Story(SQLModel, table=True):
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active lorebooks
     scenario_id: str | None = Field(default=None)  # base scenario
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
-    memory: str | None = Field(default=None, sa_column=Column(Text)) # Global author's note / story memory
+    memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory
     # Story state
     is_archived: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     chapters: list["StoryChapter"] = Relationship(back_populates="story")
+    __table_args__ = (Index('idx_story_updated', 'updated_at'),)
 
 class StoryBeatRole(str, Enum):
     NARRATOR = "narrator"  # AI-generated story prose

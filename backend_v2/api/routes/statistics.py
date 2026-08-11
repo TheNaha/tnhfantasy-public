@@ -14,9 +14,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from api.deps import cache_stats, get_logger
+from api.deps import cache_stats, get_logger, get_session_sync
 from config import settings
-from infrastructure.database import Session as DBSession, engine as db_engine
 from services.asset_reconciler import all_assets_as_file_data
 
 logger = get_logger("statistics_route")
@@ -29,7 +28,7 @@ OUTPUT_DIR = settings.output_dir
 
 def _all_gallery_files() -> list[dict[str, Any]]:
     """DB-backed gallery snapshot for statistics (non-deleted assets only)."""
-    return all_assets_as_file_data(OUTPUT_DIR, lambda: DBSession(db_engine))
+    return all_assets_as_file_data(OUTPUT_DIR, get_session_sync)
 
 
 def _calculate_statistics() -> dict[str, Any]:

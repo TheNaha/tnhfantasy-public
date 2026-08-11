@@ -73,7 +73,8 @@ def _has_recent_failure(failure_marker_path: str, ttl_seconds: int) -> bool:
     try:
         with open(failure_marker_path, 'r', encoding='utf-8') as marker_file:
             failed_at = float(marker_file.read().strip())
-    except Exception:
+    except Exception as exc:
+        logger.debug("failure_marker_read_failed", path=failure_marker_path, error=str(exc))
         return False
     return (time.time() - failed_at) < ttl_seconds
 
@@ -100,7 +101,8 @@ def _load_preview_from_cache(cache_path: str, cache_meta_path: str) -> tuple:
         try:
             with open(cache_meta_path, 'r', encoding='utf-8') as meta_file:
                 cached_content_type = meta_file.read().strip() or cached_content_type
-        except Exception:
+        except Exception as exc:
+            logger.debug("cache_meta_read_failed", path=cache_meta_path, error=str(exc))
             pass
 
     return cached_content, cached_content_type

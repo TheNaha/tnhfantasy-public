@@ -4,8 +4,15 @@ Shared chat utility functions.
 Centralizes helpers that were previously duplicated between
 world_integration_service.py and api/routes/world_vault/chats.py.
 """
+import logging
 import re
 from datetime import datetime, timezone
+
+from sqlmodel import Session
+
+from core.entities import Message, MessageRole
+
+logger = logging.getLogger("chat_utils")
 
 
 # ---------------------------------------------------------------------------
@@ -98,3 +105,24 @@ def substitute_tavern_vars(text: str, *, char: str = "", user: str = "User") -> 
     for i, original in enumerate(masked):
         text = text.replace(f"\x00{i}\x00", original)
     return _DOUBLE_BRACE_PATTERN.sub(replace_match, text)
+
+
+def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> None:
+    """Insert a UI-only world-state divider marker message after a time/location change."""
+    parts = []
+    if changed.get("location"):
+        parts.append(f"Location: {changed['location']}")
+    if changed.get("time"):
+        parts.append(f"Time: {changed['time']}")
+    if not parts:
+        return
+    marker = Message(
+        chat_id=chat_id,
+        role=MessageRole.SYSTEM,
+        content="\n".join(parts),
+        message_metadata={"source": "world_state", **changed},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    session.add(marker)
+    session.commit()

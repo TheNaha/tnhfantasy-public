@@ -1186,6 +1186,31 @@ def _migration_add_data_integrity_constraints(conn) -> bool:
     return True
 
 
+def _migration_add_composite_indexes(conn) -> bool:
+    """Add missing composite indexes for common query patterns."""
+    inspector = inspect(conn)
+    tables = inspector.get_table_names()
+
+    if "messages" in tables:
+        columns = {col["name"] for col in inspector.get_columns("messages")}
+        if "chat_id" in columns and "created_at" in columns:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_message_chat_created
+                ON messages (chat_id, created_at)
+            """))
+
+    if "stories" in tables:
+        columns = {col["name"] for col in inspector.get_columns("stories")}
+        if "updated_at" in columns:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_story_updated
+                ON stories (updated_at)
+            """))
+
+    logger.info("migration_composite_indexes_added")
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -1358,5 +1383,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="034_normalize_message_kind_case",
             description="Lowercase any enum-NAME rows in messages.kind",
             apply_fn=_migration_normalize_message_kind_case,
+        ),
+        MigrationStep(
+            version="035_add_composite_indexes",
+            description="Add composite indexes for messages(chat_id, created_at) and stories(updated_at)",
+            apply_fn=_migration_add_composite_indexes,
         ),
     ]

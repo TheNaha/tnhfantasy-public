@@ -33,11 +33,15 @@ from services.provider_runtime import resolve_provider_runtime
 logger = logging.getLogger(__name__)
 
 # Determine CORS origins for WebSocket
-# Default: accept all connections (for easier development/deployment)
-# Can be restricted via COMFY_CORS_ORIGINS environment variable
+# Reads from get_cors_origins() which honours config.json ("*" wildcard)
+# so the Socket.IO server is consistent with the FastAPI CORS middleware.
+# NOTE: sio is created at import time, so we must resolve the origins here
+# using get_cors_origins() rather than the bare settings object (which only
+# reflects env-var overrides, not config.json values).
 def _get_ws_cors_origins():
     """Get CORS origins for WebSocket. Returns '*' if settings allow all origins."""
-    origins = settings.cors_origins
+    from config import get_cors_origins
+    origins = get_cors_origins()
     # If settings contains wildcard patterns or is empty, allow all
     if not origins or '*' in origins:
         return '*'

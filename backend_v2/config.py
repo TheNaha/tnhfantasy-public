@@ -78,7 +78,7 @@ DEFAULT_CONFIG = {
         },
     "api": {
         "gzip_minimum_size": 1000,
-        "cors_origins": ["*"]
+        "cors_origins": ["http://localhost:5174"]
     },
     "jobs_cleanup": {
         "max_age_hours": 24,
@@ -146,9 +146,8 @@ class Settings(BaseSettings):
     modal_vllm_max_model_len: int = 8192
     
     # API
-    # Default: accept all origins ('*') for easier development
-    # Override via COMFY_CORS_ORIGINS environment variable for production
-    cors_origins: list[str] = ["*"]
+    # Default to frontend dev server origin. Override via COMFY_CORS_ORIGINS for production.
+    cors_origins: list[str] = ["http://localhost:5174"]
     gzip_minimum_size: int = 1000
     worker_backend_url: str = "http://backend_v2:8002"
     

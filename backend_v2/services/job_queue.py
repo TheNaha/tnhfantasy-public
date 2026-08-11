@@ -82,8 +82,8 @@ class _PgNotifyListener:
         finally:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("pg_notify_listener_close_failed", error=str(exc))
 
 
 class JobQueue:

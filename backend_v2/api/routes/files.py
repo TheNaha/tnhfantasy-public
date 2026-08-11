@@ -29,17 +29,17 @@ from api.deps import (
     get_model_service_v2,
     get_provider_service,
     get_session,
+    get_session_sync,
 )
 from config import settings
 from core.entities import Asset
 from core.exceptions import ComfyError, NotFoundError, ValidationError
-from infrastructure.database import Session as DBSession, engine as db_engine
 from services.provider_service import ProviderService
 
 
 def _sync_session():
     """Open a synchronous DB session for non-request code paths in this module."""
-    return DBSession(db_engine)
+    return get_session_sync()
 
 logger = get_logger("files_route")
 
@@ -375,6 +375,7 @@ def _query_gallery_files(
 
         if sort in ("name_asc", "name_desc"):
             # Name sorts need the full filtered set to slice deterministically.
+            # Limitation: loads all rows into memory which can cause issues with large datasets.
             rows = session.exec(q.order_by(order_col.desc(), Asset.id.desc())).all()
             total = len(rows)
             rows = sorted(rows, key=lambda a: a.filename, reverse=(sort == "name_desc"))
@@ -382,9 +383,11 @@ def _query_gallery_files(
             return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
 
         order = order_col.asc() if sort == "date_asc" else order_col.desc()
-        rows = session.exec(q.order_by(order, Asset.id.asc() if sort == "date_asc" else Asset.id.desc())).all()
-        total = len(rows)
-        page = rows[offset : offset + limit]
+        id_order = Asset.id.asc() if sort == "date_asc" else Asset.id.desc()
+        # Get total count efficiently without loading all rows
+        from sqlalchemy import func as sqlfunc
+        total = session.exec(select(sqlfunc.count()).select_from(q.subquery())).one()
+        page = session.exec(q.order_by(order, id_order).offset(offset).limit(limit)).all()
         return {"files": [_asset_as_file_data(a, OUTPUT_DIR) for a in page], "total": total}
 
 

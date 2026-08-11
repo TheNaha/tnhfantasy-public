@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from api.deps import get_job_service, get_session
 from core.entities import Chat, Character, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
-from services.chat_utils import substitute_tavern_vars
+from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
 
 router = APIRouter()
 
@@ -64,6 +64,11 @@ def list_chats(
 
 @router.post("", response_model=Chat)
 async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
+    if req.character_id:
+        character = session.get(Character, req.character_id)
+        if not character:
+            raise NotFoundError("Character", req.character_id)
+
     chat = Chat(
         name=req.name,
         character_id=req.character_id,
@@ -104,6 +109,25 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
     return chat
 
 
+def _chat_context_kwargs(chat, **overrides):
+    """Build common kwargs for build_system_prompt_sections_async and build_chat_context_async."""
+    kwargs = {
+        "character": overrides.get("character"),
+        "lorebook_ids": overrides.get("lorebook_ids", chat.active_lorebook_ids or None),
+        "persona_name": chat.persona_name,
+        "persona_description": getattr(chat, "persona_description", None),
+        "story_time": chat.story_time,
+        "story_location": chat.story_location,
+        "system_prompt_override": chat.system_prompt_override,
+        "append_system_prompt": chat.append_system_prompt,
+    }
+    if "max_context_tokens" in overrides:
+        kwargs["max_context_tokens"] = overrides["max_context_tokens"]
+    if "include_roleplay_default" in overrides:
+        kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
+    return kwargs
+
+
 @router.get("/{chat_id}", response_model=Chat)
 def get_chat(chat_id: str, session: Session = Depends(get_session)):
     chat = session.get(Chat, chat_id)
@@ -133,6 +157,9 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
 def list_messages(chat_id: str, session: Session = Depends(get_session), limit: int = 100, offset: int = 0):
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
     return session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).offset(offset).limit(limit)
     ).all()
@@ -159,29 +186,17 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
     if chat.character_id:
         character = session.get(Character, chat.character_id)
 
+    ctx_kwargs = _chat_context_kwargs(chat, character=character)
+
     sections = await build_system_prompt_sections_async(
         session,
-        character=character,
-        lorebook_ids=chat.active_lorebook_ids or None,
-        persona_name=chat.persona_name,
-        persona_description=getattr(chat, "persona_description", None),
-        story_time=chat.story_time,
-        story_location=chat.story_location,
-        system_prompt_override=chat.system_prompt_override,
-        append_system_prompt=chat.append_system_prompt,
+        **ctx_kwargs,
     )
 
     system_prompt, context = await build_chat_context_async(
         session,
         past_messages,
-        character=character,
-        lorebook_ids=chat.active_lorebook_ids or None,
-        persona_name=chat.persona_name,
-        story_time=chat.story_time,
-        story_location=chat.story_location,
-        system_prompt_override=chat.system_prompt_override,
-        append_system_prompt=chat.append_system_prompt,
-        persona_description=getattr(chat, "persona_description", None),
+        **ctx_kwargs,
     )
 
     return {
@@ -215,11 +230,11 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     session.add(chat)
     session.commit()
     session.refresh(chat)
-
     if changed_state:
-        _insert_world_state_marker(session, chat_id, changed_state)
+        insert_world_state_marker(session, chat_id, changed_state)
 
     return chat
+
 
 # ---------------------------------------------------------------------------
 # Helper: resolve default LLM model id from llm_config.json
@@ -230,31 +245,6 @@ from services.llm_config import get_default_llm_model as _get_default_llm_model
 # Helper: resolve effective context window for a chat
 # ---------------------------------------------------------------------------
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
-
-
-def _insert_world_state_marker(
-    session: Session,
-    chat_id: str,
-    changed: dict,
-) -> None:
-    """Insert a UI-only world-state divider marker message after a time/location change."""
-    parts = []
-    if changed.get("location"):
-        parts.append(f"Location: {changed['location']}")
-    if changed.get("time"):
-        parts.append(f"Time: {changed['time']}")
-    if not parts:
-        return
-    marker = Message(
-        chat_id=chat_id,
-        role=MessageRole.SYSTEM,
-        content="\n".join(parts),
-        message_metadata={"source": "world_state", **changed},
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
-    )
-    session.add(marker)
-    session.commit()
 
 
 @router.post("/{chat_id}/messages")
@@ -289,18 +279,16 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             from core.entities import Character
             character = session.get(Character, chat.character_id)
             
+        ctx_kwargs = _chat_context_kwargs(
+            chat,
+            character=character,
+            lorebook_ids=request.lorebook_ids,
+            max_context_tokens=_resolve_context_tokens(chat),
+        )
         system_prompt, context = await build_chat_context_async(
             session, 
             past_messages, 
-            character=character, 
-            lorebook_ids=request.lorebook_ids, 
-            persona_name=chat.persona_name,
-            story_time=chat.story_time,
-            story_location=chat.story_location,
-            system_prompt_override=chat.system_prompt_override,
-            append_system_prompt=chat.append_system_prompt,
-            persona_description=getattr(chat, "persona_description", None),
-            max_context_tokens=_resolve_context_tokens(chat),
+            **ctx_kwargs,
         )
             
         try:
@@ -540,7 +528,7 @@ def rollback_chat(
 
     anchor = session.get(Message, req.message_id)
     if not anchor or anchor.chat_id != chat_id:
-        raise NotFoundError("Message", message_id)
+        raise NotFoundError("Message", req.message_id)
 
     all_messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -578,7 +566,7 @@ async def regenerate_reply(
     if req.message_id:
         anchor = session.get(Message, req.message_id)
         if not anchor or anchor.chat_id != chat_id:
-            raise NotFoundError("Message", message_id)
+            raise NotFoundError("Message", req.message_id)
     else:
         for m in reversed(all_messages):
             if m.role == MessageRole.USER:
@@ -592,7 +580,6 @@ async def regenerate_reply(
     trailing = all_messages[anchor_index + 1:]
     for m in trailing:
         session.delete(m)
-    session.commit()
 
     # Mirror the previous chat_reply job's agentic settings if available.
     prev_agentic = False
@@ -613,18 +600,15 @@ async def regenerate_reply(
     if chat.character_id:
         character = session.get(Character, chat.character_id)
 
+    ctx_kwargs = _chat_context_kwargs(
+        chat,
+        character=character,
+        max_context_tokens=_resolve_context_tokens(chat),
+    )
     system_prompt, context = await build_chat_context_async(
         session,
         remaining,
-        character=character,
-        lorebook_ids=chat.active_lorebook_ids or None,
-        persona_name=chat.persona_name,
-        story_time=chat.story_time,
-        story_location=chat.story_location,
-        system_prompt_override=chat.system_prompt_override,
-        append_system_prompt=chat.append_system_prompt,
-            persona_description=getattr(chat, "persona_description", None),
-        max_context_tokens=_resolve_context_tokens(chat),
+        **ctx_kwargs,
     )
 
     from services.llm_workflow import build_llm_workflow
@@ -654,8 +638,10 @@ async def regenerate_reply(
     job_service = get_job_service(session)
     try:
         job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+        session.commit()
         await queue_manager.enqueue(job.id, task_type="llm")
     except Exception as e:
+        session.rollback()
         raise ComfyError(str(e))
 
     return {"job_id": job.id, "removed_messages": len(trailing)}
@@ -694,12 +680,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     # Build world-state context without character identity (same approach as suggest)
     world_sections = await build_system_prompt_sections_async(
         session,
-        character=None,
-        lorebook_ids=chat.active_lorebook_ids or None,
-        persona_name=chat.persona_name,
-        story_time=chat.story_time,
-        story_location=chat.story_location,
-        include_roleplay_default=False,
+        **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
@@ -779,12 +760,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 
     world_sections = await build_system_prompt_sections_async(
         session,
-        character=None,
-        lorebook_ids=chat.active_lorebook_ids or None,
-        persona_name=chat.persona_name,
-        story_time=chat.story_time,
-        story_location=chat.story_location,
-        include_roleplay_default=False,
+        **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 

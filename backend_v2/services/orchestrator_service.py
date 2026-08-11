@@ -16,6 +16,7 @@ from typing import Any
 from core.entities import JobStatus
 from core.workflow_builder import build_image_workflow
 from infrastructure.logging import get_logger
+from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
 from services.model_availability_service import ModelAvailabilityService
 
@@ -250,27 +251,7 @@ def _tool_update_world_state(
         session.add(chat)
         session.commit()
 
-        # Insert a UI-only world-state divider marker so the chat shows the scene split.
-        try:
-            from datetime import datetime, timezone
-            parts = []
-            if updated.get("location"):
-                parts.append(f"Location: {updated['location']}")
-            if updated.get("time"):
-                parts.append(f"Time: {updated['time']}")
-            marker = Message(
-                chat_id=chat_id,
-                role=MessageRole.SYSTEM,
-                content="\n".join(parts),
-                message_metadata={"source": "world_state", **updated},
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            session.add(marker)
-            session.commit()
-        except Exception as marker_exc:  # pragma: no cover
-            session.rollback()
-            logger.warning("tool_update_world_state_marker_failed", chat_id=chat_id, error=str(marker_exc))
+        insert_world_state_marker(session, chat_id, updated)
 
         logger.info(
             "tool_update_world_state",

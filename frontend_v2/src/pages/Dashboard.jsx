@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -163,6 +163,11 @@ export default function Dashboard() {
         setShowSelectCollection
     });
 
+    const handleSetSelectionMode = useCallback((mode) => {
+        setSelectionMode(mode);
+        if (mode) setSelectedFiles(new Set());
+    }, [setSelectionMode, setSelectedFiles]);
+
     const [isReusingParameters, setIsReusingParameters] = useState(false);
     const reuseParametersLockRef = useRef(false);
     
@@ -237,8 +242,10 @@ export default function Dashboard() {
         onEscape: () => {
             if (selectedImage) closeSelectedImage();
             else if (selectedJobId) setSelectedJobId(null);
+            else if (selectionMode) handleCancelSelectionMode();
         }
     });
+
 
     const {
         allItems,
@@ -356,11 +363,6 @@ export default function Dashboard() {
         refetch();
     }, [confirm, queryClient, refetch]);
 
-    const handleSetSelectionMode = useCallback((mode) => {
-        setSelectionMode(mode);
-        if (mode) setSelectedFiles(new Set());
-    }, [setSelectionMode, setSelectedFiles]);
-
     const handleSelectCollection = useCallback((collectionId) => {
         addToCollection(collectionId, Array.from(selectedFiles));
         toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
@@ -375,6 +377,62 @@ export default function Dashboard() {
     const activeCollectionName = useMemo(() => {
         return activeCollection && collections[activeCollection] ? collections[activeCollection].name : null;
     }, [activeCollection, collections]);
+
+    const location = useLocation();
+    useEffect(() => {
+        if (location.pathname !== '/') return;
+
+        const handleKeyPress = (e) => {
+            if (
+                e.target.tagName === 'INPUT' ||
+                e.target.tagName === 'TEXTAREA' ||
+                e.target.isContentEditable
+            ) {
+                return;
+            }
+
+            const key = e.key.toLowerCase();
+
+            if (e.ctrlKey || e.metaKey) {
+                if (key === 'a' && selectionMode) {
+                    e.preventDefault();
+                    const allNames = displayedItems.map(item => item.name);
+                    setSelectedFiles(new Set(allNames));
+                }
+                return;
+            }
+
+            if (e.altKey) return;
+
+            if (key === 's') {
+                e.preventDefault();
+                handleSetSelectionMode(!selectionMode);
+            } else if (key === 'r') {
+                e.preventDefault();
+                refetch();
+            } else if (key === ' ' || key === 'spacebar') {
+                if (selectedImage) {
+                    e.preventDefault();
+                    closeSelectedImage();
+                }
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectionMode && selectedFiles.size > 0) {
+                    e.preventDefault();
+                    handleBatchDelete();
+                } else if (selectedImage) {
+                    e.preventDefault();
+                    handleDelete(selectedImage.name);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyPress);
+        return () => window.removeEventListener('keydown', handleKeyPress);
+    }, [
+        location.pathname, selectionMode, handleSetSelectionMode, refetch,
+        selectedFiles, displayedItems, setSelectedFiles, handleBatchDelete,
+        selectedImage, closeSelectedImage, handleDelete
+    ]);
 
     return (
         <motion.div

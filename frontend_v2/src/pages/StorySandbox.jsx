@@ -6,7 +6,6 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
-import { api } from '../api';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearStreamingJob } from '../hooks/useStreamingJobs';
@@ -355,8 +354,7 @@ export default function StorySandbox() {
                 return;
             }
             const newTitle = text.replace(/["']/g, '');
-            await api.put(`/api/v2/stories/${activeStoryId}/chapters/${activeChapterId}`, { title: newTitle });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            await updateChapter.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId, title: newTitle });
             toast.success('Title generated!');
         } catch {
             toast.error('Failed to generate title');
@@ -515,8 +513,7 @@ export default function StorySandbox() {
         const newTitle = e.target.value;
         if (!activeStoryId || !newTitle.trim()) return;
         try {
-            await api.put(`/api/v2/stories/${activeStoryId}`, { title: newTitle });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+            await updateStory.mutateAsync({ id: activeStoryId, title: newTitle });
         } catch { /* silent */ }
     };
 

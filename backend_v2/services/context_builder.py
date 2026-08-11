@@ -441,8 +441,12 @@ def build_system_prompt_sections(
 
     if story_character_ids:
         characters_content = []
+        chars = session.exec(
+            select(Character).where(Character.id.in_(story_character_ids))
+        ).all()
+        char_map = {c.id: c for c in chars}
         for char_id in story_character_ids:
-            char = session.get(Character, char_id)
+            char = char_map.get(char_id)
             if char:
                 char_text = f"Character: {char.name}\n"
                 if char.description:
