@@ -71,8 +71,8 @@ export function useDashboardItems({
     }, [activeJobs]);
 
     const { items: allItems, jobsById } = useMemo(() => {
-        return buildDashboardItems(data, activeJobs, jobTimelineOverrides);
-    }, [data, activeJobs, jobTimelineOverrides]);
+        return buildDashboardItems(data, activeJobs, jobTimelineOverrides, { sort });
+    }, [data, activeJobs, jobTimelineOverrides, sort]);
 
     const selectedJob = useMemo(() => {
         return selectedJobId ? jobsById.get(selectedJobId) || null : null;

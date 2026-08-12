@@ -40,7 +40,7 @@ function toJobItem(job) {
     };
 }
 
-export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = null) {
+export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = null, options = {}) {
     const historicalFiles = data ? data.pages.flatMap((page) => page.files.map(toImageItem)) : [];
     const historicalJobs = data ? data.pages.flatMap((page) => (page.jobs || []).map(toJobItem)) : [];
 
@@ -70,6 +70,22 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
     const combined = [];
     const usedImages = new Set();
     const usedJobIds = new Set();
+
+    if (options.sort === 'random') {
+        // For random sort, we just want to show active jobs at the top and then the files in their exact randomized order.
+        Array.from(mergedJobs.values()).forEach((job) => {
+            if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
+                combined.push(job);
+            }
+        });
+        historicalFiles.forEach((image) => {
+            combined.push({
+                ...image,
+                type: 'image',
+            });
+        });
+        return { items: combined, jobsById: mergedJobs };
+    }
 
     Array.from(mergedJobs.values()).forEach((job) => {
         if (job.status === 'completed' && job.outputs && job.outputs.length > 0) {
