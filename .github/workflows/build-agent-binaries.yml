@@ -53,18 +53,22 @@ jobs:
           # correctly on the build host.
           pyinstaller --noconfirm --distpath ./dist --workpath ./build "${{ github.workspace }}/remote_agent/tnhcomfy-agent.spec"
 
-      - name: Verify binary
-        working-directory: remote_agent
+      - name: Verify binary (Linux)
+        if: runner.os == 'Linux'
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            ./dist/tnhcomfy-agent & AGENT_PID=$!
-            sleep 8
-            curl -fsS http://localhost:8001/health || (kill $AGENT_PID 2>/dev/null; exit 1)
-            kill $AGENT_PID 2>/dev/null || true
-          else
-            start /b dist\tnhcomfy-agent.exe
-            powershell -Command "Start-Sleep -Seconds 8; (Invoke-WebRequest -UseBasicParsing http://localhost:8001/health -ErrorAction Stop)"
-          fi
+          ./dist/tnhcomfy-agent & AGENT_PID=$!
+          trap 'kill $AGENT_PID 2>/dev/null || true; rm -rf /tmp/agentverify' EXIT
+          sleep 8
+          curl -fsS http://localhost:8001/health || { kill $AGENT_PID 2>/dev/null; exit 1; }
+
+      - name: Verify binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          start-process -FilePath "dist\tnhcomfy-agent.exe" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 8
+          $c = Invoke-WebRequest -UseBasicParsing http://localhost:8001/health
+          if ($c.StatusCode -ne 200) { exit 1 }
 
       - uses: actions/upload-artifact@v4
         with:
