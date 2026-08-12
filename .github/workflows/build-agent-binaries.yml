@@ -55,6 +55,7 @@ jobs:
 
       - name: Verify binary (Linux)
         if: runner.os == 'Linux'
+        working-directory: remote_agent
         run: |
           ./dist/tnhcomfy-agent & AGENT_PID=$!
           trap 'kill $AGENT_PID 2>/dev/null || true; rm -rf /tmp/agentverify' EXIT
@@ -63,6 +64,7 @@ jobs:
 
       - name: Verify binary (Windows)
         if: runner.os == 'Windows'
+        working-directory: remote_agent
         shell: pwsh
         run: |
           start-process -FilePath "dist\tnhcomfy-agent.exe" -PassThru -NoNewWindow
