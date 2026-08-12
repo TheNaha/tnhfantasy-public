@@ -60,3 +60,12 @@ models/models/ultralytics/bbox/hand_yolov8n.pt
 models/models/ultralytics/seg/person_yolov8n-seg.pt
 models/models/upscale_models/RealESRGAN_x4plus_anime_6B.pth
 models/models/upscale_models/RealESRGAN_x4plus.pth
+remote_agent/build/tnhcomfy-agent/Analysis-00.toc
+remote_agent/build/tnhcomfy-agent/base_library.zip
+remote_agent/build/tnhcomfy-agent/EXE-00.toc
+remote_agent/build/tnhcomfy-agent/PKG-00.toc
+remote_agent/build/tnhcomfy-agent/PYZ-00.pyz
+remote_agent/build/tnhcomfy-agent/PYZ-00.toc
+remote_agent/build/tnhcomfy-agent/tnhcomfy-agent.pkg
+remote_agent/build/tnhcomfy-agent/warn-tnhcomfy-agent.txt
+remote_agent/build/tnhcomfy-agent/xref-tnhcomfy-agent.html

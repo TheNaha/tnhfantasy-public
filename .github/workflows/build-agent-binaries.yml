@@ -1,0 +1,73 @@
+name: build-agent-binaries
+
+# Produces standalone tnhcomfy-agent executables for BOTH Linux and Windows,
+# so users can run the remote agent on the ComfyUI host machine without Docker
+# or a Python install. See remote_agent/README.md.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    paths:
+      - "remote_agent/**"
+      - "provider_containers/provider_core/**"
+      - ".github/workflows/build-agent-binaries.yml"
+    branches: [main, master]
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # provider_core + remote_agent must be siblings of this path.
+          fetch-depth: 1
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Make workspace writable (Linux)
+        if: runner.os == 'Linux'
+        run: sudo chown -R $(whoami) $(pwd)
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r remote_agent/build-requirements.txt
+          # Runtime deps bundled INSIDE the frozen binary.
+          pip install fastapi==0.115.6 "uvicorn[standard]"==0.34.0 httpx==0.28.1 pydantic==2.10.6 requests==2.32.3
+
+      - name: Build standalone executable
+        working-directory: remote_agent
+        run: |
+          # SPECPATH must be absolute so the spec can resolve REPO/pathex
+          # correctly on the build host.
+          pyinstaller --noconfirm --distpath ./dist --workpath ./build "${{ github.workspace }}/remote_agent/tnhcomfy-agent.spec"
+
+      - name: Verify binary
+        working-directory: remote_agent
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            ./dist/tnhcomfy-agent & AGENT_PID=$!
+            sleep 8
+            curl -fsS http://localhost:8001/health || (kill $AGENT_PID 2>/dev/null; exit 1)
+            kill $AGENT_PID 2>/dev/null || true
+          else
+            start /b dist\tnhcomfy-agent.exe
+            powershell -Command "Start-Sleep -Seconds 8; (Invoke-WebRequest -UseBasicParsing http://localhost:8001/health -ErrorAction Stop)"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnhcomfy-agent-${{ runner.os }}
+          path: remote_agent/dist/*
+          if-no-files-found: error

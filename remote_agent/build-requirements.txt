@@ -1,0 +1,3 @@
+# Build-time deps only (used to produce the standalone executables via PyInstaller).
+# Do NOT install this in the runtime venv — the frozen binary is self-contained.
+pyinstaller==6.12.0
