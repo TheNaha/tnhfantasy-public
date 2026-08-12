@@ -54,3 +54,9 @@ provider_fixes.patch
 .env.beam-*
 .env.direct-url
 .env.llm-*
+models/models/ultralytics/bbox/face_yolov8n.pt
+models/models/ultralytics/bbox/face_yolov8s.pt
+models/models/ultralytics/bbox/hand_yolov8n.pt
+models/models/ultralytics/seg/person_yolov8n-seg.pt
+models/models/upscale_models/RealESRGAN_x4plus_anime_6B.pth
+models/models/upscale_models/RealESRGAN_x4plus.pth

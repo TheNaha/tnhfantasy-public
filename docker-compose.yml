@@ -281,6 +281,59 @@ services:
   #     timeout: 10s
   #     retries: 5
   #     start_period: 30s
+  provider-remote-comfy:
+    build:
+      context: ./provider_containers
+      dockerfile: image_worker/Dockerfile
+    container_name: tnhcomfy-remote-comfy
+    depends_on:
+      backend_v2:
+        condition: service_healthy
+    profiles:
+      - providers
+    env_file:
+      - .env.remote-comfy
+    environment:
+      - PROVIDER_ID=remote-comfy
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+      - ENGINE=remote_comfy
+    user: "1000:1000"
+    networks:
+      - tnhcomfy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Remote Agent lives on the MACHINE HOSTING ComfyUI (not in this orchestrator
+  # stack for production). Uncomment + point DATA_DIR at your ComfyUI models dir
+  # ONLY when you want to smoke-test the agent locally on the same box as this
+  # compose stack (it cannot reach a remote ComfyUI over localhost here).
+  # remote-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: remote_agent/Dockerfile
+  #   container_name: tnhcomfy-remote-agent
+  #   environment:
+  #     - DATA_DIR=/models
+  #     - PORT=8001
+  #     - REMOTE_AGENT_TOKEN=${REMOTE_AGENT_TOKEN}
+  #   volumes:
+  #     - /opt/comfy/ComfyUI/models:/models:ro
+  #     - ./data/remote-agent/downloads:/models/downloads
+  #   ports:
+  #     - "8001:8001"
+  #   profiles:
+  #     - providers
 
 networks:
   tnhcomfy:

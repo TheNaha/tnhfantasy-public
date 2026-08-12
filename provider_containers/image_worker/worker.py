@@ -102,6 +102,9 @@ elif ENGINE == "beam":
 elif ENGINE == "direct_url":
     from image_worker.engines.direct_url.client import DirectUrlProviderClient
     client = DirectUrlProviderClient(runtime_config=runtime_config)
+elif ENGINE == "remote_comfy":
+    from image_worker.engines.remote_comfy.client import RemoteComfyProviderClient
+    client = RemoteComfyProviderClient(runtime_config=runtime_config)
 else:
     raise ValueError(f"Unknown ENGINE: {ENGINE}")
 

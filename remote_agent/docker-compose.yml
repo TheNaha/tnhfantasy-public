@@ -1,0 +1,19 @@
+services:
+  remote-agent:
+    build:
+      context: ..
+      dockerfile: remote_agent/Dockerfile
+    container_name: tnhcomfy-remote-agent
+    env_file:
+      - .env.agent
+    environment:
+      - PORT=8001
+      # DATA_DIR is strictly bound to /app/remote_agent/data inside the container
+    volumes:
+      # IMPORTANT: Replace the path on the left with the absolute path to your
+      # ComfyUI models directory on your GPU rig.
+      # Example: /home/user/ComfyUI/models:/app/remote_agent/data:rw
+      - /path/to/your/ComfyUI/models:/app/remote_agent/data:rw
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
