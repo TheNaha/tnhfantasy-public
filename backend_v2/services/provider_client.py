@@ -191,6 +191,15 @@ class _ImageReducer:
                 self.job_id, status=JobStatus.GENERATING, overall_progress=overall,
                 message=f"Executing node {len(self.executed_nodes)}/{self.total_nodes}...",
             )
+        elif event == "cached_nodes":
+            nodes = ev.get("nodes") or []
+            for node_id in nodes:
+                self.executed_nodes.add(node_id)
+            overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else 0
+            await self.job_service.update_job(
+                self.job_id, status=JobStatus.GENERATING, overall_progress=overall,
+                message=f"Cached {len(nodes)} nodes...",
+            )
         elif event == "completed":
             try:
                 validate_image_outputs(ev)

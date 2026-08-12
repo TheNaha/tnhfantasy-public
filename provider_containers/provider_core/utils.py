@@ -116,19 +116,28 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
     if status == "executing":
         return TaskEvent(event="node", job_id=job_id, node=update.get("node"))
 
-    # ComfyUI cache hits carry no progress; skip them rather than emitting a
     # progress event with a None value (which would stall the backend reducer).
-    if status in ("execution_cached", "execution_interrupted", "execution_start"):
+    if status in ("execution_interrupted", "execution_start"):
         return None
+    
+    if status == "execution_cached":
+        return TaskEvent(event="cached_nodes", job_id=job_id, nodes=update.get("nodes") or data.get("nodes") or [])
 
-    # queued / running / progress / starting / preparing -> progress fraction
     value = update.get("value")
-    if value is None:
+    max_v = update.get("max") or 0
+    if value is not None and max_v:
+        value = value / max_v
+    elif value is None:
         progress = update.get("progress")
         if isinstance(progress, dict):
-            max_v = progress.get("max") or 0
-            cur = progress.get("value") or 0
-            value = (cur / max_v) if max_v else None
+            p_max = progress.get("max") or 0
+            p_cur = progress.get("value") or 0
+            value = (p_cur / p_max) if p_max else None
+    
+    # Value is now a 0-1 fraction. Convert to 0-100 percentage.
+    if value is not None:
+        value = value * 100
+
     return TaskEvent(event="progress", job_id=job_id, value=value)
 
 

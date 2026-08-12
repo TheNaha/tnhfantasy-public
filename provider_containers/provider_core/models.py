@@ -54,13 +54,14 @@ class TaskEvent(BaseModel):
       cancelled    terminal cancellation
     """
     event: Literal[
-        "started", "progress", "delta", "node", "artifact", "completed", "failed", "cancelled"
+        "started", "progress", "delta", "node", "cached_nodes", "artifact", "completed", "failed", "cancelled"
     ]
     job_id: Optional[str] = None
     seq: Optional[int] = None
     value: Optional[float] = None          # progress fraction 0..1
     text: Optional[str] = None             # llm token delta
     node: Optional[str] = None             # executing comfy node
+    nodes: Optional[List[str]] = None      # cached comfy nodes
     tool_calls: Optional[List[Dict[str, Any]]] = None  # llm tool calls (on completed)
     outputs: Optional[List[Dict[str, Any]]] = None      # final outputs (on completed)
     status: Optional[str] = None           # backend-facing status hint
