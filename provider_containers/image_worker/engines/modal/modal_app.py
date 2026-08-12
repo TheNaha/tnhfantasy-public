@@ -20,6 +20,20 @@ from provider_core.validation import (
     MIN_MODEL_SIZE,
     VALID_FILE_HEADERS,
 )
+
+def safe_vol_reload():
+    try:
+        vol.reload()
+    except Exception as e:
+        logger.warning(f"vol.reload failed: {e}")
+
+async def safe_vol_reload_aio():
+    try:
+        await vol.reload.aio()
+    except Exception as e:
+        logger.warning(f"vol.reload.aio failed: {e}")
+
+
 # =============================================================================
 # Inlined image_worker logic
 # =============================================================================
@@ -296,7 +310,7 @@ COMFYUI_SCALEDOWN = int(os.getenv("MODAL_GPU_SCALEDOWN", "40"))
 COMFYUI_SCALEDOWN_SNAPSHOT = int(os.getenv("MODAL_GPU_SCALEDOWN_SNAPSHOT", "40"))
 COMFYUI_STALL_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_STALL_TIMEOUT_SECONDS", "300"))
 COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS = float(os.getenv("MODAL_COMFYUI_HEALTHCHECK_TIMEOUT_SECONDS", "180"))
-COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "10"))  # 10 = safe 2x margin below observed ~20-run hang
+COMFYUI_MAX_RUNS_BEFORE_RESTART = int(os.getenv("MODAL_COMFYUI_MAX_RUNS_BEFORE_RESTART", "5"))  # 5 = safe margin below observed ~15-run hang
 COMFYUI_CAPTURE_STALL_DIAGNOSTICS = os.getenv("MODAL_COMFYUI_CAPTURE_STALL_DIAGNOSTICS", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
@@ -385,6 +399,7 @@ image_base = (
         remote_path="/root/provider_core",
         copy=True,
     )
+    .env({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
 )
 
 # Image for stable mode — include load profiler for timing diagnostics
@@ -486,7 +501,7 @@ class ComfyUIStable:
         # Refresh the volume replica so inputs uploaded by other containers
         # (FileStorage.put_file) since container start are visible to ComfyUI.
         async with _reload_lock:
-            await vol.reload.aio()
+            await safe_vol_reload_aio()
 
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUIStable")
@@ -610,7 +625,7 @@ class ComfyUISnapshot:
         # Refresh the volume replica so inputs uploaded by other containers
         # (FileStorage.put_file) since container start are visible to ComfyUI.
         async with _reload_lock:
-            await vol.reload.aio()
+            await safe_vol_reload_aio()
 
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUISnapshot")
@@ -731,7 +746,7 @@ class ComfyUINodeExtractor:
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, metadata: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
-    vol.reload()
+    safe_vol_reload()
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
@@ -853,7 +868,7 @@ _reload_lock = asyncio.Lock()
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
     async with _reload_lock:
-        await vol.reload.aio()
+        await safe_vol_reload_aio()
         return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
 
@@ -869,7 +884,7 @@ async def list_models_with_metadata(directory: str):
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 async def validate_models(directories: list[str], delete_invalid: bool = False):
-    await vol.reload.aio()
+    await safe_vol_reload_aio()
     """
     Validate all models in specified directories.
     Checks: minimum size, magic bytes, partial downloads.
@@ -1056,7 +1071,7 @@ class FileStorage:
         """
         import os
         
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Reading file: {full_path}")
         
@@ -1074,7 +1089,7 @@ class FileStorage:
         import os
         import asyncio
         
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
         
@@ -1116,7 +1131,7 @@ class FileStorage:
         """
         import os
         
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", directory)
         logger.info(f"[FileStorage] Listing directory: {full_path}")
         
@@ -1139,7 +1154,7 @@ class FileStorage:
     def file_exists(self, path: str) -> bool:
         """Check if file exists in volume."""
         import os
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         return os.path.exists(full_path)
     
@@ -1147,7 +1162,7 @@ class FileStorage:
     def get_file_size(self, path: str) -> int:
         """Get file size in bytes."""
         import os
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         if os.path.exists(full_path):
             return os.path.getsize(full_path)
@@ -1188,7 +1203,7 @@ class FileStorage:
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 def setup_models():
-    vol.reload()
+    safe_vol_reload()
     import os
     import requests
     import time

@@ -21,6 +21,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("modal_app_vllm")
 
+
+
+def safe_vol_reload():
+    try:
+        vol.reload()
+    except Exception as e:
+        logger.warning(f"vol.reload failed: {e}")
+
+async def safe_vol_reload_aio():
+    try:
+        await vol.reload.aio()
+    except Exception as e:
+        logger.warning(f"vol.reload.aio failed: {e}")
+
 app = modal.App(os.getenv("MODAL_APP_NAME", "vllm-modal-stack"))
 vol = modal.Volume.from_name(os.getenv("MODAL_VOLUME_NAME", "comfy-llm-models"), create_if_missing=True)
 
@@ -193,7 +207,7 @@ class VLLMEngine:
 @modal.concurrent(max_inputs=1, target_inputs=1)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, metadata: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
-    vol.reload()
+    safe_vol_reload()
     base_path = "/mnt/data"
     try:
         full_path = get_safe_path(base_path, path)
@@ -306,9 +320,9 @@ def download_model(url: str, path: str, token: str = None, preview_url: str = No
 @modal.concurrent(max_inputs=20, target_inputs=10)
 async def list_models_with_metadata(directory: str):
     try:
-        await vol.reload.aio()
+        await safe_vol_reload_aio()
     except Exception:
-        vol.reload()
+        safe_vol_reload()
     return await list_models_with_metadata_internal("/mnt/data", directory, compute_hashes=False)
 
 
@@ -321,9 +335,9 @@ async def list_models_with_metadata(directory: str):
 @modal.concurrent(max_inputs=10, target_inputs=5)
 async def validate_models(directories: list[str], delete_invalid: bool = False):
     try:
-        await vol.reload.aio()
+        await safe_vol_reload_aio()
     except Exception:
-        vol.reload()
+        safe_vol_reload()
 
     if isinstance(directories, str):
         directories = [directories]
@@ -411,7 +425,7 @@ class FileStorage:
 
     @modal.method()
     def read_file(self, path: str) -> bytes:
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Reading file: {full_path}")
 
@@ -423,7 +437,7 @@ class FileStorage:
 
     @modal.method()
     async def delete_file(self, path: str) -> bool:
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         logger.info(f"[FileStorage] Deleting file: {full_path}")
 
@@ -460,7 +474,7 @@ class FileStorage:
 
     @modal.method()
     def list_directory(self, directory: str) -> list[dict]:
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", directory)
         logger.info(f"[FileStorage] Listing directory: {full_path}")
 
@@ -480,13 +494,13 @@ class FileStorage:
 
     @modal.method()
     def file_exists(self, path: str) -> bool:
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         return os.path.exists(full_path)
 
     @modal.method()
     def get_file_size(self, path: str) -> int:
-        vol.reload()
+        safe_vol_reload()
         full_path = get_safe_path("/mnt/data", path)
         if os.path.exists(full_path):
             return os.path.getsize(full_path)
@@ -516,7 +530,7 @@ class FileStorage:
 )
 @modal.concurrent(max_inputs=10, target_inputs=5)
 def setup_models():
-    vol.reload()
+    safe_vol_reload()
     for d in ["/mnt/data/models", "/mnt/data/downloads", "/mnt/data/output"]:
         os.makedirs(d, exist_ok=True)
         logger.debug(f"[Setup] Ensured directory: {d}")
