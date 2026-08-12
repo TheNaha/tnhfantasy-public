@@ -44,7 +44,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r remote_agent/build-requirements.txt
           # Runtime deps bundled INSIDE the frozen binary.
-          pip install fastapi==0.115.6 "uvicorn[standard]"==0.34.0 httpx==0.28.1 pydantic==2.10.6 requests==2.32.3
+          pip install fastapi==0.115.6 'uvicorn[standard]==0.34.0' httpx==0.28.1 pydantic==2.10.6 requests==2.32.3
 
       - name: Build standalone executable
         working-directory: remote_agent
