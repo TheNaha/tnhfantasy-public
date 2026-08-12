@@ -1,80 +1,73 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiPost, apiGet, apiDelete, waitForToast } from './fixtures.js';
+import { seedLorebook, seedLorebookEntry, cleanupEntities, uniqueName, expectToast } from './fixtures.js';
 
 test.describe('World Vault & Lorebooks (Module D)', () => {
   test.setTimeout(120000);
 
-  let createdLorebookId = null;
-  let createdChatId = null;
+  const created = [];
+  let lorebookName;
 
   test.afterEach(async ({ page }) => {
-    if (createdChatId) {
-      try { await apiDelete(page, `/world_vault/chats/${createdChatId}`); } catch { /* best-effort */ }
-      createdChatId = null;
-    }
-    if (createdLorebookId) {
-      try { await apiDelete(page, `/world_vault/lorebooks/${createdLorebookId}`); } catch { /* best-effort */ }
-      createdLorebookId = null;
-    }
+    await cleanupEntities(page, created).catch(() => {});
+    created.length = 0;
   });
 
-  test('Create Lorebook via API and Verify in Chat Context', async ({ page }) => {
-    const lorebook = await apiPost('/world_vault/lorebooks', {
-      name: 'E2E Test Lorebook',
-      entries: [
-        { keyword: 'Crystal Sword', content: 'The Crystal Sword is hidden in the Cave of Echoes.' }
-      ]
+  test('Lorebook toggle appears in Chat context panel', async ({ page }) => {
+    lorebookName = uniqueName('e2e-lorebook');
+    const lorebook = await seedLorebook(page, { name: lorebookName, description: 'E2E lore for chat context.' });
+    created.push({ kind: 'lorebook', id: lorebook.id });
+
+    await page.goto('/chat');
+    await expect(page.getByRole('heading', { name: 'Context & Settings' })).toBeVisible({ timeout: 10000 });
+
+    await expect(page.getByText('Lorebooks', { exact: true }).last()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: lorebookName }).first()).toBeVisible({ timeout: 10000 });
+  });
+
+  test('Lorebook appears in New Chat modal and can be attached', async ({ page }) => {
+    lorebookName = uniqueName('e2e-lorebook');
+    const lorebook = await seedLorebook(page, { name: lorebookName, description: 'E2E lore for new chat modal.' });
+    created.push({ kind: 'lorebook', id: lorebook.id });
+
+    await page.goto('/chat');
+    await page.getByTitle('New chat').click();
+
+    const modal = page.getByRole('heading', { name: 'Create New Chat' }).locator('..').locator('..');
+    await expect(modal).toBeVisible({ timeout: 10000 });
+    const toggle = modal.getByRole('button', { name: lorebookName });
+    await expect(toggle).toBeVisible({ timeout: 10000 });
+    await toggle.click();
+
+    const createResp = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && r.url().includes('/api/v2/chats'),
+    );
+    await modal.getByRole('button', { name: 'Create', exact: true }).click();
+
+    const createdChat = await (await createResp).json();
+    created.push({ kind: 'chat', id: createdChat.id });
+
+    await expectToast(page, /New chat created/);
+    expect(createdChat.active_lorebook_ids).toContain(lorebook.id);
+  });
+
+  test('Lorebook entry can be created and deleted via API', async ({ page }) => {
+    const lorebook = await seedLorebook(page, { name: uniqueName('e2e-lorebook') });
+    created.push({ kind: 'lorebook', id: lorebook.id });
+
+    const entry = await seedLorebookEntry(page, lorebook.id, {
+      keys: ['Crystal Sword'],
+      content: 'The Crystal Sword is hidden in the Cave of Echoes.',
     });
-    createdLorebookId = lorebook.id || lorebook.data?.id;
+    expect(entry.id).toBeTruthy();
 
-    await page.goto('/chat');
+    const list = await (await page.request.get('/api/v2/lorebooks')).json();
+    const fromApi = list.find((l) => l.id === lorebook.id);
+    expect(fromApi).toBeTruthy();
 
-    const newChatBtn = page.getByRole('button', { name: /new chat|\+/i }).first();
-    if (await newChatBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await newChatBtn.click();
-      await page.waitForTimeout(500);
+    await cleanupEntities(page, [{ kind: 'lorebook', id: lorebook.id }]);
+    created.length = 0;
 
-      const nameInput = page.getByPlaceholder(/chat name/i).first();
-      if (await nameInput.isVisible()) {
-        await nameInput.fill('Lorebook Test Chat');
-      }
-
-      const createBtn = page.getByRole('button', { name: /create/i }).last();
-      if (await createBtn.isVisible()) {
-        await createBtn.click();
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    const url = page.url();
-    const match = url.match(/\/chat\/([^/]+)/);
-    if (match) createdChatId = match[1];
-
-    const chatInput = page.getByPlaceholder(/type a message/i);
-    await expect(chatInput).toBeVisible();
-    await chatInput.fill('What do you know about the Crystal Sword?');
-    await chatInput.press('Enter');
-
-    await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 120000 });
-  });
-
-  test('Chat Context Panel Opens', async ({ page }) => {
-    await page.goto('/chat');
-
-    const newChatBtn = page.getByRole('button', { name: /new chat|\+/i }).first();
-    if (await newChatBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await newChatBtn.click();
-      const createBtn = page.getByRole('button', { name: /create/i }).last();
-      if (await createBtn.isVisible()) {
-        await createBtn.click();
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    const contextBtn = page.getByRole('button', { name: /context/i }).first();
-    if (await contextBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await contextBtn.click();
-      await page.waitForTimeout(500);
-    }
+    const after = await (await page.request.get('/api/v2/lorebooks')).json();
+    expect(after.find((l) => l.id === lorebook.id)).toBeFalsy();
   });
 });

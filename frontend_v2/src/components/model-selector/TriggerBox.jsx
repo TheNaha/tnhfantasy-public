@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { Check, ChevronDown, Layers, Info, Star } from 'lucide-react';
+import { Check, ChevronDown, Layers, Info, Star, ImageIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../api';
 import ModelPreviewImage from './ModelPreviewImage';
@@ -19,9 +19,7 @@ const TriggerBox = memo(function TriggerBox({
 }) {
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
 
-  if (!selectedModel) return null;
-
-  const hasVersions = selectedModel.versions && selectedModel.versions.length > 1;
+  const hasVersions = selectedModel?.versions && selectedModel.versions.length > 1;
 
   return (
     <div className="relative">
@@ -34,7 +32,13 @@ const TriggerBox = memo(function TriggerBox({
           aria-haspopup="dialog"
           aria-expanded={isOpen}
         >
-          <ModelPreviewImage model={selectedModel} size="sm" />
+          {selectedModel ? (
+            <ModelPreviewImage model={selectedModel} size="sm" />
+          ) : (
+            <div className="w-10 h-10 rounded bg-gray-800 flex items-center justify-center text-gray-500 flex-shrink-0">
+              <ImageIcon size={18} />
+            </div>
+          )}
 
           {/* Model Name */}
           <div className="flex-1 min-w-0 text-left">

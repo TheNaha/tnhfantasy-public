@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiGet, apiPost, waitForToast } from './fixtures.js';
+import { API_BASE, waitForToast } from './fixtures.js';
 
 test.describe('Settings & Configuration (Module F)', () => {
   test.setTimeout(60000);

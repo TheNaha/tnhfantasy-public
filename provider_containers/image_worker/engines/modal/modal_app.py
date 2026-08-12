@@ -483,6 +483,11 @@ class ComfyUIStable:
     
     @modal.method()
     async def run(self, workflow_json: Dict[str, Any]):
+        # Refresh the volume replica so inputs uploaded by other containers
+        # (FileStorage.put_file) since container start are visible to ComfyUI.
+        async with _reload_lock:
+            await vol.reload.aio()
+
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUIStable")
             self._completed_runs = 0
@@ -602,6 +607,11 @@ class ComfyUISnapshot:
     
     @modal.method()
     async def run(self, workflow_json: Dict[str, Any]):
+        # Refresh the volume replica so inputs uploaded by other containers
+        # (FileStorage.put_file) since container start are visible to ComfyUI.
+        async with _reload_lock:
+            await vol.reload.aio()
+
         if COMFYUI_MAX_RUNS_BEFORE_RESTART > 0 and getattr(self, "_completed_runs", 0) >= COMFYUI_MAX_RUNS_BEFORE_RESTART:
             await asyncio.to_thread(_restart_comfy_server, self.port, "ComfyUISnapshot")
             self._completed_runs = 0

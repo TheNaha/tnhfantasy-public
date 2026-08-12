@@ -16,7 +16,7 @@
  */
 
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
@@ -47,19 +47,31 @@ const StorySandbox = lazy(() => import('./pages/StorySandbox'));
 
 function AnimatedRoutes() {
     const location = useLocation();
+    // Collapse dynamic segments into a stable key so param-only navigations
+    // (e.g. /chat -> /chat/:chatId) don't remount the page component, which
+    // would destroy transient UI state (open modals, composer drafts, etc.).
+    const routeKey = (() => {
+        const parts = location.pathname.split('/').filter(Boolean);
+        if (parts[0] === 'chat' || parts[0] === 'story') return `/${parts[0]}`;
+        return location.pathname;
+    })();
     return (
         <AnimatePresence mode="wait">
-            <Routes location={location} key={location.key}>
+            <Routes location={location} key={routeKey}>
                 <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
                 <Route path="/generate" element={<ErrorBoundary><SimpleGenerator /></ErrorBoundary>} />
                 <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
                 <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />
                 <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
-                <Route path="/chat" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
-                <Route path="/chat/:chatId" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
-                <Route path="/story" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
-                <Route path="/story/:storyId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
-                <Route path="/story/:storyId/chapter/:chapterId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                <Route path="/chat" element={<Outlet />}>
+                    <Route index element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
+                    <Route path=":chatId" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
+                </Route>
+                <Route path="/story" element={<Outlet />}>
+                    <Route index element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                    <Route path=":storyId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                    <Route path=":storyId/chapter/:chapterId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                </Route>
                 <Route path="/characters" element={<ErrorBoundary><Characters /></ErrorBoundary>} />
                 <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
                 <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />

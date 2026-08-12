@@ -14,6 +14,7 @@ import { assetUrl } from '../../utils/assetUrl';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
+    console.log('DBGPANEL render isOpen=', isOpen);
     const { data: collections = {} } = useCollections();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);
@@ -62,9 +63,11 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
     };
 
     return (
-        <AnimatePresence>
+        <>
             {isOpen && (
+                <AnimatePresence>
                 <div
+                    key="collections-panel"
                     className="fixed inset-0 z-40 flex items-start justify-end bg-black/50"
                     onClick={onClose}
                 >
@@ -232,8 +235,9 @@ const CollectionsPanel = ({ isOpen, onClose }) => {
                         onCreate={handleCreate}
                     />
                 </div>
+                </AnimatePresence>
             )}
-        </AnimatePresence>
+        </>
     );
 };
 

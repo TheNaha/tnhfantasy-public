@@ -1,5 +1,5 @@
 import { X, FolderOpen } from 'lucide-react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { assetUrl } from '../../utils/assetUrl';
 
@@ -12,9 +12,10 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
     }
 
     return (
-        <AnimatePresence>
+        <>
             {isOpen && createPortal(
                 <div
+                    key="select-collection-modal"
                     className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
                     onClick={onClose}
                 >
@@ -113,7 +114,7 @@ const SelectCollectionModal = ({ isOpen, onClose, collections, onSelect }) => {
                 </div>,
                 document.body
             )}
-        </AnimatePresence>
+        </>
     );
 };
 

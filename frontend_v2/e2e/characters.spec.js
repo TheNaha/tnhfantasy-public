@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiDelete, apiGet, apiPost, waitForToast } from './fixtures.js';
+import { API_BASE, apiDelete, waitForToast } from './fixtures.js';
 
 test.describe('Character Vault (Module D)', () => {
   test.setTimeout(120000);

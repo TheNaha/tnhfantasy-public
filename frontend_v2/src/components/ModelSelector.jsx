@@ -160,6 +160,14 @@ const ModelSelector = memo(function ModelSelector({
     if (directory) return models;
     // Client side filtering ONLY if using initialModels (no directory provided)
     let result = [...models];
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (m) =>
+          (m.name || '').toLowerCase().includes(q) ||
+          (m.display_name || '').toLowerCase().includes(q)
+      );
+    }
     if (filterBaseModel !== "all" || filterType !== "all" || !showNSFW) {
       result = result.filter((m) => {
         if (filterBaseModel !== "all" && m.base_model !== filterBaseModel) return false;
@@ -178,7 +186,7 @@ const ModelSelector = memo(function ModelSelector({
       }
     });
     return result;
-  }, [models, directory, sortBy, filterBaseModel, filterType, showNSFW]);
+  }, [models, directory, search, sortBy, filterBaseModel, filterType, showNSFW]);
 
   const sentinelRef = useInfiniteScroll({
     hasMore: hasNextPage && !isFetching,

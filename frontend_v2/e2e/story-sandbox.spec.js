@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiDelete, apiGet, apiPost, waitForToast, waitForStreamingToFinish } from './fixtures.js';
+import { API_BASE, apiDelete, waitForToast } from './fixtures.js';
 
 test.describe('Story Sandbox Workspace (Module C)', () => {
   test.setTimeout(180000);

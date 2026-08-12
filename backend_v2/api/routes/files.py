@@ -590,6 +590,14 @@ async def list_files_endpoint(
                 filename = file_info.get("filename", model.get("name", "unknown"))
                 size_kb = file_info.get("size_kb", 0)
                 
+                # Skip partial/incomplete download artifacts — they must never be
+                # offered as selectable models (preflight would always fail).
+                if any(
+                    filename.lower().endswith(suffix)
+                    for suffix in (".downloading", ".part", ".crdownload", ".tmp", ".temp")
+                ):
+                    continue
+                
                 # Get base model and trained words from default version
                 version_base_model = default_version.get("base_model", "") if default_version else ""
                 trained_words = default_version.get("trained_words", []) if default_version else []

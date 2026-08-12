@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
-import { motion as Motion, AnimatePresence } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
 const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
@@ -29,7 +29,7 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
     };
 
     return (
-        <AnimatePresence>
+        <>
             {isOpen && createPortal(
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
@@ -121,7 +121,7 @@ const CreateCollectionModal = ({ isOpen, onClose, onCreate }) => {
                 </div>,
                 document.body
             )}
-        </AnimatePresence>
+        </>
     );
 };
 

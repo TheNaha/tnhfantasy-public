@@ -24,8 +24,9 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
     };
 
     return (
-        <AnimatePresence>
+        <>
             {isOpen && (
+            <AnimatePresence>
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80"
                     onClick={onClose}
@@ -104,8 +105,9 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
                         </div>
                     </motion.div>
                 </div>
+            </AnimatePresence>
             )}
-        </AnimatePresence>
+        </>
     );
 };
 
