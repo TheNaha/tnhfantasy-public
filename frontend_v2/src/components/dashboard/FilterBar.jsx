@@ -56,6 +56,24 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                         </button>
                     )}
                 </div>
+                
+                {/* Sort Dropdown */}
+                <div className="w-48">
+                    <select
+                        aria-label="Sort images"
+                        value={localFilters.sort || 'date_desc'}
+                        onChange={(e) => {
+                            const newFilters = { ...localFilters, sort: e.target.value };
+                            setLocalFilters(newFilters);
+                            onFilterChange(newFilters);
+                        }}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                        <option value="date_desc">Newest First</option>
+                        <option value="date_asc">Oldest First</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
             </div>
         </div>
     );

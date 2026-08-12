@@ -297,6 +297,14 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
             valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
         elif sort == "name_asc":
             valid_files.sort(key=lambda x: x.get("name", ""))
+        elif sort == "size_desc":
+            valid_files.sort(key=lambda x: x.get("size", 0), reverse=True)
+        elif sort == "rating_desc":
+            valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUp", 0), reverse=True)
+        elif sort == "random":
+            import random
+            # Use search term as seed for stable pagination if available, else a static string so pagination doesn't shuffle between pages.
+            random.Random(search or "stable_random_seed").shuffle(valid_files)
 
         total = len(valid_files)
         paginated = valid_files[offset:offset + limit]
@@ -419,6 +427,7 @@ async def list_assets(
     character_id: str | None = None,
     story_id: str | None = None,
     search: str | None = None,
+    sort: str = "date_desc",
 ):
     """Keyset-paginated asset listing backed by the DB (replaces in-memory scan).
 
@@ -445,13 +454,28 @@ async def list_assets(
         if search:
             like = f"%{search}%"
             q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(str).ilike(like)))
-        if cursor:
-            try:
-                cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-                q = q.where(order_col < cur_dt)
-            except Exception:
-                pass
-        q = q.order_by(order_col.desc(), Asset.id.desc()).limit(limit + 1)
+        if sort == "date_asc":
+            if cursor:
+                try:
+                    cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+                    q = q.where(order_col > cur_dt)
+                except Exception:
+                    pass
+            q = q.order_by(order_col.asc(), Asset.id.asc()).limit(limit + 1)
+        elif sort == "random":
+            from sqlalchemy import cast, String
+            hash_col = func.md5(cast(Asset.id, String))
+            if cursor:
+                q = q.where(hash_col > cursor)
+            q = q.order_by(hash_col.asc()).limit(limit + 1)
+        else:
+            if cursor:
+                try:
+                    cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
+                    q = q.where(order_col < cur_dt)
+                except Exception:
+                    pass
+            q = q.order_by(order_col.desc(), Asset.id.desc()).limit(limit + 1)
         rows = session.exec(q).all()
         has_more = len(rows) > limit
         page = rows[:limit]
@@ -475,8 +499,16 @@ async def list_assets(
                 "metadata": a.metadata_ or {},
             })
             items.append(item)
-        order_ts = (page[-1].generated_at or page[-1].created_at) if page else None
-        next_cursor = order_ts.isoformat() if (has_more and order_ts) else None
+        if sort == "random":
+            import hashlib
+            if page:
+                last_id = str(page[-1].id).encode('utf-8')
+                next_cursor = hashlib.md5(last_id).hexdigest() if has_more else None
+            else:
+                next_cursor = None
+        else:
+            order_ts = (page[-1].generated_at or page[-1].created_at) if page else None
+            next_cursor = order_ts.isoformat() if (has_more and order_ts) else None
         return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
 
 

@@ -261,6 +261,7 @@ export default function Dashboard() {
         collections: collectionsWithImages,
         showFavorites,
         favorites,
+        sort: filters.sort || 'date_desc',
     });
 
     const handleDelete = useCallback(async (filename) => {

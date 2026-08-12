@@ -55,6 +55,7 @@ export function useDashboardItems({
     collections,
     showFavorites,
     favorites,
+    sort = 'date_desc',
 }) {
     const [jobTimelineOverrides, updateJobTimelineOverrides] = useReducer(
         (currentAnchors, nextJobs) => {
@@ -106,17 +107,28 @@ export function useDashboardItems({
     }, [displayedItems]);
 
     const sortedGroupedEntries = useMemo(() => {
+        if (sort === 'random') {
+            return [['Random', displayedItems]];
+        }
+        
         return Object.entries(grouped)
-            .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-            .map(([date, groupItems]) => ([
-                date,
-                groupItems
-                    .slice()
-                    .sort((left, right) => getItemTimelineDate(right) - getItemTimelineDate(left)),
-            ]));
-    }, [grouped]);
+            .sort(([dateA], [dateB]) => {
+                const diff = new Date(dateB).getTime() - new Date(dateA).getTime();
+                return sort === 'date_asc' ? -diff : diff;
+            })
+            .map(([date, groupItems]) => {
+                const sortedItems = groupItems.slice().sort((left, right) => {
+                    const diff = getItemTimelineDate(right) - getItemTimelineDate(left);
+                    return sort === 'date_asc' ? -diff : diff;
+                });
+                return [date, sortedItems];
+            });
+    }, [grouped, sort, displayedItems]);
 
     const formatDateLabel = useCallback((localDateKey) => {
+        if (localDateKey === 'Random') {
+            return 'Random Order';
+        }
         const [year, month, day] = localDateKey.split('-');
         const date = new Date(year, month - 1, day);
 

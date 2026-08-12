@@ -44,6 +44,7 @@ export default function ModelFilterBar({
           <option value="date">Sort: Date</option>
           <option value="size">Sort: Size</option>
           <option value="rating">Sort: Rating</option>
+          <option value="random">Sort: Random</option>
         </select>
 
         <select

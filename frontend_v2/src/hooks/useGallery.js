@@ -15,6 +15,7 @@ export function useGallery(filters = {}) {
                 workspace: filters.workspace,
                 character_id: filters.character_id,
                 story_id: filters.story_id,
+                sort: filters.sort,
             };
 
             // Remove undefined/null filters
