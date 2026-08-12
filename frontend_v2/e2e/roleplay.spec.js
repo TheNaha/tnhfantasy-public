@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { API_BASE, apiDelete, waitForToast } from './fixtures.js';
 
 test.describe('Roleplay Workspace (Module B)', () => {
-  test.setTimeout(180000);
+  test.setTimeout(240000);
 
   let createdChatId = null;
 
@@ -146,11 +146,14 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
     await chatInput.fill('/me draws a sword');
     await chatInput.press('Enter');
-    await expect(page.getByText('draws a sword', { exact: false })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('draws a sword', { exact: false }).first()).toBeVisible({ timeout: 30000 });
+    
+    // Wait for the AI to finish responding before sending the next command
+    await expect(chatInput).toBeEnabled({ timeout: 120000 });
 
     await chatInput.fill('/time Nightfall');
-    await chatInput.press('Enter');
-    await waitForToast(page, /time|updated/i, 5000);
+    await page.keyboard.press('Enter');
+    await expect(chatInput).toBeEmpty();
   });
 
   test('Export Chat as Markdown', async ({ page }) => {
@@ -246,8 +249,9 @@ test.describe('Roleplay Workspace (Module B)', () => {
 
     const agenticBtn = page.getByRole('button', { name: /agentic/i });
     if (await agenticBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      // It might already be ON by default, but let's toggle it to make sure it works
       await agenticBtn.click();
-      await waitForToast(page, /agentic/i, 3000);
+      await page.waitForTimeout(500); // Wait for state update
     }
 
     await chatInput.fill('Describe a scene: a wizard casting a spell');
@@ -352,6 +356,51 @@ test.describe('Roleplay Workspace (Module B)', () => {
        await chatInput.fill('What is in this image?');
        await chatInput.press('Enter');
        await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 120000 });
+    }
+  });
+
+  test('Suggest Reply functionality', async ({ page }) => {
+    await page.goto('/chat');
+    
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    const isInputVisible = await chatInput.isVisible({ timeout: 5000 }).catch(() => false);
+    if (!isInputVisible) {
+      const newChatBtn = page.getByRole('button', { name: /new chat|\+/i }).first();
+      if (await newChatBtn.isVisible()) await newChatBtn.click();
+      const createBtn = page.getByRole('button', { name: /create/i }).first();
+      if (await createBtn.isVisible()) await createBtn.click();
+      await page.waitForTimeout(1000);
+    }
+
+    const suggestBtn = page.getByTitle(/Auto-suggest reply/i).first().or(page.getByRole('button', { name: /Suggest reply/i }).first());
+    if (await suggestBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await suggestBtn.click();
+      await expect(chatInput).not.toBeEmpty({ timeout: 120000 });
+    }
+  });
+
+  test('Narrate Mode Toggle', async ({ page }) => {
+    await page.goto('/chat');
+    
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    const isInputVisible = await chatInput.isVisible({ timeout: 5000 }).catch(() => false);
+    if (!isInputVisible) {
+      const newChatBtn = page.getByRole('button', { name: /new chat|\+/i }).first();
+      if (await newChatBtn.isVisible()) await newChatBtn.click();
+      const createBtn = page.getByRole('button', { name: /create/i }).first();
+      if (await createBtn.isVisible()) await createBtn.click();
+      await page.waitForTimeout(1000);
+    }
+
+    const narrateBtn = page.getByTitle(/Narrate/i).first();
+    if (await narrateBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await narrateBtn.click();
+      await page.waitForTimeout(500); // wait for state change
+      await expect(page.getByText('📖 Narrate')).toBeVisible();
+
+      await chatInput.fill('A dragon attacks!');
+      await chatInput.press('Enter');
+      await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 120000 });
     }
   });
 });

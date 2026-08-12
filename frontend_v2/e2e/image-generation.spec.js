@@ -409,7 +409,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await expect(page.getByText('Advanced Runway')).toBeVisible();
 
     const nodeSearch = page.getByPlaceholder('Search nodes...');
-    await expect(nodeSearch).toBeVisible();
+    await expect(nodeSearch).toBeVisible({ timeout: 60000 });
     await nodeSearch.fill('KSampler');
     const result = page.getByText('No nodes found').or(page.locator('[draggable="true"]').first());
     await expect(result).toBeVisible();

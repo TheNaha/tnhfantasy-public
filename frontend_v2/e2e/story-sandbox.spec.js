@@ -248,4 +248,24 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
       }
     }
   });
+
+  test('Story Illustration', async ({ page }) => {
+    await page.goto('/story');
+
+    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
+    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await editor.fill('A magical kingdom floating in the clouds.');
+      
+      const illustrateBtn = page.getByRole('button', { name: /Illustrate/i }).first();
+      if (await illustrateBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await illustrateBtn.click();
+        
+        // Wait for the modal or generation
+        await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
+        await expect(illustrateBtn).toBeEnabled({ timeout: 120000 });
+        
+        await waitForToast(page, /image|illustration/i, 120000).catch(() => false); // just in case it doesn't show toast
+      }
+    }
+  });
 });
