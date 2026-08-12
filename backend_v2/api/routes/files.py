@@ -438,7 +438,7 @@ async def list_assets(
     """
     from datetime import datetime
 
-    from sqlalchemy import func
+    from sqlalchemy import func, String
 
     from services.asset_reconciler import _asset_as_file_data
 
@@ -453,7 +453,7 @@ async def list_assets(
             q = q.where(Asset.story_id == story_id)
         if search:
             like = f"%{search}%"
-            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(str).ilike(like)))
+            q = q.where((Asset.filename.ilike(like)) | (Asset.metadata_.cast(String).ilike(like)))
         if sort == "date_asc":
             if cursor:
                 try:
