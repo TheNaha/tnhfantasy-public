@@ -154,12 +154,12 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     return (
         <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-wrap gap-2 pb-2">
+            <div className="flex overflow-x-auto no-scrollbar gap-2 pb-2 px-1">
                 {CATEGORIES.map(cat => (
                     <button
                         key={cat.id}
                         onClick={() => setCategory(cat.id)}
-                        className={`px-5 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-300 shadow-lg ${category === cat.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-[#0B0E14]/80 text-gray-400 border border-white/5 hover:bg-black/40 hover:text-white hover:border-white/10'
+                        className={`shrink-0 px-5 py-2.5 rounded-full text-[11px] font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-300 shadow-lg ${category === cat.id ? 'bg-blue-600/20 text-blue-400 border border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-[#0B0E14]/80 text-gray-400 border border-white/5 hover:bg-black/40 hover:text-white hover:border-white/10'
                             }`}
                     >
                         {cat.label}
@@ -395,19 +395,19 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                             Auto-discovered
                                         </span>
                                     )}
-                                    <div className="flex flex-wrap items-center justify-between text-xs text-gray-400 gap-2">
-                                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 gap-2">
+                                        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
                                             <span className="shrink-0">{(file.size / 1024 / 1024).toFixed(0)} MB</span>
                                             {showAvailabilityBadge && (
                                                 <span
-                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium shrink-0 ${availabilityTone(availability.label)}`}
+                                                    className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] sm:text-[11px] font-medium shrink-0 max-w-full truncate ${availabilityTone(availability.label)}`}
                                                     title={availability.detail || availability.label}
                                                 >
                                                     {availabilityLabel}
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="flex items-center gap-1 shrink-0 ml-auto">
+                                        <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
                                             {/* Dependency Check Button for DB-tracked models */}
                                             {file.model_id && (
                                                 <button

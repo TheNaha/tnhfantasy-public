@@ -265,7 +265,7 @@ def determine_download_token(url: str, hf_token: str, civitai_token: str) -> Opt
         return None
     if "huggingface.co" in url:
         return hf_token
-    if "civitai.com" in url:
+    if "civitai.com" in url or "civitai.red" in url:
         return civitai_token
     return None
 

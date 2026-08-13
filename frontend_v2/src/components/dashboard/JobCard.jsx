@@ -200,8 +200,11 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                                         style={{ width: `${job.progress}%` }}
                                     />
                                 </div>
-                                <div className="flex justify-between text-[10px] sm:text-xs text-gray-500 mt-1">
-                                    <span>Render</span>
+                                <div className="flex justify-between items-center text-[10px] sm:text-xs text-blue-400 mt-1">
+                                    <div className="flex items-center gap-1">
+                                        <Loader2 size={10} className="animate-spin" />
+                                        <span>Node</span>
+                                    </div>
                                     <span>{job.progress}%</span>
                                 </div>
                             </div>

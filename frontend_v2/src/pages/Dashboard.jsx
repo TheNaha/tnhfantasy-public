@@ -124,7 +124,13 @@ export default function Dashboard() {
     const [filters, setFilters] = useState(() => {
         try {
             const saved = localStorage.getItem('dashboard_filters');
-            if (saved) return JSON.parse(saved);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed.sort && parsed.sort.startsWith('random:')) {
+                    parsed.sort = 'random:' + Math.random().toString(36).substring(2, 10);
+                }
+                return parsed;
+            }
         } catch (e) {
             console.error('Failed to load dashboard filters', e);
         }

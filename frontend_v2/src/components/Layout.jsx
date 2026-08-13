@@ -122,7 +122,7 @@ export default function Layout({ children }) {
     const { data: branding } = useBranding();
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const location = useLocation();
-    const isFullBleed = /^\/(chat|story)/.test(location.pathname);
+    const isFullBleed = /^\/(chat|story|characters)/.test(location.pathname);
 
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({

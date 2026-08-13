@@ -178,11 +178,21 @@ const ModelSelector = memo(function ModelSelector({
       });
     }
     result.sort((a, b) => {
+      const getVal = (v) => v || 0;
+      if (sortBy?.startsWith("random")) {
+        const seed = sortBy.split(":")[1] || "stable_random_seed";
+        const hash = (str) => {
+          let h = 0;
+          for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+          return h;
+        };
+        return hash((a.name || "") + seed) - hash((b.name || "") + seed);
+      }
       switch (sortBy) {
         case "name": return (a.name || "").localeCompare(b.name || "");
-        case "date": return (b.modified_time || 0) - (a.modified_time || 0);
-        case "size": return (b.size || 0) - (a.size || 0);
-        case "rating": return (b.stats?.thumbsUp || 0) - (a.stats?.thumbsUp || 0);
+        case "date": return getVal(b.modified_time) - getVal(a.modified_time);
+        case "size": return getVal(b.size) - getVal(a.size);
+        case "rating": return getVal(b.stats?.thumbsUp || b.stats?.thumbsUpCount) - getVal(a.stats?.thumbsUp || a.stats?.thumbsUpCount);
         default: return 0;
       }
     });

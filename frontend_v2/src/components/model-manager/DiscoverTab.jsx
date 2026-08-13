@@ -267,13 +267,13 @@ export default function DiscoverTab() {
                         </div>
                     )}
                     {popularTags.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2 pb-2">
-                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10">Trending</span>
+                        <div className="flex overflow-x-auto no-scrollbar items-center gap-2 pb-2 px-1">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10 shrink-0">Trending</span>
                             {popularTags.map(t => (
                                 <button
                                     key={t.name}
                                     onClick={() => setFilterTag(filterTag === t.name ? "" : t.name)}
-                                    className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-inner ${
+                                    className={`shrink-0 whitespace-nowrap px-4 py-1.5 rounded-full text-[11px] font-bold tracking-widest uppercase transition-all duration-300 shadow-inner ${
                                         filterTag === t.name 
                                             ? 'bg-purple-600/20 border border-purple-500 text-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.3)]' 
                                             : 'bg-[#0B0E14]/80 border border-white/5 text-gray-400 hover:bg-white/5 hover:text-white hover:border-white/10'

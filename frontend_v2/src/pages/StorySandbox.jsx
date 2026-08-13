@@ -614,7 +614,7 @@ export default function StorySandbox() {
                                     activeChapterId={activeChapterId}
                                 />
                                 {activeChapterId && (
-                                    <div className="px-2 sm:px-4 lg:px-6 pb-16 md:pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
+                                    <div className="px-2 sm:px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">
                                         {showBeatsPanel && (
                                             <StoryBeatsPanel
                                                 beats={activeChapter?.beats || []}
