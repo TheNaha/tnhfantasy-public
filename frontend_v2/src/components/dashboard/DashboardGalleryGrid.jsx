@@ -88,6 +88,7 @@ export default function DashboardGalleryGrid({
             {viewMode === 'timeline' ? (
                 <TimelineView
                     items={displayedItems}
+                    sort={filters.sort}
                     onImageClick={onImageClick}
                     onJobClick={onJobClick}
                     selectionMode={selectionMode}

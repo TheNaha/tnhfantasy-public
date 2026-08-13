@@ -15,6 +15,7 @@ import { useWindowVirtualizer } from '@tanstack/react-virtual';
  */
 export const TimelineView = memo(function TimelineView({
     items = [],
+    sort = 'date_desc',
     onImageClick,
     onJobClick,
     selectionMode = false,
@@ -25,6 +26,24 @@ export const TimelineView = memo(function TimelineView({
 }) {
     // Group items by date with enhanced metadata
     const timelineGroups = useMemo(() => {
+        if (sort?.startsWith('random')) {
+            const stats = items.reduce((acc, item) => {
+                if (item.type === 'image') acc.totalImages++;
+                else if (item.type === 'job') {
+                    acc.totalJobs++;
+                    if (item.status === 'success') acc.successful++;
+                }
+                return acc;
+            }, { totalImages: 0, totalJobs: 0, successful: 0 });
+            
+            return [{
+                date: 'Random Order',
+                timestamp: Date.now(),
+                items: items,
+                stats
+            }];
+        }
+
         const groups = items.reduce((acc, item) => {
             const date = getItemTimelineDate(item);
             const dateKey = date.toLocaleDateString('en-US', {
@@ -64,7 +83,7 @@ export const TimelineView = memo(function TimelineView({
 
         // Convert to array and sort by date (newest first)
         return Object.values(groups).sort((a, b) => b.timestamp - a.timestamp);
-    }, [items]);
+    }, [items, sort]);
 
     const virtualizer = useWindowVirtualizer({
         count: timelineGroups.length,

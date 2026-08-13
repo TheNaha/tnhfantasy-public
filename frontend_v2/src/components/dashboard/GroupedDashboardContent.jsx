@@ -269,9 +269,11 @@ export default memo(function GroupedDashboardContent({
                         paddingBottom: '2rem'
                     }}
                 >
-                    <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
-                        <Calendar size={16} /> {formatDateLabel(date)}
-                    </h3>
+                    {date !== 'Random' && (
+                        <h3 className="text-gray-500 font-medium mb-4 flex items-center gap-2">
+                            <Calendar size={16} /> {formatDateLabel(date)}
+                        </h3>
+                    )}
                     {viewMode === 'grid' ? (
                         <div
                             className="grid gap-4"

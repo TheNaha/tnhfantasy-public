@@ -201,7 +201,10 @@ class Collection(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     character: Optional["Character"] = Relationship(back_populates="collections")
-    images: list["CollectionImage"] = Relationship(back_populates="collection")
+    images: list["CollectionImage"] = Relationship(
+        back_populates="collection",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 class CollectionImage(SQLModel, table=True):
@@ -341,8 +344,14 @@ class ModelV2(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships (for eager loading)
-    versions: list["ModelVersion"] = Relationship(back_populates="model")
-    tags: list["ModelTag"] = Relationship(back_populates="model")
+    versions: list["ModelVersion"] = Relationship(
+        back_populates="model",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    tags: list["ModelTag"] = Relationship(
+        back_populates="model",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 # ============================================================================
@@ -386,8 +395,14 @@ class ModelVersion(SQLModel, table=True):
     
     # Relationships
     model: Optional["ModelV2"] = Relationship(back_populates="versions")
-    files: list["ModelFile"] = Relationship(back_populates="version")
-    images: list["ModelImage"] = Relationship(back_populates="version")
+    files: list["ModelFile"] = Relationship(
+        back_populates="version",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    images: list["ModelImage"] = Relationship(
+        back_populates="version",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 # ============================================================================
@@ -429,7 +444,10 @@ class ModelFile(SQLModel, table=True):
     
     # Relationships
     version: Optional["ModelVersion"] = Relationship(back_populates="files")
-    provider_statuses: list["ProviderVersionStatus"] = Relationship(back_populates="file")
+    provider_statuses: list["ProviderVersionStatus"] = Relationship(
+        back_populates="file",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 # ============================================================================
@@ -759,7 +777,14 @@ class Character(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    collections: list["Collection"] = Relationship(back_populates="character")
+    collections: list["Collection"] = Relationship(
+        back_populates="character",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    chats: list["Chat"] = Relationship(
+        back_populates="character",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 class Chat(SQLModel, table=True):
     __tablename__ = "chats"
@@ -790,6 +815,12 @@ class Chat(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     active_lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+
+    character: Optional["Character"] = Relationship(back_populates="chats")
+    messages: list["Message"] = Relationship(
+        back_populates="chat",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 class MessageRole(str, Enum):
     USER = "user"
@@ -839,6 +870,8 @@ class Message(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    chat: Optional["Chat"] = Relationship(back_populates="messages")
+
 class Lorebook(SQLModel, table=True):
     __tablename__ = "lorebooks"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -849,7 +882,10 @@ class Lorebook(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
-    entries: list["LorebookEntry"] = Relationship(back_populates="lorebook")
+    entries: list["LorebookEntry"] = Relationship(
+        back_populates="lorebook",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 class LorebookEntry(SQLModel, table=True):
     __tablename__ = "lorebook_entries"
@@ -892,7 +928,10 @@ class Story(SQLModel, table=True):
     max_agentic_depth: int | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    chapters: list["StoryChapter"] = Relationship(back_populates="story")
+    chapters: list["StoryChapter"] = Relationship(
+        back_populates="story",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
     __table_args__ = (Index('idx_story_updated', 'updated_at'),)
 
 class StoryBeatRole(str, Enum):

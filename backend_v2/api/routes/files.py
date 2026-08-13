@@ -300,7 +300,7 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
         elif sort == "size_desc":
             valid_files.sort(key=lambda x: x.get("size", 0), reverse=True)
         elif sort == "rating_desc":
-            valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUp", 0), reverse=True)
+            valid_files.sort(key=lambda x: x.get("metadata", {}).get("stats", {}).get("thumbsUpCount", 0) or 0, reverse=True)
         elif sort.startswith("random"):
             import random
             seed = "stable_random_seed"
@@ -747,7 +747,7 @@ async def list_files_endpoint(
             elif sort == "size_desc":
                 valid_files.sort(key=lambda x: x.get("size", 0) or 0, reverse=True)
             elif sort == "rating_desc":
-                valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUpCount", 0) or 0, reverse=True)
+                valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUp", 0) or 0, reverse=True)
             elif sort.startswith("random"):
                 import random
                 seed = "stable_random_seed"

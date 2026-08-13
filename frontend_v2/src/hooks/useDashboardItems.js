@@ -107,7 +107,7 @@ export function useDashboardItems({
     }, [displayedItems]);
 
     const sortedGroupedEntries = useMemo(() => {
-        if (sort === 'random') {
+        if (sort?.startsWith('random')) {
             return [['Random', displayedItems]];
         }
         
