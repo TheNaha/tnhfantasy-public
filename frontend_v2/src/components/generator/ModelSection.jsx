@@ -62,7 +62,7 @@ const ModelSection = memo(function ModelSection({
             </h3>
 
             <div className="flex gap-2 items-end">
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                     <ModelSelector
                         label="Checkpoint / UNET"
                         initialModels={[...checkpoints, ...unetModels]}

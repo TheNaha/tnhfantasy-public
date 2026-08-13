@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useGeneratorStore } from '../store/generatorStore';
 import useProvidersPageData from './useProvidersPageData';
@@ -98,7 +98,9 @@ export function useGeneratorCore() {
     const store = useGeneratorStore(useShallow(generatorCoreSelector));
     const [generating, setGenerating] = useState(false);
     
-    const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const { providers: allProviders = [], isLoading: providersLoading } = useProvidersPageData();
+    const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id.startsWith('llm'))), [allProviders]);
+    
     const preflight = useGenerationPreflight();
 
     return {

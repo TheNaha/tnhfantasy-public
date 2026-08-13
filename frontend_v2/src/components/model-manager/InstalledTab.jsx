@@ -154,7 +154,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     return (
         <div className="space-y-4 md:space-y-6">
-            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <div className="flex flex-wrap gap-2 pb-2">
                 {CATEGORIES.map(cat => (
                     <button
                         key={cat.id}
@@ -395,19 +395,19 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                                             Auto-discovered
                                         </span>
                                     )}
-                                    <div className="flex items-center justify-between text-xs text-gray-400 gap-2">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <span>{(file.size / 1024 / 1024).toFixed(0)} MB</span>
+                                    <div className="flex flex-wrap items-center justify-between text-xs text-gray-400 gap-2">
+                                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                                            <span className="shrink-0">{(file.size / 1024 / 1024).toFixed(0)} MB</span>
                                             {showAvailabilityBadge && (
                                                 <span
-                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${availabilityTone(availability.label)}`}
+                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium shrink-0 ${availabilityTone(availability.label)}`}
                                                     title={availability.detail || availability.label}
                                                 >
                                                     {availabilityLabel}
                                                 </span>
                                             )}
                                         </div>
-                                        <div className="flex items-center gap-1">
+                                        <div className="flex items-center gap-1 shrink-0 ml-auto">
                                             {/* Dependency Check Button for DB-tracked models */}
                                             {file.model_id && (
                                                 <button
@@ -481,6 +481,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             {selectedModel && (
                 <ModelDetailsModal
                     file={selectedModel}
+                    providers={providers}
                     onClose={() => setSelectedModel(null)}
                 />
             )}

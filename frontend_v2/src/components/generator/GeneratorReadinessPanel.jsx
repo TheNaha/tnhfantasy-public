@@ -13,8 +13,9 @@ export default function GeneratorReadinessPanel({
     title = 'Run Readiness',
     hint = 'Provider and model availability before queueing a job.',
 }) {
-    const onlineProviders = countOnlineProviders(providers);
-    const totalProviders = providers.length;
+    const imageProviders = providers.filter(p => p.worker_type !== 'llm');
+    const onlineProviders = countOnlineProviders(imageProviders);
+    const totalProviders = imageProviders.length;
     const providerTone = onlineProviders > 0 ? 'text-emerald-300' : 'text-amber-300';
     const readinessTone = validationSummary?.valid
         ? 'text-emerald-300'

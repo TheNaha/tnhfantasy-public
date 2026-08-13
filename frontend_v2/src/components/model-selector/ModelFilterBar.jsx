@@ -35,17 +35,36 @@ export default function ModelFilterBar({
 
       {/* Sort and Filter */}
       <div className="flex gap-2 flex-wrap">
-        <select
-          value={sortBy}
-          onChange={(e) => onSortChange(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
-        >
-          <option value="name">Sort: Name</option>
-          <option value="date">Sort: Date</option>
-          <option value="size">Sort: Size</option>
-          <option value="rating">Sort: Rating</option>
-          <option value="random">Sort: Random</option>
-        </select>
+        <div className="flex items-center gap-1">
+          <select
+            value={sortBy?.startsWith('random') ? 'random' : sortBy}
+            onChange={(e) => {
+                let val = e.target.value;
+                if (val === 'random') {
+                    val = 'random:' + Math.random().toString(36).substring(2, 10);
+                }
+                onSortChange(val);
+            }}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="name">Sort: Name</option>
+            <option value="date">Sort: Date</option>
+            <option value="size">Sort: Size</option>
+            <option value="rating">Sort: Rating</option>
+            <option value="random">Sort: Random</option>
+          </select>
+          {sortBy?.startsWith('random') && (
+            <button
+                onClick={() => onSortChange('random:' + Math.random().toString(36).substring(2, 10))}
+                title="Re-roll random seed"
+                className="p-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+            >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+          )}
+        </div>
 
         <select
           value={filterBaseModel}

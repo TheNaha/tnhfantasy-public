@@ -83,7 +83,7 @@ export function useGeneratorJob(opts = {}) {
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
             if (redirectAfterGenerate) {
-                redirectTimerRef.current = setTimeout(() => navigate('/'), redirectDelay);
+                redirectTimerRef.current = setTimeout(() => navigate('/gallery'), redirectDelay);
             }
             return;
         }
@@ -155,7 +155,7 @@ export function useGeneratorJob(opts = {}) {
                     toast.success('Added to queue!', { icon: '➕' });
                 }
 
-                if (shouldRedirect) navigate('/');
+                if (shouldRedirect) navigate('/gallery');
                 if (autoRandomizeSeed) randomizeSeed?.();
             }
         } catch (e) {

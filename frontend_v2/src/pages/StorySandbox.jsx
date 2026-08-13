@@ -534,8 +534,9 @@ export default function StorySandbox() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="flex h-full bg-[#0B0E14]"
+            className="flex flex-col h-full bg-[#0B0E14]"
         >
+            <div className="flex flex-1 min-h-0 relative">
             <div className={clsx(
                 "lg:static inset-y-0 left-0 z-50 transform lg:transform-none transition-transform duration-300 ease-in-out h-full flex flex-col shrink-0 lg:w-64",
                 mobileTab === 'stories' ? "absolute inset-0 w-full z-40 bg-[#0B0E14] flex" : "hidden lg:flex"
@@ -693,7 +694,9 @@ export default function StorySandbox() {
             />
 
             {/* Shared mobile bottom tab bar for the StorySandbox workspaces. */}
+            </div>
             <BottomTabBar
+                inline
                 tabs={[
                     { id: 'stories', label: 'Stories', icon: BookOpen },
                     { id: 'write', label: 'Write', icon: Edit3 },

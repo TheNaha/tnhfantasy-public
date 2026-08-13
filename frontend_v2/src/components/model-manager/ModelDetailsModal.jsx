@@ -9,7 +9,7 @@ import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
 import { copyToClipboard } from '../../utils/clipboard';
 
-export default function ModelDetailsModal({ file, onClose }) {
+export default function ModelDetailsModal({ file, providers = [], onClose }) {
     const [activeImageIndex, setActiveImageIndex] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
     const [showSearchModal, setShowSearchModal] = useState(false);
@@ -322,10 +322,19 @@ export default function ModelDetailsModal({ file, onClose }) {
 
                             {/* Provider Status */}
                             {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
-                                <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-2">Provider Status</h3>
+                                <div className="mt-6 pt-4 border-t border-gray-800">
+                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Provider Status</h3>
                                     <div className="space-y-2">
-                                        {Object.entries(file.provider_statuses).map(([providerId, statusData]) => {
+                                        {Object.entries(file.provider_statuses)
+                                            .filter(([providerId]) => {
+                                                const p = providers.find(p => p.id === providerId);
+                                                if (!p) return true; // keep if provider info is missing
+                                                const isLlmFile = file.path?.startsWith('models/llm');
+                                                if (isLlmFile && p.worker_type !== 'llm') return false;
+                                                if (!isLlmFile && p.worker_type === 'llm') return false;
+                                                return true;
+                                            })
+                                            .map(([providerId, statusData]) => {
                                             const status = typeof statusData === 'object' ? statusData.status : statusData;
                                             const colorClass = {
                                                 ready: 'text-green-400 bg-green-500/20 border-green-500/30',

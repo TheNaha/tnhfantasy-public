@@ -267,7 +267,7 @@ export default function DiscoverTab() {
                         </div>
                     )}
                     {popularTags.length > 0 && (
-                        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                        <div className="flex flex-wrap items-center gap-2 pb-2">
                             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-4 z-10">Trending</span>
                             {popularTags.map(t => (
                                 <button

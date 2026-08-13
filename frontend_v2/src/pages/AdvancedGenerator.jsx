@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Play, Loader2, Settings2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import MissingModelsDialog from '../components/generator/MissingModelsDialog';
@@ -15,7 +15,8 @@ export default function AdvancedGenerator() {
     const [showRunway, setShowRunway] = useState(false);
     const [workflowJson, setWorkflowJson] = useState("");
     const [reactFlowState, setReactFlowState] = useState({ nodes: [], edges: [] });
-    const { providers, isLoading: providersLoading } = useProvidersPageData();
+    const { providers: allProviders = [], isLoading: providersLoading } = useProvidersPageData();
+    const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id.startsWith('llm'))), [allProviders]);
     const {
         isChecking: preflightChecking,
         validationResult,

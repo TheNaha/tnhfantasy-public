@@ -22,7 +22,7 @@ const TriggerBox = memo(function TriggerBox({
   const hasVersions = selectedModel?.versions && selectedModel.versions.length > 1;
 
   return (
-    <div className="relative">
+    <div className="relative w-full min-w-0">
       <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 flex items-center gap-3 hover:border-blue-500 transition-colors text-left group">
         {/* Clickable main area */}
         <button
@@ -58,7 +58,7 @@ const TriggerBox = memo(function TriggerBox({
 
         {/* Version Selector */}
         {hasVersions && (
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -212,7 +212,7 @@ const TriggerBox = memo(function TriggerBox({
               e.stopPropagation();
               onInfoClick(selectedModel);
             }}
-            className="p-2 rounded text-gray-400 hover:text-blue-300 hover:bg-gray-800 border border-transparent hover:border-gray-700 transition-colors"
+            className="p-2 rounded text-gray-400 hover:text-blue-300 hover:bg-gray-800 border border-transparent hover:border-gray-700 transition-colors shrink-0"
             title="View Model Details"
             aria-label={`View details for ${selectedModel.name}`}
           >

@@ -175,7 +175,7 @@ export default function SimpleGenerator() {
             await Promise.all(jobs);
             toast.success(`Queued ${count} variations!`, { icon: '🎲' });
             if (autoRandomizeSeed) randomizeSeed();
-            navigate('/');
+            navigate('/gallery');
         } catch (e) {
             toast.error("Error: " + e.message);
         } finally {
@@ -332,7 +332,7 @@ export default function SimpleGenerator() {
             )}
 
             <button
-                onClick={() => navigate('/')}
+                onClick={() => navigate('/gallery')}
                 className="fixed bottom-6 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
                 title="Go to Gallery"
             >

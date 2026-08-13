@@ -106,12 +106,13 @@ const QueueVisualization = memo(function QueueVisualization({ onJobClick }) {
                                         title={`Running: ${job.prompt?.slice(0, 50) || 'Image generation'}`}
                                     >
                                         <div
+                                            className="absolute top-0 left-0 h-full bg-blue-500/40 transition-all duration-500 ease-out"
                                             style={{ width: `${job.progress || 0}%` }}
                                         />
                                         {/* Content overlay */}
-                                        <div className="relative z-10 flex items-center gap-1">
-                                            <Loader2 className="animate-spin text-white" size={14} />
-                                            <span className="text-xs text-white/90 font-medium">{Math.round(job.progress || 0)}%</span>
+                                        <div className="relative z-10 w-full h-full flex justify-center items-center gap-1.5">
+                                            <Loader2 className="animate-spin text-white drop-shadow-md" size={14} />
+                                            <span className="text-xs text-white font-bold drop-shadow-md">{Math.round(job.progress || 0)}%</span>
                                         </div>
                                     </div>
                                 ))}

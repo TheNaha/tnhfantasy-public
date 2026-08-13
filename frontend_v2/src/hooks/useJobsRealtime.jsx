@@ -17,8 +17,8 @@ export function useJobsRealtime() {
     }, []);
 
     const dismissConnectionToast = useCallback(async () => {
-        if (!connectionToastIdRef.current) return;
         toast.dismiss('mobile-connection-error');
+        if (connectionToastIdRef.current) toast.dismiss(connectionToastIdRef.current);
         connectionToastIdRef.current = null;
     }, []);
 

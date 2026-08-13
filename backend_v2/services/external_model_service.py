@@ -30,7 +30,7 @@ class ExternalModelService:
         if not url:
             raise ExternalModelServiceError(status_code=400, detail="URL is required")
 
-        if "civitai.com" in url:
+        if "civitai.com" in url or "civitai.red" in url:
             return await self._parse_civitai_url(url)
 
         if "huggingface.co" in url:
@@ -38,7 +38,7 @@ class ExternalModelService:
 
         raise ExternalModelServiceError(
             status_code=400,
-            detail="URL must be from CivitAI (civitai.com) or HuggingFace (huggingface.co)",
+            detail="URL must be from CivitAI (civitai.com / civitai.red) or HuggingFace (huggingface.co)",
         )
 
     async def search_civitai(

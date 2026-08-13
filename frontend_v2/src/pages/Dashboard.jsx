@@ -121,8 +121,19 @@ export default function Dashboard() {
 
     // Filters
     const [showFavorites, setShowFavorites] = useState(false);
-    const [filters, setFilters] = useState({ search: '' });
+    const [filters, setFilters] = useState(() => {
+        try {
+            const saved = localStorage.getItem('dashboard_filters');
+            if (saved) return JSON.parse(saved);
+        } catch (e) {
+            console.error('Failed to load dashboard filters', e);
+        }
+        return { search: '', sort: 'date_desc' };
+    });
 
+    useEffect(() => {
+        localStorage.setItem('dashboard_filters', JSON.stringify(filters));
+    }, [filters]);
     const { confirm } = useConfirmation();
 
     const {

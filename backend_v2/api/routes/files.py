@@ -301,10 +301,12 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
             valid_files.sort(key=lambda x: x.get("size", 0), reverse=True)
         elif sort == "rating_desc":
             valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUp", 0), reverse=True)
-        elif sort == "random":
+        elif sort.startswith("random"):
             import random
-            # Use search term as seed for stable pagination if available, else a static string so pagination doesn't shuffle between pages.
-            random.Random(search or "stable_random_seed").shuffle(valid_files)
+            seed = "stable_random_seed"
+            if sort.startswith("random:"):
+                seed = sort.split(":", 1)[1]
+            random.Random(search or seed).shuffle(valid_files)
 
         total = len(valid_files)
         paginated = valid_files[offset:offset + limit]
@@ -471,9 +473,12 @@ async def list_assets(
                 except Exception:
                     pass
             q = q.order_by(order_col.asc(), Asset.id.asc()).limit(limit + 1)
-        elif sort == "random":
+        elif sort.startswith("random"):
             from sqlalchemy import cast, String
-            hash_col = func.md5(cast(Asset.id, String))
+            seed = "stable_random_seed"
+            if sort.startswith("random:"):
+                seed = sort.split(":", 1)[1]
+            hash_col = func.md5(func.concat(cast(Asset.id, String), seed))
             if cursor:
                 q = q.where(hash_col > cursor)
             q = q.order_by(hash_col.asc()).limit(limit + 1)
@@ -508,11 +513,14 @@ async def list_assets(
                 "metadata": a.metadata_ or {},
             })
             items.append(item)
-        if sort == "random":
+        if sort.startswith("random"):
             import hashlib
             if page:
-                last_id = str(page[-1].id).encode('utf-8')
-                next_cursor = hashlib.md5(last_id).hexdigest() if has_more else None
+                seed = "stable_random_seed"
+                if sort.startswith("random:"):
+                    seed = sort.split(":", 1)[1]
+                last_id_seed = (str(page[-1].id) + seed).encode('utf-8')
+                next_cursor = hashlib.md5(last_id_seed).hexdigest() if has_more else None
             else:
                 next_cursor = None
         else:
@@ -731,11 +739,21 @@ async def list_files_endpoint(
             
             # Sort
             if sort == "date_desc":
-                valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
+                valid_files.sort(key=lambda x: x.get("modified_time", 0) or 0, reverse=True)
             elif sort == "name_asc":
                 valid_files.sort(key=lambda x: x.get("name", ""))
             elif sort == "name_desc":
                 valid_files.sort(key=lambda x: x.get("name", ""), reverse=True)
+            elif sort == "size_desc":
+                valid_files.sort(key=lambda x: x.get("size", 0) or 0, reverse=True)
+            elif sort == "rating_desc":
+                valid_files.sort(key=lambda x: x.get("stats", {}).get("thumbsUpCount", 0) or 0, reverse=True)
+            elif sort.startswith("random"):
+                import random
+                seed = "stable_random_seed"
+                if sort.startswith("random:"):
+                    seed = sort.split(":", 1)[1]
+                random.Random(search or seed).shuffle(valid_files)
                 
             total = len(valid_files)
             paginated = valid_files[offset:offset + limit]

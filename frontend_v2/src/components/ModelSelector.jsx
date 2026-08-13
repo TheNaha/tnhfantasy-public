@@ -53,11 +53,12 @@ const ModelSelector = memo(function ModelSelector({
     queryFn: async ({ pageParam = 0, signal }) => {
       if (!directory) return { files: [] };
       const sortMap = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
+      const finalSort = sortBy.startsWith("random") ? sortBy : (sortMap[sortBy] || "name_asc");
       return filesApi.list({
         directory,
         limit: 50,
         offset: pageParam,
-        sort: sortMap[sortBy] || "name_asc",
+        sort: finalSort,
         search,
         base_model: filterBaseModel !== "all" ? filterBaseModel : undefined,
         model_type: filterType !== "all" ? filterType : undefined,
