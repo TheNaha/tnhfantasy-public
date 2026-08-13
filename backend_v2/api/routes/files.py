@@ -406,11 +406,20 @@ def _soft_delete_assets(relative_or_filename: str) -> int:
     rel = relative_or_filename.lstrip("/\\")
     now = datetime.now(timezone.utc)
     with _sync_session() as session:
-        q = select(Asset).where(Asset.deleted_at.is_(None)).where(Asset.relative_path == rel)
+        q = select(Asset).where(Asset.deleted_at.is_(None)).where(
+            (Asset.relative_path == rel) | (Asset.relative_path == "/" + rel)
+        )
         rows = session.exec(q).all()
         if not rows and "/" not in rel:
+            # Fallback for basenames sent by the UI:
+            # Match exact filename OR if the relative path ends with this basename
             rows = session.exec(
-                select(Asset).where(Asset.deleted_at.is_(None)).where(Asset.filename == rel)
+                select(Asset).where(Asset.deleted_at.is_(None)).where(
+                    (Asset.filename == rel) | 
+                    (Asset.relative_path.endswith("/" + rel)) |
+                    (Asset.relative_path == "/" + rel) |
+                    (Asset.relative_path.endswith(rel))
+                )
             ).all()
         for a in rows:
             a.deleted_at = now
@@ -522,6 +531,7 @@ async def serve_asset_file(asset_id: str):
         if not os.path.exists(path):
             path = os.path.join(OUTPUT_DIR, asset.filename)
         if not os.path.exists(path):
+            _soft_delete_assets(asset.relative_path)
             raise NotFoundError("Asset file missing on disk")
         return FileResponse(path)
 
@@ -534,6 +544,9 @@ async def serve_asset_thumb(asset_id: str):
             raise NotFoundError("Thumbnail not found")
         path = os.path.join(OUTPUT_DIR, asset.thumbnail_relative_path)
         if not os.path.exists(path):
+            orig_path = os.path.join(OUTPUT_DIR, asset.relative_path)
+            if not os.path.exists(orig_path):
+                _soft_delete_assets(asset.relative_path)
             raise NotFoundError("Thumbnail missing on disk")
         return FileResponse(path)
 
@@ -1011,6 +1024,10 @@ async def serve_thumbnail(size: str, filename: str):
             }
         )
     
+    # If we reached here, the file does not exist on disk in any format or location.
+    # Self-heal the database index by soft-deleting this missing file so it doesn't show up again.
+    _soft_delete_assets(filename)
+    
     raise NotFoundError("Resource", "File not found")
 
 
@@ -1222,6 +1239,9 @@ async def delete_single_file(filename: str):
             logger.warning("delete_file_path_invalid", error=str(e))
 
         if local_path and os.path.exists(local_path):
+            if os.path.isdir(local_path):
+                _soft_delete_assets(safe_filename)
+                return {"status": "success", "deleted": True}
             os.remove(local_path)
             meta_path = f"{local_path}.json"
             if os.path.exists(meta_path):
@@ -1252,6 +1272,7 @@ async def delete_single_file(filename: str):
             logger.info("delete_file_removed", path=matches[0])
             return {"status": "success", "deleted": True}
 
+        _soft_delete_assets(safe_filename)
         raise NotFoundError("Resource", f"File '{filename}' not found")
 
     try:
@@ -1316,12 +1337,21 @@ async def batch_delete_endpoint(req: BatchDeleteRequest):
                             local_path = matches[0]
                         else:
                             logger.info("delete_file_not_found", filename=filename)
+                            _soft_delete_assets(filename)
+                            success_count += 1
                             continue
                     else:
                         logger.info("delete_file_not_found", filename=filename)
+                        _soft_delete_assets(filename)
+                        success_count += 1
                         continue
                 
                 if os.path.exists(local_path):
+                    if os.path.isdir(local_path):
+                        logger.warning("delete_is_directory", filename=filename, path=local_path)
+                        _soft_delete_assets(filename)
+                        success_count += 1
+                        continue
                     try:
                         os.remove(local_path)
                         logger.info("delete_file_removed", path=local_path)
