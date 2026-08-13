@@ -50,7 +50,7 @@ def _get_ws_cors_origins():
 # Create Socket.IO server with CORS support
 sio = socketio.AsyncServer(
     async_mode='asgi',
-    cors_allowed_origins=_get_ws_cors_origins(),
+    cors_allowed_origins='*',
     logger=False,
     engineio_logger=False,
     ping_timeout=120,
