@@ -212,57 +212,18 @@ services:
       retries: 5
       start_period: 30s
 
-  # provider-direct-url:
-  #   build:
-  #     context: ./provider_containers
-  #     dockerfile: image_worker/Dockerfile
-  #   container_name: tnhcomfy-direct-url
-  #   depends_on:
-  #     backend_v2:
-  #       condition: service_healthy
-  #   profiles:
-  #     - providers
-  #   env_file:
-  #     - .env.direct-url
-  #   environment:
-  #     - PROVIDER_ID=direct-url
-  #     - PORT=8000
-  #     - BACKEND_URL=http://backend_v2:8002
-  #     - ENGINE=direct_url
-  #   user: "1000:1000"
-  #   volumes:
-  #     - ./data:/data
-  #   networks:
-  #     - tnhcomfy
-  #   restart: unless-stopped
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         memory: 2G
-  #         cpus: "2"
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
-  #     interval: 15s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-  provider-remote-comfy:
+  provider-direct-url:
     build:
       context: ./provider_containers
       dockerfile: image_worker/Dockerfile
-    container_name: tnhcomfy-remote-comfy
+    container_name: tnhcomfy-direct-url
     depends_on:
       backend_v2:
         condition: service_healthy
     profiles:
       - providers
     env_file:
-      - .env.remote-comfy
-    environment:
-      - PROVIDER_ID=remote-comfy
-      - PORT=8000
-      - BACKEND_URL=http://backend_v2:8002
-      - ENGINE=remote_comfy
+      - .env.direct-url
     user: "1000:1000"
     volumes:
       - ./data:/data
@@ -280,6 +241,41 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  # provider-remote-comfy:
+  #   build:
+  #     context: ./provider_containers
+  #     dockerfile: image_worker/Dockerfile
+  #   container_name: tnhcomfy-remote-comfy
+  #   depends_on:
+  #     backend_v2:
+  #       condition: service_healthy
+  #   profiles:
+  #     - providers
+  #   env_file:
+  #     - .env.remote-comfy
+  #   environment:
+  #     - PROVIDER_ID=remote-comfy
+  #     - PORT=8000
+  #     - BACKEND_URL=http://backend_v2:8002
+  #     - ENGINE=remote_comfy
+  #   user: "1000:1000"
+  #   volumes:
+  #     - ./data:/data
+  #   networks:
+  #     - tnhcomfy
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #         cpus: "2"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
 
   # Remote Agent lives on the MACHINE HOSTING ComfyUI (not in this orchestrator
   # stack for production). Uncomment + point DATA_DIR at your ComfyUI models dir

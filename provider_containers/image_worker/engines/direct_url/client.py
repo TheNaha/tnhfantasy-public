@@ -61,7 +61,17 @@ class DirectUrlProviderClient(BaseProviderClient):
             if directory and target_dir != directory:
                 continue
             node_input = node_info.get("input", {}) or {}
-            inputs = list(node_input.get("required", []) or []) + list(node_input.get("optional", []) or [])
+            inputs = []
+            if isinstance(node_input.get("required"), dict):
+                inputs.extend(node_input["required"].items())
+            elif isinstance(node_input.get("required"), (list, tuple)):
+                inputs.extend(node_input["required"])
+                
+            if isinstance(node_input.get("optional"), dict):
+                inputs.extend(node_input["optional"].items())
+            elif isinstance(node_input.get("optional"), (list, tuple)):
+                inputs.extend(node_input["optional"])
+            
             for input_def in inputs:
                 if not isinstance(input_def, (list, tuple)) or len(input_def) < 2:
                     continue
@@ -206,9 +216,57 @@ class DirectUrlProviderClient(BaseProviderClient):
             return {"status": "error", "message": f"Failed to query ComfyUI: {e}"}
 
     async def run_reconciliation(self, quick_sync: bool = False) -> Dict[str, Any]:
+        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        
+        async def perform_reconciliation():
+            try:
+                resp = await self._http.get("/object_info")
+                resp.raise_for_status()
+                object_info = resp.json()
+            except Exception as e:
+                self.logger.error(f"Failed to query ComfyUI: {e}")
+                return
+
+            paths = self._iter_object_info_model_paths(object_info, "")
+            
+            files = [
+                {"path": path, "size_bytes": 0}
+                for path in paths
+            ]
+            
+            from provider_core.http_client import get_http_client
+            client = get_http_client()
+            url = f"{backend_url}/api/v2/models/register-discovered"
+            payload = {
+                "provider_id": PROVIDER_ID,
+                "files": files,
+            }
+            
+            try:
+                response = await client.post(url, json=payload, timeout=60.0)
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    # Push a completion event so the UI updates
+                    from provider_core.reconciliation import push_reconciliation_event
+                    await push_reconciliation_event(
+                        backend_url=backend_url,
+                        provider_id=PROVIDER_ID,
+                        status="completed",
+                        phase="completed",
+                        message=f"Discovered and registered {len(paths)} models from ComfyUI",
+                        http_client=client
+                    )
+                else:
+                    self.logger.error(f"Failed to register models: {response.status_code}")
+            except Exception as e:
+                self.logger.error(f"Error communicating with backend: {e}")
+
+        import asyncio
+        asyncio.create_task(perform_reconciliation())
+        
         return build_status_response(
-            "success",
-            "Reconciliation is not applicable for direct_url providers. "
-            "Models are managed directly on the ComfyUI server.",
-            provider=PROVIDER_ID,
+            "queued",
+            "Reconciliation started (background task)",
+            provider=PROVIDER_ID
         )
