@@ -71,7 +71,7 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
     const usedImages = new Set();
     const usedJobIds = new Set();
 
-    if (options.sort === 'random') {
+    if (options.sort?.startsWith('random')) {
         // For random sort, we just want to show active jobs at the top and then the files in their exact randomized order.
         Array.from(mergedJobs.values()).forEach((job) => {
             if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {

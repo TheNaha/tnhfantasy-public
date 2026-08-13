@@ -33,9 +33,9 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
 
     return (
         <div className="relative mb-6">
-            <div className="flex gap-2">
+            <div className="flex flex-col md:flex-row gap-2">
                 {/* Search Input */}
-                <div className="relative flex-1">
+                <div className="relative w-full md:flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
                     <input
                         id={searchId}
@@ -58,8 +58,8 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                 </div>
                 
                 {/* Sort Dropdown */}
-                <div className="flex items-center gap-2">
-                    <div className="w-48">
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                    <div className="flex-1 md:flex-none md:w-48">
                         <select
                             aria-label="Sort images"
                             value={localFilters.sort?.startsWith('random') ? 'random' : (localFilters.sort || 'date_desc')}
@@ -80,19 +80,33 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                         </select>
                     </div>
                     {localFilters.sort?.startsWith('random') && (
-                        <button
-                            onClick={() => {
-                                const newFilters = { ...localFilters, sort: 'random:' + Math.random().toString(36).substring(2, 10) };
-                                setLocalFilters(newFilters);
-                                onFilterChange(newFilters);
-                            }}
-                            title="Re-roll random seed"
-                            className="p-2.5 bg-gray-800 border border-gray-700 rounded-xl text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                        </button>
+                        <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-xl p-1 h-[42px] flex-1 md:flex-none">
+                            <input 
+                                type="text"
+                                aria-label="Random seed"
+                                placeholder="Seed"
+                                value={localFilters.sort.split(':')[1] || ''}
+                                onChange={(e) => {
+                                    const newFilters = { ...localFilters, sort: 'random:' + e.target.value };
+                                    setLocalFilters(newFilters);
+                                    onFilterChange(newFilters);
+                                }}
+                                className="w-full md:w-24 min-w-0 bg-transparent border-none text-sm text-gray-300 px-2 outline-none focus:ring-0"
+                            />
+                            <button
+                                onClick={() => {
+                                    const newFilters = { ...localFilters, sort: 'random:' + Math.random().toString(36).substring(2, 10) };
+                                    setLocalFilters(newFilters);
+                                    onFilterChange(newFilters);
+                                }}
+                                title="Re-roll random seed"
+                                className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700 transition-colors"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
