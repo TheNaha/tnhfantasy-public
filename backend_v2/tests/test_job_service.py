@@ -270,29 +270,29 @@ class TestJobServiceFsm:
     back to PENDING during retries and provider failover."""
 
     @pytest.mark.asyncio
-    async def test_in_flight_can_reset_to_pending(self, session: Session, sample_workflow):
+    async def test_in_flight_cannot_reset_to_pending(self, session: Session, sample_workflow):
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
         await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
         updated = await service.update_job(job.id, status=JobStatus.PENDING, message="Retrying...")
-        assert updated.status == JobStatus.PENDING
+        assert updated.status == JobStatus.SENT_TO_PROVIDER
 
     @pytest.mark.asyncio
-    async def test_generating_can_reset_to_pending(self, session: Session, sample_workflow):
+    async def test_generating_cannot_reset_to_pending(self, session: Session, sample_workflow):
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
         await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
         await service.update_job(job.id, status=JobStatus.CONNECTED)
         await service.update_job(job.id, status=JobStatus.GENERATING)
         updated = await service.update_job(job.id, status=JobStatus.PENDING)
-        assert updated.status == JobStatus.PENDING
+        assert updated.status == JobStatus.GENERATING
 
     @pytest.mark.asyncio
-    async def test_pending_can_fail_when_no_providers(self, session: Session, sample_workflow):
+    async def test_pending_cannot_fail_directly(self, session: Session, sample_workflow):
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
         updated = await service.update_job(job.id, status=JobStatus.FAILED, error="No available providers")
-        assert updated.status == JobStatus.FAILED
+        assert updated.status == JobStatus.PENDING
 
     @pytest.mark.asyncio
     async def test_completed_is_terminal(self, session: Session, sample_workflow):

@@ -74,25 +74,13 @@ def _is_socket_connected(worker: ConnectedWorker) -> bool:
     return getattr(state, "name", "").upper() == "CONNECTED"
 
 
-async def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
-    async with _workers_lock:
-        return _get_live_worker_unlocked(provider_id)
-
-
 def _get_live_worker_unlocked(provider_id: str) -> ConnectedWorker | None:
-    """Synchronous worker lookup. Caller may hold _workers_lock or not.
-
-    Dict .get() and .pop() are atomic in CPython for a single key, and the only
-    mutation here (pop on stale/heartbeat-timeout) is the same operation the
-    async path performs under the lock — the race window is negligible for a
-    read-only health check.
-    """
+    """Read-only worker lookup. Caller must hold _workers_lock if mutation is needed."""
     worker = connected_workers.get(provider_id)
     if not worker:
         return None
 
     if not _is_socket_connected(worker):
-        connected_workers.pop(provider_id, None)
         return None
 
     heartbeat_age = (datetime.now(timezone.utc) - worker.last_heartbeat).total_seconds()
@@ -102,10 +90,17 @@ def _get_live_worker_unlocked(provider_id: str) -> ConnectedWorker | None:
             provider_id=provider_id,
             age_seconds=round(heartbeat_age, 1),
         )
-        connected_workers.pop(provider_id, None)
         return None
 
     return worker
+
+
+async def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
+    async with _workers_lock:
+        worker = _get_live_worker_unlocked(provider_id)
+        if worker is None:
+            connected_workers.pop(provider_id, None)
+        return worker
 
 
 def get_connected_workers() -> dict[str, dict]:

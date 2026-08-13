@@ -12,28 +12,30 @@ import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import { useActiveJobs } from '../hooks/useActiveJobs';
 import { generateApi, createIdempotencyKey } from '../api';
 import ImageUploader from '../components/generator/ImageUploader';
+import ModelMetadataModal from '../components/ModelMetadataModal';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
+import ModelSection from '../components/generator/ModelSection';
 import ControlNetSection from '../components/generator/ControlNetSection';
 import IPAdapterSection from '../components/generator/IPAdapterSection';
 import EnhancementsSection from '../components/generator/EnhancementsSection';
 import PromptPanel from '../components/generator/PromptPanel';
 import SamplingSettings from '../components/generator/SamplingSettings';
 import PresetManager from '../components/generator/PresetManager';
-import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import GeneratorShell from '../components/generator/GeneratorShell';
-import VaeLoraSection from '../components/generator/VaeLoraSection';
 import GenerateActionBar from '../components/generator/GenerateActionBar';
+import ResolutionSettings from '../components/generator/ResolutionSettings';
 
 const EMPTY_MODELS = [];
 
 export default function Img2ImgGenerator() {
     const location = useLocation();
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
+    const [viewingMetadata, setViewingMetadata] = useState(null);
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
@@ -43,8 +45,12 @@ export default function Img2ImgGenerator() {
             clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
             enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
             randomizeSeed, addLora, removeLora, updateLora, controlnets, addControlNet, removeControlNet, updateControlNet,
+            setPrompt, setNegativePrompt, addTriggerWords,
+            selectedClip, setSelectedClip, selectedClip2, setSelectedClip2,
             ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
-            adetailerInpaintMasked, setAdetailerInpaintMasked
+            adetailer, setAdetailer, adetailerModel, setAdetailerModel,
+            adetailerPrompt, setAdetailerPrompt, adetailerSteps, setAdetailerSteps,
+            adetailerDenoise, setAdetailerDenoise, adetailerInpaintMasked, setAdetailerInpaintMasked
         },
         providers, providersLoading,
         preflight: {
@@ -59,7 +65,10 @@ export default function Img2ImgGenerator() {
 
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
+    const unetModels = modelsByKey.unetModels ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
+    const clipModels = modelsByKey.clipModels ?? EMPTY_MODELS;
+    const embeddingModels = modelsByKey.embeddingModels ?? EMPTY_MODELS;
     const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
     const adetailerModels = modelsByKey.adetailerModels ?? EMPTY_MODELS;
 
@@ -102,7 +111,8 @@ export default function Img2ImgGenerator() {
             enableLatentUpscale,
             latentUpscaleMultiplier,
             ipAdapters,
-            controlnets: controlnets
+            controlnets: controlnets,
+            adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked
         });
 
         const metadata = {
@@ -127,7 +137,8 @@ export default function Img2ImgGenerator() {
             pagScale,
             enableLatentUpscale,
             ipAdapters,
-            controlnets
+            controlnets,
+            adetailer, adetailerModel
         };
 
         return runWithPreflight(workflow, {
@@ -149,7 +160,8 @@ export default function Img2ImgGenerator() {
     const canGenerate = generating || !sourceImage?.filename || !selectedCheckpoint?.name;
 
     return (
-        <GeneratorShell
+        <>
+            <GeneratorShell
             accentClass="from-orange-400 to-red-500"
             activeJobCount={activeJobCount}
             isMissingModelsOpen={isMissingModelsOpen}
@@ -175,18 +187,34 @@ export default function Img2ImgGenerator() {
 
                     {/* Model Selection */}
                     <div className="space-y-4 pb-4 border-b border-gray-800">
-                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                            <Settings2 size={18} className="text-purple-400" />
-                            Models
-                        </h3>
-
-                        <ModelSelector
-                            label="Checkpoint"
-                            initialModels={checkpoints}
-                            value={selectedCheckpoint?.name}
-                            selectedModel={selectedCheckpoint}
-                            onChange={setSelectedCheckpoint}
-                            directory="models/checkpoints"
+                        <ModelSection
+                            selectedCheckpoint={selectedCheckpoint}
+                            setSelectedCheckpoint={setSelectedCheckpoint}
+                            selectedVae={selectedVae}
+                            setSelectedVae={setSelectedVae}
+                            selectedClip={selectedClip}
+                            setSelectedClip={setSelectedClip}
+                            selectedClip2={selectedClip2}
+                            setSelectedClip2={setSelectedClip2}
+                            selectedLoras={selectedLoras}
+                            addLora={addLora}
+                            removeLora={removeLora}
+                            updateLora={updateLora}
+                            addTriggerWords={addTriggerWords}
+                            prompt={prompt}
+                            negativePrompt={negativePrompt}
+                            setPrompt={setPrompt}
+                            setNegativePrompt={setNegativePrompt}
+                            checkpoints={checkpoints}
+                            unetModels={unetModels}
+                            vaeModels={vaeModels}
+                            clipModels={clipModels}
+                            embeddingModels={embeddingModels}
+                            setViewingMetadata={setViewingMetadata}
+                            providers={providers}
+                            providersLoading={providersLoading}
+                            autoOpenLoraIndex={autoOpenLoraIndex}
+                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                         />
 
                         <ControlNetSection
@@ -205,6 +233,16 @@ export default function Img2ImgGenerator() {
                         />
 
                         <EnhancementsSection
+                            adetailer={adetailer}
+                            setAdetailer={setAdetailer}
+                            adetailerModel={adetailerModel}
+                            setAdetailerModel={setAdetailerModel}
+                            adetailerPrompt={adetailerPrompt}
+                            setAdetailerPrompt={setAdetailerPrompt}
+                            adetailerSteps={adetailerSteps}
+                            setAdetailerSteps={setAdetailerSteps}
+                            adetailerDenoise={adetailerDenoise}
+                            setAdetailerDenoise={setAdetailerDenoise}
                             adetailerInpaintMasked={adetailerInpaintMasked}
                             setAdetailerInpaintMasked={setAdetailerInpaintMasked}
                             adetailerModels={adetailerModels}
@@ -218,18 +256,6 @@ export default function Img2ImgGenerator() {
                             setEnableLatentUpscale={setEnableLatentUpscale}
                             latentUpscaleMultiplier={latentUpscaleMultiplier}
                             setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                        />
-
-                        <VaeLoraSection
-                            selectedVae={selectedVae}
-                            setSelectedVae={setSelectedVae}
-                            vaeModels={vaeModels}
-                            selectedLoras={selectedLoras}
-                            addLora={addLora}
-                            removeLora={removeLora}
-                            updateLora={updateLora}
-                            autoOpenLoraIndex={autoOpenLoraIndex}
-                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                         />
                     </div>
                 </>
@@ -304,5 +330,15 @@ export default function Img2ImgGenerator() {
                 </>
             )}
         />
+
+            {viewingMetadata && (
+                <ModelMetadataModal
+                    metadata={viewingMetadata}
+                    providers={providers}
+                    providersLoading={providersLoading}
+                    onClose={() => setViewingMetadata(null)}
+                />
+            )}
+        </>
     );
 }

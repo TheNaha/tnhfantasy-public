@@ -84,6 +84,28 @@ export function useLLMProviderStatus() {
 }
 
 /**
+ * Convenience hook: current default LLM provider config ({provider_id, model_id} | null).
+ */
+export function useLLMDefaultProvider() {
+    return useQuery({
+        queryKey: LLM_DEFAULT_KEY,
+        queryFn: fetchLLMDefault,
+        staleTime: 5 * 60_000,
+    });
+}
+
+/**
+ * Convenience hook: models available on the default LLM provider's worker.
+ */
+export function useLLMAvailableModels() {
+    return useQuery({
+        queryKey: LLM_MODELS_KEY,
+        queryFn: fetchLLMModels,
+        staleTime: 5 * 60_000,
+    });
+}
+
+/**
  * Test connectivity to a specific LLM provider.
  * Calls POST /api/v2/llm/providers/{providerId}/test
  * Returns { healthy, models, error, worker_url }

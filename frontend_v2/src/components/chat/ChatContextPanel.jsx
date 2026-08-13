@@ -217,6 +217,37 @@ function ChatContextPanel({
                         </button>
                     )}
                 </div>
+                <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                            {activeChat?.max_agentic_depth
+                                ? `${activeChat.max_agentic_depth} steps`
+                                : 'Global default (5)'}
+                        </span>
+                    </div>
+                    <input
+                        type="range"
+                        min="1"
+                        max="10"
+                        step="1"
+                        value={activeChat?.max_agentic_depth || 5}
+                        onChange={(e) => onChatUpdate({ max_agentic_depth: parseInt(e.target.value) })}
+                        className="w-full accent-purple-500"
+                        title="Max agentic tool-call loops per reply. Higher = more autonomous but slower."
+                    />
+                    <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                        <span>1</span><span>5</span><span>10</span>
+                    </div>
+                    {activeChat?.max_agentic_depth && (
+                        <button
+                            onClick={() => onChatUpdate({ max_agentic_depth: null })}
+                            className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                        >
+                            Reset to global default
+                        </button>
+                    )}
+                </div>
                 <div className="flex items-center justify-between">
                     <div>
                         <p className="text-xs text-gray-300 font-medium">Allow image generation</p>

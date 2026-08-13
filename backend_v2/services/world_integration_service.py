@@ -14,9 +14,9 @@ from core.entities import (
     StoryBeatRole,
 )
 from core.events import event_bus, EventType, Event
-from infrastructure.database import engine
+from infrastructure.database import get_session_context
 from infrastructure.logging import get_logger
-from sqlmodel import Session, select
+from sqlmodel import select
 from services.context_builder import build_chat_context_async
 from services.job_queue import queue_manager
 from services.job_service import JobService
@@ -48,7 +48,7 @@ async def _handle_impersonation(job_data: dict[str, Any]):
     if not imp_chat_id or not imp_text:
         return
 
-    with Session(engine) as session:
+    async with get_session_context() as session:
         try:
             _user_msg = Message(
                 chat_id=imp_chat_id,
@@ -127,26 +127,28 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
         prompt_preview=prompt[:80],
     )
     try:
-        from core.workflow_builder import build_image_workflow
+        from core.workflow_builder import build_image_job_workflow
         from services.model_availability_service import ModelAvailabilityService
 
-        with Session(engine) as session:
+        async with get_session_context() as session:
             checkpoint = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
             if not checkpoint:
                 logger.error("illustrate_no_checkpoint", story_id=story_id, chapter_id=chapter_id)
                 return
             _job_service = JobService(session)
-            image_workflow = build_image_workflow(prompt, checkpoint=checkpoint, filename_prefix="ComfyUI")
+            image_workflow, image_metadata = build_image_job_workflow(
+                prompt=prompt,
+                checkpoint=checkpoint,
+                filename_prefix="ComfyUI",
+                source="story_illustrate",
+                workspace="story",
+                story_id=story_id,
+                chapter_id=chapter_id,
+            )
             img_job = await _job_service.create_job(
                 task_type="image",
                 workflow=image_workflow,
-                metadata={
-                    "story_id": story_id,
-                    "chapter_id": chapter_id,
-                    "prompt": prompt,
-                    "source": "story_illustrate",
-                    "workspace": "story",
-                },
+                metadata=image_metadata,
             )
             await queue_manager.enqueue(img_job.id, task_type="image")
             logger.info("illustrate_image_job_queued", job_id=img_job.id, story_id=story_id)
@@ -178,26 +180,24 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
         prompt_preview=prompt[:80],
     )
     try:
-        with Session(engine) as session:
+        async with get_session_context() as session:
             resolved_ckpt = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
             if not resolved_ckpt:
                 logger.error("scene_prompt_no_checkpoint", chat_id=chat_id)
                 return
-            workflow = build_image_workflow(
-                prompt,
-                DEFAULT_NEGATIVE_PROMPT,
+            workflow, image_metadata = build_image_job_workflow(
+                prompt=prompt,
+                negative=DEFAULT_NEGATIVE_PROMPT,
                 checkpoint=resolved_ckpt,
                 filename_prefix="ComfyUI",
+                source="scene_illustrate",
+                chat_id=chat_id,
+                character_id=character_id,
             )
             img_job = await JobService(session).create_job(
                 task_type="image",
                 workflow=workflow,
-                metadata={
-                    "chat_id": chat_id,
-                    "character_id": character_id,
-                    "prompt": prompt,
-                    "source": "scene_illustrate",
-                },
+                metadata=image_metadata,
             )
             await queue_manager.enqueue(img_job.id, task_type="image")
             logger.info("scene_image_job_queued", job_id=img_job.id, chat_id=chat_id)
@@ -211,7 +211,7 @@ async def _handle_narrator(job_data: dict[str, Any]):
     if not chat_id or not content:
         return
 
-    with Session(engine) as session:
+    async with get_session_context() as session:
         try:
             msg = Message(
                 role=MessageRole.SYSTEM,
@@ -249,7 +249,7 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
     # alternates/swipe overwrite branch was removed — it overwrote the
     # character message BEFORE the prompt because the old reply was already
     # deleted, pushing regenerated output above the prompt.
-    with Session(engine) as session:
+    async with get_session_context() as session:
         try:
             metadata = job_data.get("metadata", {}) or {}
             msg_metadata = {"agentic": bool(tool_calls)}
@@ -276,7 +276,7 @@ async def _handle_story_continue(job_data: dict[str, Any]):
     if not chapter_id or not content:
         return
 
-    with Session(engine) as session:
+    async with get_session_context() as session:
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter:
@@ -311,7 +311,7 @@ async def _handle_chat_image(job_data: dict[str, Any]):
     if not chat_id or not image_path:
         return
 
-    with Session(engine) as session:
+    async with get_session_context() as session:
         if metadata.get("source") == "agentic_tool":
             tool_name = metadata.get("tool_name", "generate_image")
             content = f"[Image generated by {tool_name}]"
@@ -371,7 +371,7 @@ async def _handle_story_image(job_data: dict[str, Any]):
     if not chapter_id or not image_path:
         return
 
-    with Session(engine) as session:
+    async with get_session_context() as session:
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter:

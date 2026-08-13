@@ -96,8 +96,10 @@ class TestChatsRoute:
         })
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["role"] == "user"
-        assert data["content"] == "Hello"
+        assert data["user_message_id"]
+        assert data["job_id"]
+        messages = client.get(f"/api/v2/chats/{chat_id}/messages").json()
+        assert any(m["role"] == "user" and m["content"] == "Hello" for m in messages)
 
     def test_chat_with_character_greeting(self, client, session):
         character = Character(name="TestChar", first_mes="Greetings, traveler!")
@@ -201,7 +203,7 @@ class TestStoriesRoute:
         create = client.post("/api/v2/stories", json={"title": "Old Title"})
         story_id = create.json()["id"]
 
-        response = client.patch(f"/api/v2/stories/{story_id}", json={"title": "New Title"})
+        response = client.put(f"/api/v2/stories/{story_id}", json={"title": "New Title"})
         assert response.status_code == 200
         assert response.json()["title"] == "New Title"
 

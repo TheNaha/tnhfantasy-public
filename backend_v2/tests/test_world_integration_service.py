@@ -18,11 +18,13 @@ from core.entities import (
     StoryChapter,
 )
 import services.world_integration_service as wis
+from infrastructure import database as infra_database
 
-# The handlers open their own Session(engine); point them at the test engine.
+# The handlers open their own Session via get_session_context(); point the
+# underlying engine at the test engine so all DB operations use in-memory SQLite.
 @pytest.fixture
 def wired_engine(engine, monkeypatch):
-    monkeypatch.setattr(wis, "engine", engine)
+    monkeypatch.setattr(infra_database, "engine", engine)
     return engine
 
 

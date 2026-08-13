@@ -14,7 +14,6 @@ import { assetUrl } from '../../utils/assetUrl';
 import EmptyState from '../EmptyState';
 
 const CollectionsPanel = ({ isOpen, onClose }) => {
-    console.log('DBGPANEL render isOpen=', isOpen);
     const { data: collections = {} } = useCollections();
     const activeCollection = useStore((state) => state.activeCollection);
     const setActiveCollection = useStore((state) => state.setActiveCollection);

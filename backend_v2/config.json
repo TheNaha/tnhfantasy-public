@@ -40,7 +40,7 @@
   "api": {
     "gzip_minimum_size": 1000,
     "cors_origins": [
-      "*"
+      "http://localhost:5174"
     ]
   },
   "jobs_cleanup": {

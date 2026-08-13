@@ -31,6 +31,7 @@ import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { api } from './api';
 // Lazy-loaded pages to minimise initial JS bundle
+const FantasyHub = lazy(() => import('./pages/FantasyHub'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const SimpleGenerator = lazy(() => import('./pages/SimpleGenerator'));
 const AdvancedGenerator = lazy(() => import('./pages/AdvancedGenerator'));
@@ -58,7 +59,8 @@ function AnimatedRoutes() {
     return (
         <AnimatePresence mode="wait">
             <Routes location={location} key={routeKey}>
-                <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+                <Route path="/" element={<ErrorBoundary><FantasyHub /></ErrorBoundary>} />
+                <Route path="/gallery" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
                 <Route path="/generate" element={<ErrorBoundary><SimpleGenerator /></ErrorBoundary>} />
                 <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
                 <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />

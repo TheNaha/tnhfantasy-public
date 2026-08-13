@@ -1211,6 +1211,75 @@ def _migration_add_composite_indexes(conn) -> bool:
     return True
 
 
+def _migration_add_job_typed_columns(conn) -> bool:
+    """Add typed routing columns to jobs and backfill from metadata_ JSON."""
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("jobs")}
+
+    typed_cols = {
+        "workspace": "TEXT",
+        "character_id": "TEXT",
+        "story_id": "TEXT",
+        "source": "TEXT",
+    }
+    for col_name, col_type in typed_cols.items():
+        if col_name not in columns:
+            conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_type}"))
+            logger.info("migration_column_added", table="jobs", column=col_name)
+
+    if "workspace" in columns or "character_id" in columns or "story_id" in columns or "source" in columns:
+        conn.execute(text("""
+            UPDATE jobs
+            SET workspace = COALESCE(workspace, metadata_->>'workspace'),
+                character_id = COALESCE(character_id, metadata_->>'character_id'),
+                story_id = COALESCE(story_id, metadata_->>'story_id'),
+                source = COALESCE(source, metadata_->>'source')
+            WHERE metadata_ IS NOT NULL
+              AND (workspace IS NULL OR character_id IS NULL OR story_id IS NULL OR source IS NULL)
+        """))
+        logger.info("migration_job_typed_columns_backfilled")
+
+    for col_name in ("workspace", "character_id", "story_id", "source"):
+        if col_name in columns:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_job_{col_name} ON jobs ({col_name})"))
+
+    _verify_required_columns(conn, "jobs", set(typed_cols.keys()))
+    return True
+
+
+def _migration_add_chat_max_agentic_depth(conn) -> bool:
+    """Add max_agentic_depth column to chats."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "max_agentic_depth" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN max_agentic_depth INTEGER"))
+        logger.info("migration_column_added", table="chats", column="max_agentic_depth")
+
+    _verify_required_columns(conn, "chats", {"max_agentic_depth"})
+    return True
+
+
+def _migration_add_story_max_agentic_depth(conn) -> bool:
+    """Add max_agentic_depth column to stories."""
+    inspector = inspect(conn)
+    if "stories" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("stories")}
+    if "max_agentic_depth" not in columns:
+        conn.execute(text("ALTER TABLE stories ADD COLUMN max_agentic_depth INTEGER"))
+        logger.info("migration_column_added", table="stories", column="max_agentic_depth")
+
+    _verify_required_columns(conn, "stories", {"max_agentic_depth"})
+    return True
+
+
 def _get_schema_migration_steps() -> list[MigrationStep]:
     """Return ordered schema migration steps."""
     return [
@@ -1388,5 +1457,20 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="035_add_composite_indexes",
             description="Add composite indexes for messages(chat_id, created_at) and stories(updated_at)",
             apply_fn=_migration_add_composite_indexes,
+        ),
+        MigrationStep(
+            version="036_add_job_typed_columns",
+            description="Add workspace/character_id/story_id/source typed columns to jobs with backfill from metadata_",
+            apply_fn=_migration_add_job_typed_columns,
+        ),
+        MigrationStep(
+            version="037_add_chat_max_agentic_depth",
+            description="Add max_agentic_depth column to chats for per-chat agentic loop limit",
+            apply_fn=_migration_add_chat_max_agentic_depth,
+        ),
+        MigrationStep(
+            version="038_add_story_max_agentic_depth",
+            description="Add max_agentic_depth column to stories for per-story agentic loop limit",
+            apply_fn=_migration_add_story_max_agentic_depth,
         ),
     ]

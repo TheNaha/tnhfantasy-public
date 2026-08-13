@@ -127,28 +127,59 @@ export default React.memo(function StoryContextPanel({
                         </div>
                     )}
                 </div>
-                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 space-y-4">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Settings size={16} className="text-gray-400" />
-                        <h3 className="font-semibold text-gray-200">AI Model Settings</h3>
-                    </div>
-                    <div>
-                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Text Model</label>
-                        <select
-                            className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50"
-                            value={activeStory?.llm_model || 'default'}
-                            onChange={(e) => {
-                                onUpdateStory({ llm_model: e.target.value === 'default' ? null : e.target.value });
-                            }}
-                        >
-                            <option value="default">Provider Default ({defaultLlmConfig?.model_id || 'default'})</option>
-                            {llmModels.map(m => (
-                                <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                            ))}
-                        </select>
-                        <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
-                    </div>
-                </div>
+                 <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 space-y-4">
+                     <div className="flex items-center gap-2 mb-2">
+                         <Settings size={16} className="text-gray-400" />
+                         <h3 className="font-semibold text-gray-200">AI Model Settings</h3>
+                     </div>
+                     <div>
+                         <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-2">Text Model</label>
+                         <select
+                             className="w-full bg-gray-900 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500/50"
+                             value={activeStory?.llm_model || 'default'}
+                             onChange={(e) => {
+                                 onUpdateStory({ llm_model: e.target.value === 'default' ? null : e.target.value });
+                             }}
+                         >
+                             <option value="default">Provider Default ({defaultLlmConfig?.model_id || 'default'})</option>
+                             {llmModels.map(m => (
+                                 <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                             ))}
+                         </select>
+                         <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
+                     </div>
+                     <div>
+                         <div className="flex items-center justify-between mb-1.5">
+                             <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
+                             <span className="text-[10px] text-gray-500 font-mono">
+                                 {activeStory?.max_agentic_depth
+                                     ? `${activeStory.max_agentic_depth} steps`
+                                     : 'Global default (5)'}
+                             </span>
+                         </div>
+                         <input
+                             type="range"
+                             min="1"
+                             max="10"
+                             step="1"
+                             value={activeStory?.max_agentic_depth || 5}
+                             onChange={(e) => onUpdateStory({ max_agentic_depth: parseInt(e.target.value) })}
+                             className="w-full accent-purple-500"
+                             title="Max agentic tool-call loops per continuation. Higher = more autonomous but slower."
+                         />
+                         <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                             <span>1</span><span>5</span><span>10</span>
+                         </div>
+                         {activeStory?.max_agentic_depth && (
+                             <button
+                                 onClick={() => onUpdateStory({ max_agentic_depth: null })}
+                                 className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                             >
+                                 Reset to global default
+                             </button>
+                         )}
+                     </div>
+                 </div>
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
                     <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <Book size={14} /> Story Info

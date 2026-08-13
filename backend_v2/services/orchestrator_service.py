@@ -158,9 +158,18 @@ def get_agentic_depth(metadata: dict[str, Any] | None) -> int:
     return metadata.get("orchestrator_depth", 0)
 
 
-def can_continue_agentic(metadata: dict[str, Any] | None) -> bool:
+def get_max_agentic_depth(chat_or_story=None, metadata: dict[str, Any] | None = None) -> int:
+    """Resolve the max agentic depth: per-entity override > metadata > global default."""
+    if chat_or_story is not None and getattr(chat_or_story, "max_agentic_depth", None) is not None:
+        return int(chat_or_story.max_agentic_depth)
+    if metadata and metadata.get("max_agentic_depth") is not None:
+        return int(metadata["max_agentic_depth"])
+    return MAX_AGENTIC_DEPTH
+
+
+def can_continue_agentic(metadata: dict[str, Any] | None, chat_or_story=None) -> bool:
     """Whether the orchestrator should process another iteration."""
-    return get_agentic_depth(metadata) < MAX_AGENTIC_DEPTH
+    return get_agentic_depth(metadata) < get_max_agentic_depth(chat_or_story, metadata)
 
 
 def _available_checkpoint(session, preferred: str | None) -> str | None:
@@ -325,33 +334,24 @@ async def _tool_narrate_scene(
 
         character_system_prompt = source_meta.get("character_system_prompt")
         if not character_system_prompt and chat_id:
-            # Re-build the character system prompt fresh from DB so the narrator
-            # always has the full character identity even in deeply-chained agentic jobs.
+            from core.entities import Chat as _Chat, Character as _Char
+            from services.context_builder import build_system_prompt_sections
             try:
-                from infrastructure.database import get_session_sync as _gsync
-                from core.entities import Chat as _Chat, Character as _Char
-                from services.context_builder import build_system_prompt_sections
-                _s = _gsync()
-                try:
-                    _chat = _s.get(_Chat, chat_id)
-                    if _chat:
-                        _char = _s.get(_Char, _chat.character_id) if _chat.character_id else None
-                        _sections = build_system_prompt_sections(
-                            _s,
-                            character=_char,
-                            system_prompt_override=_chat.system_prompt_override,
-                            append_system_prompt=_chat.append_system_prompt,
-                            persona_name=_chat.persona_name,
-                            story_time=_chat.story_time,
-                            story_location=_chat.story_location,
-                            lorebook_ids=_chat.active_lorebook_ids or None,
-                            # Don't include roleplay_default in the narrator context —
-                            # the narrator has its own dedicated system prompt.
-                            include_roleplay_default=False,
-                        )
-                        character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
-                finally:
-                    _s.close()
+                _chat = session.get(_Chat, chat_id)
+                if _chat:
+                    _char = session.get(_Char, _chat.character_id) if _chat.character_id else None
+                    _sections = build_system_prompt_sections(
+                        session,
+                        character=_char,
+                        system_prompt_override=_chat.system_prompt_override,
+                        append_system_prompt=_chat.append_system_prompt,
+                        persona_name=_chat.persona_name,
+                        story_time=_chat.story_time,
+                        story_location=_chat.story_location,
+                        lorebook_ids=_chat.active_lorebook_ids or None,
+                        include_roleplay_default=False,
+                    )
+                    character_system_prompt = "\n\n".join(s["content"] for s in _sections) or None
             except Exception as _e:
                 logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
 
@@ -386,79 +386,74 @@ async def _tool_narrate_scene(
     # claimed by the single LLM worker (deadlock / 180s timeout). The job row
     # is created (not enqueued) so the _LLMReducer streams status/events and
     # the completion event persists the narration via world_integration.
+    from services.job_queue import queue_manager
+    from services.load_balancer_factory import create_load_balancer
+    from services.provider_runtime import resolve_provider_runtime
+    from services.provider_client import (
+        call_llm_provider,
+        JobCancelledError,
+        JobTimeoutError,
+        ProviderCallError,
+    )
+    from config import get_job_timeout
+
+    _session = get_session_sync()
     try:
-        from services.job_queue import queue_manager
-        from services.load_balancer_factory import create_load_balancer
-        from services.provider_runtime import resolve_provider_runtime
-        from services.provider_client import (
-            call_llm_provider,
-            JobCancelledError,
-            JobTimeoutError,
-            ProviderCallError,
+        _job_service = JobService(_session)
+        load_balancer = create_load_balancer(_session, task_type="llm")
+
+        provider = await load_balancer.get_next_provider(
+            required_models=None,
+            task_type="llm",
         )
-        from config import get_job_timeout
+        if provider is None:
+            await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
+            return {"status": "error", "error": "No available LLM providers for narration"}
 
-        _session = get_session_sync()
-        try:
-            _job_service = JobService(_session)
-            load_balancer = create_load_balancer(_session, task_type="llm")
-
-            provider = await load_balancer.get_next_provider(
-                required_models=None,
-                task_type="llm",
-            )
-            if provider is None:
-                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
-                return {"status": "error", "error": "No available LLM providers for narration"}
-
-            runtime = resolve_provider_runtime(provider)
-            if runtime.mode not in ("container_http", "discovery"):
-                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
-                await load_balancer.report_failure(provider.id)
-                await load_balancer.release_job(provider.id)
-                return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
-
-            timeout = get_job_timeout("llm")
-            final_result = await call_llm_provider(
-                worker_url=runtime.worker_url,
-                workflow=workflow,
-                job_id=job.id,
-                job_service=_job_service,
-                timeout=timeout,
-                provider_id=provider.id,
-                provider_type=provider.type,
-            )
-
-            await load_balancer.report_success(provider.id)
+        runtime = resolve_provider_runtime(provider)
+        if runtime.mode not in ("container_http", "discovery"):
+            await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
+            await load_balancer.report_failure(provider.id)
             await load_balancer.release_job(provider.id)
+            return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
 
-            content = ""
-            outputs = final_result.get("outputs") or []
-            if outputs and isinstance(outputs[0], dict):
-                content = outputs[0].get("content", "")
-            if not content:
-                content = final_result.get("text", "")
-            return {"status": "success", "narration": content, "job_id": job.id}
-        finally:
-            _session.close()
+        timeout = get_job_timeout("llm")
+        final_result = await call_llm_provider(
+            worker_url=runtime.worker_url,
+            workflow=workflow,
+            job_id=job.id,
+            job_service=_job_service,
+            timeout=timeout,
+            provider_id=provider.id,
+            provider_type=provider.type,
+        )
+
+        await load_balancer.report_success(provider.id)
+        await load_balancer.release_job(provider.id)
+
+        content = ""
+        outputs = final_result.get("outputs") or []
+        if outputs and isinstance(outputs[0], dict):
+            content = outputs[0].get("content", "")
+        if not content:
+            content = final_result.get("text", "")
+        return {"status": "success", "narration": content, "job_id": job.id}
     except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
         logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
         try:
-            _s2 = get_session_sync()
-            try:
-                await JobService(_s2).update_job(
-                    job.id,
-                    status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
-                    error=str(exc),
-                )
-            finally:
-                _s2.close()
+            await JobService(_session).update_job(
+                job.id,
+                status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
+                error=str(exc),
+            )
         except Exception as update_exc:
             logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
         return {"status": "error", "error": f"Narration failed: {exc}"}
     except Exception as exc:
         logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
         return {"status": "error", "error": f"Failed waiting for narrator job: {exc}"}
+    finally:
+        _session.close()
 
 
 async def _tool_generate_image(
@@ -527,36 +522,21 @@ async def _tool_generate_image(
         if lora_name and resolved_lora is None:
             logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
 
-        workflow = build_image_workflow(
+        from core.workflow_builder import build_image_job_workflow
+
+        workflow, metadata = build_image_job_workflow(
             prompt=prompt,
             negative=negative,
             checkpoint=resolved_ckpt,
             lora=resolved_lora,
             filename_prefix="AgenticGen",
+            source="agentic_tool",
+            workspace="chat",
+            chat_id=chat_id,
+            character_id=character_id,
+            parent_job_id=source_job_id,
+            extra_metadata={"tool_name": "generate_image"},
         )
-
-        metadata: dict[str, Any] = {"source": "agentic_tool", "tool_name": "generate_image", "workspace": "chat"}
-        if chat_id:
-            metadata["chat_id"] = chat_id
-        if character_id:
-            metadata["character_id"] = character_id
-        if source_job_id:
-            metadata["parent_job_id"] = source_job_id
-
-        # Persist generation parameters so the details panel shows real values
-        # instead of "Model Unknown".
-        metadata["prompt"] = prompt
-        metadata["negativePrompt"] = negative
-        metadata["checkpoint"] = resolved_ckpt
-        if resolved_lora:
-            metadata["loras"] = [resolved_lora]
-        metadata["steps"] = 20
-        metadata["cfg"] = 7
-        metadata["sampler"] = "euler"
-        metadata["scheduler"] = "normal"
-        metadata["width"] = 1024
-        metadata["height"] = 1024
-        metadata["seed"] = 0
 
         try:
             job = await submission.create_and_enqueue_job(
@@ -628,12 +608,13 @@ async def process_tool_calls_and_chain(
 
     metadata = job.metadata_ or {}
     depth = get_agentic_depth(metadata)
+    max_depth = get_max_agentic_depth(metadata=metadata)
     if not can_continue_agentic(metadata):
         logger.warning(
             "agentic_depth_exceeded",
             job_id=job.id,
             depth=depth,
-            max=MAX_AGENTIC_DEPTH,
+            max=max_depth,
         )
         return False
 
@@ -684,6 +665,7 @@ async def process_tool_calls_and_chain(
             "agentic": True,
             "orchestrator_depth": depth + 1,
             "original_messages": context,
+            "max_agentic_depth": metadata.get("max_agentic_depth"),
         },
     )
     followup_workflow["tools"] = AGENTIC_TOOLS

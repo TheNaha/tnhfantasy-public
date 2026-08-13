@@ -169,7 +169,7 @@ def list_characters(session: Session = Depends(get_session)):
     characters = session.exec(select(Character).order_by(Character.name)).all()
     return [_character_to_dict(c) for c in characters]
 
-@router.post("", response_model=Character)
+@router.post("")
 def create_character(character: Character, session: Session = Depends(get_session)):
     character.created_at = datetime.now(timezone.utc)
     character.updated_at = character.created_at
@@ -188,7 +188,10 @@ def create_character(character: Character, session: Session = Depends(get_sessio
     session.add(collection)
     session.commit()
 
-    return character
+    # The second commit expires `character`; refresh so serialization works
+    session.refresh(character)
+
+    return _character_to_dict(character)
 
 @router.post("/import")
 def import_character_card(

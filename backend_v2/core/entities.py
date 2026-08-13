@@ -85,6 +85,12 @@ class Job(SQLModel, table=True):
     # Not NULL while a worker owns the job; cleared when processing finishes.
     claimed_at: datetime | None = Field(default=None)
 
+    # Typed routing columns (backed by metadata_ JSON; populated on write, indexed for SQL queries).
+    workspace: str | None = Field(default=None, index=True)
+    character_id: str | None = Field(default=None, index=True)
+    story_id: str | None = Field(default=None, index=True)
+    source: str | None = Field(default=None, index=True)
+
     # Queue position (calculated, not stored)
     queue_position: int | None = Field(default=None, exclude=True)
 
@@ -776,6 +782,8 @@ class Chat(SQLModel, table=True):
     append_system_prompt: str | None = Field(default=None, sa_column=Column(Text))
     # Per-chat LLM context window in tokens (None → use global setting → 4096 fallback)
     max_context_tokens: int | None = Field(default=None)
+    # Per-chat agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
+    max_agentic_depth: int | None = Field(default=None)
     # Per-chat user persona description injected into the system prompt
     persona_description: str | None = Field(default=None, sa_column=Column(Text))
     
@@ -880,6 +888,8 @@ class Story(SQLModel, table=True):
     memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory
     # Story state
     is_archived: bool = Field(default=False)
+    # Per-story agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
+    max_agentic_depth: int | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     chapters: list["StoryChapter"] = Relationship(back_populates="story")

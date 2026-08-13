@@ -416,7 +416,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
   });
 
   test('Gallery: lightbox opens and Reuse Parameters fills the generator', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/gallery');
     const firstCard = page.locator('[role="img"]').first();
     await firstCard.waitFor({ state: 'visible', timeout: 30000 });
 
@@ -434,7 +434,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
   });
 
   test('Gallery: favorite toggle on a card, then restored', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/gallery');
     const firstCard = page.locator('[role="img"]').first();
     await firstCard.waitFor({ state: 'visible', timeout: 30000 });
 
@@ -449,7 +449,7 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     const collection = await seedCollection(page, { name: uniqueName('e2e-col'), workspace: 'main' });
     created.push({ kind: 'collection', id: collection.id });
 
-    await page.goto('/');
+    await page.goto('/gallery');
     const firstCard = page.locator('[role="img"]').first();
     await firstCard.waitFor({ state: 'visible', timeout: 30000 });
 

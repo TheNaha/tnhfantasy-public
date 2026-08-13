@@ -116,21 +116,19 @@ class JobSubmissionService:
 
         Returns the created Job.
         """
-        workflow = build_image_workflow(
-            prompt,
-            negative_prompt=negative_prompt,
-            checkpoint=checkpoint,
+        from core.workflow_builder import DEFAULT_NEGATIVE_PROMPT, build_image_job_workflow
+
+        workflow, metadata = build_image_job_workflow(
+            prompt=prompt,
+            negative=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
+            checkpoint=checkpoint or "sd_xl_base_1.0.safetensors",
             filename_prefix=filename_prefix,
+            source=source,
+            workspace=workspace,
+            character_id=character_id,
+            story_id=story_id,
+            extra_metadata=extra_metadata,
         )
-        metadata: dict[str, Any] = {
-            "prompt": prompt,
-            "workspace": workspace,
-            "character_id": character_id,
-            "story_id": story_id,
-            "source": source,
-        }
-        if extra_metadata:
-            metadata.update(extra_metadata)
 
         return await self.create_and_enqueue_job(
             workflow,

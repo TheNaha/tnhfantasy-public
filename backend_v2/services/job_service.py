@@ -14,12 +14,12 @@ from infrastructure.repositories import JobRepository
 logger = job_logger()
 
 JOB_STATUS_TRANSITIONS = {
-    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.SENT_TO_PROVIDER: {JobStatus.PENDING, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.CONNECTED: {JobStatus.PENDING, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.PRE_GENERATION: {JobStatus.PENDING, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.GENERATING: {JobStatus.PENDING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.POST_PROCESSING: {JobStatus.PENDING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.PENDING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CANCELLED},
+    JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.POST_PROCESSING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.COMPLETED: set(),
     JobStatus.FAILED: {JobStatus.PENDING},
     JobStatus.CANCELLED: set(),
@@ -48,6 +48,16 @@ class JobService:
             Created job
         """
         job = self.repo.create(workflow=workflow, metadata=metadata, task_type=task_type)
+        
+        # Populate typed routing columns from metadata for SQL-level filtering
+        if metadata:
+            job.workspace = metadata.get("workspace")
+            job.character_id = metadata.get("character_id")
+            job.story_id = metadata.get("story_id")
+            job.source = metadata.get("source")
+            self.session.add(job)
+            self.session.commit()
+            self.session.refresh(job)
         
         logger.info("job_created", job_id=job.id)
         

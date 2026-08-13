@@ -76,15 +76,3 @@ export async function moveImagesBetweenCollections(fromCollectionId, toCollectio
         images,
     });
 }
-
-export default {
-    listCollections,
-    getCollection,
-    createCollection,
-    updateCollection,
-    deleteCollection,
-    addImagesToCollection,
-    removeImagesFromCollection,
-    importCollections,
-    moveImagesBetweenCollections,
-};

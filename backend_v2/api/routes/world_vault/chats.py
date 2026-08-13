@@ -9,6 +9,8 @@ from core.entities import Chat, Character, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
 
+MAX_CONTEXT_MESSAGES = 200
+
 router = APIRouter()
 
 
@@ -26,6 +28,7 @@ class UpdateChatRequest(BaseModel):
     system_prompt_override: str | None = None
     append_system_prompt: str | None = None
     max_context_tokens: int | None = None
+    max_agentic_depth: int | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -37,6 +40,7 @@ class CreateChatRequest(BaseModel):
     story_time: str | None = None
     story_location: str | None = None
     active_lorebook_ids: list[str] = []
+    max_agentic_depth: int | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -48,6 +52,7 @@ class SendMessageRequest(BaseModel):
     generator_checkpoint: str | None = None
     no_reply: bool = False
     narrate: bool = False
+    max_agentic_depth: int | None = None
 
 
 @router.get("", response_model=list[Chat])
@@ -77,6 +82,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         story_time=req.story_time,
         story_location=req.story_location,
         active_lorebook_ids=req.active_lorebook_ids or [],
+        max_agentic_depth=req.max_agentic_depth,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -179,7 +185,7 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
         raise NotFoundError("Chat", chat_id)
 
     past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
     character = None
@@ -299,45 +305,47 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     raise ValidationError("Narration is disabled for this chat")
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
-                from services.llm_workflow import build_llm_workflow
+                from services.llm_workflow import build_chat_llm_workflow
 
                 narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
-                workflow, metadata = build_llm_workflow(
+                workflow, metadata = build_chat_llm_workflow(
                     messages=[
                         {"role": "system", "content": narrator_prompt},
                         *context,
                         {"role": "user", "content": f"[Narration request] {message.content}"},
                     ],
-                    type_="narrator",
                     chat_id=chat_id,
                     character_id=chat.character_id,
-                    character_system_prompt=system_prompt or None,
+                    system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
+                    type_="narrator",
                     source="narrator",
                 )
             else:
-                from services.llm_workflow import build_llm_workflow
+                from services.llm_workflow import build_chat_llm_workflow
 
-                workflow, metadata = build_llm_workflow(
+                workflow, metadata = build_chat_llm_workflow(
                     messages=context,
-                    type_="chat_reply",
                     chat_id=chat_id,
                     character_id=chat.character_id,
-                    character_system_prompt=system_prompt or None,
+                    system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
                 )
 
-                if request.agentic:
-                    from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
-                    workflow["tools"] = filter_agentic_tools(
-                        AGENTIC_TOOLS,
-                        allow_image=chat.allow_image_generation,
-                        allow_narration=chat.allow_narration,
-                    )
-                    metadata["agentic"] = True
-                    metadata["orchestrator_depth"] = 0
-                    metadata["original_messages"] = context
+            if request.agentic:
+                from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
+                workflow["tools"] = filter_agentic_tools(
+                    AGENTIC_TOOLS,
+                    allow_image=chat.allow_image_generation,
+                    allow_narration=chat.allow_narration,
+                )
+                metadata["agentic"] = True
+                metadata["orchestrator_depth"] = 0
+                metadata["original_messages"] = context
+                effective_max = request.max_agentic_depth or chat.max_agentic_depth
+                if effective_max is not None:
+                    metadata["max_agentic_depth"] = effective_max
 
             if request.generator_checkpoint:
                 metadata["generator_checkpoint"] = request.generator_checkpoint
@@ -611,14 +619,13 @@ async def regenerate_reply(
         **ctx_kwargs,
     )
 
-    from services.llm_workflow import build_llm_workflow
+    from services.llm_workflow import build_chat_llm_workflow
 
-    workflow, metadata = build_llm_workflow(
+    workflow, metadata = build_chat_llm_workflow(
         messages=context,
-        type_="chat_reply",
         chat_id=chat_id,
         character_id=chat.character_id,
-        character_system_prompt=system_prompt or None,
+        system_prompt=system_prompt or None,
         model=chat.llm_model or _get_default_llm_model(),
         extra_metadata={"regenerated": True},
     )
@@ -632,6 +639,9 @@ async def regenerate_reply(
         metadata["agentic"] = True
         metadata["orchestrator_depth"] = 0
         metadata["original_messages"] = context
+        effective_max = chat.max_agentic_depth
+        if effective_max is not None:
+            metadata["max_agentic_depth"] = effective_max
     if prev_checkpoint:
         metadata["generator_checkpoint"] = prev_checkpoint
 
@@ -667,7 +677,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         raise NotFoundError("Chat", chat_id)
 
     past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
     character = None
@@ -710,17 +720,23 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     try:
         job_service = get_job_service(session)
-        from services.llm_workflow import build_llm_workflow
+        from services.llm_workflow import build_chat_llm_workflow
 
-        workflow, metadata = build_llm_workflow(
+        workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
-            type_="impersonate",
             chat_id=chat_id,
             character_id=chat.character_id,
             model=chat.llm_model or _get_default_llm_model(),
-            workspace="chat",
-            source="impersonation",
-            extra_metadata={"hint": req.hint, "is_impersonation": True},
+            type_="suggest_reply",
+            source="suggest_reply",
+            extra_metadata={
+                "hint": req.hint,
+                "is_impersonation": True,
+                "max_agentic_depth": chat.max_agentic_depth,
+            } if req.hint else {
+                "is_impersonation": True,
+                "max_agentic_depth": chat.max_agentic_depth,
+            },
         )
 
         imp_job = await job_service.create_job(
@@ -747,7 +763,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
         raise NotFoundError("Chat", chat_id)
         
     past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
     
     character = None
@@ -826,16 +842,15 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 
     try:
         job_service = get_job_service(session)
-        from services.llm_workflow import build_llm_workflow
+        from services.llm_workflow import build_chat_llm_workflow
 
-        workflow, metadata = build_llm_workflow(
+        workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
-            type_="suggest_reply",
             chat_id=chat_id,
             character_id=chat.character_id,
             model=chat.llm_model or _get_default_llm_model(),
-            workspace="chat",
-            extra_metadata={"is_suggestion": True},
+            type_="suggest_reply",
+            extra_metadata={"is_suggestion": True, "max_agentic_depth": chat.max_agentic_depth},
         )
 
         job = await job_service.create_job(
@@ -894,17 +909,17 @@ async def generate_scene(
 
     job_service = JobService(session)
     from services.orchestrator_service import AGENTIC_TOOLS
-    from services.llm_workflow import build_llm_workflow
+    from services.llm_workflow import build_chat_llm_workflow
 
-    workflow, metadata = build_llm_workflow(
+    workflow, metadata = build_chat_llm_workflow(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context:\n{context_text}"}
         ],
-        type_="chat_reply",
         chat_id=chat_id,
         character_id=chat.character_id,
         model=chat.llm_model or _get_default_llm_model(),
+        type_="chat_reply",
         workspace="roleplay",
         source="scene_prompt",
         extra_metadata={
@@ -983,31 +998,19 @@ async def illustrate_chat(
 
     lora_name = character.lora if character and character.lora else None
 
-    workflow = build_image_workflow(
+    from core.workflow_builder import build_image_job_workflow
+
+    workflow, metadata = build_image_job_workflow(
         prompt=image_prompt,
         checkpoint=checkpoint,
         lora=lora_name,
         filename_prefix="ChatIllustrate",
+        source="chat_image",
+        workspace="chat",
+        chat_id=chat_id,
+        character_id=chat.character_id,
+        extra_metadata={"image_context": image_prompt},
     )
-
-    metadata: dict = {
-        "source": "chat_image",
-        "chat_id": chat_id,
-        "character_id": chat.character_id,
-        "workspace": "chat",
-        "image_context": image_prompt,
-        "prompt": image_prompt,
-        "checkpoint": checkpoint,
-        "steps": 20,
-        "cfg": 7,
-        "sampler": "euler",
-        "scheduler": "normal",
-        "width": 1024,
-        "height": 1024,
-        "seed": 0,
-    }
-    if lora_name:
-        metadata["loras"] = [lora_name]
 
     job_service = JobService(session)
     job = await job_service.create_job(

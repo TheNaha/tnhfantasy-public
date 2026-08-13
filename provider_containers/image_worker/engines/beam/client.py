@@ -85,44 +85,80 @@ class BeamProviderClient(BaseProviderClient):
     async def inference(self, request: InferenceRequest) -> StreamingResponse:
         job_id = request.job_id
         inference_timeout = max(1.0, float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)))
-        
+        use_snapshot = bool(getattr(request, "use_snapshot", False))
+
         if job_id:
             await self.job_tracker.start_job(job_id)
 
         async def generate():
             try:
-                headers = {"Authorization": f"Bearer {BEAM_API_KEY}"}
-                async with websockets.connect(BEAM_GPU_URL, max_size=WS_MAX_SIZE_MB * 1024 * 1024, additional_headers=headers, open_timeout=WS_OPEN_TIMEOUT) as ws:
-                    await ws.send(json.dumps({"workflow": request.workflow}))
-                    async with asyncio.timeout(inference_timeout):
-                        while True:
-                            try:
-                                message = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                            except asyncio.TimeoutError:
-                                if job_id and await self.job_tracker.is_cancelled(job_id):
-                                    yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
-                                    return
-                                continue
-                            except websockets.exceptions.ConnectionClosedOK:
-                                break
-                            except websockets.exceptions.ConnectionClosedError as e:
-                                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Websocket connection closed with error: {str(e)}"), retryable=True).to_ndjson()
-                                break
-                            except websockets.exceptions.ConnectionClosed:
-                                yield TaskEvent(event="failed", job_id=job_id, message=str("Websocket connection closed unexpectedly"), retryable=True).to_ndjson()
-                                break
-                                
+                task = None
+                async with asyncio.timeout(inference_timeout):
+                    q = asyncio.Queue()
+
+                    async def fetcher():
+                        try:
+                            headers = {"Authorization": f"Bearer {BEAM_API_KEY}"}
+                            async with websockets.connect(
+                                BEAM_GPU_URL,
+                                max_size=WS_MAX_SIZE_MB * 1024 * 1024,
+                                additional_headers=headers,
+                                open_timeout=WS_OPEN_TIMEOUT,
+                            ) as ws:
+                                payload = {"workflow": request.workflow}
+                                if use_snapshot:
+                                    payload["use_snapshot"] = True
+                                await ws.send(json.dumps(payload))
+                                async for message in ws:
+                                    if job_id and await self.job_tracker.is_cancelled(job_id):
+                                        return
+                                    await q.put(message)
+                                await q.put(None)
+                        except Exception as e:
+                            await q.put(e)
+
+                    task = asyncio.create_task(fetcher())
+
+                    while True:
+                        try:
+                            item = await asyncio.wait_for(q.get(), timeout=2.0)
+                        except asyncio.TimeoutError:
                             if job_id and await self.job_tracker.is_cancelled(job_id):
+                                task.cancel()
                                 yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
                                 return
-                            if isinstance(message, bytes):
-                                message = message.decode('utf-8')
-                            yield message + "\n"
+                            continue
+
+                        if item is None:
+                            break
+
+                        if isinstance(item, Exception):
+                            raise item
+
+                        message = item
+                        if isinstance(message, bytes):
+                            message = message.decode("utf-8")
+
+                        if job_id and await self.job_tracker.is_cancelled(job_id):
+                            task.cancel()
+                            yield TaskEvent(event="cancelled", job_id=job_id, message="Job cancelled").to_ndjson()
+                            return
+
+                        yield message + "\n"
+
+                if task is not None:
+                    task.cancel()
             except asyncio.TimeoutError:
-                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {inference_timeout}s"), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Inference timed out after {int(inference_timeout)}s"), retryable=True).to_ndjson()
+            except websockets.exceptions.ConnectionClosedError as e:
+                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Websocket connection closed with error: {str(e)}"), retryable=True).to_ndjson()
+            except websockets.exceptions.ConnectionClosed:
+                yield TaskEvent(event="failed", job_id=job_id, message="Websocket connection closed unexpectedly", retryable=True).to_ndjson()
             except Exception as e:
-                yield TaskEvent(event="failed", job_id=job_id, message=str(str(e)), retryable=True).to_ndjson()
+                yield TaskEvent(event="failed", job_id=job_id, message=str(f"Stream error: {e}"), retryable=True).to_ndjson()
             finally:
+                if task is not None:
+                    task.cancel()
                 if job_id:
                     await self.job_tracker.end_job(job_id)
 

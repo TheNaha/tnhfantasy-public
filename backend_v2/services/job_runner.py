@@ -184,12 +184,6 @@ async def _handle_provider_failure(
     if not cancel_signal_delivered:
         logger.warning("provider_cancel_not_confirmed", job_id=job_id, provider=provider_id)
         
-    latest_status = await _get_job_status(job_service, job_id)
-    if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:
-        logger.info(f"job_terminal_after_{error_type}", job_id=job_id, provider=provider_id, status=latest_status.value)
-        await load_balancer.release_job(provider_id)
-        return True
-        
     await load_balancer.report_failure(provider_id)
     return False
 
@@ -273,7 +267,9 @@ async def execute_job(
                     max_attempts=max_retries + 1,
                 )
 
-                latest_status = await _get_job_status(job_service, job_id)
+                if retry_count > 0:
+                    job = await job_service.get_job(job_id)
+                latest_status = job.status
                 if latest_status in {JobStatus.CANCELLED, JobStatus.COMPLETED, JobStatus.FAILED}:
                     logger.info(
                         "job_terminal_before_attempt",

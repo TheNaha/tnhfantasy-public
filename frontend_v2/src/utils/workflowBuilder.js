@@ -131,7 +131,7 @@ class BasePipeline {
         return latent;
     }
     
-    applyADetailer(finalImage, currentModel, currentClip, currentVae, options) {
+    applyADetailer(finalImage, currentModel, currentClip, currentVae, positiveConditioning, negativeConditioning, options) {
         const { adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, seed, cfg, sampler, scheduler } = options;
         const bboxLoader = this.builder.addNode("UltralyticsDetectorProvider", {
             model_name: `bbox/${adetailerModel}`
@@ -142,6 +142,8 @@ class BasePipeline {
             model: currentModel,
             clip: currentClip,
             vae: currentVae,
+            positive: positiveConditioning,
+            negative: negativeConditioning,
             guide_size: 256,
             guide_size_for: true,
             max_size: 768,
@@ -158,7 +160,12 @@ class BasePipeline {
             bbox_dilation: 10,
             bbox_crop_factor: 3.0,
             sam_detection_hint: "center-1",
-            spot_percent: 0.0,
+            sam_dilation: 0,
+            sam_threshold: 0.93,
+            sam_bbox_expansion: 0,
+            sam_mask_hint_threshold: 0.7,
+            sam_mask_hint_use_negative: "False",
+            drop_size: 10,
             wildcard: adetailerPrompt, 
             cycle: 1,
             bbox_detector: [bboxLoader, 0],
@@ -372,8 +379,8 @@ class DefaultPipeline extends BasePipeline {
 
         let finalImage = [this.builder.addNode("VAEDecode", { samples: finalLatent, vae: currentVae }), 0];
 
-        if (mode === 't2i' && options.adetailer) {
-            finalImage = this.applyADetailer(finalImage, currentModel, currentClip, currentVae, options);
+        if (options.adetailer) {
+            finalImage = this.applyADetailer(finalImage, currentModel, currentClip, currentVae, positiveConditioning, negativeConditioning, options);
         }
 
         const prefix = this.builder._generateFilenamePrefix(

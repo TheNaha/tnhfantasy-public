@@ -13,22 +13,22 @@ import { useActiveJobs } from '../hooks/useActiveJobs';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
+import ModelMetadataModal from '../components/ModelMetadataModal';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
 import SamplingSettings from '../components/generator/SamplingSettings';
 import PromptPanel from '../components/generator/PromptPanel';
+import ModelSection from '../components/generator/ModelSection';
 import EnhancementsSection from '../components/generator/EnhancementsSection';
 import ControlNetSection from '../components/generator/ControlNetSection';
 import IPAdapterSection from '../components/generator/IPAdapterSection';
 import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
-import ModelSelector from '../components/ModelSelector';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
 import { WorkflowBuilder } from '../utils/workflowBuilder';
 import GeneratorShell from '../components/generator/GeneratorShell';
-import VaeLoraSection from '../components/generator/VaeLoraSection';
 import GenerateActionBar from '../components/generator/GenerateActionBar';
 
 const EMPTY_MODELS = [];
@@ -36,6 +36,7 @@ const EMPTY_MODELS = [];
 export default function InpaintGenerator() {
     const location = useLocation();
     const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
+    const [viewingMetadata, setViewingMetadata] = useState(null);
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
@@ -43,10 +44,15 @@ export default function InpaintGenerator() {
             selectedCheckpoint, selectedVae, selectedLoras,
             setSourceImage, setDenoise, setMaskImage, setMaskBlur,
             clearSourceImage, setSelectedCheckpoint, setSelectedVae,
+            setPrompt, setNegativePrompt,
             clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
             enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
-            randomizeSeed, addLora, removeLora, updateLora, controlnets, addControlNet, removeControlNet, updateControlNet,
-            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter
+            randomizeSeed, addLora, removeLora, updateLora, addTriggerWords, controlnets, addControlNet, removeControlNet, updateControlNet,
+            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
+            adetailer, setAdetailer, adetailerModel, setAdetailerModel,
+            adetailerPrompt, setAdetailerPrompt, adetailerSteps, setAdetailerSteps,
+            adetailerDenoise, setAdetailerDenoise, adetailerInpaintMasked, setAdetailerInpaintMasked,
+            selectedClip, setSelectedClip, selectedClip2, setSelectedClip2
         },
         providers, providersLoading,
         preflight: {
@@ -67,8 +73,12 @@ export default function InpaintGenerator() {
     const activeJobCount = activeJobs.length;
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
+    const unetModels = modelsByKey.unetModels ?? EMPTY_MODELS;
     const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
     const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
+    const clipModels = modelsByKey.clipModels ?? EMPTY_MODELS;
+    const embeddingModels = modelsByKey.embeddingModels ?? EMPTY_MODELS;
+    const adetailerModels = modelsByKey.adetailerModels ?? EMPTY_MODELS;
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
@@ -137,7 +147,8 @@ export default function InpaintGenerator() {
             enableLatentUpscale,
             latentUpscaleMultiplier,
             ipAdapters,
-            controlnets
+            controlnets,
+            adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked
         });
 
         const metadata = {
@@ -162,6 +173,7 @@ export default function InpaintGenerator() {
             enableFreeU,
             enablePAG,
             pagScale,
+            adetailer, adetailerModel,
             usedInpaintModel: !!inpaintCheckpoint
         };
 
@@ -189,7 +201,8 @@ export default function InpaintGenerator() {
     const canGenerate = generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name;
 
     return (
-        <GeneratorShell
+        <>
+            <GeneratorShell
             accentClass="from-purple-400 to-pink-500"
             activeJobCount={activeJobCount}
             isMissingModelsOpen={isMissingModelsOpen}
@@ -243,18 +256,34 @@ export default function InpaintGenerator() {
 
                     {/* Model Selection */}
                     <div className="space-y-4 pb-4 border-b border-gray-800">
-                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                            <Settings2 size={18} className="text-purple-400" />
-                            Models
-                        </h3>
-
-                        <ModelSelector
-                            label="Checkpoint"
-                            initialModels={checkpoints}
-                            value={selectedCheckpoint?.name}
-                            selectedModel={selectedCheckpoint}
-                            onChange={setSelectedCheckpoint}
-                            directory="models/checkpoints"
+                        <ModelSection
+                            selectedCheckpoint={selectedCheckpoint}
+                            setSelectedCheckpoint={setSelectedCheckpoint}
+                            selectedVae={selectedVae}
+                            setSelectedVae={setSelectedVae}
+                            selectedClip={selectedClip}
+                            setSelectedClip={setSelectedClip}
+                            selectedClip2={selectedClip2}
+                            setSelectedClip2={setSelectedClip2}
+                            selectedLoras={selectedLoras}
+                            addLora={addLora}
+                            removeLora={removeLora}
+                            updateLora={updateLora}
+                            addTriggerWords={addTriggerWords}
+                            prompt={prompt}
+                            negativePrompt={negativePrompt}
+                            setPrompt={setPrompt}
+                            setNegativePrompt={setNegativePrompt}
+                            checkpoints={checkpoints}
+                            unetModels={unetModels}
+                            vaeModels={vaeModels}
+                            clipModels={clipModels}
+                            embeddingModels={embeddingModels}
+                            setViewingMetadata={setViewingMetadata}
+                            providers={providers}
+                            providersLoading={providersLoading}
+                            autoOpenLoraIndex={autoOpenLoraIndex}
+                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                         />
 
                         {/* ControlNet */}
@@ -288,6 +317,19 @@ export default function InpaintGenerator() {
                         )}
 
                         <EnhancementsSection
+                            adetailer={adetailer}
+                            setAdetailer={setAdetailer}
+                            adetailerModel={adetailerModel}
+                            setAdetailerModel={setAdetailerModel}
+                            adetailerPrompt={adetailerPrompt}
+                            setAdetailerPrompt={setAdetailerPrompt}
+                            adetailerSteps={adetailerSteps}
+                            setAdetailerSteps={setAdetailerSteps}
+                            adetailerDenoise={adetailerDenoise}
+                            setAdetailerDenoise={setAdetailerDenoise}
+                            adetailerInpaintMasked={adetailerInpaintMasked}
+                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
+                            adetailerModels={adetailerModels}
                             enableFreeU={enableFreeU}
                             setEnableFreeU={setEnableFreeU}
                             enablePAG={enablePAG}
@@ -298,18 +340,6 @@ export default function InpaintGenerator() {
                             setEnableLatentUpscale={setEnableLatentUpscale}
                             latentUpscaleMultiplier={latentUpscaleMultiplier}
                             setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                        />
-
-                        <VaeLoraSection
-                            selectedVae={selectedVae}
-                            setSelectedVae={setSelectedVae}
-                            vaeModels={vaeModels}
-                            selectedLoras={selectedLoras}
-                            addLora={addLora}
-                            removeLora={removeLora}
-                            updateLora={updateLora}
-                            autoOpenLoraIndex={autoOpenLoraIndex}
-                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                         />
                     </div>
                 </>
@@ -405,5 +435,15 @@ export default function InpaintGenerator() {
                 </>
             )}
         />
+
+            {viewingMetadata && (
+                <ModelMetadataModal
+                    metadata={viewingMetadata}
+                    providers={providers}
+                    providersLoading={providersLoading}
+                    onClose={() => setViewingMetadata(null)}
+                />
+            )}
+        </>
     );
 }

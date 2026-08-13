@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import collectionsApi from '../api/collectionsApi';
+import {
+    listCollections, getCollection, createCollection, deleteCollection,
+    updateCollection, addImagesToCollection, removeImagesFromCollection,
+    importCollections
+} from '../api/collectionsApi';
 
 const MIGRATION_KEY = 'comfy-collections-migrated';
 const OLD_STORAGE_KEY = 'comfy-storage';
@@ -36,7 +40,7 @@ export async function migrateLegacyCollections() {
                 description: null,
                 images: c.images || []
             }));
-            await collectionsApi.importCollections(collectionsToMigrate);
+            await importCollections(collectionsToMigrate);
         }
         localStorage.setItem(MIGRATION_KEY, 'true');
     } catch (e) {
@@ -49,7 +53,7 @@ export function useCollections(workspace = null) {
     return useQuery({
         queryKey: ['collections', workspace],
         queryFn: async () => {
-            const { collections } = await collectionsApi.listCollections(workspace);
+            const { collections } = await listCollections(workspace);
             // Convert to collections map keyed by id to be compatible with older store design
             const collectionsMap = {};
             for (const col of collections) {
@@ -75,7 +79,7 @@ export function useCollectionImages(collectionId) {
         queryKey: ['collections', collectionId, 'images'],
         queryFn: async () => {
             if (!collectionId) return [];
-            const col = await collectionsApi.getCollection(collectionId, true);
+            const col = await getCollection(collectionId, true);
             return col.images || [];
         },
         enabled: !!collectionId,
@@ -87,7 +91,7 @@ export function useCreateCollection() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async ({ name, color, workspace }) => {
-            return collectionsApi.createCollection({ name, color, workspace });
+            return createCollection({ name, color, workspace });
         },
         onSuccess: () => {
             invalidateAllCollections(queryClient);
@@ -99,7 +103,7 @@ export function useDeleteCollection() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async (id) => {
-            return collectionsApi.deleteCollection(id);
+            return deleteCollection(id);
         },
         onSuccess: () => {
             invalidateAllCollections(queryClient);
@@ -111,7 +115,7 @@ export function useRenameCollection() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async ({ id, name }) => {
-            return collectionsApi.updateCollection(id, { name });
+            return updateCollection(id, { name });
         },
         onSuccess: () => {
             invalidateAllCollections(queryClient);
@@ -123,7 +127,7 @@ export function useAddImagesToCollection() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async ({ collectionId, images }) => {
-            return collectionsApi.addImagesToCollection(collectionId, images);
+            return addImagesToCollection(collectionId, images);
         },
         onSuccess: (_, { collectionId }) => {
             invalidateAllCollections(queryClient);
@@ -136,7 +140,7 @@ export function useRemoveImagesFromCollection() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async ({ collectionId, images }) => {
-            return collectionsApi.removeImagesFromCollection(collectionId, images);
+            return removeImagesFromCollection(collectionId, images);
         },
         onSuccess: (_, { collectionId }) => {
             invalidateAllCollections(queryClient);

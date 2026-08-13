@@ -542,7 +542,8 @@ class QueueManager:
                     continue
             recoverable_running.append(job)
 
-        # Mark stale jobs failed
+        # Mark stale jobs failed before the DB reset so they stay FAILED
+        # instead of being reset back to PENDING by _reset_claims_and_requeue_sync.
         if stale_running and session is not None:
             error_message = "Server restart during processing - job timed out"
             try:

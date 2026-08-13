@@ -53,3 +53,45 @@ def build_llm_workflow(
         metadata.update(extra_metadata)
 
     return workflow, metadata
+
+
+def build_chat_llm_workflow(
+    messages: list[dict[str, Any]],
+    *,
+    chat_id: str,
+    character_id: str | None = None,
+    system_prompt: str | None = None,
+    model: str | None = None,
+    type_: str = "chat_reply",
+    workspace: str = "chat",
+    source: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build an LLM workflow for a chat reply with pre-filled common metadata.
+
+    Pre-fills chat_id, character_id, workspace, and type so callers don't have
+    to repeat them on every route.
+    """
+    metadata: dict[str, Any] = {
+        "chat_id": chat_id,
+        "character_id": character_id,
+        "workspace": workspace,
+        "type": type_,
+    }
+    if source is not None:
+        metadata["source"] = source
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return build_llm_workflow(
+        messages=messages,
+        type_=type_,
+        chat_id=chat_id,
+        character_id=character_id,
+        character_system_prompt=system_prompt,
+        model=model,
+        workspace=workspace,
+        source=source,
+        extra_metadata=metadata,
+    )
+

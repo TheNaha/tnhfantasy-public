@@ -382,6 +382,23 @@ image_base = (
         "comfy node install --fast-deps comfyui-impact-pack",
         "comfy node install --fast-deps comfyui_controlnet_aux",
         "comfy node install --fast-deps comfyui-animatediff-evolved",
+        # Impact Pack gates its ADetailer / UltralyticsDetectorProvider nodes on
+        # `ultralytics` being importable (comfy-cli's --fast-deps skips that
+        # heavy requirement, leaving the nodes unregistered and ADetailer
+        # workflows failing with "Node 'UltralyticsDetectorProvider' not found").
+        # ComfyUI runs on the image python (/usr/local), so a plain pip install
+        # lands in the right environment. Verify the import at build time.
+        #
+        # Since Impact Pack V8.0 the UltralyticsDetectorProvider node itself
+        # lives in the separate ComfyUI-Impact-Subpack repo (its README points
+        # to it: "Please install the ComfyUI-Impact-Subpack separately"), so we
+        # clone it into custom_nodes here. Subpack deps: matplotlib/numpy/torch
+        # already present; dill is missing -> install it. opencv-python-headless
+        # is deliberately skipped (opencv-python is already installed and
+        # headless would replace cv2).
+        "git clone --depth 1 https://github.com/ltdrdata/ComfyUI-Impact-Subpack /root/comfy/ComfyUI/custom_nodes/comfyui-impact-subpack",
+        "pip install --no-cache-dir ultralytics dill",
+        "python -c \"import ultralytics; print('ultralytics', ultralytics.__version__, 'installed in ComfyUI python env')\"",
         "comfy --help",
         gpu="L4",
     )

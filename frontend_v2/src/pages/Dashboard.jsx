@@ -381,7 +381,7 @@ export default function Dashboard() {
 
     const location = useLocation();
     useEffect(() => {
-        if (location.pathname !== '/') return;
+        if (location.pathname !== '/' && location.pathname !== '/gallery') return;
 
         const handleKeyPress = (e) => {
             if (

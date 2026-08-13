@@ -5,6 +5,7 @@ test.describe('Navigation & Page Smoke Tests', () => {
 
   const routes = [
     { path: '/', name: 'Dashboard' },
+    { path: '/gallery', name: 'Gallery' },
     { path: '/generate', name: 'Simple Generator' },
     { path: '/img2img', name: 'Img2Img' },
     { path: '/inpaint', name: 'Inpaint' },
