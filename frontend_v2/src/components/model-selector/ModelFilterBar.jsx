@@ -41,7 +41,10 @@ export default function ModelFilterBar({
             onChange={(e) => {
                 let val = e.target.value;
                 if (val === 'random') {
-                    val = 'random:' + Math.random().toString(36).substring(2, 10);
+                    const savedSeed = localStorage.getItem('model_random_seed');
+                    const seed = savedSeed || Math.random().toString(36).substring(2, 10);
+                    if (!savedSeed) localStorage.setItem('model_random_seed', seed);
+                    val = 'random:' + seed;
                 }
                 onSortChange(val);
             }}
@@ -60,11 +63,19 @@ export default function ModelFilterBar({
                   aria-label="Random seed"
                   placeholder="Seed"
                   value={sortBy.split(':')[1] || ''}
-                  onChange={(e) => onSortChange('random:' + e.target.value)}
+                  onChange={(e) => {
+                      const newSeed = e.target.value;
+                      localStorage.setItem('model_random_seed', newSeed);
+                      onSortChange('random:' + newSeed);
+                  }}
                   className="w-16 bg-transparent border-none text-xs text-gray-300 px-1 outline-none focus:ring-0"
               />
               <button
-                  onClick={() => onSortChange('random:' + Math.random().toString(36).substring(2, 10))}
+                  onClick={() => {
+                      const newSeed = Math.random().toString(36).substring(2, 10);
+                      localStorage.setItem('model_random_seed', newSeed);
+                      onSortChange('random:' + newSeed);
+                  }}
                   title="Re-roll random seed"
                   className="p-1 text-gray-400 hover:text-white rounded hover:bg-gray-700 transition-colors"
               >

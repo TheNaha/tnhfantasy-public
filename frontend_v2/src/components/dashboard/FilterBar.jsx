@@ -66,7 +66,10 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                             onChange={(e) => {
                                 let sortVal = e.target.value;
                                 if (sortVal === 'random') {
-                                    sortVal = 'random:' + Math.random().toString(36).substring(2, 10);
+                                    const savedSeed = localStorage.getItem('gallery_random_seed');
+                                    const seed = savedSeed || Math.random().toString(36).substring(2, 10);
+                                    if (!savedSeed) localStorage.setItem('gallery_random_seed', seed);
+                                    sortVal = 'random:' + seed;
                                 }
                                 const newFilters = { ...localFilters, sort: sortVal };
                                 setLocalFilters(newFilters);
@@ -87,7 +90,9 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                                 placeholder="Seed"
                                 value={localFilters.sort.split(':')[1] || ''}
                                 onChange={(e) => {
-                                    const newFilters = { ...localFilters, sort: 'random:' + e.target.value };
+                                    const newSeed = e.target.value;
+                                    localStorage.setItem('gallery_random_seed', newSeed);
+                                    const newFilters = { ...localFilters, sort: 'random:' + newSeed };
                                     setLocalFilters(newFilters);
                                     onFilterChange(newFilters);
                                 }}
@@ -95,7 +100,9 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                             />
                             <button
                                 onClick={() => {
-                                    const newFilters = { ...localFilters, sort: 'random:' + Math.random().toString(36).substring(2, 10) };
+                                    const newSeed = Math.random().toString(36).substring(2, 10);
+                                    localStorage.setItem('gallery_random_seed', newSeed);
+                                    const newFilters = { ...localFilters, sort: 'random:' + newSeed };
                                     setLocalFilters(newFilters);
                                     onFilterChange(newFilters);
                                 }}
