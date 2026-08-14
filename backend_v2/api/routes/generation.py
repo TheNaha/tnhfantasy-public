@@ -38,11 +38,13 @@ router = APIRouter(prefix="/api", tags=["generation"])
 class GenerateRequest(BaseModel):
     """Request body for single-image generation."""
     workflow: dict[str, Any] | None = None  # Full ComfyUI workflow node graph
+    options: dict[str, Any] | None = None  # Generator options
     metadata: dict[str, Any] = {}  # Optional: prompt, seed, model info for gallery display
 
 
 class GenerateBatchRequest(BaseModel):
     workflows: list[dict[str, Any]] | None = None
+    options: dict[str, Any] | None = None
     metadata: dict[str, Any] = {}
 
 
@@ -67,12 +69,18 @@ async def generate(
         - If omitted, each request creates a new job.
     """
     try:
-        if not request.workflow:
-            raise ValidationError("workflow is required", field="workflow")
+        from core.workflow_builder import WorkflowBuilder
+        workflow = request.workflow
+        if not workflow and request.options:
+            builder = WorkflowBuilder()
+            workflow = builder.build(request.options)
+            
+        if not workflow:
+            raise ValidationError("workflow or options is required", field="workflow")
 
         async def _create_generation_job():
             job = await submission_service.create_and_enqueue_job(
-                workflow=request.workflow,
+                workflow=workflow,
                 metadata=request.metadata,
             )
             logger.info("generate_job_created", job_id=job.id)
@@ -111,18 +119,28 @@ async def generate_batch(
     - If omitted, each request creates a new set of jobs.
     """
     try:
-        if not request.workflows:
+        from core.workflow_builder import WorkflowBuilder
+
+        workflows = request.workflows
+        
+        # If workflows are omitted but options are provided, treat it as a single-workflow batch
+        # This isn't commonly needed but ensures we don't break if someone passes options to batch
+        if not workflows and request.options:
+            builder = WorkflowBuilder()
+            workflows = [builder.build(request.options)]
+
+        if not workflows:
             raise ValidationError("workflows array is required", field="workflows")
 
         async def _create_batch_jobs():
             created_jobs = []
 
-            for i, workflow in enumerate(request.workflows):
+            for i, workflow in enumerate(workflows):
                 # Add batch index to metadata
                 job_metadata = {
                     **request.metadata,
                     "batch_index": i,
-                    "batch_total": len(request.workflows),
+                    "batch_total": len(workflows),
                 }
                 job = await submission_service.create_and_enqueue_job(
                     workflow=workflow,

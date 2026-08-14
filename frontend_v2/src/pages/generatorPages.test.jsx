@@ -166,7 +166,7 @@ describe('Img2ImgGenerator wiring', () => {
         };
         const { default: Img2ImgGenerator } = await import('./Img2ImgGenerator');
         renderInRouter(Img2ImgGenerator);
-        fireEvent.click(screen.getByRole('button', { name: /generate img2img/i }));
+        fireEvent.click(screen.getAllByRole('button', { name: /generate img2img/i })[0]);
         await assertWired('generate-img2img', true);
     });
 });
@@ -179,7 +179,7 @@ describe('InpaintGenerator wiring', () => {
         };
         const { default: InpaintGenerator } = await import('./InpaintGenerator');
         renderInRouter(InpaintGenerator);
-        fireEvent.click(screen.getByRole('button', { name: /generate inpaint/i }));
+        fireEvent.click(screen.getAllByRole('button', { name: /generate inpaint/i })[0]);
         await waitFor(() => expect(mocks.uploadMask).toHaveBeenCalledWith(
             { data: 'mask-data' }, 'src.png',
         ));

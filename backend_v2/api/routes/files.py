@@ -559,6 +559,78 @@ async def serve_asset_thumb(asset_id: str):
         return FileResponse(path)
 
 
+class MoveAssetRequest(BaseModel):
+    workspace: str | None = None
+    character_id: str | None = None
+    story_id: str | None = None
+    copy: bool = False
+
+
+@router.post("/api/v2/assets/{asset_id}/move")
+async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = Depends(get_session)):
+    asset = session.get(Asset, asset_id)
+    if not asset or asset.deleted_at is not None:
+        raise NotFoundError("Asset not found")
+
+    if not any([body.workspace, body.character_id, body.story_id]):
+        raise ValidationError("Provide at least one of workspace, character_id, or story_id")
+
+    source_path = os.path.join(OUTPUT_DIR, asset.relative_path)
+    if not os.path.exists(source_path):
+        _soft_delete_assets(asset.relative_path)
+        raise NotFoundError("Asset file missing on disk")
+
+    target_workspace = body.workspace or asset.workspace
+    target_character_id = body.character_id if body.character_id is not None else asset.character_id
+    target_story_id = body.story_id if body.story_id is not None else asset.story_id
+
+    target_rel = os.path.join(
+        target_workspace,
+        *([target_character_id] if target_character_id else []),
+        *([target_story_id] if target_story_id else []),
+        asset.filename,
+    )
+    target_path = os.path.join(OUTPUT_DIR, target_rel)
+
+    if body.copy:
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(source_path, "rb") as src, open(target_path, "wb") as dst:
+            dst.write(src.read())
+        new_asset = Asset(
+            user_id=asset.user_id,
+            filename=asset.filename,
+            relative_path=target_rel,
+            kind=asset.kind,
+            workspace=target_workspace,
+            character_id=target_character_id,
+            story_id=target_story_id,
+            job_id=asset.job_id,
+            width=asset.width,
+            height=asset.height,
+            blurhash=asset.blurhash,
+            thumbnail_relative_path=asset.thumbnail_relative_path,
+            metadata_=asset.metadata_,
+            generated_at=asset.generated_at,
+        )
+        session.add(new_asset)
+        session.commit()
+        session.refresh(new_asset)
+        return {"id": new_asset.id, "relative_path": new_asset.relative_path}
+
+    if target_path != source_path:
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        os.rename(source_path, target_path)
+        asset.relative_path = target_rel
+        asset.workspace = target_workspace
+        asset.character_id = target_character_id
+        asset.story_id = target_story_id
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+
+    return {"id": asset.id, "relative_path": asset.relative_path}
+
+
 @router.get("/api/v2/gallery")
 async def get_v2_gallery(
     limit: int = 20, 

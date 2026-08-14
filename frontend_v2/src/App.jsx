@@ -152,6 +152,11 @@ function App() {
             ? queryUiSettings.queryCacheTime
             : 1000 * 60 * 30;
 
+        const current = queryClient.getDefaultOptions().queries;
+        if (current.staleTime === staleTime && current.gcTime === gcTime) {
+            return;
+        }
+
         queryClient.setDefaultOptions({
             queries: {
                 staleTime,

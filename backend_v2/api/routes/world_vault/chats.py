@@ -99,7 +99,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
             first_mes = substitute_tavern_vars(
                 raw_mes,
                 char=character.name or "",
-                user=chat.persona_name or chat.name or "User",
+                user=chat.persona_name or "User",
             )
             opening = Message(
                 chat_id=chat.id,

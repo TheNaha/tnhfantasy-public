@@ -19,12 +19,15 @@ export const generateApi = {
      * @param {object} [params]  - Additional metadata to store with the job.
      * @returns {Promise<{job: object}>} Newly created job record.
      */
-    workflow: (workflow, params = {}, options = {}) => {
+    workflow: (workflowOrOptions, params = {}, options = {}) => {
         const metadata = params?.metadata ?? params ?? {};
-        return api.post('/api/generate', {
-            workflow,
-            metadata,
-        }, {
+        const payload = { metadata };
+        if (workflowOrOptions?.mode !== undefined || workflowOrOptions?.prompt !== undefined) {
+            payload.options = workflowOrOptions;
+        } else {
+            payload.workflow = workflowOrOptions;
+        }
+        return api.post('/api/generate', payload, {
             idempotencyKey: options.idempotencyKey || createIdempotencyKey('generate-workflow'),
         });
     },

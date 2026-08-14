@@ -3,11 +3,11 @@ import {
   seedLorebook,
   seedLorebookEntry,
   seedCharacter,
+  seedChat,
   cleanupEntities,
   uniqueName,
   expectToast,
   apiGet,
-  apiDelete,
 } from './fixtures.js';
 
 test.describe('World Vault & Lorebooks (Module D)', () => {

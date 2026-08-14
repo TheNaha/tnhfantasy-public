@@ -5,62 +5,43 @@
  * Uses a Fabric.js canvas for mask drawing.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Paintbrush, Settings2, Trash2, Sparkles } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
-import { useActiveJobs } from '../hooks/useActiveJobs';
 import { filesApi, generateApi, createIdempotencyKey } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
-import ModelMetadataModal from '../components/ModelMetadataModal';
-import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
-import SamplingSettings from '../components/generator/SamplingSettings';
-import PromptPanel from '../components/generator/PromptPanel';
-import ModelSection from '../components/generator/ModelSection';
-import EnhancementsSection from '../components/generator/EnhancementsSection';
-import ControlNetSection from '../components/generator/ControlNetSection';
-import IPAdapterSection from '../components/generator/IPAdapterSection';
-import PresetManager from '../components/generator/PresetManager';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
+import PresetManager from '../components/generator/PresetManager';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import { WorkflowBuilder } from '../utils/workflowBuilder';
-import GeneratorShell from '../components/generator/GeneratorShell';
+// WorkflowBuilder moved to backend
+import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayout';
 import GenerateActionBar from '../components/generator/GenerateActionBar';
 
 const EMPTY_MODELS = [];
 
 export default function InpaintGenerator() {
     const location = useLocation();
-    const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
-    const [viewingMetadata, setViewingMetadata] = useState(null);
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
             sourceImage, denoise, maskImage, maskBlur,
             selectedCheckpoint, selectedVae, selectedLoras,
             setSourceImage, setDenoise, setMaskImage, setMaskBlur,
-            clearSourceImage, setSelectedCheckpoint, setSelectedVae,
-            setPrompt, setNegativePrompt,
-            clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
-            enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
-            randomizeSeed, addLora, removeLora, updateLora, addTriggerWords, controlnets, addControlNet, removeControlNet, updateControlNet,
-            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
-            adetailer, setAdetailer, adetailerModel, setAdetailerModel,
-            adetailerPrompt, setAdetailerPrompt, adetailerSteps, setAdetailerSteps,
-            adetailerDenoise, setAdetailerDenoise, adetailerInpaintMasked, setAdetailerInpaintMasked,
-            selectedClip, setSelectedClip, selectedClip2, setSelectedClip2
+            clearSourceImage,
+            clipSkip, enableFreeU, enablePAG, pagScale,
+            enableLatentUpscale, latentUpscaleMultiplier,
+            randomizeSeed, controlnets,
+            ipAdapters,
+            adetailer, adetailerModel,
+            adetailerPrompt, adetailerSteps,
+            adetailerDenoise, adetailerInpaintMasked
         },
-        providers, providersLoading,
         preflight: {
-            isChecking: preflightChecking,
-            validationResult,
-            summary: validationSummary,
-            isMissingModelsOpen,
-            setIsMissingModelsOpen,
             runWithPreflight,
         }
     } = useGeneratorCore();
@@ -69,16 +50,8 @@ export default function InpaintGenerator() {
     // only ever opened when an image is loaded and closed on Clear), so there is
     // no separate state to keep in sync — avoids setState-in-effect lint errors.
     const showCanvas = !!sourceImage?.filename;
-    const { data: activeJobs = [] } = useActiveJobs();
-    const activeJobCount = activeJobs.length;
     const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints ?? EMPTY_MODELS;
-    const unetModels = modelsByKey.unetModels ?? EMPTY_MODELS;
-    const controlNetModels = modelsByKey.controlNetModels ?? EMPTY_MODELS;
-    const vaeModels = modelsByKey.vaeModels ?? EMPTY_MODELS;
-    const clipModels = modelsByKey.clipModels ?? EMPTY_MODELS;
-    const embeddingModels = modelsByKey.embeddingModels ?? EMPTY_MODELS;
-    const adetailerModels = modelsByKey.adetailerModels ?? EMPTY_MODELS;
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
@@ -123,8 +96,8 @@ export default function InpaintGenerator() {
 
         setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
 
-        const builder = new WorkflowBuilder();
-        const workflow = builder.buildInpaint({
+        const options = {
+            mode: 'inpaint',
             inputImage: sourceImage.filename,
             maskImage: maskResult.filename,
             prompt,
@@ -149,7 +122,7 @@ export default function InpaintGenerator() {
             ipAdapters,
             controlnets,
             adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked
-        });
+        };
 
         const metadata = {
             type: 'inpaint',
@@ -177,8 +150,8 @@ export default function InpaintGenerator() {
             usedInpaintModel: !!inpaintCheckpoint
         };
 
-        return runWithPreflight(workflow, {
-            onValid: async () => generateApi.workflow(workflow, metadata, {
+        return runWithPreflight(options, {
+            onValid: async () => generateApi.workflow(options, metadata, {
                 idempotencyKey: createIdempotencyKey('generate-inpaint')
             }),
         });
@@ -201,160 +174,69 @@ export default function InpaintGenerator() {
     const canGenerate = generating || !sourceImage?.filename || !maskImage || !selectedCheckpoint?.name;
 
     return (
-        <>
-            <GeneratorShell
+        <UnifiedGeneratorLayout
+            mode="inpaint"
             accentClass="from-purple-400 to-pink-500"
-            activeJobCount={activeJobCount}
-            isMissingModelsOpen={isMissingModelsOpen}
-            setIsMissingModelsOpen={setIsMissingModelsOpen}
-            validationResult={validationResult}
-            leftColumn={(
-                <>
-                    {/* Source Image / Canvas */}
-                    <div className="space-y-3 pb-4 border-b border-gray-800">
-                        <div className="flex justify-between items-center">
-                            <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
-                                <Paintbrush size={18} className="text-purple-400" />
-                                {showCanvas ? 'Draw Mask' : 'Source Image'}
-                            </h3>
-                            {sourceImage && (
-                                <button
-                                    onClick={handleClearAll}
-                                    className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
-                                >
-                                    <Trash2 size={14} /> Clear
-                                </button>
-                            )}
-                        </div>
-
-                        {!sourceImage ? (
-                            <ImageUploader
-                                image={sourceImage}
-                                onImageSelect={(img) => {
-                                    setSourceImage(img);
-                                }}
-                                onClear={handleClearAll}
-                            />
-                        ) : (
-                            <InpaintCanvas
-                                sourceImageUrl={sourceImage.previewUrl || `${getApiUrl()}${sourceImage.localPreview}`}
-                                sourceWidth={sourceImage.width}
-                                sourceHeight={sourceImage.height}
-                                onMaskChange={setMaskImage}
-                            />
-                        )}
-
+            runwayTitle="Inpaint Runway"
+            runwayHint="Check runtime health and workflow availability before regenerating the masked region."
+            leftColumnTop={
+                <div className="space-y-3 pb-4 border-b border-gray-800">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-base lg:text-lg font-semibold flex items-center gap-2">
+                            <Paintbrush size={18} className="text-purple-400" />
+                            {showCanvas ? 'Draw Mask' : 'Source Image'}
+                        </h3>
                         {sourceImage && (
-                            <p className="text-xs text-gray-500 text-center">
-                                Paint over areas you want to regenerate • White = regenerate, Black = keep
+                            <button
+                                onClick={handleClearAll}
+                                className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                            >
+                                <Trash2 size={14} /> Clear
+                            </button>
+                        )}
+                    </div>
+
+                    {!sourceImage ? (
+                        <ImageUploader
+                            image={sourceImage}
+                            onImageSelect={(img) => {
+                                setSourceImage(img);
+                            }}
+                            onClear={handleClearAll}
+                        />
+                    ) : (
+                        <InpaintCanvas
+                            sourceImageUrl={sourceImage.previewUrl || `${getApiUrl()}${sourceImage.localPreview}`}
+                            sourceWidth={sourceImage.width}
+                            sourceHeight={sourceImage.height}
+                            onMaskChange={setMaskImage}
+                        />
+                    )}
+
+                    {sourceImage && (
+                        <p className="text-xs text-gray-500 text-center">
+                            Paint over areas you want to regenerate • White = regenerate, Black = keep
+                        </p>
+                    )}
+                </div>
+            }
+            leftColumnBottom={
+                inpaintCheckpoint && (
+                    <div className="bg-purple-900/20 border border-purple-700/50 rounded-lg p-3 flex items-center gap-3">
+                        <Sparkles size={18} className="text-purple-400" />
+                        <div>
+                            <p className="text-sm text-purple-300 font-medium">
+                                Inpaint model detected!
                             </p>
-                        )}
+                            <p className="text-xs text-gray-400">
+                                Using: {inpaintCheckpoint.display_name || inpaintCheckpoint.name}
+                            </p>
+                        </div>
                     </div>
-
-                    {/* Prompt Section */}
-                    <PromptPanel />
-
-                    {/* Model Selection */}
-                    <div className="space-y-4 pb-4 border-b border-gray-800">
-                        <ModelSection
-                            selectedCheckpoint={selectedCheckpoint}
-                            setSelectedCheckpoint={setSelectedCheckpoint}
-                            selectedVae={selectedVae}
-                            setSelectedVae={setSelectedVae}
-                            selectedClip={selectedClip}
-                            setSelectedClip={setSelectedClip}
-                            selectedClip2={selectedClip2}
-                            setSelectedClip2={setSelectedClip2}
-                            selectedLoras={selectedLoras}
-                            addLora={addLora}
-                            removeLora={removeLora}
-                            updateLora={updateLora}
-                            addTriggerWords={addTriggerWords}
-                            prompt={prompt}
-                            negativePrompt={negativePrompt}
-                            setPrompt={setPrompt}
-                            setNegativePrompt={setNegativePrompt}
-                            checkpoints={checkpoints}
-                            unetModels={unetModels}
-                            vaeModels={vaeModels}
-                            clipModels={clipModels}
-                            embeddingModels={embeddingModels}
-                            setViewingMetadata={setViewingMetadata}
-                            providers={providers}
-                            providersLoading={providersLoading}
-                            autoOpenLoraIndex={autoOpenLoraIndex}
-                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
-                        />
-
-                        {/* ControlNet */}
-                        <ControlNetSection
-                            controlnets={controlnets}
-                            addControlNet={addControlNet}
-                            removeControlNet={removeControlNet}
-                            updateControlNet={updateControlNet}
-                            controlNetModels={controlNetModels}
-                        />
-
-                        <IPAdapterSection
-                            ipAdapters={ipAdapters}
-                            addIpAdapter={addIpAdapter}
-                            removeIpAdapter={removeIpAdapter}
-                            updateIpAdapter={updateIpAdapter}
-                        />
-
-                        {inpaintCheckpoint && (
-                            <div className="bg-purple-900/20 border border-purple-700/50 rounded-lg p-3 flex items-center gap-3">
-                                <Sparkles size={18} className="text-purple-400" />
-                                <div>
-                                    <p className="text-sm text-purple-300 font-medium">
-                                        Inpaint model detected!
-                                    </p>
-                                    <p className="text-xs text-gray-400">
-                                        Using: {inpaintCheckpoint.display_name || inpaintCheckpoint.name}
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-
-                        <EnhancementsSection
-                            adetailer={adetailer}
-                            setAdetailer={setAdetailer}
-                            adetailerModel={adetailerModel}
-                            setAdetailerModel={setAdetailerModel}
-                            adetailerPrompt={adetailerPrompt}
-                            setAdetailerPrompt={setAdetailerPrompt}
-                            adetailerSteps={adetailerSteps}
-                            setAdetailerSteps={setAdetailerSteps}
-                            adetailerDenoise={adetailerDenoise}
-                            setAdetailerDenoise={setAdetailerDenoise}
-                            adetailerInpaintMasked={adetailerInpaintMasked}
-                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
-                            adetailerModels={adetailerModels}
-                            enableFreeU={enableFreeU}
-                            setEnableFreeU={setEnableFreeU}
-                            enablePAG={enablePAG}
-                            setEnablePAG={setEnablePAG}
-                            pagScale={pagScale}
-                            setPagScale={setPagScale}
-                            enableLatentUpscale={enableLatentUpscale}
-                            setEnableLatentUpscale={setEnableLatentUpscale}
-                            latentUpscaleMultiplier={latentUpscaleMultiplier}
-                            setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                        />
-                    </div>
-                </>
-            )}
-            rightColumn={(
+                )
+            }
+            rightColumnMiddle={
                 <>
-                    <GeneratorReadinessPanel
-                        providers={providers}
-                        providersLoading={providersLoading}
-                        validationSummary={validationSummary}
-                        isChecking={preflightChecking}
-                        title="Inpaint Runway"
-                        hint="Check runtime health and workflow availability before regenerating the masked region."
-                    />
-
                     <PresetManager />
 
                     {/* Denoise Strength */}
@@ -400,9 +282,10 @@ export default function InpaintGenerator() {
                             Blur mask edges for smoother blending
                         </p>
                     </div>
-
-                    <SamplingSettings />
-
+                </>
+            }
+            rightColumnBottom={
+                <>
                     <GenerateActionBar
                         generating={generating}
                         progress={progress}
@@ -416,7 +299,7 @@ export default function InpaintGenerator() {
 
                     {/* Status */}
                     {sourceImage && !maskImage && (
-                        <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3 text-center">
+                        <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3 text-center mt-4">
                             <p className="text-sm text-yellow-300">
                                 Draw a mask on the image to continue
                             </p>
@@ -425,7 +308,7 @@ export default function InpaintGenerator() {
 
                     {/* Quick Info */}
                     {sourceImage && (
-                        <div className="bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
+                        <div className="bg-gray-800/30 p-4 mt-4 rounded-xl border border-gray-700/50">
                             <p className="text-xs text-gray-500 mb-2">Output Resolution</p>
                             <p className="text-lg font-bold text-gray-300">
                                 {sourceImage.width} × {sourceImage.height}
@@ -433,17 +316,19 @@ export default function InpaintGenerator() {
                         </div>
                     )}
                 </>
-            )}
-        />
-
-            {viewingMetadata && (
-                <ModelMetadataModal
-                    metadata={viewingMetadata}
-                    providers={providers}
-                    providersLoading={providersLoading}
-                    onClose={() => setViewingMetadata(null)}
+            }
+            mobileActionBar={
+                <GenerateActionBar
+                    generating={generating}
+                    progress={progress}
+                    disabled={canGenerate}
+                    onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
+                    onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
+                    label="Generate Inpaint"
+                    gradientClass="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-900/30"
+                    progressBarClass="from-purple-400 to-pink-400"
                 />
-            )}
-        </>
+            }
+        />
     );
 }

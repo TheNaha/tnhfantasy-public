@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2 } from 'lucide-react';
+import clsx from 'clsx';
 
 const CARDS = [
     {
@@ -125,8 +126,4 @@ export default function FantasyHub() {
             </motion.div>
         </div>
     );
-}
-
-function clsx(...classes) {
-    return classes.filter(Boolean).join(' ');
 }

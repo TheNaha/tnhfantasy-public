@@ -42,11 +42,15 @@ export const jobsApi = {
      *   required_models: Object
      * }>}
      */
-    validate: (workflow, preferredProviderId = null) =>
-        api.post('/api/jobs/validate', {
-            workflow,
-            preferred_provider_id: preferredProviderId
-        }),
+    validate: (workflowOrOptions, preferredProviderId = null) => {
+        const payload = { preferred_provider_id: preferredProviderId };
+        if (workflowOrOptions?.mode !== undefined || workflowOrOptions?.prompt !== undefined) {
+            payload.options = workflowOrOptions;
+        } else {
+            payload.workflow = workflowOrOptions;
+        }
+        return api.post('/api/jobs/validate', payload);
+    },
 };
 
 export default jobsApi;

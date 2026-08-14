@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test';
 import {
   apiGet,
   uniqueName,
-  expectToast,
   waitForJob,
   makeTestImage,
   seedPrompt,
@@ -10,74 +9,19 @@ import {
   cleanupEntities,
   drawMaskOnCanvas,
 } from './fixtures.js';
+import {
+  listModels,
+  pickSingleVersionModel,
+  selectModelFromDialog,
+  selectCheckpoint,
+  visibleGenerate,
+} from './helpers/generationHelpers.js';
 
 const JOB_TIMEOUT = 360000;
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function listModels(page, directory) {
-  const data = await apiGet(page, `/files?directory=${directory}&limit=100`);
-  return data.files || [];
-}
-
-// Pick a model that is actually usable: skip partial-download artifacts and
-// prefer models installed on at least one provider; single-version models
-// select in one click.
-function pickSingleVersionModel(models) {
-  const real = models.filter((m) => !/\.(downloading|part|crdownload|tmp|temp)$/i.test(m.name || ''));
-  const available = real.filter((m) =>
-    Object.values(m.provider_statuses || {}).some(
-      (s) => s && ['installed', 'ready'].includes(s.status)
-    )
-  );
-  const pool = available.length ? available : real;
-  return (
-    pool.find((m) => !m.versions || m.versions.length <= 1) ||
-    pool[0] ||
-    models[0]
-  );
-}
-
-// Select a model card inside the selector dialog. Multi-version cards expand
-// first, so click the first version row if the dialog is still open.
-async function selectModelFromDialog(dialog, model) {
-  const cardText = model.display_name || model.name;
-  const search = dialog.getByPlaceholder('Search models by name, tags, description...');
-  await search.fill(cardText);
-  await dialog.getByText(cardText).first().click();
-  const dropdown = dialog.getByText('Select Version').locator('..').locator('..');
-  const firstVersion = dropdown.locator('div').last().locator('button').first();
-  if (await firstVersion.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await firstVersion.click();
-  }
-  await expect(dialog).toBeHidden();
-}
-
-async function selectCheckpoint(page, model, label = 'Checkpoint / UNET') {
-  await page.getByRole('button', { name: `Select ${label}` }).click();
-  await selectModelFromDialog(page.getByRole('dialog'), model);
-  const dismiss = page.getByRole('button', { name: 'Dismiss' });
-  if (await dismiss.isVisible({ timeout: 3000 }).catch(() => false)) await dismiss.click();
-}
-
-// GenerateButtonBar renders twice (desktop + mobile) — scope to the visible one.
-function visibleGenerate(page) {
-  return page.getByRole('button', { name: 'Generate', exact: true }).filter({ visible: true });
-}
-
-async function uploadSourceImage(page, filename, rgb) {
-  await page.locator('input[type="file"]').first().setInputFiles({
-    name: filename,
-    mimeType: 'image/png',
-    buffer: makeTestImage({ width: 256, height: 256, rgb }),
-  });
-  await expectToast(page, /Image uploaded/);
-}
-
-// ---------------------------------------------------------------------------
 // Suite
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
 test.describe('Image Generation & Asset Management (Module A)', () => {

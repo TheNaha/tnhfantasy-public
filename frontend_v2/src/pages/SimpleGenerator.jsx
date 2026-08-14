@@ -1,75 +1,36 @@
-import { useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
 import { generateApi, createIdempotencyKey } from '../api';
 
-import { WorkflowBuilder } from '../utils/workflowBuilder';
-import { useActiveJobs } from '../hooks/useActiveJobs';
+// WorkflowBuilder moved to backend
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import ModelMetadataModal from '../components/ModelMetadataModal';
-import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
-import PromptPanel from '../components/generator/PromptPanel';
-import ModelSection from '../components/generator/ModelSection';
 import { isUnetModel, isFluxModel, isAuraFlowModel, isPonyModel } from '../utils/modelType';
-import ControlNetSection from '../components/generator/ControlNetSection';
-import IPAdapterSection from '../components/generator/IPAdapterSection';
-import EnhancementsSection from '../components/generator/EnhancementsSection';
-import ResolutionSettings from '../components/generator/ResolutionSettings';
-import SamplingSettings from '../components/generator/SamplingSettings';
-import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 import { useNavigate } from 'react-router-dom';
-import { useModelDirectories } from '../hooks/useModelDirectories';
-import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-import GeneratorShell from '../components/generator/GeneratorShell';
+import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayout';
+import ResolutionSettings from '../components/generator/ResolutionSettings';
+import GenerateButtonBar from '../components/generator/GenerateButtonBar';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
-    const [viewingMetadata, setViewingMetadata] = useState(null);
-    const [autoOpenLoraIndex, setAutoOpenLoraIndex] = useState(null);
-
-
     const {
         store: {
             prompt, negativePrompt, seed, steps, cfg, sampler, scheduler, width, height, batchSize,
             selectedCheckpoint, selectedVae, selectedClip, selectedClip2, selectedLoras, controlnets,
             hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
             adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked,
-            setPrompt, setNegativePrompt,
-            setSelectedCheckpoint, setSelectedVae, setSelectedClip, setSelectedClip2,
-            setHiresFix, setHiresUpscaler, setHiresDenoise, setHiresUpscale, setHiresSteps,
-            setAdetailer, setAdetailerModel, setAdetailerPrompt, setAdetailerSteps, setAdetailerDenoise, setAdetailerInpaintMasked,
-            clipSkip, enableFreeU, setEnableFreeU, enablePAG, setEnablePAG, pagScale, setPagScale,
-            enableLatentUpscale, setEnableLatentUpscale, latentUpscaleMultiplier, setLatentUpscaleMultiplier,
-            randomizeSeed, addLora, removeLora, updateLora, addControlNet, removeControlNet, updateControlNet,
-            ipAdapters, addIpAdapter, removeIpAdapter, updateIpAdapter,
-            addTriggerWords
+            clipSkip, enableFreeU, enablePAG, pagScale,
+            enableLatentUpscale, latentUpscaleMultiplier,
+            randomizeSeed,
+            ipAdapters
         },
-        providers, providersLoading,
         preflight: {
-            isChecking: preflightChecking,
-            validationResult,
-            summary: validationSummary,
-            isMissingModelsOpen,
-            setIsMissingModelsOpen,
             runWithPreflight,
         }
     } = useGeneratorCore();
 
-    const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
-    const checkpoints = modelsByKey.checkpoints || [];
-    const controlNetModels = modelsByKey.controlNetModels || [];
-    const upscalerModels = modelsByKey.upscalerModels || [];
-    const vaeModels = modelsByKey.vaeModels || [];
-    const unetModels = modelsByKey.unetModels || [];
-    const clipModels = modelsByKey.clipModels || [];
-    const embeddingModels = modelsByKey.embeddingModels || [];
-    const adetailerModels = modelsByKey.adetailerModels || [];
-
-    const { data: activeJobs = [] } = useActiveJobs();
-    const activeJobCount = activeJobs.length;
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
 
     useKeyboardShortcuts();
@@ -89,7 +50,6 @@ export default function SimpleGenerator() {
     };
 
     const buildSimpleWorkflowPayload = (jobSeed = seed) => {
-        const builder = new WorkflowBuilder();
         const isUnet = isUnetModel(selectedCheckpoint);
 
         let effectiveVae = selectedVae;
@@ -98,7 +58,8 @@ export default function SimpleGenerator() {
             else if (isAuraFlowModel(selectedCheckpoint) || isPonyModel(selectedCheckpoint)) effectiveVae = "sdxl_vae.safetensors";
         }
 
-        const workflow = builder.build({
+        const options = {
+            mode: 't2i',
             prompt, negativePrompt, seed: jobSeed, steps, cfg, sampler, scheduler,
             width, height, batchSize,
             checkpoint: isUnet ? null : selectedCheckpoint?.name,
@@ -112,7 +73,7 @@ export default function SimpleGenerator() {
             clipSkip, enableFreeU, enablePAG, pagScale,
             enableLatentUpscale, latentUpscaleMultiplier,
             modelType: isFluxModel(selectedCheckpoint) ? 'flux' : (isPonyModel(selectedCheckpoint) || isAuraFlowModel(selectedCheckpoint)) ? 'sdxl' : 'sd15'
-        });
+        };
 
         const metadata = {
             prompt, negativePrompt, seed: jobSeed, steps, cfg, sampler, scheduler,
@@ -124,13 +85,13 @@ export default function SimpleGenerator() {
             ipAdapters, controlnets
         };
 
-        return { workflow, metadata };
+        return { options, metadata };
     };
 
     const runSubmission = async () => {
-        const { workflow, metadata } = buildSimpleWorkflowPayload();
-        return runWithPreflight(workflow, {
-            onValid: async () => generateApi.workflow(workflow, metadata, {
+        const { options, metadata } = buildSimpleWorkflowPayload();
+        return runWithPreflight(options, {
+            onValid: async () => generateApi.workflow(options, metadata, {
                 idempotencyKey: createIdempotencyKey('generate-simple')
             }),
         });
@@ -163,11 +124,11 @@ export default function SimpleGenerator() {
                 });
             }
 
-            const validation = await runWithPreflight(payloads[0]?.workflow);
+            const validation = await runWithPreflight(payloads[0]?.options);
             if (!validation.ok) return;
 
-            const jobs = payloads.map(({ workflow, metadata, index }) => (
-                generateApi.workflow(workflow, metadata, {
+            const jobs = payloads.map(({ options, metadata, index }) => (
+                generateApi.workflow(options, metadata, {
                     idempotencyKey: createIdempotencyKey(`generate-variation-${index}`)
                 })
             ));
@@ -184,134 +145,13 @@ export default function SimpleGenerator() {
     };
 
     return (
-        <>
-            <GeneratorShell
-                accentClass="from-blue-400 to-purple-500"
-                activeJobCount={activeJobCount}
-                gapClass="gap-3 lg:gap-8"
-                leftColumnClass="order-last lg:order-none"
-                rightColumnClass="order-first lg:order-none"
-                isMissingModelsOpen={isMissingModelsOpen}
-                setIsMissingModelsOpen={setIsMissingModelsOpen}
-                validationResult={validationResult}
-                leftColumn={(
-                    <>
-                        <PromptPanel />
-
-                        <ModelSection
-                            selectedCheckpoint={selectedCheckpoint}
-                            setSelectedCheckpoint={setSelectedCheckpoint}
-                            selectedVae={selectedVae}
-                            setSelectedVae={setSelectedVae}
-                            selectedClip={selectedClip}
-                            setSelectedClip={setSelectedClip}
-                            selectedClip2={selectedClip2}
-                            setSelectedClip2={setSelectedClip2}
-                            selectedLoras={selectedLoras}
-                            addLora={addLora}
-                            removeLora={removeLora}
-                            updateLora={updateLora}
-                            addTriggerWords={addTriggerWords}
-                            prompt={prompt}
-                            negativePrompt={negativePrompt}
-                            setPrompt={setPrompt}
-                            setNegativePrompt={setNegativePrompt}
-                            checkpoints={checkpoints}
-                            unetModels={unetModels}
-                            vaeModels={vaeModels}
-                            clipModels={clipModels}
-                            embeddingModels={embeddingModels}
-                            setViewingMetadata={setViewingMetadata}
-                            providers={providers}
-                            providersLoading={providersLoading}
-                            autoOpenLoraIndex={autoOpenLoraIndex}
-                            setAutoOpenLoraIndex={setAutoOpenLoraIndex}
-                        />
-
-                        <ControlNetSection
-                            controlnets={controlnets}
-                            addControlNet={addControlNet}
-                            removeControlNet={removeControlNet}
-                            updateControlNet={updateControlNet}
-                            controlNetModels={controlNetModels}
-                        />
-
-                        <IPAdapterSection
-                            ipAdapters={ipAdapters}
-                            addIpAdapter={addIpAdapter}
-                            removeIpAdapter={removeIpAdapter}
-                            updateIpAdapter={updateIpAdapter}
-                        />
-
-                        <EnhancementsSection
-                            hiresFix={hiresFix}
-                            setHiresFix={setHiresFix}
-                            hiresUpscaler={hiresUpscaler}
-                            setHiresUpscaler={setHiresUpscaler}
-                            hiresDenoise={hiresDenoise}
-                            setHiresDenoise={setHiresDenoise}
-                            hiresUpscale={hiresUpscale}
-                            setHiresUpscale={setHiresUpscale}
-                            hiresSteps={hiresSteps}
-                            setHiresSteps={setHiresSteps}
-                            upscalerModels={upscalerModels}
-                            adetailer={adetailer}
-                            setAdetailer={setAdetailer}
-                            adetailerModel={adetailerModel}
-                            setAdetailerModel={setAdetailerModel}
-                            adetailerPrompt={adetailerPrompt}
-                            setAdetailerPrompt={setAdetailerPrompt}
-                            adetailerSteps={adetailerSteps}
-                            setAdetailerSteps={setAdetailerSteps}
-                            adetailerDenoise={adetailerDenoise}
-                            setAdetailerDenoise={setAdetailerDenoise}
-                            adetailerInpaintMasked={adetailerInpaintMasked}
-                            setAdetailerInpaintMasked={setAdetailerInpaintMasked}
-                            adetailerModels={adetailerModels}
-                            enableFreeU={enableFreeU}
-                            setEnableFreeU={setEnableFreeU}
-                            enablePAG={enablePAG}
-                            setEnablePAG={setEnablePAG}
-                            pagScale={pagScale}
-                            setPagScale={setPagScale}
-                            enableLatentUpscale={enableLatentUpscale}
-                            setEnableLatentUpscale={setEnableLatentUpscale}
-                            latentUpscaleMultiplier={latentUpscaleMultiplier}
-                            setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                        />
-                    </>
-                )}
-                rightColumn={(
-                    <>
-                        <GeneratorReadinessPanel
-                            providers={providers}
-                            providersLoading={providersLoading}
-                            validationSummary={validationSummary}
-                            isChecking={preflightChecking}
-                            title="Generation Runway"
-                            hint="Provider health and model checks before you commit a generation."
-                        />
-
-                        <ResolutionSettings />
-                        <SamplingSettings />
-
-                        <div className="hidden md:block">
-                            <GenerateButtonBar
-                                generating={generating}
-                                progress={progress}
-                                prompt={prompt}
-                                onGenerate={() => handleGenerate({ shouldRedirect: true, trackQueuedJob: true })}
-                                onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
-                                onGenerateVariations={handleGenerateVariations}
-                            />
-                        </div>
-                    </>
-                )}
-            />
-
-            <div className="h-20 md:hidden"></div>
-
-            <div className="fixed bottom-0 left-0 right-0 p-3 bg-gray-900/95 backdrop-blur-xl border-t border-gray-800 md:hidden z-30 pb-safe">
+        <UnifiedGeneratorLayout
+            mode="t2i"
+            accentClass="from-blue-400 to-purple-500"
+            runwayTitle="Generation Runway"
+            runwayHint="Provider health and model checks before you commit a generation."
+            rightColumnMiddle={<ResolutionSettings />}
+            rightColumnBottom={
                 <GenerateButtonBar
                     generating={generating}
                     progress={progress}
@@ -320,24 +160,7 @@ export default function SimpleGenerator() {
                     onQueue={() => handleGenerate({ shouldRedirect: false, trackQueuedJob: false })}
                     onGenerateVariations={handleGenerateVariations}
                 />
-            </div>
-
-            {viewingMetadata && (
-                <ModelMetadataModal
-                    metadata={viewingMetadata}
-                    providers={providers}
-                    providersLoading={providersLoading}
-                    onClose={() => setViewingMetadata(null)}
-                />
-            )}
-
-            <button
-                onClick={() => navigate('/gallery')}
-                className="fixed bottom-6 right-6 z-40 md:hidden bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-all transform hover:scale-110 flex items-center gap-2"
-                title="Go to Gallery"
-            >
-                <FolderOpen size={24} />
-            </button>
-        </>
+            }
+        />
     );
 }

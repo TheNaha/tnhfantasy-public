@@ -5,7 +5,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from api.deps import get_session_sync
+from api.deps import get_session_context
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
@@ -193,70 +193,60 @@ async def finalize_persisted_job_outputs(
         raise
 
     async def complete_when_ready():
-        reconcile_session = get_session_sync()
+        async with get_session_context() as reconcile_session:
+            try:
+                for output in outputs:
+                    if output.get("type") == "text":
+                        continue
+                    path = output.get("path") or output.get("relative_path")
+                    if path and not os.path.isabs(path) and not os.path.exists(path):
+                        candidate = os.path.join(settings.output_dir, path)
+                        if os.path.exists(candidate):
+                            path = candidate
+                    if path and output.get("type") == "image":
+                        try:
+                            from services.asset_reconciler import reconcile_asset
 
-        try:
-            for output in outputs:
-                if output.get("type") == "text":
-                    # Text outputs are routed in-memory to chat/story handlers and
-                    # are never persisted to the image gallery; skip all disk/gallery
-                    # work for them so LLM jobs don't stall on wait_for_gallery_outputs.
-                    continue
-                path = output.get("path") or output.get("relative_path")
-                if path and not os.path.isabs(path) and not os.path.exists(path):
-                    # Worker gave a relative path (e.g. YYYY/MM/DD/name.png); make it
-                    # absolute under OUTPUT_DIR so reconcile can read dimensions/thumb.
-                    candidate = os.path.join(settings.output_dir, path)
-                    if os.path.exists(candidate):
-                        path = candidate
-                # Reconcile into the DB-backed assets index (replaces the
-                # in-memory GalleryIndexer). Newly saved images already live in the
-                # partitioned layout; this just writes/updates the asset row.
-                if path and output.get("type") == "image":
-                    try:
-                        from services.asset_reconciler import reconcile_asset
+                            await asyncio.to_thread(
+                                reconcile_asset,
+                                reconcile_session,
+                                path,
+                                user_id="default_user",
+                                workspace=(job.metadata_ or {}).get("workspace", "main"),
+                                character_id=(job.metadata_ or {}).get("character_id"),
+                                story_id=(job.metadata_ or {}).get("story_id"),
+                                job_id=job_id,
+                                job_metadata=job.metadata_,
+                                output_dir=settings.output_dir,
+                            )
+                        except Exception as exc:
+                            logger.warning("asset_reconcile_failed", job_id=job_id, path=path, error=str(exc))
 
-                        await asyncio.to_thread(
-                            reconcile_asset,
-                            reconcile_session,
-                            path,
-                            user_id="default_user",
-                            workspace=(job.metadata_ or {}).get("workspace", "main"),
-                            character_id=(job.metadata_ or {}).get("character_id"),
-                            story_id=(job.metadata_ or {}).get("story_id"),
-                            job_id=job_id,
-                            job_metadata=job.metadata_,
-                            output_dir=settings.output_dir,
-                        )
-                    except Exception as exc:
-                        logger.warning("asset_reconcile_failed", job_id=job_id, path=path, error=str(exc))
+                    if process_image_background_fn and path and output.get("type") == "image":
+                        await process_image_background_fn(path, job_id)
 
-                if process_image_background_fn and path and output.get("type") == "image":
-                    await process_image_background_fn(path, job_id)
-
-            await wait_for_gallery_outputs(outputs)
-            await complete_job(
-                job_service=job_service,
-                job_id=job_id,
-                outputs=outputs,
-                provider_id=provider_id,
-                load_balancer=load_balancer,
-                event_extra=event_extra,
-            )
-            logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
-        except Exception as exc:
-            logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
-            await job_service.update_job(
-                job_id,
-                status=JobStatus.FAILED,
-                error=str(exc),
-                provider_id=provider_id,
-            )
-            if load_balancer and provider_id:
-                await load_balancer.release_job(provider_id)
-        finally:
-            reconcile_session.close()
-            await _release_finalization(job_id)
+                await wait_for_gallery_outputs(outputs)
+                await complete_job(
+                    job_service=job_service,
+                    job_id=job_id,
+                    outputs=outputs,
+                    provider_id=provider_id,
+                    load_balancer=load_balancer,
+                    event_extra=event_extra,
+                )
+                logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
+            except Exception as exc:
+                logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
+                await job_service.update_job(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error=str(exc),
+                    provider_id=provider_id,
+                )
+                if load_balancer and provider_id:
+                    await load_balancer.release_job(provider_id)
+            finally:
+                await _release_finalization(job_id)
 
     start_background_task(
         complete_when_ready(),

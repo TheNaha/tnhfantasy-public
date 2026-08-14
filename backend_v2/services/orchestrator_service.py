@@ -217,8 +217,7 @@ async def execute_tool(
         )
 
     if name == "update_world_state":
-        return await asyncio.to_thread(
-            _tool_update_world_state,
+        return await _tool_update_world_state(
             args,
             chat_id=chat_id,
             source_job_id=source_job_id,
@@ -227,15 +226,15 @@ async def execute_tool(
     return {"status": "error", "error": f"Unknown tool: {name}"}
 
 
-def _tool_update_world_state(
+async def _tool_update_world_state(
     args: dict[str, Any],
     *,
     chat_id: str | None = None,
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Synchronously update a chat's story_time / story_location (side-effect tool)."""
-    from infrastructure.database import get_session_sync
-    from core.entities import Chat, Message, MessageRole
+    """Update a chat's story_time / story_location (side-effect tool)."""
+    from infrastructure.database import get_session_context
+    from core.entities import Chat
 
     time_value = (args.get("time") or "").strip()
     location_value = (args.get("location") or "").strip()
@@ -245,36 +244,34 @@ def _tool_update_world_state(
     if not chat_id:
         return {"status": "error", "error": "No chat_id available to update world state."}
 
-    session = get_session_sync()
-    try:
-        chat = session.get(Chat, chat_id)
-        if not chat:
-            return {"status": "error", "error": f"Chat {chat_id} not found."}
-        updated = {}
-        if time_value:
-            chat.story_time = time_value
-            updated["time"] = time_value
-        if location_value:
-            chat.story_location = location_value
-            updated["location"] = location_value
-        session.add(chat)
-        session.commit()
+    async with get_session_context() as session:
+        try:
+            chat = session.get(Chat, chat_id)
+            if not chat:
+                return {"status": "error", "error": f"Chat {chat_id} not found."}
+            updated = {}
+            if time_value:
+                chat.story_time = time_value
+                updated["time"] = time_value
+            if location_value:
+                chat.story_location = location_value
+                updated["location"] = location_value
+            session.add(chat)
+            session.commit()
 
-        insert_world_state_marker(session, chat_id, updated)
+            insert_world_state_marker(session, chat_id, updated)
 
-        logger.info(
-            "tool_update_world_state",
-            chat_id=chat_id,
-            job_id=source_job_id,
-            updated=updated,
-        )
-        return {"status": "success", "updated": updated}
-    except Exception as exc:  # pragma: no cover
-        session.rollback()
-        logger.error("tool_update_world_state_failed", chat_id=chat_id, error=str(exc))
-        return {"status": "error", "error": f"Failed to update world state: {exc}"}
-    finally:
-        session.close()
+            logger.info(
+                "tool_update_world_state",
+                chat_id=chat_id,
+                job_id=source_job_id,
+                updated=updated,
+            )
+            return {"status": "success", "updated": updated}
+        except Exception as exc:  # pragma: no cover
+            session.rollback()
+            logger.error("tool_update_world_state_failed", chat_id=chat_id, error=str(exc))
+            return {"status": "error", "error": f"Failed to update world state: {exc}"}
 
 
 async def _tool_narrate_scene(
@@ -286,7 +283,7 @@ async def _tool_narrate_scene(
 ) -> dict[str, Any]:
     """Run a Narrator LLM job that writes a third-person scene description."""
     from services.job_submission_service import JobSubmissionService
-    from infrastructure.database import get_session_sync
+    from infrastructure.database import get_session_context
 
     scene_direction = args.get("scene_direction", "")
 
@@ -295,8 +292,8 @@ async def _tool_narrate_scene(
     from config import get_system_prompt_blocks
     narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
-    session = get_session_sync()
-    try:
+    job = None
+    async with get_session_context() as session:
         submission = JobSubmissionService(session)
 
         messages: list[dict[str, Any]] = [{"role": "system", "content": narrator_prompt}]
@@ -335,12 +332,12 @@ async def _tool_narrate_scene(
         character_system_prompt = source_meta.get("character_system_prompt")
         if not character_system_prompt and chat_id:
             from core.entities import Chat as _Chat, Character as _Char
-            from services.context_builder import build_system_prompt_sections
+            from services.context_builder import build_system_prompt_sections_async
             try:
                 _chat = session.get(_Chat, chat_id)
                 if _chat:
                     _char = session.get(_Char, _chat.character_id) if _chat.character_id else None
-                    _sections = build_system_prompt_sections(
+                    _sections = await build_system_prompt_sections_async(
                         session,
                         character=_char,
                         system_prompt_override=_chat.system_prompt_override,
@@ -377,8 +374,6 @@ async def _tool_narrate_scene(
         except Exception as e:
             logger.error("tool_narrate_scene_create_failed", error=str(e))
             return {"status": "error", "error": f"Failed to create narrator job: {e}"}
-    finally:
-        session.close()
 
     # Inline execution: run the narrator call directly against a load-balanced
     # LLM provider instead of enqueueing and waiting. The agentic chain holds
@@ -397,63 +392,71 @@ async def _tool_narrate_scene(
     )
     from config import get_job_timeout
 
-    _session = get_session_sync()
-    try:
+    _lb_release = False
+    async with get_session_context() as _session:
         _job_service = JobService(_session)
         load_balancer = create_load_balancer(_session, task_type="llm")
 
-        provider = await load_balancer.get_next_provider(
-            required_models=None,
-            task_type="llm",
-        )
-        if provider is None:
-            await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
-            return {"status": "error", "error": "No available LLM providers for narration"}
-
-        runtime = resolve_provider_runtime(provider)
-        if runtime.mode not in ("container_http", "discovery"):
-            await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
-            await load_balancer.report_failure(provider.id)
-            await load_balancer.release_job(provider.id)
-            return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
-
-        timeout = get_job_timeout("llm")
-        final_result = await call_llm_provider(
-            worker_url=runtime.worker_url,
-            workflow=workflow,
-            job_id=job.id,
-            job_service=_job_service,
-            timeout=timeout,
-            provider_id=provider.id,
-            provider_type=provider.type,
-        )
-
-        await load_balancer.report_success(provider.id)
-        await load_balancer.release_job(provider.id)
-
-        content = ""
-        outputs = final_result.get("outputs") or []
-        if outputs and isinstance(outputs[0], dict):
-            content = outputs[0].get("content", "")
-        if not content:
-            content = final_result.get("text", "")
-        return {"status": "success", "narration": content, "job_id": job.id}
-    except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
-        logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
         try:
-            await JobService(_session).update_job(
-                job.id,
-                status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
-                error=str(exc),
+            provider = await load_balancer.get_next_provider(
+                required_models=None,
+                task_type="llm",
             )
-        except Exception as update_exc:
-            logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
-        return {"status": "error", "error": f"Narration failed: {exc}"}
-    except Exception as exc:
-        logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
-        return {"status": "error", "error": f"Failed waiting for narrator job: {exc}"}
-    finally:
-        _session.close()
+            if provider is None:
+                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
+                return {"status": "error", "error": "No available LLM providers for narration"}
+
+            runtime = resolve_provider_runtime(provider)
+            if runtime.mode not in ("container_http", "discovery"):
+                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
+                await load_balancer.report_failure(provider.id)
+                await load_balancer.release_job(provider.id)
+                return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
+
+            timeout = get_job_timeout("llm")
+            final_result = await call_llm_provider(
+                worker_url=runtime.worker_url,
+                workflow=workflow,
+                job_id=job.id,
+                job_service=_job_service,
+                timeout=timeout,
+                provider_id=provider.id,
+                provider_type=provider.type,
+            )
+
+            await load_balancer.report_success(provider.id)
+            _lb_release = True
+            await load_balancer.release_job(provider.id)
+
+            content = ""
+            outputs = final_result.get("outputs") or []
+            if outputs and isinstance(outputs[0], dict):
+                content = outputs[0].get("content", "")
+            if not content:
+                content = final_result.get("text", "")
+            return {"status": "success", "narration": content, "job_id": job.id}
+        except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
+            logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
+            try:
+                await _job_service.update_job(
+                    job.id,
+                    status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
+                    error=str(exc),
+                )
+            except Exception as update_exc:
+                logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
+            return {"status": "error", "error": f"Narration failed: {exc}"}
+        except Exception as exc:
+            logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
+            try:
+                await _job_service.update_job(
+                    job.id,
+                    status=JobStatus.FAILED,
+                    error=f"Narration failed: {exc}",
+                )
+            except Exception as update_exc:
+                logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
+            return {"status": "error", "error": f"Narration failed: {exc}"}
 
 
 async def _tool_generate_image(
@@ -465,15 +468,14 @@ async def _tool_generate_image(
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline and wait for completion."""
     from services.job_submission_service import JobSubmissionService
-    from infrastructure.database import get_session_sync
+    from infrastructure.database import get_session_context
 
     prompt = args.get("prompt", "a beautiful fantasy landscape")
     negative = args.get("negative_prompt", "worst quality, low quality, bad anatomy")
 
     logger.info("tool_generate_image", prompt=prompt[:80], chat_id=chat_id)
 
-    session = get_session_sync()
-    try:
+    async with get_session_context() as session:
         submission = JobSubmissionService(session)
 
         # 1. Start with system default checkpoint
@@ -501,6 +503,9 @@ async def _tool_generate_image(
                     ckpt_name = char.checkpoint
                 if char.lora:
                     lora_name = char.lora
+                if char.visual_tags:
+                    tags = ", ".join(char.visual_tags)
+                    prompt = f"{prompt}, {tags}" if prompt else tags
 
         # 4. Ensure the chosen models are actually installed on an enabled provider
         resolved_ckpt = _available_checkpoint(session, ckpt_name)
@@ -546,8 +551,6 @@ async def _tool_generate_image(
         except Exception as e:
             logger.error("tool_generate_image_failed", error=str(e))
             return {"status": "error", "error": str(e)}
-    finally:
-        session.close()
 
     try:
         from core.events import wait_for_job_completion

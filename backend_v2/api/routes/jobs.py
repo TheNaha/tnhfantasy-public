@@ -46,7 +46,8 @@ class CreateJobRequest(BaseModel):
 
 class ValidateWorkflowRequest(BaseModel):
     """Request to validate workflow model availability."""
-    workflow: dict
+    workflow: dict | None = None
+    options: dict | None = None
     preferred_provider_id: str | None = None
 
 
@@ -77,8 +78,18 @@ async def validate_workflow(
     Returns detailed breakdown to allow UI to show missing models
     and offer download triggers.
     """
+    from core.workflow_builder import WorkflowBuilder
+    workflow = request.workflow
+    if not workflow and request.options:
+        builder = WorkflowBuilder()
+        workflow = builder.build(request.options)
+
+    if not workflow:
+        from core.exceptions import ValidationError
+        raise ValidationError("workflow or options is required", field="workflow")
+
     response = submission_service.build_validation_response(
-        request.workflow,
+        workflow,
         preferred_provider_id=request.preferred_provider_id,
     )
     logger.debug("workflow_validation_start", model_count=len(response["required_models"]))

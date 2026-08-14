@@ -153,8 +153,6 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
 @router.get("/{story_id}/chapters", response_model=list[StoryChapter])
 def list_chapters(story_id: str, session: Session = Depends(get_session)):
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).all()
-    for ch in chapters:
-        _ensure_beat_ids(session, ch)
     return chapters
 
 @router.post("/{story_id}/chapters", response_model=StoryChapter)
@@ -179,7 +177,6 @@ def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_s
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
-    _ensure_beat_ids(session, chapter)
     return chapter
 
 @router.put("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)

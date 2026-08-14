@@ -1,27 +1,489 @@
-"""
-Shared ComfyUI workflow builder.
+import math
+from typing import Any, Optional, Union
+from datetime import datetime
+from pydantic import BaseModel, Field
 
-Previously, two near-identical copies of an SDXL text-to-image workflow
-existed — one in ``services/orchestrator_service.py`` (with LoRA support)
-and a simpler variant in ``api/routes/world_vault/stories.py``.  This module
-provides a single canonical implementation that both call sites can use,
-eliminating the duplication and ensuring consistency.
-"""
 
-from typing import Any, Optional
+class LoraOption(BaseModel):
+    name: str
+    strength: float = 1.0
 
-# ---------------------------------------------------------------------------
-# Default negative prompt — reused across all image-generation workflows so
-# output quality is consistent wherever workflows are built.
-# ---------------------------------------------------------------------------
+
+class ControlNetOption(BaseModel):
+    name: str
+    image: Union[str, dict[str, Any]]
+    preprocessor: str = "None"
+    strength: float = 1.0
+
+
+class IPAdapterOption(BaseModel):
+    model: str
+    image: Union[str, dict[str, Any]]
+    clipVision: str
+    weight: float = 1.0
+
+
+class GeneratorOptions(BaseModel):
+    mode: str = "t2i"  # t2i, img2img, inpaint
+    
+    # Text
+    prompt: str
+    negativePrompt: str = ""
+    
+    # Base Generation
+    seed: int = 0
+    steps: int = 20
+    cfg: float = 7.0
+    sampler: str = "euler"
+    scheduler: str = "normal"
+    width: int = 1024
+    height: int = 1024
+    batchSize: int = 1
+    
+    # Models
+    checkpoint: str = ""
+    unet: str | None = None
+    clip: str | None = None
+    clip2: str | None = None
+    vae: str | None = None
+    modelType: str = "sdxl" # sdxl, flux, sd15, auraflow, pony
+    
+    # Enhancements
+    clipSkip: int = 1
+    enableFreeU: bool = False
+    enablePAG: bool = False
+    pagScale: float = 3.0
+    loras: list[LoraOption] = Field(default_factory=list)
+    ipAdapters: list[IPAdapterOption] = Field(default_factory=list)
+    controlnets: list[ControlNetOption] = Field(default_factory=list)
+    
+    # Image to Image / Inpaint
+    inputImage: Union[str, dict[str, Any], None] = None
+    maskImage: Union[str, dict[str, Any], None] = None
+    denoise: float = 0.7
+    growMask: int = 0
+    maskBlur: int = 0
+    
+    # Upscale / Hires Fix
+    hiresFix: bool = False
+    hiresUpscaler: str = "Latent"
+    hiresDenoise: float = 0.3
+    hiresUpscale: float = 1.5
+    hiresSteps: int = 10
+    enableLatentUpscale: bool = False
+    latentUpscaleMultiplier: float = 1.5
+    
+    # ADetailer
+    adetailer: bool = False
+    adetailerModel: str | None = None
+    adetailerPrompt: str = ""
+    adetailerSteps: int = 20
+    adetailerDenoise: float = 0.4
+    adetailerInpaintMasked: bool = True
+
+
+class WorkflowBuilder:
+    def __init__(self):
+        self.nodes = {}
+        self.last_node_id = 0
+
+    def add_node(self, class_type: str, inputs: dict[str, Any]) -> str:
+        self.last_node_id += 1
+        node_id = str(self.last_node_id)
+        self.nodes[node_id] = {"inputs": inputs, "class_type": class_type}
+        return node_id
+
+    def _generate_filename_prefix(self, type_str: str = "T2I") -> str:
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H-%M-%S")
+        return f"{type_str}_{date_str}_{time_str}"
+        
+    def _get_image_str(self, image_input: Union[str, dict[str, Any]]) -> str:
+        if isinstance(image_input, dict):
+            return image_input.get("filename", "")
+        return image_input
+
+    def apply_loras(self, current_model, current_clip, loras: list[LoraOption]):
+        for lora in loras:
+            if not lora.name:
+                continue
+            lora_node = self.add_node("LoraLoader", {
+                "model": current_model,
+                "clip": current_clip,
+                "lora_name": lora.name,
+                "strength_model": lora.strength,
+                "strength_clip": lora.strength
+            })
+            current_model = [lora_node, 0]
+            current_clip = [lora_node, 1]
+        return current_model, current_clip
+
+    def apply_freeu(self, current_model, model_type: str):
+        is_sd15 = (model_type == "sd15")
+        freeu_node = self.add_node("FreeU_V2", {
+            "model": current_model,
+            "b1": 1.2 if is_sd15 else 1.3,
+            "b2": 1.4,
+            "s1": 0.9,
+            "s2": 0.2
+        })
+        return [freeu_node, 0]
+
+    def apply_pag(self, current_model, scale: float):
+        pag_node = self.add_node("PerturbedAttentionGuidance", {
+            "model": current_model,
+            "scale": scale
+        })
+        return [pag_node, 0]
+
+    def apply_clip_skip(self, current_clip, skip: int):
+        clip_skip_node = self.add_node("CLIPSetLastLayer", {
+            "clip": current_clip,
+            "stop_at_clip_layer": -abs(skip)
+        })
+        return [clip_skip_node, 0]
+
+    def apply_controlnets(self, positive_conditioning, controlnets: list[ControlNetOption]):
+        current_cond = positive_conditioning
+        for cn in controlnets:
+            if not cn.name or not cn.image:
+                continue
+
+            cn_loader = self.add_node("ControlNetLoader", {
+                "control_net_name": cn.name
+            })
+
+            img_str = self._get_image_str(cn.image)
+            image_loader = self.add_node("LoadImage", {
+                "image": img_str
+            })
+
+            processed_image = [image_loader, 0]
+            if cn.preprocessor == "Canny":
+                canny = self.add_node("CannyEdgePreprocessor", {
+                    "image": [image_loader, 0],
+                    "low_threshold": 100,
+                    "high_threshold": 200,
+                    "resolution": 512
+                })
+                processed_image = [canny, 0]
+
+            cn_apply = self.add_node("ControlNetApply", {
+                "conditioning": current_cond,
+                "control_net": [cn_loader, 0],
+                "image": processed_image,
+                "strength": cn.strength
+            })
+
+            current_cond = [cn_apply, 0]
+        return current_cond
+
+    def apply_ip_adapters(self, current_model, ip_adapters: list[IPAdapterOption]):
+        model = current_model
+        for ip in ip_adapters:
+            if not ip.model or not ip.image or not ip.clipVision:
+                continue
+
+            ip_loader = self.add_node("IPAdapterModelLoader", {
+                "ipadapter_file": ip.model
+            })
+
+            self.add_node("CLIPVisionLoader", {
+                "clip_name": ip.clipVision
+            })
+
+            img_str = self._get_image_str(ip.image)
+            image_loader = self.add_node("LoadImage", {
+                "image": img_str
+            })
+
+            ip_apply = self.add_node("IPAdapterApply", {
+                "ipadapter": [ip_loader, 0],
+                "model": model,
+                "weight": ip.weight,
+                "image": [image_loader, 0]
+            })
+
+            model = [ip_apply, 0]
+        return model
+
+    def apply_latent_modifiers(self, latent_image, options: GeneratorOptions):
+        latent = latent_image
+        if options.enableLatentUpscale and options.latentUpscaleMultiplier > 1.0:
+            upscale_node = self.add_node("LatentUpscaleBy", {
+                "samples": latent,
+                "upscale_method": "bilinear",
+                "scale_by": options.latentUpscaleMultiplier
+            })
+            latent = [upscale_node, 0]
+        return latent
+
+    def apply_adetailer(self, final_image, current_model, current_clip, current_vae, positive_cond, negative_cond, options: GeneratorOptions):
+        bbox_loader = self.add_node("UltralyticsDetectorProvider", {
+            "model_name": f"bbox/{options.adetailerModel}"
+        })
+
+        face_detailer = self.add_node("FaceDetailer", {
+            "image": final_image,
+            "model": current_model,
+            "clip": current_clip,
+            "vae": current_vae,
+            "positive": positive_cond,
+            "negative": negative_cond,
+            "guide_size": 256,
+            "guide_size_for": True,
+            "max_size": 768,
+            "seed": options.seed,
+            "steps": options.adetailerSteps,
+            "cfg": options.cfg,
+            "sampler_name": options.sampler,
+            "scheduler": options.scheduler,
+            "denoise": options.adetailerDenoise,
+            "feather": 5,
+            "noise_mask": True,
+            "force_inpaint": True,
+            "bbox_threshold": 0.5,
+            "bbox_dilation": 10,
+            "bbox_crop_factor": 3.0,
+            "sam_detection_hint": "center-1",
+            "sam_dilation": 0,
+            "sam_threshold": 0.93,
+            "sam_bbox_expansion": 0,
+            "sam_mask_hint_threshold": 0.7,
+            "sam_mask_hint_use_negative": "False",
+            "drop_size": 10,
+            "wildcard": options.adetailerPrompt,
+            "cycle": 1,
+            "bbox_detector": [bbox_loader, 0],
+            "sam_model_opt": None,
+            "segm_detector_opt": None,
+            "detailer_hook": None
+        })
+
+        return [face_detailer, 0]
+
+    def load_models(self, options: GeneratorOptions):
+        if options.unet and options.clip:
+            # Split Loader Mode (Flux, SD3, AuraFlow)
+            current_model = [self.add_node("UNETLoader", {
+                "unet_name": options.unet,
+                "weight_dtype": "default"
+            }), 0]
+
+            if options.clip2:
+                clip1_name = options.clip
+                clip2_name = options.clip2
+                loader_type = "flux"
+
+                if options.modelType == "sdxl":
+                    clip1_name = options.clip2
+                    clip2_name = options.clip
+                    loader_type = "sdxl"
+
+                current_clip = [self.add_node("DualCLIPLoader", {
+                    "clip_name1": clip1_name,
+                    "clip_name2": clip2_name,
+                    "type": loader_type
+                }), 0]
+            else:
+                current_clip = [self.add_node("CLIPLoader", {
+                    "clip_name": options.clip,
+                    "type": "stable_diffusion"
+                }), 0]
+
+            vae_name = options.vae if (options.vae and options.vae != "Baked in") else "ae.safetensors"
+            current_vae = [self.add_node("VAELoader", {
+                "vae_name": vae_name
+            }), 0]
+        else:
+            # Standard Checkpoint Loader
+            checkpoint_loader = self.add_node("CheckpointLoaderSimple", {
+                "ckpt_name": options.checkpoint
+            })
+            current_model = [checkpoint_loader, 0]
+            current_clip = [checkpoint_loader, 1]
+            current_vae = [checkpoint_loader, 2]
+
+            if options.vae and options.vae != "Baked in":
+                current_vae = [self.add_node("VAELoader", {
+                    "vae_name": options.vae
+                }), 0]
+
+        return current_model, current_clip, current_vae
+
+    def build_core(self, options: GeneratorOptions) -> dict[str, Any]:
+        mode = options.mode
+        current_model, current_clip, current_vae = self.load_models(options)
+
+        # Enhancements
+        if options.clipSkip > 1:
+            current_clip = self.apply_clip_skip(current_clip, options.clipSkip)
+
+        current_model, current_clip = self.apply_loras(current_model, current_clip, options.loras)
+
+        if options.enableFreeU and options.modelType != "flux":
+            current_model = self.apply_freeu(current_model, options.modelType)
+
+        if options.enablePAG and options.modelType != "flux":
+            current_model = self.apply_pag(current_model, options.pagScale)
+
+        current_model = self.apply_ip_adapters(current_model, options.ipAdapters)
+
+        # CLIP Encoding
+        positive_cond = [self.add_node("CLIPTextEncode", {
+            "text": options.prompt,
+            "clip": current_clip
+        }), 0]
+
+        negative_cond = [self.add_node("CLIPTextEncode", {
+            "text": options.negativePrompt,
+            "clip": current_clip
+        }), 0]
+
+        positive_cond = self.apply_controlnets(positive_cond, options.controlnets)
+
+        # Latent Setup based on mode
+        if mode == 't2i':
+            latent_image = [self.add_node("EmptyLatentImage", {
+                "width": options.width,
+                "height": options.height,
+                "batch_size": options.batchSize
+            }), 0]
+        elif mode == 'img2img':
+            img_str = self._get_image_str(options.inputImage)
+            load_image = [self.add_node("LoadImage", {"image": img_str}), 0]
+            latent_image = [self.add_node("VAEEncode", {
+                "pixels": load_image,
+                "vae": current_vae
+            }), 0]
+        elif mode == 'inpaint':
+            img_str = self._get_image_str(options.inputImage)
+            mask_str = self._get_image_str(options.maskImage)
+            load_image = [self.add_node("LoadImage", {"image": img_str}), 0]
+            load_mask = [self.add_node("LoadImageMask", {"image": mask_str, "channel": "red"}), 0]
+            
+            processed_mask = load_mask
+            if options.growMask > 0:
+                processed_mask = [self.add_node("GrowMask", {
+                    "mask": processed_mask, 
+                    "expand": options.growMask, 
+                    "tapered_corners": True
+                }), 0]
+            if options.maskBlur > 0:
+                processed_mask = [self.add_node("FeatherMask", {
+                    "mask": processed_mask, 
+                    "left": options.maskBlur, 
+                    "right": options.maskBlur, 
+                    "top": options.maskBlur, 
+                    "bottom": options.maskBlur
+                }), 0]
+
+            latent_image = [self.add_node("VAEEncodeForInpaint", {
+                "pixels": load_image,
+                "vae": current_vae,
+                "mask": processed_mask,
+                "grow_mask_by": 6
+            }), 0]
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        latent_image = self.apply_latent_modifiers(latent_image, options)
+
+        # KSampler
+        denoise = 1.0 if mode == 't2i' else (options.denoise if options.denoise else 0.7)
+        final_latent = [self.add_node("KSampler", {
+            "seed": options.seed,
+            "steps": options.steps,
+            "cfg": options.cfg,
+            "sampler_name": options.sampler,
+            "scheduler": options.scheduler,
+            "denoise": denoise,
+            "model": current_model,
+            "positive": positive_cond,
+            "negative": negative_cond,
+            "latent_image": latent_image
+        }), 0]
+
+        # Hires Fix (T2I only)
+        if mode == 't2i' and options.hiresFix:
+            if options.hiresUpscaler == "Latent":
+                final_latent = [self.add_node("LatentUpscaleBy", {
+                    "samples": final_latent,
+                    "upscale_method": "bilinear",
+                    "scale_by": options.hiresUpscale
+                }), 0]
+            else:
+                vae_decode1 = [self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}), 0]
+                
+                if options.hiresUpscaler == "Pixel":
+                    upscale_image = [self.add_node("ImageScaleBy", {
+                        "image": vae_decode1,
+                        "upscale_method": "nearest-exact",
+                        "scale_by": options.hiresUpscale
+                    }), 0]
+                else:
+                    upscaler_loader = [self.add_node("UpscaleModelLoader", {"model_name": options.hiresUpscaler}), 0]
+                    upscale_with_model = [self.add_node("ImageUpscaleWithModel", {
+                        "upscale_model": upscaler_loader,
+                        "image": vae_decode1
+                    }), 0]
+                    target_width = math.floor(options.width * options.hiresUpscale)
+                    target_height = math.floor(options.height * options.hiresUpscale)
+                    upscale_image = [self.add_node("ImageScale", {
+                        "image": upscale_with_model,
+                        "upscale_method": "lanczos",
+                        "width": target_width,
+                        "height": target_height,
+                        "crop": "disabled"
+                    }), 0]
+                final_latent = [self.add_node("VAEEncode", {"pixels": upscale_image, "vae": current_vae}), 0]
+
+            final_latent = [self.add_node("KSampler", {
+                "seed": options.seed,
+                "steps": options.hiresSteps,
+                "cfg": options.cfg,
+                "sampler_name": options.sampler,
+                "scheduler": options.scheduler,
+                "denoise": options.hiresDenoise,
+                "model": current_model,
+                "positive": positive_cond,
+                "negative": negative_cond,
+                "latent_image": final_latent
+            }), 0]
+
+        final_image = [self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}), 0]
+
+        if options.adetailer:
+            final_image = self.apply_adetailer(final_image, current_model, current_clip, current_vae, positive_cond, negative_cond, options)
+
+        prefix_type = "T2I"
+        if mode == 't2i':
+            prefix_type = "T2I_Hires" if options.hiresFix else "T2I"
+        elif mode == 'img2img':
+            prefix_type = "Img2Img"
+        elif mode == 'inpaint':
+            prefix_type = "Inpaint"
+
+        prefix = self._generate_filename_prefix(prefix_type)
+
+        self.add_node("SaveImage", {
+            "filename_prefix": prefix,
+            "images": final_image
+        })
+
+        return self.nodes
+
+    def build(self, options: Union[GeneratorOptions, dict[str, Any]]) -> dict[str, Any]:
+        if isinstance(options, dict):
+            options = GeneratorOptions(**options)
+        return self.build_core(options)
+
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, bad anatomy, bad hands, missing fingers, "
     "extra limbs, extra digit, text, signature, watermark, username"
 )
-
-# Default filename prefix written into SaveImage nodes.
 DEFAULT_FILENAME_PREFIX = "ComfyUI"
-
 
 def build_image_workflow(
     prompt: str,
@@ -38,101 +500,22 @@ def build_image_workflow(
     scheduler: str = "normal",
     denoise: float = 1.0,
 ) -> dict[str, Any]:
-    """Build a standard SDXL text-to-image ComfyUI workflow.
-
-    Parameters
-    ----------
-    prompt
-        Positive prompt (Danbooru-style tags, comma-separated).
-    negative
-        Negative prompt.  Defaults to :data:`DEFAULT_NEGATIVE_PROMPT`.
-    checkpoint
-        Filename of the checkpoint model to load (e.g.
-        ``"animagine_xl_v31_v31_403131.safetensors"``).
-    lora
-        Optional LoRA filename.  When provided a ``LoraLoader`` node is
-        inserted and both CLIP text-encode nodes are rewired to use the
-        LoRA-enhanced clip.
-    filename_prefix
-        Prefix used by the ``SaveImage`` node.
-    width / height
-        Latent image dimensions.
-    steps / cfg / seed / sampler_name / scheduler / denoise
-        KSampler hyper-parameters.
-
-    Returns
-    -------
-    dict[str, Any]
-        ComfyUI workflow dictionary keyed by node id (as strings).
-    """
-    # Node "4" is always the CheckpointLoader / LoRA chain root, so the
-    # CLIP/text-encode/latent/model references stay stable whether or not
-    # a LoRA is present.
-    clip_ref = ["10", 1] if lora else ["4", 1]
-    model_ref = ["10", 0] if lora else ["4", 0]
-
-    workflow: dict[str, dict[str, Any]] = {
-        # KSampler
-        "3": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": seed,
-                "steps": steps,
-                "cfg": cfg,
-                "sampler_name": sampler_name,
-                "scheduler": scheduler,
-                "denoise": denoise,
-                "model": model_ref,
-                "positive": ["6", 0],
-                "negative": ["7", 0],
-                "latent_image": ["5", 0],
-            },
-        },
-        # Checkpoint loader
-        "4": {
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": checkpoint},
-        },
-        # Empty latent
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"batch_size": 1, "width": width, "height": height},
-        },
-        # Positive CLIP text encode
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": prompt, "clip": clip_ref},
-        },
-        # Negative CLIP text encode
-        "7": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": negative, "clip": clip_ref},
-        },
-        # VAE decode
-        "8": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
-        },
-        # Save image
-        "9": {
-            "class_type": "SaveImage",
-            "inputs": {"filename_prefix": filename_prefix, "images": ["8", 0]},
-        },
-    }
-
-    if lora:
-        workflow["10"] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "lora_name": lora,
-                "strength_model": 1.0,
-                "strength_clip": 1.0,
-                "model": ["4", 0],
-                "clip": ["4", 1],
-            },
-        }
-
-    return workflow
+    opts = GeneratorOptions(
+        prompt=prompt,
+        negativePrompt=negative,
+        checkpoint=checkpoint,
+        width=width,
+        height=height,
+        steps=steps,
+        cfg=cfg,
+        seed=seed,
+        sampler=sampler_name,
+        scheduler=scheduler,
+        denoise=denoise,
+        loras=[LoraOption(name=lora)] if lora else []
+    )
+    builder = WorkflowBuilder()
+    return builder.build(opts)
 
 
 def build_image_job_workflow(
@@ -158,12 +541,6 @@ def build_image_job_workflow(
     parent_job_id: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build an image workflow + metadata pair with pre-filled common fields.
-
-    This helper wraps :func:`build_image_workflow` and adds the standard
-    metadata keys that every image job should carry (prompt, checkpoint,
-    generation params, workspace, and optional entity links).
-    """
     workflow = build_image_workflow(
         prompt=prompt,
         negative=negative,
@@ -210,3 +587,4 @@ def build_image_job_workflow(
         metadata.update(extra_metadata)
 
     return workflow, metadata
+
