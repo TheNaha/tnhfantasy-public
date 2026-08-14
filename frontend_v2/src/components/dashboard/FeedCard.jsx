@@ -210,8 +210,7 @@ const FeedCard = memo(function FeedCard({
         },
       });
       toast.success("Image loaded for Img2Img", { icon: "🖼️" });
-    } catch (error) {
-      console.error("Failed to load image for Img2Img:", error);
+    } catch {
       toast.error("Failed to load image");
     }
   }, [item.name, loadImageBlob, navigate]);
@@ -242,8 +241,7 @@ const FeedCard = memo(function FeedCard({
         },
       });
       toast.success("Image loaded for Inpainting", { icon: "🎨" });
-    } catch (error) {
-      console.error("Failed to load image for Inpaint:", error);
+    } catch {
       toast.error("Failed to load image");
     }
   }, [item.name, loadImageBlob, navigate]);
@@ -256,6 +254,40 @@ const FeedCard = memo(function FeedCard({
     }
     setShowDetails(!showDetails);
   };
+
+  const handleMoveAsset = useCallback(async () => {
+    const assetId = item.id || item.name;
+    const workspace = prompt("Move to workspace (leave empty to keep current):") || undefined;
+    if (window.confirm(`Move asset ${item.name} to workspace: ${workspace || 'current'}?`)) {
+      try {
+        await api.post(`/api/v2/assets/${assetId}/move`, {
+          workspace: workspace || item.workspace || 'main',
+          copy: false,
+        });
+        toast.success("Asset moved", { icon: "📁" });
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+      } catch {
+        toast.error("Failed to move asset");
+      }
+    }
+  }, [item, queryClient]);
+
+  const handleCopyAsset = useCallback(async () => {
+    const assetId = item.id || item.name;
+    const workspace = prompt("Copy to workspace (leave empty for current):") || undefined;
+    if (window.confirm(`Copy asset ${item.name} to workspace: ${workspace || 'current'}?`)) {
+      try {
+        await api.post(`/api/v2/assets/${assetId}/move`, {
+          workspace: workspace || item.workspace || 'main',
+          copy: true,
+        });
+        toast.success("Asset copied", { icon: "📋" });
+        queryClient.invalidateQueries({ queryKey: ['gallery'] });
+      } catch {
+        toast.error("Failed to copy asset");
+      }
+    }
+  }, [item, queryClient]);
 
   const checkpointDisplayName = getCheckpointDisplayName(metadata) || getCheckpointDisplayName(item) || "Unknown Model";
 
@@ -329,6 +361,8 @@ const FeedCard = memo(function FeedCard({
           onViewParams: () => onClick(item),
           onRemix: handleRemix,
           onDelete: () => onDelete(item.name),
+          onMoveAsset: handleMoveAsset,
+          onCopyAsset: handleCopyAsset,
         })}
       >
         <div

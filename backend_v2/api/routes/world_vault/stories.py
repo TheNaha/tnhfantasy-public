@@ -387,11 +387,10 @@ async def illustrate_chapter(
 
     if data.image_prompt:
         # Provided prompt: queue image job directly (non-blocking)
-        from core.workflow_builder import build_image_job_workflow
-        from services.job_submission_service import JobSubmissionService
-        submission_service = JobSubmissionService(session)
+        from services.image_submission import submit_image_job
 
-        image_workflow, image_metadata = build_image_job_workflow(
+        img_job = await submit_image_job(
+            session,
             prompt=data.image_prompt,
             checkpoint=checkpoint,
             filename_prefix="ComfyUI",
@@ -399,10 +398,6 @@ async def illustrate_chapter(
             story_id=story_id,
             chapter_id=chapter_id,
             extra_metadata={"prompt": data.image_prompt},
-        )
-        img_job = await submission_service.create_and_enqueue_job(
-            workflow=image_workflow,
-            metadata=image_metadata,
         )
         return {"job_id": img_job.id, "prompt": data.image_prompt}
 

@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { useCreateResource, useDeleteResource } from './useWorldVaultResource';
+
+const CHAT_LIST_KEY = ['world_vault', 'chats'];
+const CHAT_DETAIL_KEY = (chatId) => ['world_vault', 'chats', chatId];
 
 export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     const params = {};
@@ -52,23 +56,18 @@ export const useChatJobs = (chatId) => {
     });
 };
 
-export const useCreateChat = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (chatData) => api.post('/api/v2/chats', chatData),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-        }
-    });
-};
+export const useCreateChat = () => useCreateResource({
+    basePath: '/api/v2/chats',
+    listQueryKey: CHAT_LIST_KEY,
+});
 
 export const useRenameChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, name }) => api.patch(`/api/v2/chats/${chatId}`, { name }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         }
     });
 };
@@ -78,7 +77,7 @@ export const useGenerateScene = () => {
     return useMutation({
         mutationFn: ({ chatId }) => api.post(`/api/v2/chats/${chatId}/scene`, {}),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         }
     });
 };
@@ -95,20 +94,20 @@ export const useUpdateChat = () => {
         mutationFn: ({ chatId, ...data }) => api.patch(`/api/v2/chats/${chatId}`, data),
         onMutate: async (variables) => {
             const { chatId, ...data } = variables;
-            await queryClient.cancelQueries({ queryKey: ['world_vault', 'chats', chatId] });
-            const previousChat = queryClient.getQueryData(['world_vault', 'chats', chatId]);
+            await queryClient.cancelQueries({ queryKey: CHAT_DETAIL_KEY(chatId) });
+            const previousChat = queryClient.getQueryData(CHAT_DETAIL_KEY(chatId));
 
             if (previousChat) {
-                queryClient.setQueryData(['world_vault', 'chats', chatId], {
+                queryClient.setQueryData(CHAT_DETAIL_KEY(chatId), {
                     ...previousChat,
                     ...data
                 });
             }
 
-            await queryClient.cancelQueries({ queryKey: ['world_vault', 'chats'] });
-            const previousChats = queryClient.getQueryData(['world_vault', 'chats']);
+            await queryClient.cancelQueries({ queryKey: CHAT_LIST_KEY });
+            const previousChats = queryClient.getQueryData(CHAT_LIST_KEY);
             if (previousChats) {
-                queryClient.setQueryData(['world_vault', 'chats'],
+                queryClient.setQueryData(CHAT_LIST_KEY,
                     previousChats.map(c => c.id === chatId ? { ...c, ...data } : c)
                 );
             }
@@ -117,36 +116,31 @@ export const useUpdateChat = () => {
         },
         onError: (err, variables, context) => {
             if (context?.previousChat) {
-                queryClient.setQueryData(['world_vault', 'chats', variables.chatId], context.previousChat);
+                queryClient.setQueryData(CHAT_DETAIL_KEY(variables.chatId), context.previousChat);
             }
             if (context?.previousChats) {
-                queryClient.setQueryData(['world_vault', 'chats'], context.previousChats);
+                queryClient.setQueryData(CHAT_LIST_KEY, context.previousChats);
             }
         },
         onSettled: (data, error, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId, 'system-prompt'] });
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId), exact: false });
         }
     });
 };
 
-export const useDeleteChat = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (chatId) => api.delete(`/api/v2/chats/${chatId}`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
-        }
-    });
-};
+export const useDeleteChat = () => useDeleteResource({
+    basePath: '/api/v2/chats',
+    listQueryKey: CHAT_LIST_KEY,
+});
 
 export const useSendMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         }
     });
@@ -158,7 +152,7 @@ export const useIllustrateChat = () => {
         mutationFn: ({ chatId, imagePrompt }) =>
             api.post(`/api/v2/chats/${chatId}/illustrate`, { image_prompt: imagePrompt || '' }),
         onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         }
     });
 };

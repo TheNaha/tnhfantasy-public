@@ -100,4 +100,33 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
     await expectToast(page, /updated/i, 5000);
     await expect(page.getByRole('heading', { name: 'Updated Character Name' })).toBeVisible();
   });
+
+  test('@fullstack Character chat linkage and agentic image appears in character gallery', async ({ page }) => {
+    test.setTimeout(300000);
+    const character = await seedCharacter(page, {
+      name: uniqueName('e2e-char'),
+      description: 'A test character for cross-pillar gallery.',
+      visual_tags: ['1girl', 'fantasy'],
+    });
+    created.push({ kind: 'character', id: character.id });
+
+    const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
+    created.push({ kind: 'chat', id: chat.id });
+
+    await page.goto(`/chat/${chat.id}`);
+    const agenticBtn = page.getByRole('button', { name: /agentic/i });
+    await expect(agenticBtn).toBeVisible({ timeout: 10000 });
+    await agenticBtn.click();
+    await page.waitForTimeout(500);
+
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
+    await chatInput.fill('Generate a scene image of this character in a forest.');
+    await chatInput.press('Enter');
+
+    await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 180000 });
+
+    await page.goto(`/characters/${character.id}`);
+    await expect(page.getByText(/scene|gallery|image/i).first()).toBeVisible({ timeout: 10000 });
+  });
 });

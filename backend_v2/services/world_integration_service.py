@@ -127,30 +127,19 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
         prompt_preview=prompt[:80],
     )
     try:
-        from core.workflow_builder import build_image_job_workflow
-        from services.model_availability_service import ModelAvailabilityService
-
         async with get_session_context() as session:
-            checkpoint = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
-            if not checkpoint:
-                logger.error("illustrate_no_checkpoint", story_id=story_id, chapter_id=chapter_id)
-                return
-            _job_service = JobService(session)
-            image_workflow, image_metadata = build_image_job_workflow(
+            from services.image_submission import submit_image_job
+
+            img_job = await submit_image_job(
+                session,
                 prompt=prompt,
-                checkpoint=checkpoint,
+                checkpoint=preferred_checkpoint,
                 filename_prefix="ComfyUI",
                 source="story_illustrate",
                 workspace="story",
                 story_id=story_id,
                 chapter_id=chapter_id,
             )
-            img_job = await _job_service.create_job(
-                task_type="image",
-                workflow=image_workflow,
-                metadata=image_metadata,
-            )
-            await queue_manager.enqueue(img_job.id, task_type="image")
             logger.info("illustrate_image_job_queued", job_id=img_job.id, story_id=story_id)
     except Exception as e:
         logger.error("illustrate_chain_failed", job_id=job_data.get("id"), error=str(e), exc_info=True)
@@ -181,25 +170,19 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
     )
     try:
         async with get_session_context() as session:
-            resolved_ckpt = ModelAvailabilityService(session).get_available_checkpoint(preferred_checkpoint)
-            if not resolved_ckpt:
-                logger.error("scene_prompt_no_checkpoint", chat_id=chat_id)
-                return
-            workflow, image_metadata = build_image_job_workflow(
+            from services.image_submission import submit_image_job
+
+            img_job = await submit_image_job(
+                session,
                 prompt=prompt,
-                negative=DEFAULT_NEGATIVE_PROMPT,
-                checkpoint=resolved_ckpt,
+                negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+                checkpoint=preferred_checkpoint,
                 filename_prefix="ComfyUI",
                 source="scene_illustrate",
+                workspace="chat",
                 chat_id=chat_id,
                 character_id=character_id,
             )
-            img_job = await JobService(session).create_job(
-                task_type="image",
-                workflow=workflow,
-                metadata=image_metadata,
-            )
-            await queue_manager.enqueue(img_job.id, task_type="image")
             logger.info("scene_image_job_queued", job_id=img_job.id, chat_id=chat_id)
     except Exception as e:
         logger.error("scene_chain_failed", job_id=job_data.get("id"), error=str(e), exc_info=True)

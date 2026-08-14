@@ -244,4 +244,87 @@ test.describe('Story Sandbox Workspace (Module C)', () => {
     await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
     await expect(illustrateBtn).toBeEnabled({ timeout: 120000 });
   });
+
+  test('@fullstack Continue AI generation completes end-to-end', async ({ page }) => {
+    test.setTimeout(300000);
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
+    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+
+    await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
+
+    await editor.fill('The dark knight stepped into the cavern, drawing his glowing sword.');
+
+    const continueBtn = page.getByRole('button', { name: /continue|generate/i }).first();
+    await expect(continueBtn).toBeVisible();
+    await continueBtn.click();
+
+    await expect(continueBtn).toBeDisabled({ timeout: 5000 });
+    await expect(continueBtn).toBeEnabled({ timeout: 180000 });
+
+    const textContent = await editor.textContent();
+    expect(textContent?.length).toBeGreaterThan(100);
+  });
+
+  test('@fullstack Illustrate generates prompt and image job', async ({ page }) => {
+    test.setTimeout(300000);
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
+    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+
+    await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
+
+    await editor.fill('A magical kingdom floating in the clouds, with waterfalls cascading into the sky.');
+
+    const illustrateBtn = page.getByRole('button', { name: /Illustrate/i }).first();
+    await expect(illustrateBtn).toBeVisible({ timeout: 10000 });
+    await illustrateBtn.click();
+
+    await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
+    await expectToast(page, /illustration prompt|illustrate/i, 180000);
+    await expect(illustrateBtn).toBeEnabled({ timeout: 180000 });
+  });
+
+  test('@fullstack Branch from beat and continue new path', async ({ page }) => {
+    test.setTimeout(300000);
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    const chapter = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
+    created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
+
+    await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
+
+    await editor.fill('The hero entered the dark forest.');
+
+    const continueBtn = page.getByRole('button', { name: /continue|generate/i }).first();
+    await expect(continueBtn).toBeVisible();
+    await continueBtn.click();
+
+    await expect(continueBtn).toBeEnabled({ timeout: 180000 });
+
+    const beatsPanel = page.getByRole('button', { name: /beats|branch/i }).first();
+    await expect(beatsPanel).toBeVisible({ timeout: 10000 });
+    await beatsPanel.click();
+
+    const branchBtn = page.getByRole('button', { name: /branch/i }).first();
+    await expect(branchBtn).toBeVisible({ timeout: 10000 });
+    await branchBtn.click();
+
+    const confirmBtn = page.getByRole('button', { name: /branch|confirm/i }).first();
+    if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await confirmBtn.click();
+    }
+    await expectToast(page, /branch/i, 10000);
+
+    const newChapterMatch = page.url().match(/chapter\/([^/]+)/);
+    expect(newChapterMatch).toBeTruthy();
+  });
 });

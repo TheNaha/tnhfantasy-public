@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 import {
-  apiGet,
   uniqueName,
   expectToast,
   waitForJob,
@@ -9,7 +8,6 @@ import {
 import {
   listModels,
   pickSingleVersionModel,
-  selectModelFromDialog,
   selectCheckpoint,
   visibleGenerate,
 } from './helpers/generationHelpers.js';

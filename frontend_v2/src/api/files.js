@@ -85,4 +85,6 @@ export const assetsApi = {
     move: (assetId, body) => api.post(`/api/v2/assets/${assetId}/move`, body),
 };
 
+export const moveAsset = (assetId, body) => assetsApi.move(assetId, body);
+
 export default filesApi;

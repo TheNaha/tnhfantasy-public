@@ -1,11 +1,7 @@
 import { expect } from '@playwright/test';
-import {
-  apiGet,
-  expectToast,
-} from '../fixtures.js';
 
 async function listModels(page, directory) {
-  const data = await apiGet(page, `/files?directory=${directory}&limit=100`);
+  const data = await page.request.get(`/api/files?directory=${directory}&limit=100`).then(r => r.json());
   return data.files || [];
 }
 

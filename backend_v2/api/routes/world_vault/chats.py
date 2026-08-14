@@ -998,9 +998,10 @@ async def illustrate_chat(
 
     lora_name = character.lora if character and character.lora else None
 
-    from core.workflow_builder import build_image_job_workflow
+    from services.image_submission import submit_image_job
 
-    workflow, metadata = build_image_job_workflow(
+    job = await submit_image_job(
+        session,
         prompt=image_prompt,
         checkpoint=checkpoint,
         lora=lora_name,
@@ -1011,14 +1012,6 @@ async def illustrate_chat(
         character_id=chat.character_id,
         extra_metadata={"image_context": image_prompt},
     )
-
-    job_service = JobService(session)
-    job = await job_service.create_job(
-        task_type="image",
-        workflow=workflow,
-        metadata=metadata,
-    )
-    await queue_manager.enqueue(job.id, task_type="image")
     return {"job_id": job.id, "status": "queued", "message": "Illustration started"}
 
 

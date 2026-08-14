@@ -1,16 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+
+const STORY_LIST_KEY = ['world_vault', 'stories'];
+const STORY_DETAIL_KEY = (storyId) => ['world_vault', 'stories', storyId];
 
 export const useStories = () => {
     return useQuery({
-        queryKey: ['world_vault', 'stories'],
+        queryKey: STORY_LIST_KEY,
         queryFn: () => api.get('/api/v2/stories')
     });
 };
 
 export const useStory = (storyId) => {
     return useQuery({
-        queryKey: ['world_vault', 'stories', storyId],
+        queryKey: STORY_DETAIL_KEY(storyId),
         queryFn: () => api.get(`/api/v2/stories/${storyId}`),
         enabled: !!storyId
     });
@@ -32,15 +36,10 @@ export const useStoryImages = (storyId) => {
     });
 };
 
-export const useCreateStory = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (storyData) => api.post('/api/v2/stories', storyData),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
-        }
-    });
-};
+export const useCreateStory = () => useCreateResource({
+    basePath: '/api/v2/stories',
+    listQueryKey: STORY_LIST_KEY,
+});
 
 export const useCreateChapter = () => {
     const queryClient = useQueryClient();
@@ -86,26 +85,16 @@ export const useIllustrateChapter = () => {
     });
 };
 
-export const useDeleteStory = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: (storyId) => api.delete(`/api/v2/stories/${storyId}`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
-        }
-    });
-};
+export const useDeleteStory = () => useDeleteResource({
+    basePath: '/api/v2/stories',
+    listQueryKey: STORY_LIST_KEY,
+});
 
-export const useUpdateStory = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, ...data }) => api.put(`/api/v2/stories/${id}`, data),
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.id] });
-        }
-    });
-};
+export const useUpdateStory = () => useUpdateResource({
+    basePath: '/api/v2/stories',
+    listQueryKey: STORY_LIST_KEY,
+    detailQueryKey: STORY_DETAIL_KEY,
+});
 
 export const useDeleteChapter = () => {
     const queryClient = useQueryClient();

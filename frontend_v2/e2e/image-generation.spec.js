@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 import {
-  apiGet,
   uniqueName,
   waitForJob,
   makeTestImage,
@@ -8,6 +7,8 @@ import {
   seedCollection,
   cleanupEntities,
   drawMaskOnCanvas,
+  expectToast,
+  apiGet,
 } from './fixtures.js';
 import {
   listModels,
@@ -16,6 +17,15 @@ import {
   selectCheckpoint,
   visibleGenerate,
 } from './helpers/generationHelpers.js';
+
+async function uploadSourceImage(page, filename, rgb) {
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: filename,
+    mimeType: 'image/png',
+    buffer: makeTestImage({ width: 256, height: 256, rgb }),
+  });
+  await expectToast(page, /Image uploaded/);
+}
 
 const JOB_TIMEOUT = 360000;
 

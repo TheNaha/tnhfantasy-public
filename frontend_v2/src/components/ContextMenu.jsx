@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Copy, Download, FolderPlus, Eye, Trash2,
-    Sparkles, Share2
+    Sparkles, Share2, FolderOpen, CopyPlus
 } from 'lucide-react';
 
 const MotionDiv = motion.div;
@@ -278,6 +278,8 @@ export const createImageActions = ({
     onRemix,
     onShare,
     onDelete,
+    onMoveAsset,
+    onCopyAsset,
 }) => {
     const actions = [];
 
@@ -295,6 +297,12 @@ export const createImageActions = ({
     }
     if (onAddToCollection) {
         actions.push({ icon: FolderPlus, label: 'Add to Collection', onClick: onAddToCollection });
+    }
+    if (onMoveAsset) {
+        actions.push({ icon: FolderOpen, label: 'Move to...', onClick: onMoveAsset });
+    }
+    if (onCopyAsset) {
+        actions.push({ icon: CopyPlus, label: 'Copy to...', onClick: onCopyAsset });
     }
     if (onShare) {
         actions.push({ icon: Share2, label: 'Share', onClick: onShare });

@@ -289,4 +289,73 @@ test.describe('Roleplay Workspace (Module B)', () => {
     await chatInput.press('Enter');
     await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 120000 });
   });
+
+  test('@fullstack Real LLM reply completes end-to-end', async ({ page }) => {
+    test.setTimeout(300000);
+    const chat = await seedChat(page, { name: uniqueName('e2e-chat') });
+    created.push({ kind: 'chat', id: chat.id });
+
+    await page.goto(`/chat/${chat.id}`);
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
+
+    await chatInput.fill('Reply with exactly: fullstack-roleplay-ok');
+    await chatInput.press('Enter');
+
+    await expect(page.getByText('fullstack-roleplay-ok', { exact: false }).last()).toBeVisible({ timeout: 120000 });
+  });
+
+  test('@fullstack Agentic mode triggers image generation tool', async ({ page }) => {
+    test.setTimeout(300000);
+    const character = await seedCharacter(page, {
+      name: uniqueName('e2e-char'),
+      description: 'A test character for agentic image generation.',
+      personality: 'Creative and visual.',
+      scenario: 'An artist studio.',
+    });
+    created.push({ kind: 'character', id: character.id });
+
+    const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
+    created.push({ kind: 'chat', id: chat.id });
+
+    await page.goto(`/chat/${chat.id}`);
+    const agenticBtn = page.getByRole('button', { name: /agentic/i });
+    await expect(agenticBtn).toBeVisible({ timeout: 10000 });
+    await agenticBtn.click();
+    await page.waitForTimeout(500);
+
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
+    await chatInput.fill('Generate an image of a futuristic city at sunset.');
+    await chatInput.press('Enter');
+
+    await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 180000 });
+  });
+
+  test('@fullstack Character with visual_tags influences agentic prompt', async ({ page }) => {
+    test.setTimeout(300000);
+    const character = await seedCharacter(page, {
+      name: uniqueName('e2e-char'),
+      description: 'A visual character test.',
+      visual_tags: ['1boy', 'male focus', 'glowing eyes'],
+      lora_triggers: ['test_lora'],
+    });
+    created.push({ kind: 'character', id: character.id });
+
+    const chat = await seedChat(page, { name: uniqueName('e2e-chat'), character_id: character.id });
+    created.push({ kind: 'chat', id: chat.id });
+
+    await page.goto(`/chat/${chat.id}`);
+    const agenticBtn = page.getByRole('button', { name: /agentic/i });
+    await expect(agenticBtn).toBeVisible({ timeout: 10000 });
+    await agenticBtn.click();
+    await page.waitForTimeout(500);
+
+    const chatInput = page.getByPlaceholder(/type a message/i);
+    await expect(chatInput).toBeVisible({ timeout: 10000 });
+    await chatInput.fill('Draw a portrait.');
+    await chatInput.press('Enter');
+
+    await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 180000 });
+  });
 });
