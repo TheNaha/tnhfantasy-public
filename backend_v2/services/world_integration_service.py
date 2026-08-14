@@ -12,6 +12,9 @@ from core.entities import (
     CollectionImage,
     StoryChapter,
     StoryBeatRole,
+    Story,
+    Lorebook,
+    LorebookEntry,
 )
 from core.events import event_bus, EventType, Event
 from infrastructure.database import get_session_context
@@ -226,18 +229,35 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
     if outputs and isinstance(outputs[0], dict):
         tool_calls = outputs[0].get("tool_calls")
 
-    # NOTE: regeneration deletes the old trailing messages in the route
-    # (chats.py regenerate_reply) and then enqueues a fresh job, so both the
-    # normal and regenerated paths must insert a NEW CHAR message. The old
-    # alternates/swipe overwrite branch was removed — it overwrote the
-    # character message BEFORE the prompt because the old reply was already
-    # deleted, pushing regenerated output above the prompt.
     async with get_session_context() as session:
         try:
             metadata = job_data.get("metadata", {}) or {}
             msg_metadata = {"agentic": bool(tool_calls)}
             if "orchestrator_depth" in metadata:
                 msg_metadata["orchestrator_depth"] = metadata["orchestrator_depth"]
+
+            if metadata.get("is_swipe") and metadata.get("target_message_id"):
+                # Append as alternate to existing message
+                target_msg = session.get(Message, metadata["target_message_id"])
+                if target_msg:
+                    target_meta = target_msg.message_metadata or {}
+                    alternates = target_meta.get("alternates", [target_msg.content])
+                    if target_msg.content not in alternates:
+                        alternates.insert(0, target_msg.content)
+                    
+                    alternates.append(content)
+                    active_index = len(alternates) - 1
+                    
+                    target_msg.content = content
+                    target_msg.tool_calls = tool_calls
+                    target_meta.update(msg_metadata)
+                    target_meta.update({"alternates": alternates, "active_index": active_index})
+                    target_msg.message_metadata = target_meta
+                    session.add(target_msg)
+                    session.commit()
+                    return
+
+            # Normal path: insert NEW CHAR message
             msg = Message(
                 role=MessageRole.CHAR,
                 kind=MessageKind.CHAR,
@@ -283,6 +303,30 @@ async def _handle_story_continue(job_data: dict[str, Any]):
             session.rollback()
             logger.warning("story_continue_failed", job_id=job_data.get("id"), error=str(e))
 
+
+async def _handle_chat_tts(job_data: dict[str, Any]):
+    outputs = job_data.get("outputs", [])
+    chat_id = job_data.get("metadata", {}).get("chat_id")
+    message_id = job_data.get("metadata", {}).get("message_id")
+    audio_path = (
+        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
+    ) or job_data.get("image_path")
+    
+    if not chat_id or not message_id or not audio_path:
+        return
+        
+    async with get_session_context() as session:
+        try:
+            msg = session.get(Message, message_id)
+            if msg and msg.chat_id == chat_id:
+                meta = dict(msg.message_metadata or {})
+                meta["audio_path"] = audio_path
+                msg.message_metadata = meta
+                session.add(msg)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning("chat_tts_msg_failed", job_id=job_data.get("id"), error=str(e))
 
 async def _handle_chat_image(job_data: dict[str, Any]):
     outputs = job_data.get("outputs", [])
@@ -367,6 +411,80 @@ async def _handle_story_image(job_data: dict[str, Any]):
             logger.warning("story_image_failed", job_id=job_data.get("id"), error=str(e))
 
 
+async def _handle_story_parse(job_data: dict[str, Any]):
+    text = _first_text(job_data)
+    story_id = job_data.get("metadata", {}).get("story_id")
+    if not text or not story_id:
+        return
+
+    parsed = None
+    try:
+        import json
+        parsed = json.loads(text)
+    except Exception:
+        logger.warning("story_parse_invalid_json", job_id=job_data.get("id"))
+        return
+    if not isinstance(parsed, dict):
+        return
+
+    async with get_session_context() as session:
+        try:
+            story = session.get(Story, story_id)
+            if not story:
+                return
+
+            for char_data in (parsed.get("characters") or []):
+                if not char_data.get("name"):
+                    continue
+                character = Character(
+                    name=char_data.get("name", ""),
+                    description=char_data.get("description"),
+                    personality=char_data.get("personality"),
+                )
+                session.add(character)
+                session.commit()
+                session.refresh(character)
+
+            for loc_data in (parsed.get("locations") or []):
+                if not loc_data.get("name"):
+                    continue
+                lorebook = Lorebook(
+                    name=loc_data.get("name", ""),
+                    description=loc_data.get("description"),
+                )
+                session.add(lorebook)
+                session.commit()
+                session.refresh(lorebook)
+                entry = LorebookEntry(
+                    lorebook_id=lorebook.id,
+                    content=loc_data.get("description", ""),
+                    keys=[loc_data.get("name", "")],
+                )
+                session.add(entry)
+
+            for lore_data in (parsed.get("lorebooks") or []):
+                if not lore_data.get("name"):
+                    continue
+                lorebook = Lorebook(
+                    name=lore_data.get("name", ""),
+                    description=lore_data.get("description"),
+                )
+                session.add(lorebook)
+                session.commit()
+                session.refresh(lorebook)
+                entry = LorebookEntry(
+                    lorebook_id=lorebook.id,
+                    content=lore_data.get("description", ""),
+                    keys=[lore_data.get("name", "")],
+                )
+                session.add(entry)
+
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning("story_parse_failed", job_id=job_data.get("id"), error=str(e))
+
+
 async def start_world_integration_service():
     """Start listening to EventBus for world vault events."""
     logger.info("starting_world_integration_service")
@@ -402,7 +520,11 @@ async def start_world_integration_service():
                 await _handle_story_continue(job_data)
             elif event_type == "chat_image":
                 await _handle_chat_image(job_data)
+            elif event_type == "chat_tts":
+                await _handle_chat_tts(job_data)
             elif event_type == "story_image":
                 await _handle_story_image(job_data)
+            elif event_type == "story_parse":
+                await _handle_story_parse(job_data)
         except Exception as exc:
             logger.error("world_integration_event_processing_failed", error=str(exc))

@@ -32,7 +32,7 @@ const DEFAULT_FORM = {
     visual_tags: [], lora_triggers: [], voice_profile: '',
 };
 
-function CharacterModal({ isOpen, onClose, character, onSave }) {
+export function CharacterModal({ isOpen, onClose, character, onSave }) {
     const [form, setForm] = useState(() => {
         if (character) {
             return {

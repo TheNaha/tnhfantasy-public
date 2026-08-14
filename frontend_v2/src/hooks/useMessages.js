@@ -27,6 +27,19 @@ export const useEditMessage = () => {
     });
 };
 
+export const useDeleteMessage = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, msgId }) =>
+            api.delete(`/api/v2/chats/${chatId}/messages/${msgId}`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });
+        }
+    });
+};
+
+
 export const useRollbackChat = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -76,6 +89,28 @@ export const useSwipeMessage = () => {
     return useMutation({
         mutationFn: ({ chatId, msgId, direction, index }) =>
             api.post(`/api/v2/chats/${chatId}/messages/${msgId}/swipe`, { direction, index }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+        },
+    });
+};
+
+export const useGenerateSwipe = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, msgId }) =>
+            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/generate-swipe`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
+        },
+    });
+};
+
+export const useNarrateMessage = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ chatId, msgId }) =>
+            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/narrate`),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         },

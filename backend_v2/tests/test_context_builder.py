@@ -172,12 +172,13 @@ def test_sections_character_block_and_tavern_vars(session):
     char = _seed_character(session)
     sections = build_system_prompt_sections(session, character=char, persona_name="Kai")
     by_key = {s["key"]: s for s in sections}
-    assert "character" in by_key
-    assert "{{char}}" not in by_key["character"]["content"]
-    assert "{user}" not in by_key["character"]["content"]
-    assert "Aria" in by_key["character"]["content"]
-    assert "Kai" in by_key["character"]["content"]
-    assert by_key["char_append"]["content"] == "Always mention the moon."
+    char_key = f"character_{char.id}"
+    assert char_key in by_key
+    assert "{{char}}" not in by_key[char_key]["content"]
+    assert "{user}" not in by_key[char_key]["content"]
+    assert "Aria" in by_key[char_key]["content"]
+    assert "Kai" in by_key[char_key]["content"]
+    assert by_key[f"char_append_{char.id}"]["content"] == "Always mention the moon."
 
 
 def test_sections_override_replaces_character(session):
@@ -262,7 +263,7 @@ def test_build_chat_context_assembles_and_maps_messages(session):
     session.commit()
 
     system_prompt, all_msgs = build_chat_context(
-        session, messages, character=char, persona_name="Kai"
+        session, messages, characters=[char], persona_name="Kai"
     )
     assert system_prompt
     assert "Aria" in system_prompt

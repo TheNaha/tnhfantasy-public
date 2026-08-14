@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -24,6 +24,9 @@ import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import IllustrateModal from '../components/story/IllustrateModal';
 import StoryGalleryModal from '../components/story/StoryGalleryModal';
+import ParseStoryModal from '../components/story/ParseStoryModal';
+import { CharacterModal } from './Characters';
+import { LorebookModal } from '../components/story/LorebookModal';
 
 export default function StorySandbox() {
     // Only default the context panel open on desktop — on phones/tablets the
@@ -32,6 +35,7 @@ export default function StorySandbox() {
     const [editorContent, setEditorContent] = useState('');
     const [beatInput, setBeatInput] = useState('');
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [showParseModal, setShowParseModal] = useState(false);
     const [newStoryTitle, setNewStoryTitle] = useState('');
     const textareaRef = useRef(null);
     const streamingRef = useRef('');
@@ -62,6 +66,7 @@ export default function StorySandbox() {
     const deleteChapter = useDeleteChapter();
     const updateChapter = useUpdateChapter();
     const illustrateChapter = useIllustrateChapter();
+    const parseStory = useParseStory();
 
     const [isStreaming, setIsStreaming] = useState(false);
     // Keep a ref in sync so WebSocket handlers can read the live value
@@ -77,6 +82,19 @@ export default function StorySandbox() {
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
     const [isIllustrating, setIsIllustrating] = useState(false);
     const [showGallery, setShowGallery] = useState(false);
+    const [editingCharacter, setEditingCharacter] = useState(null);
+    const [editingLorebook, setEditingLorebook] = useState(null);
+
+    const updateCharacter = useUpdateCharacter();
+
+    const handleSaveCharacter = async (form) => {
+        const { _avatarFile, ...payload } = form;
+        if (editingCharacter) {
+            await updateCharacter.mutateAsync({ id: editingCharacter.id, ...payload });
+            setEditingCharacter(null);
+        }
+    };
+
     const [isPreviewMode, setIsPreviewMode] = useState(false);
     const [showBeatsPanel, setShowBeatsPanel] = useState(false);
     const [branchingBeatId, setBranchingBeatId] = useState(null);
@@ -91,6 +109,12 @@ export default function StorySandbox() {
     useEffect(() => {
         titlePollCancelledRef.current = true;
     }, [activeChapterId]);
+
+    useEffect(() => {
+        const handler = () => setShowParseModal(true);
+        window.addEventListener('open-parse-story', handler);
+        return () => window.removeEventListener('open-parse-story', handler);
+    }, []);
 
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
@@ -136,6 +160,30 @@ export default function StorySandbox() {
         }
     }, [activeChapterId, activeChapter]);
 
+    const handleParseStoryComplete = async (text) => {
+        setShowParseModal(false);
+        try {
+            const titleMatch = text.trim().split('\n')[0].substring(0, 50).replace(/[^\w\s-]/gi, '').trim();
+            const title = titleMatch ? titleMatch : 'Imported Story';
+            
+            const newStory = await createStory.mutateAsync({ title });
+            await updateChapter.mutateAsync({ 
+                storyId: newStory.id, 
+                chapterId: newStory.chapters?.[0]?.id || '1', 
+                updates: { content: text }
+            });
+            
+            await parseStory.mutateAsync({ storyId: newStory.id, text });
+            
+            navigate(`/story/${newStory.id}`, { replace: true });
+            
+            toast.success("Story imported. AI is parsing Characters & Lore in the background!");
+        } catch (err) {
+            console.error(err);
+            toast.error("Failed to import story.");
+        }
+    };
+
     // WebSocket for streaming story continuation
     useEffect(() => {
         const getJob = (event) => event?.data?.job || {};
@@ -162,12 +210,77 @@ export default function StorySandbox() {
             }
         });
 
-        const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
+        const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, async (event) => {
             const job = getJob(event);
             const meta = job.metadata_ ?? job.metadata ?? {};
             const storyId = meta.story_id;
             const chapterId = meta.chapter_id;
             const eventType = job.task_type || meta.workspace;
+            
+            if (meta.type === 'story_parse' && storyId === activeStoryId) {
+                try {
+                    const parsed = JSON.parse(job.text ?? job.message);
+                    if (parsed.characters || parsed.locations || parsed.lorebooks) {
+                        toast.success("AI finished parsing story! Saving entities...");
+                        
+                        const newLorebookIds = [];
+                        const newCharacterIds = [];
+
+                        // 1. Insert characters
+                        for (const char of (parsed.characters || [])) {
+                            const res = await fetch('/api/world_vault/characters', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name: char.name, description: char.description || '', persona: char.personality || '' })
+                            });
+                            if (res.ok) {
+                                const data = await res.json();
+                                newCharacterIds.push(data.id);
+                            }
+                        }
+
+                        // 2. Insert lorebooks (combining locations and lorebooks)
+                        const allLore = [...(parsed.locations || []), ...(parsed.lorebooks || [])];
+                        for (const lore of allLore) {
+                            const res = await fetch('/api/world_vault/lorebooks', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name: lore.name, description: lore.description || '' })
+                            });
+                            if (res.ok) {
+                                const data = await res.json();
+                                newLorebookIds.push(data.id);
+                            }
+                        }
+
+                        // 3. Link to story
+                        if (newCharacterIds.length > 0 || newLorebookIds.length > 0) {
+                            const currentStoryRes = await fetch(`/api/world_vault/stories/${storyId}`);
+                            if (currentStoryRes.ok) {
+                                const currentStory = await currentStoryRes.json();
+                                const uniqueCharIds = Array.from(new Set([...(currentStory.character_ids || []), ...newCharacterIds]));
+                                const uniqueLoreIds = Array.from(new Set([...(currentStory.lorebook_ids || []), ...newLorebookIds]));
+                                
+                                await fetch(`/api/world_vault/stories/${storyId}`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        character_ids: uniqueCharIds,
+                                        lorebook_ids: uniqueLoreIds
+                                    })
+                                });
+                            }
+                        }
+
+                        // Refresh the world vault to show new entities
+                        queryClient.invalidateQueries({ queryKey: ['world_vault'] });
+                        toast.success("Successfully imported Characters & Lore!");
+                    }
+                } catch (e) {
+                    console.error("Failed to parse story entities from LLM", e);
+                }
+                return;
+            }
             
             if (storyId === activeStoryId && chapterId === activeChapterId) {
                 if (eventType === 'image') {
@@ -580,6 +693,26 @@ export default function StorySandbox() {
                                 onClose={() => { setShowCreateModal(false); setNewStoryTitle(''); }}
                             />
                         )}
+                        <ParseStoryModal
+                            isOpen={showParseModal}
+                            onClose={() => setShowParseModal(false)}
+                            onComplete={handleParseStoryComplete}
+                        />
+
+                        {editingCharacter && (
+                            <CharacterModal
+                                isOpen={true}
+                                onClose={() => setEditingCharacter(null)}
+                                character={editingCharacter}
+                                onSave={handleSaveCharacter}
+                            />
+                        )}
+
+                        <LorebookModal
+                            isOpen={!!editingLorebook}
+                            onClose={() => setEditingLorebook(null)}
+                            lorebook={editingLorebook}
+                        />
                     </>
                 ) : (
                     <>
@@ -671,6 +804,8 @@ export default function StorySandbox() {
                             onClose={() => { setMobileTab('write'); setIsPanelOpen(false); }}
                             onShowGallery={() => setShowGallery(true)}
                             onUpdateStory={(updates) => { if (activeStoryId) updateStory.mutate({ id: activeStoryId, ...updates }); }}
+                            onEditCharacter={setEditingCharacter}
+                            onEditLorebook={setEditingLorebook}
                         />
                     </motion.div>
                 )}

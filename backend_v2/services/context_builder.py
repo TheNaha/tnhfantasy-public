@@ -21,20 +21,29 @@ DEFAULT_MAX_TOKENS = 4096
 CHARS_PER_TOKEN = 3.5
 
 
+import tiktoken
+
+def get_tokenizer():
+    """Cache the tiktoken encoder to avoid reloading it."""
+    if not hasattr(get_tokenizer, "_enc"):
+        get_tokenizer._enc = tiktoken.get_encoding("cl100k_base")
+    return get_tokenizer._enc
+
 def estimate_tokens(text: str) -> int:
-    """Estimate token count from text using a simple heuristic.
+    """Estimate token count from text using tiktoken.
     
-    Uses word-boundary splitting + character length to approximate tokenization
-    without requiring a tokenizer dependency. For English/mixed content:
-    - Splits on whitespace/punctuation to get rough word count
-    - Applies chars-per-token ratio as a secondary signal
-    - Returns the higher of the two estimates for safety
+    Uses cl100k_base (standard for GPT-3.5/4/Llama-3/Mistral compatible contexts).
+    Falls back to a chars-per-token heuristic if tokenization fails.
     """
     if not text:
         return 0
-    word_count = len(re.findall(r'\S+', text))
-    char_estimate = len(text) / CHARS_PER_TOKEN
-    return max(int(char_estimate), word_count)
+    try:
+        return len(get_tokenizer().encode(text, disallowed_special=()))
+    except Exception as e:
+        logger.warning(f"tiktoken failed, using heuristic: {e}")
+        word_count = len(re.findall(r'\S+', text))
+        char_estimate = len(text) / CHARS_PER_TOKEN
+        return max(int(char_estimate), word_count)
 
 
 def build_character_system_prompt(character) -> str:
@@ -191,6 +200,7 @@ def prune_context(
 def build_system_prompt_sections(
     session: Session,
     character=None,
+    characters: list = None,
     lorebook_ids: list[str] = None,
     persona_name: str | None = None,
     persona_description: str | None = None,
@@ -203,6 +213,7 @@ def build_system_prompt_sections(
     story_genre: str | None = None,
     story_memory: str | None = None,
     story_character_ids: list[str] | None = None,
+    active_character_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -233,23 +244,39 @@ def build_system_prompt_sections(
     """
     sections: list[dict[str, Any]] = []
 
-    if character:
-        char_prompt = character.system_prompt or build_character_system_prompt(character)
+    chars_to_process = characters if characters is not None else ([character] if character else [])
+    primary_char = chars_to_process[0] if chars_to_process else (character if character else None)
+
+    active_char = None
+    if active_character_id:
+        for c in chars_to_process:
+            if c.id == active_character_id:
+                active_char = c
+                break
+
+    if active_char:
+        sections.append({
+            "key": "active_character",
+            "label": f"Speaking as — {active_char.name or active_char.id}",
+            "content": f"[You are currently speaking as {active_char.name or active_char.id}. Stay in character and respond from their perspective.]",
+            "source": "active_character"
+        })
+
+    for char in chars_to_process:
+        char_prompt = char.system_prompt or build_character_system_prompt(char)
         if char_prompt:
             sections.append({
-                "key": "character",
-                "label": f"Character — {character.name or character.id}",
+                "key": f"character_{char.id}",
+                "label": f"Character — {char.name or char.id}",
                 "content": char_prompt,
-                "source": "character",
+                "source": "character"
             })
-        # Per-character append (applies to every chat using this character)
-        char_append = getattr(character, "append_system_prompt", None)
-        if char_append and char_append.strip():
+        if char.append_system_prompt:
             sections.append({
-                "key": "char_append",
-                "label": f"Character extra — {character.name or character.id}",
-                "content": char_append.strip(),
-                "source": "char_append",
+                "key": f"char_append_{char.id}",
+                "label": f"Character Append — {char.name or char.id}",
+                "content": char.append_system_prompt,
+                "source": "char_append"
             })
 
     if system_prompt_override and system_prompt_override.strip():
@@ -299,7 +326,7 @@ def build_system_prompt_sections(
             if section["source"] in substitutable:
                 section["content"] = substitute_tavern_vars(
                     section["content"],
-                    char=(character.name if character else "") or "",
+                    char=(primary_char.name if primary_char else "") or "",
                     user=persona_name or "User",
                 )
 
@@ -459,10 +486,10 @@ def build_system_prompt_sections(
         if characters_content:
             sections.append({
                 "key": "story_characters",
-                "label": f"Story characters ({len(characters_content)})",
-                "content": "\n\n".join(characters_content),
-                "source": "story_characters",
-            })
+            "label": f"Story characters ({len(characters_content)})",
+            "content": "\n\n".join(characters_content),
+            "source": "story_characters",
+        })
 
     return sections
 
@@ -470,7 +497,7 @@ def build_system_prompt_sections(
 def build_chat_context(
     session: Session,
     messages: list,
-    character=None,
+    characters: list = None,
     lorebook_ids: list[str] = None,
     max_context_tokens: int = DEFAULT_MAX_TOKENS,
     persona_name: str | None = None,
@@ -482,6 +509,7 @@ def build_chat_context(
     story_genre: str | None = None,
     story_memory: str | None = None,
     story_character_ids: list[str] | None = None,
+    active_character_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -510,7 +538,7 @@ def build_chat_context(
 
     sections = build_system_prompt_sections(
         session,
-        character=character,
+        characters=characters,
         lorebook_ids=lorebook_ids,
         persona_name=persona_name,
         persona_description=persona_description,
@@ -522,6 +550,7 @@ def build_chat_context(
         story_genre=story_genre,
         story_memory=story_memory,
         story_character_ids=story_character_ids,
+        active_character_id=active_character_id,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 
@@ -531,10 +560,11 @@ def build_chat_context(
     # Wrapped in a lightweight "example session" marker so the model knows
     # these are illustrative, not real prior turns.
     example_messages: list[dict[str, str]] = []
-    if character and not system_prompt_override and getattr(character, "mes_example", None):
+    primary_char = (characters or [None])[0]
+    if primary_char and not system_prompt_override and getattr(primary_char, "mes_example", None):
         raw_examples = parse_mes_example(
-            character.mes_example,
-            char_name=character.name or "Character",
+            primary_char.mes_example,
+            char_name=primary_char.name or "Character",
             user_name=persona_name or "User",
         )
         if raw_examples:

@@ -270,7 +270,7 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
         return "impersonation"
 
     for candidate in (result_type, workflow_type):
-        if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply"}:
+        if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply", "story_parse"}:
             return candidate
 
     return "chat_reply"
@@ -534,9 +534,10 @@ async def _finalize_image_job(
 
     if image_path:
         chat_id = metadata.get("chat_id")
+        is_audio = str(image_path).endswith(('.wav', '.mp3', '.ogg', '.flac'))
         if chat_id:
             event_extra = {
-                "type": "chat_image",
+                "type": "chat_tts" if (metadata.get("type") == "chat_tts" or is_audio) else "chat_image",
                 "chat_id": chat_id,
                 "image_path": image_path,
                 "metadata": metadata,

@@ -19,8 +19,8 @@ bash setup_jules.sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
 
 # Backend only (from backend_v2/)
-pip install -r requirements.txt && uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
-pytest
+.venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+.venv/bin/pytest
 
 # Frontend only (from frontend_v2/)
 npm install && npm run dev -- --host 0.0.0.0 --port 5174

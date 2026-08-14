@@ -1,54 +1,15 @@
-# Project Roadmap: The AI Fantasy Engine
+# TNHComfy Implementation Plan
 
-See `AGENTS.md` and `docs/` for architecture, conventions, and API reference. See `VISION.md` for the macro-level trajectory of the project.
+## Completed Phases
+- **Phase 1: "Demo to Pro" QoL Refinements**: Chat swiping, editing, group chats, Story Sandbox rich text editing, inline editing of Lorebooks/Characters, and visual tag searching.
+- **Phase 2: System Consolidation & Hardening**: Centralized ComfyUI payload assembly (`useWorkflowBuilder`), integrated OpenAI token counting (`tiktoken`), and stabilized Beam execution.
+- **Phase 3: Immediate New Modalities**: ComfyUI-Powered Audio / TTS added, and AI Story Parsing endpoints implemented.
 
-## Phases
+## Upcoming Phases (Future Frontiers)
+1. **Autobiographical Memory (RAG)**: Indexing all past chat messages and story beats into `pgvector`.
+2. **Visual Novel / Comic Compiler**: Exporting Stories to PDFs and Comics.
+3. **Relationship Graph UI**: Obsidian-like relationship node visualization.
+4. **Agentic Idle Simulation**: Background cron jobs for autonomous offline character interactions.
+5. **Video / Animation**: AnimateDiff for looping character avatars.
 
-### Phase 1: Foundation ✓
-- FastAPI backend with PostgreSQL + pgvector, SQLModel, auto-run migrations at startup (no Alembic), domain-driven structure
-- React frontend with Zustand (UI) + React Query (server data), Vite on 5174
-- Docker Compose stack (backend → frontend → providers)
-- Provider container system for ComfyUI inference workers
-
-### Phase 2: Refactoring & Consolidation ✓ (Batches B1-B6)
-- 11 critical backend bugs, 8 high-severity fixes, 8 frontend fixes, 4 architecture cleanups
-- 7 features: LB persistence, lifecycle cleanup, autopopulate, job/provider UI
-- Autopopulate search unification with Discover page
-
-### Phase 3: Harden & Production-Readiness (Current)
-- [x] Codebase hardening: fix N+1 queries, missing endpoints, DI violations, unreachable code
-- [x] Frontend state management: migrate server data from Zustand to React Query
-- [x] Provider container (Paused): fix protocol compliance, path handling, deletion logic
-- [x] Infra: clean up tracked patch files, unify Docker Compose docs, remove old `docs/plan.md` (superseded by this file)
-
----
-
-### Phase 4: The World Vault (Data Layer & State) [COMPLETED]
-*Focus: Laying the groundwork for Characters, Chats, and Storytelling without breaking existing Image Generation.*
-- [x] **Database Migration (SQLite -> PostgreSQL):** Migrated to PostgreSQL with `pgvector` for Lorebook/character semantic embeddings. Migrations run automatically at backend startup via `infrastructure/migrations/steps.py` (no Alembic).
-- [x] **Database Schema:** Expand PostgreSQL `core/entities.py` to include `Characters` (indexing only), `Chats`, `Messages`, `Lorebooks`, and `Scenarios`.
-- [x] **Job & Provider Schemas:** Update `Job` entity to support `task_type` (`image`, `text`, `audio`) and decouple `workflow` from ComfyUI. Update `Provider` entity with `worker_type`.
-- [x] **Backend API:** Implement CRUD endpoints for the new World Vault entities (`/api/v2/characters`, `/api/v2/chats`, etc.).
-- [x] **Asset Storage (Filesystem First):** Upgrade the filesystem indexer to handle Text and Audio assets natively. Character cards (V2 PNG) act as the source of truth, with the database acting as a metadata indexer. Introduce `/{user_id}/` root partitions immediately to future-proof for multi-tenancy.
-- [x] **Context Builder (Stateful Frontend):** Build the foundational React Query caches, Zustand UI states, and context assembly logic to prune/manage LLM context limits before sending payloads to the backend.
-
-### Phase 5: The Universal Adapter (Workers)
-*Focus: Refactoring the provider architecture to support BYO Compute (Local URLs, Ollama) and LLMs.*
-- [x] **Codebase Merger:** Consolidate `beam_worker` and `modal_worker` into a unified `image_worker`. Extract ComfyUI specific execution logic out of `provider_core` and strictly into `image_worker`.
-- [x] **Provider Core:** Refactor `provider_core` to strictly handle Auth, Logging, State, and the Unified Streaming Protocol.
-- [x] **Load Balancer Updates:** Update `services/load_balancer.py` to route jobs based on `task_type` mapping to `worker_type`.
-- [x] **BYO Compute Logic:** Implement the `ENGINE` environment variable strategy (`ENGINE=modal`, `ENGINE=direct_url`) within the workers.
-- [x] **LLM Integration (Hybrid Model):** Support both API-based LLMs (`openai_compat` for OpenRouter/Ollama) and Managed Weight LLMs (e.g., deploying vLLM to Modal where TNHComfy handles downloading and syncing the LLM weights).
-- [x] **Streaming Protocol:** Build the streaming translator inside the workers (converting varying SSE/NDJSON formats into a single standard `TaskEvent` stream for the backend).
-
-### Phase 6: The Roleplay Workspace (UI & Integration)
-*Focus: Building the frontend chat interface and connecting it to the Image Generator via Agentic Workflows.*
-- [x] **Character UI:** Build the Character Card management UI, supporting import/export of V2/V3 spec PNGs with custom TNHComfy metadata (e.g., visual tags, LoRA triggers).
-- [x] **Chat UI:** Build the dedicated Roleplay Workspace layout (split-pane chat).
-- [x] **Agentic Orchestrator (Backend):** Implement an orchestrator service that intercepts native OpenAI-spec JSON tool calls, allows Autonomous Looping (stringing multiple tools together), and enforces a sensible Max Tool Calls limit to prevent infinite loops.
-- [x] **Workspace-Scoped Galleries:** Build isolated galleries (e.g., Roleplay Gallery vs. main Image Generation Gallery). Ensure assets generated by a specific chatbot are tagged with metadata associating them with that character, allowing for character-specific image filtering.
-- [x] **Asset Cross-Pollination:** Build the logic for users to migrate or reference assets freely between different workspaces.
-
-### Phase 7: The Story Sandbox & Future Frontiers
-*Focus: Completing the vision with the sandbox.*
-- [x] **Story UI:** Build the Story Sandbox Workspace (AI Dungeon style interactive document editor).
+*This document serves as the roadmap for future agent modifications.*

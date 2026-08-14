@@ -2,13 +2,13 @@ import { memo, useState } from 'react';
 import clsx from 'clsx';
 import {
     Activity, Check, ChevronLeft, ChevronRight, Clock, MapPin,
-    MessageSquare, Pencil, Pin, PinOff, RotateCcw, Undo2,
+    MessageSquare, Pencil, Pin, PinOff, RotateCcw, Undo2, Sparkles, Volume2, Trash2, ImageIcon
 } from 'lucide-react';
-import { thumbUrl } from '../../utils/assetUrl';
+import { thumbUrl, assetUrl } from '../../utils/assetUrl';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import TavernMessage from './TavernMessage';
 
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onRegenerate, onRollback, onPin, onSwipe, onAvatarClick }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(msg.content);
 
@@ -106,6 +106,9 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         {(msg.role === 'char' || msg.role === 'assistant') ? (
                             <div className="flex flex-col gap-1.5 w-full">
                                 {msg.content && <TavernMessage content={msg.content} />}
+                                {meta.audio_path && (
+                                    <audio src={assetUrl(meta.audio_path)} controls className="h-8 rounded w-full max-w-xs mt-1" />
+                                )}
                                 {msg.tool_calls?.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                         {typeof meta.orchestrator_depth === 'number' && (
@@ -173,6 +176,9 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         ) : msg.role === 'user' ? (
                             <div className="text-sm leading-relaxed break-words text-gray-100">
                                 <TavernMessage content={msg.content} alignRight />
+                                {meta.audio_path && (
+                                    <audio src={assetUrl(meta.audio_path)} controls className="h-8 rounded w-full max-w-xs mt-1" />
+                                )}
                                 {msg.image_path && (
                                     <div className="mt-3">
                                         <img src={thumbUrl(msg.image_path)} alt="Attachment" loading="lazy" decoding="async" className="rounded-xl max-w-full h-auto border border-white/10 shadow-lg" />
@@ -218,23 +224,59 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         )}
                         <div className="flex items-center gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity mt-0.5">
                             {(msg.role === 'user' || msg.role === 'char') && (
+                                <>
+                                    <button
+                                        onClick={() => { setDraft(msg.content); setEditing(true); }}
+                                        className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                        title="Edit message"
+                                    >
+                                        <Pencil size={11} />
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (window.confirm('Delete this message?')) {
+                                                onDelete?.(msg.id);
+                                            }
+                                        }}
+                                        className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
+                                        title="Delete message"
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                </>
+                            )}
+                            {msg.role === 'char' && (
                                 <button
-                                    onClick={() => { setDraft(msg.content); setEditing(true); }}
-                                    className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
-                                    title="Edit message"
+                                    onClick={() => onGenerateSwipe?.(msg.id)}
+                                    className="p-1 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
+                                    title="Generate alternate reply (Swipe)"
                                 >
-                                    <Pencil size={11} />
+                                    <Sparkles size={11} />
                                 </button>
                             )}
                             {(canRegenerate || msg.role === 'user') && (
                                 <button
                                     onClick={() => onRegenerate?.(msg.id)}
                                     className="p-1 rounded-md text-gray-500 hover:text-green-400 hover:bg-white/5 transition-colors"
-                                    title="Regenerate from here"
+                                    title="Regenerate from here (Deletes following messages)"
                                 >
                                     <RotateCcw size={11} />
                                 </button>
                             )}
+                            <button
+                                onClick={() => onGenerateTTS?.(msg.id)}
+                                className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                title="Generate TTS"
+                            >
+                                <Volume2 size={11} />
+                            </button>
+                            <button
+                                onClick={() => onIllustrate?.(msg.id)}
+                                className="p-1 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"
+                                title="Illustrate Message"
+                            >
+                                <ImageIcon size={11} />
+                            </button>
                             <button
                                 onClick={() => onRollback?.(msg.id)}
                                 className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"

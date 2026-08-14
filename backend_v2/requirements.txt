@@ -40,6 +40,7 @@ structlog>=23.2.0
 # LLM and Embeddings
 sentence-transformers>=2.2.2
 torch>=2.0.0 --extra-index-url https://download.pytorch.org/whl/cpu
+tiktoken>=0.7.0
 
 # Prometheus Metrics
 prometheus_client>=0.20.0

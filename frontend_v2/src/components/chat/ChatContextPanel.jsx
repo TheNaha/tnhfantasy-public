@@ -167,9 +167,75 @@ function ChatContextPanel({
                     </div>
                 ) : (
                     <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">
-                        No character assigned
+                        No primary character assigned
                     </p>
                 )}
+
+                {/* Additional Characters */}
+                <div className="mt-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between mb-3">
+                        <h5 className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest">
+                            Group Members
+                        </h5>
+                        <select
+                            value=""
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if (val) {
+                                    const current = activeChat?.additional_character_ids || [];
+                                    if (!current.includes(val)) {
+                                        onChatUpdate({ additional_character_ids: [...current, val] });
+                                    }
+                                }
+                            }}
+                            className="bg-gray-800 border border-gray-700 text-xs rounded px-2 py-1 text-gray-300 focus:outline-none max-w-[120px] truncate"
+                        >
+                            <option value="">+ Add Member</option>
+                            {characters
+                                .filter(c => c.id !== activeChat?.character_id && !(activeChat?.additional_character_ids || []).includes(c.id))
+                                .map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    <div className="space-y-1.5">
+                        {(activeChat?.additional_character_ids || []).map(id => {
+                            const c = characters.find(char => char.id === id);
+                            if (!c) return null;
+                            return (
+                                <div key={c.id} className="flex items-center justify-between bg-gray-800/40 px-2 py-1.5 rounded-lg group">
+                                    <div className="flex items-center gap-2 overflow-hidden">
+                                        <div className="w-5 h-5 rounded-full bg-gray-700 shrink-0 overflow-hidden">
+                                            {c.avatar_path ? (
+                                                <img src={getAvatarUrl(c.id)} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <User size={10} className="mx-auto mt-1 text-gray-400" />
+                                            )}
+                                        </div>
+                                        <span className="text-xs text-gray-300 truncate">{c.name}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-opacity"
+                                        title="Remove from group"
+                                        onClick={() => {
+                                            const current = activeChat?.additional_character_ids || [];
+                                            onChatUpdate({ additional_character_ids: current.filter(cid => cid !== c.id) });
+                                        }}
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                    </button>
+                                </div>
+                            );
+                        })}
+                        {!(activeChat?.additional_character_ids || []).length && (
+                            <p className="text-[10px] text-gray-600 text-center py-2">
+                                Add more characters for a group chat
+                            </p>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* AI Model + Image generation */}

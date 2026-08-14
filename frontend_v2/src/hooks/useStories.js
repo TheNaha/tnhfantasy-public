@@ -115,3 +115,14 @@ export const useUpdateChapter = () => {
         }
     });
 };
+
+export const useParseStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, text }) => api.post(`/api/v2/stories/parse`, { story_id: storyId, text }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
+        }
+    });
+};

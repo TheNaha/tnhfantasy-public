@@ -9,7 +9,7 @@ import { useEffect } from 'react';
 import { ImageIcon, Settings2, Link as LinkIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
-import { generateApi, createIdempotencyKey } from '../api';
+
 import ImageUploader from '../components/generator/ImageUploader';
 import ModelMetadataModal from '../components/ModelMetadataModal';
 import GeneratorReadinessPanel from '../components/generator/GeneratorReadinessPanel';
@@ -22,7 +22,7 @@ import SamplingSettings from '../components/generator/SamplingSettings';
 import PresetManager from '../components/generator/PresetManager';
 import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
-// WorkflowBuilder moved to backend
+import { useWorkflowBuilder } from '../hooks/useWorkflowBuilder';
 import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayout';
 import GenerateActionBar from '../components/generator/GenerateActionBar';
 import ResolutionSettings from '../components/generator/ResolutionSettings';
@@ -33,23 +33,13 @@ export default function Img2ImgGenerator() {
     const location = useLocation();
     const {
         store: {
-            prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
             sourceImage, denoise, setSourceImage, setDenoise, clearSourceImage,
-            selectedCheckpoint, selectedVae, selectedLoras,
-            clipSkip, enableFreeU, enablePAG, pagScale,
-            enableLatentUpscale, latentUpscaleMultiplier,
-            randomizeSeed, controlnets,
-            ipAdapters,
-            adetailer, adetailerModel,
-            adetailerPrompt, adetailerSteps,
-            adetailerDenoise, adetailerInpaintMasked
+            selectedCheckpoint, randomizeSeed
         },
-        preflight: {
-            runWithPreflight,
-        }
     } = useGeneratorCore();
 
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
+    const { runSubmission } = useWorkflowBuilder('img2img');
 
     // Check for pre-loaded image from navigation state
     useEffect(() => {
@@ -62,65 +52,6 @@ export default function Img2ImgGenerator() {
         if (!sourceImage?.filename) return 'Please upload a source image first';
         if (!selectedCheckpoint?.name) return 'Please select a checkpoint';
         return null;
-    };
-
-    const runSubmission = async () => {
-        const options = {
-            mode: 'img2img',
-            inputImage: sourceImage.filename,
-            prompt,
-            negativePrompt,
-            seed,
-            steps,
-            cfg,
-            sampler,
-            scheduler,
-            denoise,
-            checkpoint: selectedCheckpoint.name,
-            loras: selectedLoras,
-            vae: selectedVae,
-            clipSkip,
-            enableFreeU,
-            enablePAG,
-            pagScale,
-            enableLatentUpscale,
-            latentUpscaleMultiplier,
-            ipAdapters,
-            controlnets: controlnets,
-            adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked
-        };
-
-        const metadata = {
-            type: 'img2img',
-            prompt,
-            negativePrompt,
-            seed,
-            steps,
-            cfg,
-            sampler,
-            scheduler,
-            denoise,
-            width: sourceImage.width,
-            height: sourceImage.height,
-            sourceImage: sourceImage.filename,
-            checkpoint: selectedCheckpoint,
-            vae: selectedVae,
-            loras: selectedLoras,
-            clipSkip,
-            enableFreeU,
-            enablePAG,
-            pagScale,
-            enableLatentUpscale,
-            ipAdapters,
-            controlnets,
-            adetailer, adetailerModel
-        };
-
-        return runWithPreflight(options, {
-            onValid: async () => generateApi.workflow(options, metadata, {
-                idempotencyKey: createIdempotencyKey('generate-img2img')
-            }),
-        });
     };
 
     const { progress, generating, handleGenerate } = useGeneratorJob({

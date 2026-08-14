@@ -797,7 +797,20 @@ def _migration_add_chat_append_system_prompt(conn) -> bool:
     if "append_system_prompt" not in columns:
         conn.execute(text("ALTER TABLE chats ADD COLUMN append_system_prompt TEXT DEFAULT NULL"))
         logger.info("migration_column_added", table="chats", column="append_system_prompt")
-    _verify_required_columns(conn, "chats", {"append_system_prompt"})
+        _verify_required_columns(conn, "chats", {"append_system_prompt"})
+    return True
+
+
+def _migration_add_chat_additional_character_ids(conn) -> bool:
+    """Add additional_character_ids column to chats table."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "additional_character_ids" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN additional_character_ids JSON DEFAULT '[]'"))
+        logger.info("migration_column_added", table="chats", column="additional_character_ids")
+    _verify_required_columns(conn, "chats", {"additional_character_ids"})
     return True
 
 
@@ -1472,5 +1485,10 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             version="038_add_story_max_agentic_depth",
             description="Add max_agentic_depth column to stories for per-story agentic loop limit",
             apply_fn=_migration_add_story_max_agentic_depth,
+        ),
+        MigrationStep(
+            version="039_add_chat_additional_character_ids",
+            description="Add additional_character_ids column to chats table for group chats",
+            apply_fn=_migration_add_chat_additional_character_ids,
         ),
     ]

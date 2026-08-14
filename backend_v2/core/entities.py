@@ -794,6 +794,7 @@ class Chat(SQLModel, table=True):
     name: str = Field(default="New Chat")
     chat_type: str = Field(default="chat") # "chat" or "story"
     persona_name: str | None = Field(default=None) # Used for {{user}} substitutions
+    additional_character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     story_time: str | None = Field(default=None)
     story_location: str | None = Field(default=None)
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)

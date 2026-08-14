@@ -588,3 +588,61 @@ def build_image_job_workflow(
 
     return workflow, metadata
 
+
+def build_tts_workflow(
+    text: str,
+    voice_profile: str | None = None,
+    client_id: str | None = None,
+    chat_id: str | None = None,
+    character_id: str | None = None,
+    story_id: str | None = None,
+    chapter_id: str | None = None,
+    parent_job_id: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Assemble a ComfyUI workflow payload for Text-to-Speech.
+    Expects a standard XTTS v2 or Bark custom node setup on the worker.
+    """
+    workflow = {
+        "prompt": {
+            "3": {
+                "inputs": {
+                    "text": text,
+                    "voice": voice_profile or "default",
+                    "speed": 1.0,
+                },
+                "class_type": "XTTS_v2",
+                "_meta": {"title": "XTTS Text-to-Speech"}
+            },
+            "4": {
+                "inputs": {
+                    "filename_prefix": "tts_output",
+                    "audio": ["3", 0]
+                },
+                "class_type": "SaveAudio",
+                "_meta": {"title": "Save Audio"}
+            }
+        },
+        "client_id": client_id,
+        "type": "tts",
+    }
+    
+    metadata = {
+        "type": "tts",
+        "text": text,
+    }
+    if chat_id is not None:
+        metadata["chat_id"] = chat_id
+    if character_id is not None:
+        metadata["character_id"] = character_id
+    if story_id is not None:
+        metadata["story_id"] = story_id
+    if chapter_id is not None:
+        metadata["chapter_id"] = chapter_id
+    if parent_job_id is not None:
+        metadata["parent_job_id"] = parent_job_id
+    if extra_metadata:
+        metadata.update(extra_metadata)
+        
+    return workflow, metadata

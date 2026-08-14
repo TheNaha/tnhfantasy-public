@@ -52,6 +52,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useLLMAvailableModels: () => ({ data: [] }),
     useLLMDefaultProvider: () => ({ data: null }),
     useStoryImages: () => ({ data: [] }),
+    useUpdateCharacter: () => ({ mutateAsync: vi.fn() }),
+    useParseStory: () => ({ mutateAsync: vi.fn() }),
 }));
 
 vi.mock('../api/websocket', () => ({

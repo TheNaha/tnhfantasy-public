@@ -18,8 +18,8 @@ import {
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
     useCharacterCollection, useEditMessage, useRollbackChat,
     useRegenerateReply, useChatJobs, usePatchCharacter,
-    useImpersonateMessage, usePinMessage, useSwipeMessage, useChatImages,
-    useIllustrateChat, useGenerateScene
+    useImpersonateMessage, usePinMessage, useSwipeMessage, useGenerateSwipe, useChatImages,
+    useIllustrateChat, useGenerateScene, useNarrateMessage
 } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -139,6 +139,7 @@ export default function ChatWorkspace() {
     }, []);
     
     const [activeCommand, setActiveCommand] = useState(null);
+    const [targetCharacterId, setTargetCharacterId] = useState('');
     
     useEffect(() => {
         suggestJobIdRef.current = suggestJobId;
@@ -219,6 +220,8 @@ export default function ChatWorkspace() {
     const impersonateMutation = useImpersonateMessage();
     const pinMessageMutation = usePinMessage();
     const swipeMessageMutation = useSwipeMessage();
+    const generateSwipeMutation = useGenerateSwipe();
+    const narrateMutation = useNarrateMessage();
     const illustrateMutation = useIllustrateChat();
     const generateSceneMutation = useGenerateScene();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
@@ -358,7 +361,9 @@ export default function ChatWorkspace() {
 
             if (eventChatId === activeChatId) {
                 const jobType = meta.workspace || job.task_type;
-                if (jobType === 'image' || meta.image_context) {
+                if (meta.type === 'chat_tts') {
+                    toast.success('Speech generated!', { icon: '🎤' });
+                } else if (jobType === 'image' || meta.image_context) {
                     toast.success('Image generated!', { icon: '🖼️' });
                 }
             }
@@ -514,6 +519,7 @@ export default function ChatWorkspace() {
                     content: msgContent, 
                     lorebook_ids: selectedLorebooks, 
                     image_path: attachmentFilename, 
+                    target_character_id: targetCharacterId || null,
                     agentic: agenticMode,
                     narrate: narrateMode,
                     generator_checkpoint: settings.generator?.defaultCheckpoint || null,
@@ -527,7 +533,7 @@ export default function ChatWorkspace() {
         } catch {
             toast.error('Failed to send message');
         }
-    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand]);
+    }, [message, pendingAttachment, activeChatId, selectedLorebooks, agenticMode, narrateMode, createChatMutation, sendMessageMutation, queryClient, setActiveChatId, settings, updateChatMutation, suggestReplyMutation, activeCommand, targetCharacterId]);
 
     const handleSuggestClick = useCallback(async () => {
         if (!activeChatId) return;
@@ -812,6 +818,55 @@ export default function ChatWorkspace() {
         } catch { toast.error('Swipe failed'); }
     }, [activeChatId, swipeMessageMutation]);
 
+    const handleGenerateSwipe = useCallback(async (msgId) => {
+        try {
+            const res = await generateSwipeMutation.mutateAsync({ chatId: activeChatId, msgId });
+            if (res?.job_id) {
+                setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'llm' });
+                toast('Generating alternate reply...', { icon: '✨' });
+            }
+        } catch { toast.error('Failed to generate swipe'); }
+    }, [activeChatId, generateSwipeMutation, queryClient]);
+
+    const handleGenerateTTS = useCallback(async (msgId) => {
+        try {
+            await narrateMutation.mutateAsync({ chatId: activeChatId, msgId });
+            toast.success('TTS generation started');
+        } catch {
+            toast.error('Failed to generate TTS');
+        }
+    }, [activeChatId, narrateMutation]);
+
+    const handleMessageIllustrate = useCallback(async (msgId) => {
+        try {
+            const msg = messages.find(m => m.id === msgId);
+            const res = await fetch(`/api/v2/chats/${activeChatId}/illustrate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_prompt: msg?.content || '' })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.job_id) {
+                    setStreamingJob(queryClient, data.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'image' });
+                    toast.success('Illustration started', { icon: '✨' });
+                }
+            } else {
+                toast.error('Failed to start illustration');
+            }
+        } catch { toast.error('Failed to start illustration'); }
+    }, [activeChatId, messages, queryClient]);
+
+    const handleDeleteMessage = useCallback(async (msgId) => {
+        try {
+            await fetch(`/api/world_vault/chats/${activeChatId}/messages/${msgId}`, { method: 'DELETE' });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
+            toast.success('Message deleted');
+        } catch {
+            toast.error('Failed to delete message');
+        }
+    }, [activeChatId, queryClient]);
+
     const handleExportChat = () => {
         if (!messages.length) { toast.error('No messages to export'); return; }
         const charName = linkedCharacter?.name || 'AI';
@@ -873,11 +928,15 @@ export default function ChatWorkspace() {
                     activeChat={activeChat}
                     canRegenerate={idx === messages.length - 1}
                     onEdit={handleEditMessage}
+                    onDelete={handleDeleteMessage}
                     onRegenerate={handleRegenerate}
                     onRollback={handleRollback}
                     onPin={handlePinMessage}
                     onSwipe={handleSwipe}
+                    onGenerateSwipe={handleGenerateSwipe}
                     onAvatarClick={handleAvatarClick}
+                    onGenerateTTS={handleGenerateTTS}
+                    onIllustrate={handleMessageIllustrate}
                 />
             );
         }
@@ -1184,6 +1243,25 @@ export default function ChatWorkspace() {
                             </div>
                         )}
                         <div className="relative">
+                            {activeChat?.additional_character_ids?.length > 0 && (
+                                <div className="absolute -top-10 right-0 flex items-center gap-2 bg-gray-900/80 backdrop-blur border border-gray-700 rounded-lg px-2 py-1 shadow-xl">
+                                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Reply as:</span>
+                                    <select
+                                        value={targetCharacterId}
+                                        onChange={(e) => setTargetCharacterId(e.target.value)}
+                                        className="bg-transparent text-xs text-blue-300 font-medium focus:outline-none appearance-none cursor-pointer"
+                                    >
+                                        <option value="">{activeChat.character_id ? characters.find(c => c.id === activeChat.character_id)?.name || 'Default' : 'Default'}</option>
+                                        {activeChat.additional_character_ids.map(id => {
+                                            const c = characters.find(char => char.id === id);
+                                            return c ? <option key={c.id} value={c.id}>{c.name}</option> : null;
+                                        })}
+                                    </select>
+                                    <div className="pointer-events-none text-gray-500">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                                    </div>
+                                </div>
+                            )}
                             <CommandPalette
                                 message={message}
                                 activeCommand={activeCommand}

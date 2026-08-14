@@ -1,5 +1,5 @@
 import React from 'react';
-import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool } from 'lucide-react';
+import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2 } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 
@@ -15,6 +15,8 @@ export default React.memo(function StoryContextPanel({
     onClose,
     onShowGallery,
     onUpdateStory,
+    onEditCharacter,
+    onEditLorebook
 }) {
     return (
         <>
@@ -42,23 +44,34 @@ export default React.memo(function StoryContextPanel({
                             {characters.map(char => {
                                 const isActive = (activeStory?.character_ids || []).includes(char.id);
                                 return (
-                                    <button
-                                        key={char.id}
-                                        onClick={() => {
-                                            const current = activeStory?.character_ids || [];
-                                            const newIds = isActive ? current.filter(id => id !== char.id) : [...current, char.id];
-                                            onUpdateStory({ character_ids: newIds });
-                                        }}
-                                        className={clsx(
-                                            "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
-                                            isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
-                                        )}
-                                    >
-                                        {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
-                                        <div className="min-w-0">
-                                            <p className="truncate font-medium">{char.name}</p>
-                                        </div>
-                                    </button>
+                                    <div key={char.id} className={clsx(
+                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors",
+                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                    )}>
+                                        <button
+                                            onClick={() => {
+                                                const current = activeStory?.character_ids || [];
+                                                const newIds = isActive ? current.filter(id => id !== char.id) : [...current, char.id];
+                                                onUpdateStory({ character_ids: newIds });
+                                            }}
+                                            className="flex-1 text-left flex items-center gap-2 min-w-0"
+                                        >
+                                            {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                            <div className="min-w-0">
+                                                <p className="truncate font-medium">{char.name}</p>
+                                            </div>
+                                        </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onEditCharacter?.(char);
+                                            }}
+                                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            title="Edit Character"
+                                        >
+                                            <Edit2 size={12} />
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -76,24 +89,35 @@ export default React.memo(function StoryContextPanel({
                             {lorebooks.map(lb => {
                                 const isActive = (activeStory?.lorebook_ids || []).includes(lb.id);
                                 return (
-                                    <button
-                                        key={lb.id}
-                                        onClick={() => {
-                                            const current = activeStory?.lorebook_ids || [];
-                                            const newIds = isActive ? current.filter(id => id !== lb.id) : [...current, lb.id];
-                                            onUpdateStory({ lorebook_ids: newIds });
-                                        }}
-                                        className={clsx(
-                                            "w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
-                                            isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
-                                        )}
-                                    >
-                                        {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
-                                        <div className="min-w-0">
-                                            <p className="truncate font-medium">{lb.name}</p>
-                                            {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
-                                        </div>
-                                    </button>
+                                    <div key={lb.id} className={clsx(
+                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors group",
+                                        isActive ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                    )}>
+                                        <button
+                                            onClick={() => {
+                                                const current = activeStory?.lorebook_ids || [];
+                                                const newIds = isActive ? current.filter(id => id !== lb.id) : [...current, lb.id];
+                                                onUpdateStory({ lorebook_ids: newIds });
+                                            }}
+                                            className="flex-1 text-left flex items-center gap-2 min-w-0"
+                                        >
+                                            {isActive ? <Check size={14} className="text-indigo-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                            <div className="min-w-0">
+                                                <p className="truncate font-medium">{lb.name}</p>
+                                                {lb.description && <p className="text-[10px] text-gray-500 truncate">{lb.description}</p>}
+                                            </div>
+                                        </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onEditLorebook?.(lb);
+                                            }}
+                                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            title="Edit Lorebook"
+                                        >
+                                            <Edit2 size={12} />
+                                        </button>
+                                    </div>
                                 );
                             })}
                         </div>

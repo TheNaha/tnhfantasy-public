@@ -22,6 +22,11 @@ class StoryContinueRequest(BaseModel):
     prompt: str = ""
 
 
+class ParseStoryRequest(BaseModel):
+    story_id: str
+    text: str
+
+
 class StoryBeatRequest(BaseModel):
     content: str
     role: str = "user"
@@ -177,6 +182,7 @@ def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_s
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
+    _ensure_beat_ids(session, chapter)
     return chapter
 
 @router.put("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)
@@ -507,5 +513,41 @@ def _resolve_default_checkpoint(session: Session, preferred: str | None = None) 
     resolved = service.get_available_checkpoint(preferred)
     if resolved:
         return resolved
-    from config import get_config
     return get_config().get("generator", {}).get("default_checkpoint", "sd_xl_base_1.0.safetensors")
+
+
+@router.post("/parse")
+async def parse_story(req: ParseStoryRequest, session: Session = Depends(get_session)) -> dict:
+    from services.job_queue import queue_manager
+    from api.deps import get_job_service
+    from services.llm_workflow import build_chat_llm_workflow
+
+    system_prompt = """You are an AI worldbuilder. Parse the provided story text and extract the following:
+1. Characters (name, physical appearance, personality)
+2. Locations (name, description)
+3. Key Lore (important items, concepts, organizations)
+
+Return a strictly valid JSON object in this format:
+{
+  "characters": [ {"name": "...", "description": "...", "personality": "..."} ],
+  "locations": [ {"name": "...", "description": "..."} ],
+  "lorebooks": [ {"name": "...", "description": "..."} ]
+}
+"""
+    workflow, metadata = build_chat_llm_workflow(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": req.text[:10000]}  # limit text length
+        ],
+        chat_id=None,
+        character_id=None,
+        model=_get_default_llm_model(),
+        type_="story_parse"
+    )
+    metadata["story_id"] = req.story_id
+    metadata["workspace"] = "story"
+    job_service = get_job_service(session)
+    job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+    session.commit()
+    await queue_manager.enqueue(job.id, task_type="llm")
+    return {"job_id": job.id}

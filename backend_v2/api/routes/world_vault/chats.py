@@ -4,14 +4,30 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session
+from api.deps import get_job_service, get_session, get_queue_manager
 from core.entities import Chat, Character, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
+from services.job_service import JobService
+from services.job_queue import QueueManager
 
 MAX_CONTEXT_MESSAGES = 200
 
 router = APIRouter()
+
+
+def _load_characters_ordered(session: Session, primary_id: str | None, additional_ids: list[str]) -> list[Character]:
+    ids: list[str] = []
+    if primary_id:
+        ids.append(primary_id)
+    for cid in additional_ids:
+        if cid not in ids:
+            ids.append(cid)
+    if not ids:
+        return []
+    chars = session.exec(select(Character).where(Character.id.in_(ids))).all()
+    char_map = {c.id: c for c in chars}
+    return [char_map[cid] for cid in ids if cid in char_map]
 
 
 class UpdateChatRequest(BaseModel):
@@ -53,6 +69,7 @@ class SendMessageRequest(BaseModel):
     no_reply: bool = False
     narrate: bool = False
     max_agentic_depth: int | None = None
+    target_character_id: str | None = None
 
 
 @router.get("", response_model=list[Chat])
@@ -118,7 +135,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
 def _chat_context_kwargs(chat, **overrides):
     """Build common kwargs for build_system_prompt_sections_async and build_chat_context_async."""
     kwargs = {
-        "character": overrides.get("character"),
+        "characters": overrides.get("characters"),
         "lorebook_ids": overrides.get("lorebook_ids", chat.active_lorebook_ids or None),
         "persona_name": chat.persona_name,
         "persona_description": getattr(chat, "persona_description", None),
@@ -131,6 +148,8 @@ def _chat_context_kwargs(chat, **overrides):
         kwargs["max_context_tokens"] = overrides["max_context_tokens"]
     if "include_roleplay_default" in overrides:
         kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
+    if overrides.get("active_character_id"):
+        kwargs["active_character_id"] = overrides["active_character_id"]
     return kwargs
 
 
@@ -188,11 +207,9 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
-    character = None
-    if chat.character_id:
-        character = session.get(Character, chat.character_id)
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = _chat_context_kwargs(chat, character=character)
+    ctx_kwargs = _chat_context_kwargs(chat, characters=characters)
 
     sections = await build_system_prompt_sections_async(
         session,
@@ -280,16 +297,14 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     if message.role == MessageRole.USER and not request.no_reply:
         past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
         
-        character = None
-        if chat.character_id:
-            from core.entities import Character
-            character = session.get(Character, chat.character_id)
+        characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
             
         ctx_kwargs = _chat_context_kwargs(
             chat,
-            character=character,
+            characters=characters,
             lorebook_ids=request.lorebook_ids,
             max_context_tokens=_resolve_context_tokens(chat),
+            active_character_id=request.target_character_id,
         )
         system_prompt, context = await build_chat_context_async(
             session, 
@@ -316,7 +331,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                         {"role": "user", "content": f"[Narration request] {message.content}"},
                     ],
                     chat_id=chat_id,
-                    character_id=chat.character_id,
+                    character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
                     type_="narrator",
@@ -328,7 +343,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
                     chat_id=chat_id,
-                    character_id=chat.character_id,
+                    character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
                 )
@@ -428,6 +443,57 @@ class SwipeRequest(BaseModel):
     index: int | None = None  # used when direction == "select"
 
 
+@router.post("/{chat_id}/messages/{message_id}/narrate", response_model=dict)
+async def narrate_message(
+    chat_id: str,
+    message_id: str,
+    session: Session = Depends(get_session),
+    job_service: JobService = Depends(get_job_service),
+    queue_manager: QueueManager = Depends(get_queue_manager),
+):
+    """Trigger a TTS job to narrate a specific message."""
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+        
+    message = session.get(Message, message_id)
+    if not message or message.chat_id != chat_id:
+        raise NotFoundError("Message", message_id)
+
+    if not message.content:
+        raise ComfyError("Message has no content to narrate")
+
+    from core.workflow_builder import build_tts_workflow
+    
+    # Optional: If you had character-specific voice profiles, you'd fetch it here.
+    voice_profile = None
+    if chat.character_id:
+        from core.entities import Character
+        char = session.get(Character, chat.character_id)
+        if char:
+            voice_profile = getattr(char, "voice_profile", None)
+
+    workflow, metadata = build_tts_workflow(
+        text=message.content,
+        voice_profile=voice_profile,
+        chat_id=chat_id,
+        character_id=chat.character_id,
+        extra_metadata={
+            "source": "chat_tts",
+            "message_id": message_id
+        }
+    )
+
+    job = await job_service.create_job(
+        task_type="image",  # Dispatch to the ComfyUI image_worker adapter
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+    
+    return {"message_id": message.id, "job_id": job.id}
+
+
 @router.post("/{chat_id}/messages/{message_id}/swipe", response_model=Message)
 def swipe_message(
     chat_id: str,
@@ -475,6 +541,92 @@ def swipe_message(
     session.commit()
     session.refresh(message)
     return message
+
+
+@router.post("/{chat_id}/messages/{message_id}/generate-swipe")
+async def generate_swipe(
+    chat_id: str,
+    message_id: str,
+    session: Session = Depends(get_session)
+) -> dict:
+    from services.context_builder import build_chat_context_async
+    from services.job_queue import queue_manager
+
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+
+    target_msg = session.get(Message, message_id)
+    if not target_msg or target_msg.chat_id != chat_id:
+        raise NotFoundError("Message", message_id)
+    if target_msg.role != MessageRole.CHAR:
+        raise ValidationError("Only character messages can generate swipes")
+
+    all_messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+    
+    target_index = next((i for i, m in enumerate(all_messages) if m.id == target_msg.id), -1)
+    if target_index < 0:
+        raise NotFoundError("Message", message_id)
+
+    remaining = all_messages[:target_index]
+    
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
+
+    ctx_kwargs = _chat_context_kwargs(
+        chat,
+        characters=characters,
+        max_context_tokens=_resolve_context_tokens(chat),
+    )
+    system_prompt, context = await build_chat_context_async(
+        session,
+        remaining,
+        **ctx_kwargs,
+    )
+
+    from services.llm_workflow import build_chat_llm_workflow
+    
+    # Mirror agentic state
+    prev_agentic = target_msg.tool_calls is not None or (target_msg.message_metadata or {}).get("agentic", False)
+
+    workflow, metadata = build_chat_llm_workflow(
+        messages=context,
+        chat_id=chat_id,
+        character_id=chat.character_id,
+        system_prompt=system_prompt or None,
+        model=chat.llm_model or _get_default_llm_model(),
+        extra_metadata={
+            "is_swipe": True,
+            "target_message_id": message_id
+        },
+    )
+    
+    if prev_agentic:
+        from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
+        workflow["tools"] = filter_agentic_tools(
+            AGENTIC_TOOLS,
+            allow_image=chat.allow_image_generation,
+            allow_narration=chat.allow_narration,
+        )
+        metadata["agentic"] = True
+        metadata["orchestrator_depth"] = 0
+        metadata["original_messages"] = context
+        metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
+
+    from api.deps import get_job_service
+    job_service = get_job_service(session)
+    job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
+    session.commit()
+
+    if prev_agentic:
+        from services.orchestrator_service import OrchestratorService
+        orch = OrchestratorService(session)
+        await orch.handle_new_turn(job.id, metadata)
+    else:
+        await queue_manager.enqueue(job.id)
+
+    return {"job_id": job.id}
 
 class PinMessageRequest(BaseModel):
     pinned: bool
@@ -604,13 +756,11 @@ async def regenerate_reply(
             break
 
     remaining = [m for m in all_messages[: anchor_index + 1]]
-    character = None
-    if chat.character_id:
-        character = session.get(Character, chat.character_id)
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
     ctx_kwargs = _chat_context_kwargs(
         chat,
-        character=character,
+        characters=characters,
         max_context_tokens=_resolve_context_tokens(chat),
     )
     system_prompt, context = await build_chat_context_async(
@@ -680,9 +830,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
-    character = None
-    if chat.character_id:
-        character = session.get(Character, chat.character_id)
+    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
     user_name = chat.persona_name or "User"
     char_name = character.name if character else "the AI"

@@ -9,7 +9,7 @@ import { useEffect, useMemo } from 'react';
 import { Paintbrush, Settings2, Trash2, Sparkles } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
-import { filesApi, generateApi, createIdempotencyKey } from '../api';
+import { filesApi } from '../api';
 import { getApiUrl } from '../api/config';
 import ImageUploader from '../components/generator/ImageUploader';
 import InpaintCanvas from '../components/generator/InpaintCanvas';
@@ -18,7 +18,7 @@ import useSettingsStore from '../store/settingsStore';
 import { useGeneratorJob } from '../hooks/useGeneratorJob';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../constants/modelDirectories';
-// WorkflowBuilder moved to backend
+import { useWorkflowBuilder } from '../hooks/useWorkflowBuilder';
 import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayout';
 import GenerateActionBar from '../components/generator/GenerateActionBar';
 
@@ -28,23 +28,15 @@ export default function InpaintGenerator() {
     const location = useLocation();
     const {
         store: {
-            prompt, negativePrompt, seed, steps, cfg, sampler, scheduler,
             sourceImage, denoise, maskImage, maskBlur,
-            selectedCheckpoint, selectedVae, selectedLoras,
+            selectedCheckpoint, 
             setSourceImage, setDenoise, setMaskImage, setMaskBlur,
             clearSourceImage,
-            clipSkip, enableFreeU, enablePAG, pagScale,
-            enableLatentUpscale, latentUpscaleMultiplier,
-            randomizeSeed, controlnets,
-            ipAdapters,
-            adetailer, adetailerModel,
-            adetailerPrompt, adetailerSteps,
-            adetailerDenoise, adetailerInpaintMasked
+            randomizeSeed
         },
-        preflight: {
-            runWithPreflight,
-        }
     } = useGeneratorCore();
+
+    const { runSubmission: runWorkflowSubmission } = useWorkflowBuilder('inpaint');
 
     // Canvas visibility is derived from the presence of a source image (it is
     // only ever opened when an image is loaded and closed on Clear), so there is
@@ -96,65 +88,7 @@ export default function InpaintGenerator() {
 
         setProgress({ value: 0, max: 100, status: 'starting', node: 'Initializing...' });
 
-        const options = {
-            mode: 'inpaint',
-            inputImage: sourceImage.filename,
-            maskImage: maskResult.filename,
-            prompt,
-            negativePrompt,
-            seed,
-            steps,
-            cfg,
-            sampler,
-            scheduler,
-            denoise,
-            checkpoint: checkpointToUse,
-            loras: selectedLoras,
-            vae: selectedVae,
-            maskBlur,
-            growMask: 6,
-            clipSkip,
-            enableFreeU,
-            enablePAG,
-            pagScale,
-            enableLatentUpscale,
-            latentUpscaleMultiplier,
-            ipAdapters,
-            controlnets,
-            adetailer, adetailerModel, adetailerPrompt, adetailerSteps, adetailerDenoise, adetailerInpaintMasked
-        };
-
-        const metadata = {
-            type: 'inpaint',
-            prompt,
-            negativePrompt,
-            seed,
-            steps,
-            cfg,
-            sampler,
-            scheduler,
-            denoise,
-            maskBlur,
-            width: sourceImage.width,
-            height: sourceImage.height,
-            sourceImage: sourceImage.filename,
-            maskImage: maskResult.filename,
-            checkpoint: inpaintCheckpoint || selectedCheckpoint,
-            vae: selectedVae,
-            loras: selectedLoras,
-            clipSkip,
-            enableFreeU,
-            enablePAG,
-            pagScale,
-            adetailer, adetailerModel,
-            usedInpaintModel: !!inpaintCheckpoint
-        };
-
-        return runWithPreflight(options, {
-            onValid: async () => generateApi.workflow(options, metadata, {
-                idempotencyKey: createIdempotencyKey('generate-inpaint')
-            }),
-        });
+        return runWorkflowSubmission({ maskResult, checkpointToUse, inpaintCheckpoint });
     };
 
     const { progress, generating, handleGenerate } = useGeneratorJob({
