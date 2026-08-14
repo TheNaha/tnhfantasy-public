@@ -1421,6 +1421,7 @@ export default function ChatWorkspace() {
                     </h3>
                     <button
                         onClick={() => setMobileTab('chat')}
+                        aria-label="Close context panel"
                         className="lg:hidden p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
                     >
                         <X size={16} />

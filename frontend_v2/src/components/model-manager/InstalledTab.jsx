@@ -100,7 +100,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         
         try {
             toast.promise(
-                api.post(`/api/v2/models/${file.model_id}/check-dependencies`),
+                api.post(`/api/v2/models/maintenance/${file.model_id}/check-dependencies`),
                 {
                     loading: 'Checking dependencies...',
                     success: 'Dependencies triggered! Check provider status.',
@@ -280,7 +280,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         onClick={async () => {
                             try {
                                 const res = await api.post('/api/v2/models/maintenance/cleanup-orphans');
-                                toast.success(`Cleanup complete! Removed ${res.removed_models} orphaned models.`);
+                                toast.success(`Cleanup complete! Removed ${res.deleted_models?.length ?? 0} orphaned models.`);
                             } catch (err) {
                                 toast.error('Failed to cleanup orphans: ' + err.message);
                             }

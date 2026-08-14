@@ -13,13 +13,14 @@ import {
     summarizeProviderStatus,
 } from '../utils/providerStatus';
 
-const NavItem = ({ to, icon: Icon, label }) => {
+const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
     const location = useLocation();
     const isActive = location.pathname === to;
 
     return (
         <Link
             to={to}
+            onClick={onNavigate}
             aria-current={isActive ? 'page' : undefined}
             className={clsx(
                 "group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
@@ -127,6 +128,7 @@ export default function Layout({ children }) {
     // Initialize global keyboard shortcuts
     useKeyboardShortcuts({
         onShowHelp: () => setShowShortcutsModal(true),
+        onEscape: () => setShowShortcutsModal(false),
     });
 
     return (
@@ -187,25 +189,25 @@ export default function Layout({ children }) {
 
                 <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
                     <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-3 px-4">Menu</div>
-                    <NavItem to="/" icon={Home} label="Home" />
-                    <NavItem to="/gallery" icon={Images} label="Gallery" />
-                    <NavItem to="/generate" icon={Wand2} label="Simple Generate" />
-                    <NavItem to="/img2img" icon={ImagePlus} label="Img2Img" />
-                    <NavItem to="/inpaint" icon={Paintbrush} label="Inpaint" />
-                    <NavItem to="/advanced" icon={Settings} label="Advanced" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/" icon={Home} label="Home" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/img2img" icon={ImagePlus} label="Img2Img" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Roleplay</div>
-                    <NavItem to="/chat" icon={MessageSquare} label="Chat Workspace" />
-                    <NavItem to="/story" icon={BookOpen} label="Story Sandbox" />
-                    <NavItem to="/characters" icon={Users} label="Characters" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Chat Workspace" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Story Sandbox" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/characters" icon={Users} label="Characters" />
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
-                    <NavItem to="/models/installed" icon={HardDrive} label="Installed Models" />
-                    <NavItem to="/models/discover" icon={Globe} label="Discover Models" />
-                    <NavItem to="/providers" icon={Server} label="Providers" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/discover" icon={Globe} label="Discover Models" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/providers" icon={Server} label="Providers" />
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">System</div>
-                    <NavItem to="/statistics" icon={BarChart3} label="Statistics" />
-                    <NavItem to="/settings" icon={Settings2} label="Settings" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" />
                 </nav>
 
                 <ProviderStatusPanel />

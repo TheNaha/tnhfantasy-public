@@ -70,3 +70,5 @@ remote_agent/build/tnhcomfy-agent/PYZ-00.toc
 remote_agent/build/tnhcomfy-agent/tnhcomfy-agent.pkg
 remote_agent/build/tnhcomfy-agent/warn-tnhcomfy-agent.txt
 remote_agent/build/tnhcomfy-agent/xref-tnhcomfy-agent.html
+frontend_v2/test-results/.last-run.json
+frontend_v2/playwright-report/index.html

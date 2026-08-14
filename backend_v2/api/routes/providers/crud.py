@@ -9,6 +9,7 @@
 #   GET    /api/providers/load-balancing – Current LB strategy
 #   PUT    /api/providers/load-balancing – Update LB strategy
 import asyncio
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -24,6 +25,8 @@ from api.deps import (
     get_session,
     start_background_task,
 )
+from core.entities import Provider
+from services.provider_runtime import resolve_provider_runtime
 from services.provider_status_service import invalidate_provider_status_caches
 
 logger = api_logger()
@@ -174,6 +177,58 @@ async def wake_providers(session: Session = Depends(get_session)):
     start_background_task(ping_containers(), task_name="wake_provider_containers")
     
     return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
+
+
+@router.post("/{provider_id}/ping")
+async def ping_provider(provider_id: str, session: Session = Depends(get_session)):
+    """Ping a provider worker from the backend network and report latency.
+
+    Browsers cannot resolve docker-internal worker hostnames (tnhcomfy-<id>),
+    so the health probe is proxied through the backend instead of being
+    fetched directly from the client.
+    """
+    provider = session.get(Provider, provider_id)
+    if not provider:
+        return {
+            "healthy": False,
+            "worker_url": None,
+            "latency_ms": None,
+            "error": "Provider not found",
+        }
+
+    base_url = None
+    runtime = resolve_provider_runtime(provider)
+    if runtime.worker_url:
+        base_url = runtime.worker_url.rstrip("/")
+    elif provider.container_config:
+        base_url = get_provider_worker_url(provider_id).rstrip("/")
+    if not base_url:
+        return {
+            "healthy": False,
+            "worker_url": None,
+            "latency_ms": None,
+            "error": "No worker URL configured for this provider",
+        }
+
+    client = get_http_client()
+    started = time.monotonic()
+    try:
+        resp = await client.get(f"{base_url}/health", timeout=10.0)
+    except Exception as e:
+        latency_ms = int((time.monotonic() - started) * 1000)
+        return {
+            "healthy": False,
+            "worker_url": base_url,
+            "latency_ms": latency_ms,
+            "error": f"Health check failed: {e}",
+        }
+    latency_ms = int((time.monotonic() - started) * 1000)
+    return {
+        "healthy": resp.status_code == 200,
+        "worker_url": base_url,
+        "latency_ms": latency_ms,
+        "error": None if resp.status_code == 200 else f"Health check failed: HTTP {resp.status_code}",
+    }
 
 
 @router.get("/")

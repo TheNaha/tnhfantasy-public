@@ -233,6 +233,38 @@ async function seedCollection(page, overrides = {}) {
 // Cleanup (delete entities created by the suite)
 // ---------------------------------------------------------------------------
 
+// Seed a fabricated metadata-only ModelV2 row (no real files). Uses a fake
+// NON-NULL CivitAI id so the backend's duplicate check (get_model_by_civitai_id
+// with NULL matches ANY auto-discovered row — the live worker sync registers
+// those constantly) always creates a fresh row; SDXL base avoids Flux CLIP/VAE
+// dependency downloads. The "Auto-discovered" description keeps the details
+// modal banner intact.
+async function seedModel(page, overrides = {}) {
+  const name = overrides.name || uniqueName('e2e-model');
+  const versionId = 1_000_000_000 + Math.floor(Math.random() * 999_999_999);
+  const body = {
+    civitai_data: {
+      id: Math.floor(Math.random() * 999_999) + 1,
+      name,
+      type: overrides.type || 'LORA',
+      description: `Auto-discovered ${name}`,
+      nsfw: false,
+      creator: { username: 'e2e' },
+      stats: { downloads: 0, thumbsUp: 0, thumbsDown: 0, comments: 0 },
+      modelVersions: [
+        {
+          id: versionId,
+          name: 'v1.0',
+          baseModel: 'SDXL 1.0',
+          files: [{ name: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.safetensors`, sizeKB: 10, primary: true }],
+        },
+      ],
+    },
+    selected_versions: [{ version_id: versionId, is_default: true }],
+  };
+  return apiPost(page, '/v2/models', body);
+}
+
 const DELETE_PATHS = {
   chat: (id) => `/v2/chats/${id}`,
   story: (id) => `/v2/stories/${id}`,
@@ -242,6 +274,7 @@ const DELETE_PATHS = {
   collection: (id) => `/collections/${id}`,
   prompt: (id) => `/prompts/${id}`,
   job: (id) => `/jobs/${id}`,
+  model: (id) => `/v2/models/${id}`,
 };
 
 async function cleanupEntities(page, entities) {
@@ -321,6 +354,7 @@ export {
   seedStoryChapter,
   seedPrompt,
   seedCollection,
+  seedModel,
   cleanupEntities,
   waitForStreamingToFinish,
   closeModal,

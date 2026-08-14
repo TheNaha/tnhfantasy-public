@@ -409,7 +409,9 @@ test.describe('Image Generation & Asset Management (Module A)', () => {
     await expect(page.getByText('Advanced Runway')).toBeVisible();
 
     const nodeSearch = page.getByPlaceholder('Search nodes...');
-    await expect(nodeSearch).toBeVisible({ timeout: 60000 });
+    // object_info is fetched from the Modal worker via the backend proxy and
+    // can take 35-70s on cold/warm invocations — give it a generous window.
+    await expect(nodeSearch).toBeVisible({ timeout: 120000 });
     await nodeSearch.fill('KSampler');
     const result = page.getByText('No nodes found').or(page.locator('[draggable="true"]').first());
     await expect(result).toBeVisible();
