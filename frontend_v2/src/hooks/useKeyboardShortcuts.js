@@ -44,8 +44,8 @@ export const useKeyboardShortcuts = ({ onEscape, onShowHelp } = {}) => {
                     }
                     break;
                 case 'd':
-                    if (location.pathname !== '/gallery') {
-                        navigate('/gallery');
+                    if (location.pathname !== '/') {
+                        navigate('/');
                     }
                     break;
                 case 'm':

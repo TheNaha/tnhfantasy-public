@@ -1,271 +1,247 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiDelete, waitForToast } from './fixtures.js';
+import {
+  seedStory,
+  seedStoryChapter,
+  cleanupEntities,
+  uniqueName,
+  expectToast,
+} from './fixtures.js';
 
 test.describe('Story Sandbox Workspace (Module C)', () => {
   test.setTimeout(180000);
 
-  let createdStoryId = null;
-  let createdChapterId = null;
+  let created = [];
 
   test.afterEach(async ({ page }) => {
-    if (createdChapterId && createdStoryId) {
-      try {
-        await apiDelete(page, `/world_vault/stories/${createdStoryId}/chapters/${createdChapterId}`);
-      } catch {
-        // best-effort
-      }
-      createdChapterId = null;
-    }
-    if (createdStoryId) {
-      try {
-        await apiDelete(page, `/world_vault/stories/${createdStoryId}`);
-      } catch {
-        // best-effort
-      }
-      createdStoryId = null;
-    }
+    await cleanupEntities(page, created.splice(0));
   });
 
   test('Create Story and Chapter', async ({ page }) => {
     await page.goto('/story');
 
     const createStoryBtn = page.getByRole('button', { name: /create story/i }).first();
-    if (await createStoryBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createStoryBtn.click();
-    }
+    await expect(createStoryBtn).toBeVisible({ timeout: 10000 });
+    await createStoryBtn.click();
 
     const titleInput = page.getByPlaceholder(/story title/i).first();
-    if (await titleInput.isVisible()) {
-      await titleInput.fill('Playwright Test Story');
-      await page.getByRole('button', { name: /create|confirm/i }).first().click();
-      await waitForToast(page, /created/i, 5000);
-    }
+    await expect(titleInput).toBeVisible();
+    const storyName = uniqueName('e2e-story');
+    await titleInput.fill(storyName);
+
+    await page.getByRole('button', { name: /create|confirm/i }).first().click();
+    await expectToast(page, /created/i, 5000);
 
     const url = page.url();
     const storyMatch = url.match(/\/story\/([^/]+)/);
-    if (storyMatch) createdStoryId = storyMatch[1];
+    expect(storyMatch).toBeTruthy();
+    const storyId = storyMatch[1];
 
     const createChapterBtn = page.getByRole('button', { name: /new chapter|add chapter/i }).first();
-    if (await createChapterBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createChapterBtn.click();
-      await waitForToast(page, /chapter/i, 5000);
-    }
+    await expect(createChapterBtn).toBeVisible({ timeout: 10000 });
+    await createChapterBtn.click();
+    await expectToast(page, /chapter/i, 5000);
 
     const chapterMatch = page.url().match(/chapter\/([^/]+)/);
-    if (chapterMatch) createdChapterId = chapterMatch[1];
+    expect(chapterMatch).toBeTruthy();
+    const chapterId = chapterMatch[1];
+
+    created.push({ kind: 'chapter', id: `${storyId}:${chapterId}` });
+    created.push({ kind: 'story', id: storyId });
   });
 
   test('Continue AI Generation', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editor.fill('The dark knight stepped into the cavern, drawing his glowing sword.');
+    await page.goto(`/story/${story.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
 
-      const continueBtn = page.getByRole('button', { name: /continue|generate/i });
-      if (await continueBtn.isVisible()) {
-        await continueBtn.click();
-        await expect(continueBtn).toBeDisabled({ timeout: 5000 });
-        await expect(continueBtn).toBeEnabled({ timeout: 120000 });
+    await editor.fill('The dark knight stepped into the cavern, drawing his glowing sword.');
 
-        const textContent = await editor.textContent();
-        expect(textContent?.length).toBeGreaterThan(100);
-      }
-    }
+    const continueBtn = page.getByRole('button', { name: /continue|generate/i }).first();
+    await expect(continueBtn).toBeVisible();
+    await continueBtn.click();
+
+    await expect(continueBtn).toBeDisabled({ timeout: 5000 });
+    await expect(continueBtn).toBeEnabled({ timeout: 120000 });
+
+    const textContent = await editor.textContent();
+    expect(textContent?.length).toBeGreaterThan(100);
   });
 
   test('Branch from Beat', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editor.fill('The hero entered the dark forest.');
+    await page.goto(`/story/${story.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
 
-      const continueBtn = page.getByRole('button', { name: /continue|generate/i });
-      if (await continueBtn.isVisible()) {
-        await continueBtn.click();
-        await expect(continueBtn).toBeEnabled({ timeout: 120000 });
-      }
+    await editor.fill('The hero entered the dark forest.');
 
-      const beatsPanel = page.getByRole('button', { name: /beats|branch/i });
-      if (await beatsPanel.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await beatsPanel.click();
+    const continueBtn = page.getByRole('button', { name: /continue|generate/i }).first();
+    await expect(continueBtn).toBeVisible();
+    await continueBtn.click();
 
-        const branchBtn = page.getByRole('button', { name: /branch/i }).first();
-        if (await branchBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await branchBtn.click();
-          const confirmBtn = page.getByRole('button', { name: /branch|confirm/i }).first();
-          if (await confirmBtn.isVisible()) {
-            await confirmBtn.click();
-          }
-          await waitForToast(page, /branch/i, 10000);
-        }
-      }
+    await expect(continueBtn).toBeEnabled({ timeout: 120000 });
+
+    const beatsPanel = page.getByRole('button', { name: /beats|branch/i }).first();
+    await expect(beatsPanel).toBeVisible({ timeout: 10000 });
+    await beatsPanel.click();
+
+    const branchBtn = page.getByRole('button', { name: /branch/i }).first();
+    await expect(branchBtn).toBeVisible({ timeout: 10000 });
+    await branchBtn.click();
+
+    const confirmBtn = page.getByRole('button', { name: /branch|confirm/i }).first();
+    if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await confirmBtn.click();
     }
+    await expectToast(page, /branch/i, 10000);
   });
 
   test('Add Manual Beat', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
+    await page.goto(`/story/${story.id}`);
     const beatInput = page.getByPlaceholder(/add a beat|beat input/i).first();
-    if (await beatInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await beatInput.fill('A sudden dragon attack!');
-      await beatInput.press('Enter');
-      await waitForToast(page, /beat added/i, 5000);
-    }
+    await expect(beatInput).toBeVisible({ timeout: 10000 });
+
+    await beatInput.fill('A sudden dragon attack!');
+    await beatInput.press('Enter');
+    await expectToast(page, /beat added/i, 5000);
   });
 
   test('Auto-Generate Title', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editor.fill('Once upon a time in a magical kingdom, there lived a brave knight who could talk to dragons.');
+    await page.goto(`/story/${story.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
 
-      const titleBtn = page.getByRole('button', { name: /title|auto.?generate/i }).first();
-      if (await titleBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await titleBtn.click();
-        await waitForToast(page, /title/i, 30000);
-      }
-    }
+    await editor.fill('Once upon a time in a magical kingdom, there lived a brave knight who could talk to dragons.');
+
+    const titleBtn = page.getByRole('button', { name: /title|auto.?generate/i }).first();
+    await expect(titleBtn).toBeVisible({ timeout: 10000 });
+    await titleBtn.click();
+    await expectToast(page, /title/i, 30000);
   });
 
   test('Story Editor Auto-Save', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editor.fill('Auto-save verification paragraph.');
-      await page.waitForTimeout(3000);
+    await page.goto(`/story/${story.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
 
-      await page.reload();
-      await page.waitForTimeout(1000);
+    await editor.fill('Auto-save verification paragraph.');
+    await page.waitForTimeout(3000);
 
-      const reloadedEditor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-      const content = await reloadedEditor.textContent();
-      expect(content).toContain('Auto-save verification paragraph');
-    }
+    await page.reload();
+    await page.waitForTimeout(1000);
+
+    const reloadedEditor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(reloadedEditor).toBeVisible({ timeout: 10000 });
+    const content = await reloadedEditor.textContent();
+    expect(content).toContain('Auto-save verification paragraph');
   });
 
   test('Context Panel: Attach Lorebook', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
+    await page.goto(`/story/${story.id}`);
     const contextTab = page.getByRole('button', { name: /context/i }).first();
-    if (await contextTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await contextTab.click();
-      await page.waitForTimeout(1000);
+    await expect(contextTab).toBeVisible({ timeout: 10000 });
+    await contextTab.click();
+    await page.waitForTimeout(1000);
 
-      const lorebookToggle = page.getByRole('button', { name: /lorebook|add lorebook/i }).first();
-      if (await lorebookToggle.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await lorebookToggle.click();
-        await waitForToast(page, /lorebook/i, 5000);
-      }
-    }
+    const lorebookToggle = page.getByRole('button', { name: /lorebook|add lorebook/i }).first();
+    await expect(lorebookToggle).toBeVisible({ timeout: 10000 });
+    await lorebookToggle.click();
+    await expectToast(page, /lorebook/i, 5000);
   });
 
   test('Delete Story', async ({ page }) => {
+    const story = await seedStory(page, { title: 'To Be Deleted Story' });
+    created.push({ kind: 'story', id: story.id });
+
     await page.goto('/story');
-
-    const createStoryBtn = page.getByRole('button', { name: /create story/i }).first();
-    if (await createStoryBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createStoryBtn.click();
-      const titleInput = page.getByPlaceholder(/story title/i).first();
-      if (await titleInput.isVisible()) {
-        await titleInput.fill('To Be Deleted Story');
-        await page.getByRole('button', { name: /create|confirm/i }).first().click();
-        await waitForToast(page, /created/i, 5000);
-      }
-
-      const url = page.url();
-      const storyMatch = url.match(/\/story\/([^/]+)/);
-      if (storyMatch) createdStoryId = storyMatch[1];
-    }
-
     const deleteBtn = page.getByRole('button', { name: /delete/i }).first();
-    if (await deleteBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await deleteBtn.click();
-      const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
-      if (await confirmBtn.isVisible()) {
-        await confirmBtn.click();
-      }
-      await waitForToast(page, /deleted/i, 5000);
-    }
+    await expect(deleteBtn).toBeVisible({ timeout: 10000 });
+    await deleteBtn.click();
+
+    const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
+    await expect(confirmBtn).toBeVisible();
+    await confirmBtn.click();
+    await expectToast(page, /deleted/i, 5000);
   });
 
   test('Switch Chapters and Verify Content', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    const chapter1 = await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
+    const chapter2 = await seedStoryChapter(page, story.id, { title: 'Chapter 2' });
+    created.push({ kind: 'chapter', id: `${story.id}:${chapter2.id}` });
+    created.push({ kind: 'chapter', id: `${story.id}:${chapter1.id}` });
 
-    const createStoryBtn = page.getByRole('button', { name: /create story/i }).first();
-    if (await createStoryBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createStoryBtn.click();
-      const titleInput = page.getByPlaceholder(/story title/i).first();
-      if (await titleInput.isVisible()) {
-        await titleInput.fill('Multi-chapter Story');
-        await page.getByRole('button', { name: /create|confirm/i }).first().click();
-        await waitForToast(page, /created/i, 5000);
-      }
-      
-      const url = page.url();
-      const storyMatch = url.match(/\/story\/([^/]+)/);
-      if (storyMatch) createdStoryId = storyMatch[1];
-    }
-    
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-       await editor.fill('This is chapter 1.');
-       
-       const createChapterBtn = page.getByRole('button', { name: /new chapter|add chapter/i }).first();
-       if (await createChapterBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-         await createChapterBtn.click();
-         await waitForToast(page, /chapter/i, 5000);
-         
-         const newEditor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-         if (await newEditor.isVisible({ timeout: 5000 }).catch(() => false)) {
-           await newEditor.fill('This is chapter 2.');
-           
-           const chap1Btn = page.getByRole('button', { name: /chapter 1/i }).first();
-           if (await chap1Btn.isVisible({ timeout: 3000 }).catch(() => false)) {
-             await chap1Btn.click();
-             await expect(newEditor).toContainText('chapter 1', { timeout: 5000 });
-           }
-         }
-       }
-    }
+    await page.goto(`/story/${story.id}/chapter/${chapter1.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
+    await editor.fill('This is chapter 1.');
+
+    await page.goto(`/story/${story.id}/chapter/${chapter2.id}`);
+    const newEditor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(newEditor).toBeVisible({ timeout: 10000 });
+    await newEditor.fill('This is chapter 2.');
+
+    await page.goto(`/story/${story.id}/chapter/${chapter1.id}`);
+    await expect(newEditor).toContainText('chapter 1', { timeout: 10000 });
   });
 
   test('Edit and Reorder Beats', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
+    await page.goto(`/story/${story.id}`);
     const beatInput = page.getByPlaceholder(/add a beat|beat input/i).first();
-    if (await beatInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await beatInput.fill('First beat');
-      await beatInput.press('Enter');
-      await waitForToast(page, /beat added/i, 5000);
-      
-      const beatItem = page.getByText('First beat').first();
-      if (await beatItem.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await expect(beatItem).toBeVisible();
-      }
-    }
+    await expect(beatInput).toBeVisible({ timeout: 10000 });
+
+    await beatInput.fill('First beat');
+    await beatInput.press('Enter');
+    await expectToast(page, /beat added/i, 5000);
+
+    const beatItem = page.getByText('First beat').first();
+    await expect(beatItem).toBeVisible({ timeout: 10000 });
   });
 
   test('Story Illustration', async ({ page }) => {
-    await page.goto('/story');
+    const story = await seedStory(page, { title: uniqueName('e2e-story') });
+    created.push({ kind: 'story', id: story.id });
+    await seedStoryChapter(page, story.id, { title: 'Chapter 1' });
 
-    const editor = page.getByPlaceholder(/once upon a time/i).first().or(page.locator('.story-editor').first());
-    if (await editor.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editor.fill('A magical kingdom floating in the clouds.');
-      
-      const illustrateBtn = page.getByRole('button', { name: /Illustrate/i }).first();
-      if (await illustrateBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await illustrateBtn.click();
-        
-        // Wait for the modal or generation
-        await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
-        await expect(illustrateBtn).toBeEnabled({ timeout: 120000 });
-        
-        await waitForToast(page, /image|illustration/i, 120000).catch(() => false); // just in case it doesn't show toast
-      }
-    }
+    await page.goto(`/story/${story.id}`);
+    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    await expect(editor).toBeVisible({ timeout: 10000 });
+
+    await editor.fill('A magical kingdom floating in the clouds.');
+
+    const illustrateBtn = page.getByRole('button', { name: /Illustrate/i }).first();
+    await expect(illustrateBtn).toBeVisible({ timeout: 10000 });
+    await illustrateBtn.click();
+
+    await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
+    await expect(illustrateBtn).toBeEnabled({ timeout: 120000 });
   });
 });

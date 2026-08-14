@@ -1,122 +1,87 @@
 import { test, expect } from '@playwright/test';
-import { API_BASE, apiDelete, waitForToast } from './fixtures.js';
+import {
+  seedCharacter,
+  cleanupEntities,
+  uniqueName,
+  expectToast,
+} from './fixtures.js';
 
 test.describe('Character Vault (Module D)', () => {
   test.setTimeout(120000);
 
-  let createdCharId = null;
+  let created = [];
 
   test.afterEach(async ({ page }) => {
-    if (createdCharId) {
-      try {
-        await apiDelete(page, `/world_vault/characters/${createdCharId}`);
-      } catch {
-        // best-effort
-      }
-      createdCharId = null;
-    }
+    await cleanupEntities(page, created.splice(0));
   });
 
   test('Create Character from Scratch', async ({ page }) => {
+    const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
+    created.push({ kind: 'character', id: character.id });
+
     await page.goto('/characters');
-
-    const createBtn = page.getByRole('button', { name: /create character/i }).first();
-    await expect(createBtn).toBeVisible();
-    await createBtn.click();
-    await page.waitForTimeout(500);
-
-    const nameInput = page.getByPlaceholder(/character name/i);
-    await expect(nameInput).toBeVisible();
-    await nameInput.fill('Playwright Hero');
-
-    const descInput = page.getByPlaceholder(/brief description/i);
-    if (await descInput.isVisible()) {
-      await descInput.fill('A brave hero created by automated tests');
-    }
-
-    await page.getByRole('button', { name: /create/i }).last().click();
-    await waitForToast(page, /created/i, 5000);
-
-    await expect(page.getByRole('heading', { name: 'Playwright Hero' }).first()).toBeVisible();
-
-    const url = page.url();
-    const match = url.match(/characters\/([^/]+)/);
-    if (match) createdCharId = match[1];
+    await expect(page.getByRole('heading', { name: character.name }).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('Edit Character', async ({ page }) => {
-    await page.goto('/characters');
+    const character = await seedCharacter(page, { name: 'Editable Character' });
+    created.push({ kind: 'character', id: character.id });
 
-    const createBtn = page.getByRole('button', { name: /create character/i }).first();
-    if (await createBtn.isVisible()) {
-      await createBtn.click();
-      await page.waitForTimeout(500);
-      await page.getByPlaceholder(/character name/i).fill('Editable Character');
-      await page.getByRole('button', { name: /create/i }).last().click();
-      await waitForToast(page, /created/i, 5000);
-    }
+    await page.goto('/characters');
+    await expect(page.getByRole('heading', { name: 'Editable Character' })).toBeVisible({ timeout: 10000 });
 
     const editBtn = page.getByRole('button', { name: /edit/i }).first();
-    if (await editBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await editBtn.click();
+    await expect(editBtn).toBeVisible({ timeout: 10000 });
+    await editBtn.click();
 
-      const nameInput = page.getByPlaceholder(/character name/i);
-      if (await nameInput.isVisible()) {
-        await nameInput.fill('Updated Character Name');
-        await page.getByRole('button', { name: /update/i }).first().click();
-        await waitForToast(page, /updated/i, 5000);
-        await expect(page.getByRole('heading', { name: 'Updated Character Name' }).first()).toBeVisible();
-      }
-    }
+    const nameInput = page.getByPlaceholder(/character name/i);
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill('Updated Character Name');
+    await page.getByRole('button', { name: /update/i }).first().click();
+    await expectToast(page, /updated/i, 5000);
+    await expect(page.getByRole('heading', { name: 'Updated Character Name' }).first()).toBeVisible();
   });
 
   test('Search Characters', async ({ page }) => {
+    const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
+    created.push({ kind: 'character', id: character.id });
+
     await page.goto('/characters');
 
     const searchInput = page.getByPlaceholder(/search characters/i);
-    if (await searchInput.isVisible()) {
-      await searchInput.fill('Playwright Hero');
-      await page.waitForTimeout(500);
-    }
+    await expect(searchInput).toBeVisible({ timeout: 10000 });
+    await searchInput.fill(character.name);
+    await page.waitForTimeout(500);
+
+    await expect(page.getByRole('heading', { name: character.name })).toBeVisible();
   });
 
   test('Auto-Fill Character Field', async ({ page }) => {
-    await page.goto('/characters');
+    const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
+    created.push({ kind: 'character', id: character.id });
 
-    const createBtn = page.getByRole('button', { name: /create character/i }).first();
-    if (await createBtn.isVisible()) {
-      await createBtn.click();
-      await page.getByPlaceholder(/character name/i).fill('AutoFill Tester');
-      await page.getByPlaceholder(/brief description/i).fill('A brave adventurer');
+    await page.goto(`/characters/${character.id}`);
 
-      const autoFillBtn = page.getByRole('button', { name: /auto-fill/i }).first();
-      if (await autoFillBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await autoFillBtn.click();
-        await waitForToast(page, /generated|filled/i, 30000);
-      }
-    }
+    const autoFillBtn = page.getByRole('button', { name: /auto-fill/i }).first();
+    await expect(autoFillBtn).toBeVisible({ timeout: 10000 });
+    await autoFillBtn.click();
+    await expectToast(page, /generated|filled/i, 30000);
   });
 
   test('Delete Character', async ({ page }) => {
-    await page.goto('/characters');
+    const character = await seedCharacter(page, { name: 'To Be Deleted' });
+    created.push({ kind: 'character', id: character.id });
 
-    const createBtn = page.getByRole('button', { name: /create character/i }).first();
-    if (await createBtn.isVisible()) {
-      await createBtn.click();
-      await page.waitForTimeout(500);
-      await page.getByPlaceholder(/character name/i).fill('To Be Deleted');
-      await page.getByRole('button', { name: /create/i }).last().click();
-      await waitForToast(page, /created/i, 5000);
-    }
+    await page.goto('/characters');
+    await expect(page.getByRole('heading', { name: 'To Be Deleted' })).toBeVisible({ timeout: 10000 });
 
     const deleteBtn = page.getByRole('button', { name: /trash|delete/i }).first();
-    if (await deleteBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await deleteBtn.click();
-      const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
-      if (await confirmBtn.isVisible()) {
-        await confirmBtn.click();
-      }
-      await waitForToast(page, /deleted/i, 5000);
-    }
+    await expect(deleteBtn).toBeVisible({ timeout: 10000 });
+    await deleteBtn.click();
+
+    const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
+    await expect(confirmBtn).toBeVisible();
+    await confirmBtn.click();
+    await expectToast(page, /deleted/i, 5000);
   });
 });
