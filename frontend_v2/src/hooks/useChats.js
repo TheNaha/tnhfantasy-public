@@ -139,6 +139,28 @@ export const useSendMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ chatId, message }) => api.post(`/api/v2/chats/${chatId}/messages`, message),
+        onMutate: async ({ chatId, message }) => {
+            await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
+            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
+            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) => [
+                ...(old || []),
+                {
+                    id: `temp-${crypto.randomUUID()}`,
+                    role: message.role,
+                    content: message.content,
+                    chat_id: chatId,
+                    created_at: new Date().toISOString(),
+                    optimistic: true,
+                },
+            ]);
+            return { previous };
+        },
+        onError: (_, { chatId }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+            }
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', chatId] });
+        },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
@@ -162,5 +184,28 @@ export const useChatImages = (chatId) => {
         queryKey: ['world_vault', 'chat', 'images', chatId],
         queryFn: () => api.get(`/api/v2/chats/${chatId}/images`),
         enabled: !!chatId
+    });
+};
+
+export const useSearchChats = (query) => {
+    return useQuery({
+        queryKey: ['world_vault', 'chats', 'search', query],
+        queryFn: () => api.get('/api/v2/chats', { params: { q: query } }),
+        enabled: !!query && query.trim().length > 0,
+    });
+};
+
+export const useExportChat = () => {
+    return useMutation({
+        mutationFn: ({ chatId }) => api.get(`/api/v2/chats/${chatId}/export`),
+        onSuccess: (data, variables) => {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chat-${variables.chatId}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
     });
 };

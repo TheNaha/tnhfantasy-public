@@ -5,11 +5,13 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
-from core.entities import Chat, Character, Message, MessageRole
+from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
+from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
+from services.llm_workflow import build_chat_llm_workflow
 
 MAX_CONTEXT_MESSAGES = 200
 
@@ -78,11 +80,61 @@ def list_chats(
     limit: int = 50,
     offset: int = 0,
     workspace: str | None = None,
+    q: str | None = None,
 ):
     stmt = select(Chat).order_by(Chat.updated_at.desc()).offset(offset).limit(limit)
     if workspace:
         stmt = stmt.where(Chat.chat_type == workspace)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(Chat.name.ilike(pattern))
     return session.exec(stmt).all()
+
+
+@router.get("/{chat_id}/export")
+def export_chat(chat_id: str, session: Session = Depends(get_session)):
+    chat = session.get(Chat, chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+    messages = session.exec(
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+    ).all()
+    character = session.get(Character, chat.character_id) if chat.character_id else None
+
+    def _serialize_message(msg: Message) -> dict:
+        return {
+            "id": msg.id,
+            "role": msg.role.value,
+            "kind": msg.kind.value if msg.kind else None,
+            "content": msg.content,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "updated_at": msg.updated_at.isoformat() if msg.updated_at else None,
+            "pinned": msg.pinned,
+            "message_metadata": msg.message_metadata or {},
+        }
+
+    payload = {
+        "chat": {
+            "id": chat.id,
+            "name": chat.name,
+            "chat_type": chat.chat_type,
+            "character_id": chat.character_id,
+            "character_name": character.name if character else None,
+            "persona_name": chat.persona_name,
+            "persona_description": chat.persona_description,
+            "story_time": chat.story_time,
+            "story_location": chat.story_location,
+            "created_at": chat.created_at.isoformat() if chat.created_at else None,
+            "updated_at": chat.updated_at.isoformat() if chat.updated_at else None,
+        },
+        "messages": [_serialize_message(m) for m in messages],
+        "meta": {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "message_count": len(messages),
+        },
+    }
+    return payload
+
 
 @router.post("", response_model=Chat)
 async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
@@ -193,11 +245,7 @@ def list_messages(chat_id: str, session: Session = Depends(get_session), limit: 
 @router.get("/{chat_id}/system-prompt")
 async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
     """Return the assembled system prompt (with per-section breakdown) for this chat."""
-    from services.context_builder import (
-        build_chat_context_async,
-        build_system_prompt_sections_async,
-        estimate_tokens,
-    )
+    from services.context_builder import estimate_tokens
 
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -272,7 +320,6 @@ from services.chat_utils import resolve_context_tokens as _resolve_context_token
 
 @router.post("/{chat_id}/messages")
 async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
-    from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
     
     chat = session.get(Chat, chat_id)
@@ -320,7 +367,6 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     raise ValidationError("Narration is disabled for this chat")
                 from config import get_system_prompt_blocks
                 from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
-                from services.llm_workflow import build_chat_llm_workflow
 
                 narrator_prompt = (get_system_prompt_blocks() or {}).get("narrator") or NARRATOR_SYSTEM_PROMPT
 
@@ -338,7 +384,6 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     source="narrator",
                 )
             else:
-                from services.llm_workflow import build_chat_llm_workflow
 
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
@@ -393,7 +438,6 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
 def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
     """Recent jobs (LLM + image) assigned to this chat, newest first."""
     from sqlalchemy import JSON
-    from core.entities import Job, JobStatus
 
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -468,7 +512,6 @@ async def narrate_message(
     # Optional: If you had character-specific voice profiles, you'd fetch it here.
     voice_profile = None
     if chat.character_id:
-        from core.entities import Character
         char = session.get(Character, chat.character_id)
         if char:
             voice_profile = getattr(char, "voice_profile", None)
@@ -549,7 +592,6 @@ async def generate_swipe(
     message_id: str,
     session: Session = Depends(get_session)
 ) -> dict:
-    from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
 
     chat = session.get(Chat, chat_id)
@@ -585,7 +627,6 @@ async def generate_swipe(
         **ctx_kwargs,
     )
 
-    from services.llm_workflow import build_chat_llm_workflow
     
     # Mirror agentic state
     prev_agentic = target_msg.tool_calls is not None or (target_msg.message_metadata or {}).get("agentic", False)
@@ -614,7 +655,6 @@ async def generate_swipe(
         metadata["original_messages"] = context
         metadata["max_agentic_depth"] = chat.max_agentic_depth or 3
 
-    from api.deps import get_job_service
     job_service = get_job_service(session)
     job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
     session.commit()
@@ -710,8 +750,6 @@ async def regenerate_reply(
     Re-run the last user message: delete every message after it, then dispatch
     a fresh reply job mirroring the previous job's agentic settings.
     """
-    from core.entities import Job, JobStatus
-    from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
 
     chat = session.get(Chat, chat_id)
@@ -769,7 +807,6 @@ async def regenerate_reply(
         **ctx_kwargs,
     )
 
-    from services.llm_workflow import build_chat_llm_workflow
 
     workflow, metadata = build_chat_llm_workflow(
         messages=context,
@@ -818,7 +855,6 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     a completed user message directly and immediately fires the character's response.
     The LLM writes *as the user*, not as the character.
     """
-    from services.context_builder import build_system_prompt_sections_async, prune_context
     from services.job_queue import queue_manager
     from config import get_system_prompt_blocks
 
@@ -868,7 +904,6 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     try:
         job_service = get_job_service(session)
-        from services.llm_workflow import build_chat_llm_workflow
 
         workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
@@ -916,10 +951,8 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     
     character = None
     if chat.character_id:
-        from core.entities import Character
         character = session.get(Character, chat.character_id)
 
-    from services.context_builder import build_system_prompt_sections_async
     from config import get_system_prompt_blocks
 
     world_sections = await build_system_prompt_sections_async(
@@ -980,7 +1013,6 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             msg_list.append({"role": "user", "content": f"[{msg.content}]"})
 
     # Prune to stay within context budget
-    from services.context_builder import prune_context
     all_msgs = [{"role": "system", "content": suggest_system}] + msg_list
     
     if req.draft and req.draft.strip():
@@ -990,7 +1022,6 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 
     try:
         job_service = get_job_service(session)
-        from services.llm_workflow import build_chat_llm_workflow
 
         workflow, metadata = build_chat_llm_workflow(
             messages=all_msgs,
@@ -1017,7 +1048,6 @@ async def generate_scene(
     chat_id: str, 
     session: Session = Depends(get_session),
 ):
-    from services.job_service import JobService
     from services.job_submission_service import JobSubmissionService
     from services.job_queue import queue_manager
     
@@ -1031,7 +1061,7 @@ async def generate_scene(
         
     context_text = "\n".join([f"{m.role.value}: {m.content}" for m in past_messages[-10:] if m.content])
     
-    # Resolve checkpoint: character > user settings > fallback to any installed model
+    # Resolve checkpoint: character > configured default > any installed model
     checkpoint = None
     if chat.character_id:
         character = session.get(Character, chat.character_id)
@@ -1039,9 +1069,7 @@ async def generate_scene(
             checkpoint = character.checkpoint
     if not checkpoint:
         from services.model_availability_service import ModelAvailabilityService
-        checkpoint = ModelAvailabilityService(session).get_available_checkpoint()
-    if not checkpoint:
-        checkpoint = "sd_xl_base_1.0.safetensors"
+        checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
     
     system_prompt = (
         "You are an AI scene director for a roleplay chat. Read the following recent "
@@ -1057,7 +1085,6 @@ async def generate_scene(
 
     job_service = JobService(session)
     from services.orchestrator_service import AGENTIC_TOOLS
-    from services.llm_workflow import build_chat_llm_workflow
 
     workflow, metadata = build_chat_llm_workflow(
         messages=[
@@ -1111,7 +1138,6 @@ async def illustrate_chat(
     """
     from core.workflow_builder import build_image_workflow
     from services.job_queue import queue_manager
-    from services.job_service import JobService
     from services.model_availability_service import ModelAvailabilityService
 
     chat = session.get(Chat, chat_id)
@@ -1140,9 +1166,7 @@ async def illustrate_chat(
 
     checkpoint = (character.checkpoint if character and character.checkpoint else None)
     if not checkpoint:
-        checkpoint = ModelAvailabilityService(session).get_available_checkpoint()
-    if not checkpoint:
-        checkpoint = "sd_xl_base_1.0.safetensors"
+        checkpoint = ModelAvailabilityService(session).resolve_checkpoint()
 
     lora_name = character.lora if character and character.lora else None
 

@@ -21,6 +21,19 @@ export const useEditMessage = () => {
     return useMutation({
         mutationFn: ({ chatId, msgId, content }) =>
             api.patch(`/api/v2/chats/${chatId}/messages/${msgId}`, { content }),
+        onMutate: async ({ chatId, msgId, content }) => {
+            await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
+            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
+            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) =>
+                old?.map((m) => m.id === msgId ? { ...m, content } : m) || []
+            );
+            return { previous };
+        },
+        onError: (_, { chatId }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+            }
+        },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         }
@@ -32,6 +45,19 @@ export const useDeleteMessage = () => {
     return useMutation({
         mutationFn: ({ chatId, msgId }) =>
             api.delete(`/api/v2/chats/${chatId}/messages/${msgId}`),
+        onMutate: async ({ chatId, msgId }) => {
+            await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
+            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
+            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) =>
+                old?.filter((m) => m.id !== msgId) || []
+            );
+            return { previous };
+        },
+        onError: (_, { chatId }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+            }
+        },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', variables.chatId] });

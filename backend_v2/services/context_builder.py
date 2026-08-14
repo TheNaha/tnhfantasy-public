@@ -22,12 +22,18 @@ CHARS_PER_TOKEN = 3.5
 
 
 import tiktoken
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4)
+def _load_encoding(name: str):
+    """Load and cache a tiktoken encoding by name (e.g. 'cl100k_base')."""
+    return tiktoken.get_encoding(name)
+
 
 def get_tokenizer():
     """Cache the tiktoken encoder to avoid reloading it."""
-    if not hasattr(get_tokenizer, "_enc"):
-        get_tokenizer._enc = tiktoken.get_encoding("cl100k_base")
-    return get_tokenizer._enc
+    return _load_encoding("cl100k_base")
 
 def estimate_tokens(text: str) -> int:
     """Estimate token count from text using tiktoken.
@@ -44,6 +50,11 @@ def estimate_tokens(text: str) -> int:
         word_count = len(re.findall(r'\S+', text))
         char_estimate = len(text) / CHARS_PER_TOKEN
         return max(int(char_estimate), word_count)
+
+
+@lru_cache(maxsize=2048)
+def _cached_estimate_tokens(text: str) -> int:
+    return estimate_tokens(text)
 
 
 def build_character_system_prompt(character) -> str:
@@ -162,7 +173,7 @@ def prune_context(
     system_msgs = [m for m in messages if _is_exempt_system(m)]
     non_system_msgs = [m for m in messages if not _is_exempt_system(m)]
 
-    system_tokens = sum(estimate_tokens(m.get("content", "")) for m in system_msgs)
+    system_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in system_msgs)
     remaining_budget = max_tokens - system_tokens
 
     if remaining_budget <= 0:
@@ -173,14 +184,14 @@ def prune_context(
     pinned_msgs = [m for m in non_system_msgs if m.get("_pinned")]
     unpinned_msgs = [m for m in non_system_msgs if not m.get("_pinned")]
 
-    pinned_tokens = sum(estimate_tokens(m.get("content", "")) for m in pinned_msgs)
+    pinned_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in pinned_msgs)
     remaining_budget -= pinned_tokens
 
-    total_tokens = sum(estimate_tokens(m.get("content", "")) for m in unpinned_msgs)
+    total_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in unpinned_msgs)
 
     while total_tokens > remaining_budget and len(unpinned_msgs) > 2:
         removed = unpinned_msgs.pop(0)
-        total_tokens -= estimate_tokens(removed.get("content", ""))
+        total_tokens -= _cached_estimate_tokens(removed.get("content", ""))
 
     # Reconstruct in original order: system → unpinned (oldest first) → pinned at end
     # Actually preserve original relative order for pinned messages

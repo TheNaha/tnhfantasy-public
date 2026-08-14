@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon } from 'lucide-react';
+import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download } from 'lucide-react';
 import clsx from 'clsx';
 
 export default React.memo(function StoryHeader({
@@ -18,6 +18,7 @@ export default React.memo(function StoryHeader({
     mobileTab,
     onOpenContextMobile,
     onTitleChange,
+    onExport,
 }) {
     return (
         <div className="h-16 border-b border-white/5 flex items-center justify-between px-2 sm:px-6 bg-gray-900/60 backdrop-blur-md z-10 shrink-0 gap-2">
@@ -69,6 +70,16 @@ export default React.memo(function StoryHeader({
                     >
                         {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={14} />}
                         Save
+                    </button>
+                )}
+                {onExport && activeStory && (
+                    <button
+                        onClick={onExport}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors"
+                        title="Export story as JSON"
+                    >
+                        <Download size={14} />
+                        <span className="hidden sm:inline">Export</span>
                     </button>
                 )}
                         <button

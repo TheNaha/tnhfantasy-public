@@ -227,6 +227,7 @@ def test_illustrate_chat_queues_image_job(client, session, monkeypatch):
     from unittest.mock import AsyncMock
 
     from core.entities import Character, Job
+    from services.model_availability_service import AvailabilityResult
 
     char = Character(name="Aria", checkpoint="aria_checkpoint.safetensors", lora="aria_lora")
     session.add(char)
@@ -238,6 +239,14 @@ def test_illustrate_chat_queues_image_job(client, session, monkeypatch):
     session.refresh(chat)
 
     enqueue = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "services.model_availability_service.ModelAvailabilityService.check_availability",
+        lambda self, required: AvailabilityResult(
+            valid=True,
+            eligible_providers=["test-provider"],
+            required_models=required,
+        ),
+    )
     monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
 
     resp = client.post(f"/api/v2/chats/{chat.id}/illustrate", json={"image_prompt": "A dragon"})
@@ -258,13 +267,16 @@ def test_illustrate_chat_queues_image_job(client, session, monkeypatch):
     assert job.metadata_["chat_id"] == chat.id
     assert job.metadata_["checkpoint"] == "aria_checkpoint.safetensors"
     assert job.metadata_["loras"] == ["aria_lora"]
-    assert job.workflow["6"]["inputs"]["text"] == "A dragon"
+    # Find the positive CLIPTextEncode node (node IDs are incremental, not fixed)
+    text_nodes = [v for v in job.workflow.values() if v.get("class_type") == "CLIPTextEncode"]
+    assert any(n.get("inputs", {}).get("text") == "A dragon" for n in text_nodes)
 
 
 def test_illustrate_chat_falls_back_to_latest_reply(client, session, monkeypatch):
     from unittest.mock import AsyncMock
 
     from core.entities import Job
+    from services.model_availability_service import AvailabilityResult
 
     chat = Chat(name="Fallback Test")
     session.add(chat)
@@ -279,6 +291,14 @@ def test_illustrate_chat_falls_back_to_latest_reply(client, session, monkeypatch
     session.commit()
 
     enqueue = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "services.model_availability_service.ModelAvailabilityService.check_availability",
+        lambda self, required: AvailabilityResult(
+            valid=True,
+            eligible_providers=["test-provider"],
+            required_models=required,
+        ),
+    )
     monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
 
     resp = client.post(f"/api/v2/chats/{chat.id}/illustrate", json={"image_prompt": ""})
@@ -286,7 +306,8 @@ def test_illustrate_chat_falls_back_to_latest_reply(client, session, monkeypatch
     job_id = resp.json()["job_id"]
     job = session.get(Job, job_id)
     assert job.metadata_["prompt"] == "The heroine stares at the horizon."
-    assert job.workflow["6"]["inputs"]["text"] == "The heroine stares at the horizon."
+    text_nodes = [v for v in job.workflow.values() if v.get("class_type") == "CLIPTextEncode"]
+    assert any(n.get("inputs", {}).get("text") == "The heroine stares at the horizon." for n in text_nodes)
 
 
 def test_illustrate_chat_without_prompt_or_reply_400(client, session):

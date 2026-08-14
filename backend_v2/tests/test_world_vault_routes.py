@@ -1,8 +1,10 @@
 # Integration tests for World Vault routes (chats, characters, stories).
 
-import pytest
+from unittest.mock import AsyncMock
+
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -216,3 +218,98 @@ class TestStoriesRoute:
 
         get_response = client.get(f"/api/v2/stories/{story_id}")
         assert get_response.status_code == 404
+
+    def test_parse_story(self, client, session, monkeypatch):
+        monkeypatch.setattr("services.llm_config.get_default_llm_model", lambda: "test-model")
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+
+        story = Story(title="Parse Test")
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+
+        response = client.post("/api/v2/stories/parse", json={
+            "story_id": story.id,
+            "text": "Alice was a brave knight who lived in the Shire. The Ancient Lore spoke of great magic.",
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["job_id"]
+
+        from core.entities import Job
+        job = session.get(Job, body["job_id"])
+        assert job.task_type == "llm"
+        assert job.workflow["type"] == "story_parse"
+
+
+class TestChatSearchAndExport:
+    def test_list_chats_with_search(self, client, session):
+        c1 = Chat(name="Alpha Chat", chat_type="chat")
+        c2 = Chat(name="Beta Chat", chat_type="chat")
+        c3 = Chat(name="Alpha Story", chat_type="story")
+        session.add_all([c1, c2, c3])
+        session.commit()
+
+        resp = client.get("/api/v2/chats", params={"q": "Alpha"})
+        assert resp.status_code == 200
+        names = [c["name"] for c in resp.json()]
+        assert "Alpha Chat" in names
+        assert "Beta Chat" not in names
+
+    def test_export_chat_returns_json(self, client, session):
+        chat = Chat(name="Export Chat", chat_type="chat")
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        session.add(Message(chat_id=chat.id, role=MessageRole.USER, content="hello"))
+        session.commit()
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/export")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["chat"]["name"] == "Export Chat"
+        assert len(body["messages"]) == 1
+        assert body["messages"][0]["content"] == "hello"
+        assert body["meta"]["message_count"] == 1
+
+    def test_export_chat_not_found(self, client, session):
+        resp = client.get("/api/v2/chats/does-not-exist/export")
+        assert resp.status_code == 404
+
+
+class TestStoryExportAndReorder:
+    def test_export_story_returns_json(self, client, session):
+        story = Story(title="Export Story")
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        ch = StoryChapter(story_id=story.id, title="Ch1", content="Once upon a time", chapter_number=1)
+        session.add(ch)
+        session.commit()
+
+        resp = client.get(f"/api/v2/stories/{story.id}/export")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["story"]["title"] == "Export Story"
+        assert len(body["chapters"]) == 1
+        assert body["chapters"][0]["content"] == "Once upon a time"
+        assert body["meta"]["chapter_count"] == 1
+
+    def test_reorder_chapters(self, client, session):
+        story = Story(title="Reorder Story")
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        ch1 = StoryChapter(story_id=story.id, title="A", chapter_number=1)
+        ch2 = StoryChapter(story_id=story.id, title="B", chapter_number=2)
+        session.add_all([ch1, ch2])
+        session.commit()
+        session.refresh(ch1)
+        session.refresh(ch2)
+
+        resp = client.post(f"/api/v2/stories/{story.id}/chapters/reorder", json={"chapter_ids": [ch2.id, ch1.id]})
+        assert resp.status_code == 200
+        session.refresh(ch1)
+        session.refresh(ch2)
+        assert ch1.chapter_number == 2
+        assert ch2.chapter_number == 1

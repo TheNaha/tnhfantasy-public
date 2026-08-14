@@ -1,10 +1,10 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, useExportStory } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -67,6 +67,18 @@ export default function StorySandbox() {
     const updateChapter = useUpdateChapter();
     const illustrateChapter = useIllustrateChapter();
     const parseStory = useParseStory();
+    const exportStory = useExportStory();
+
+    const wordCount = useMemo(() => {
+        const text = editorContent || '';
+        const trimmed = text.trim();
+        if (!trimmed) return 0;
+        return trimmed.split(/\s+/).length;
+    }, [editorContent]);
+
+    const readingTimeMinutes = useMemo(() => {
+        return Math.max(1, Math.ceil(wordCount / 200));
+    }, [wordCount]);
 
     const [isStreaming, setIsStreaming] = useState(false);
     // Keep a ref in sync so WebSocket handlers can read the live value
@@ -218,67 +230,11 @@ export default function StorySandbox() {
             const eventType = job.task_type || meta.workspace;
             
             if (meta.type === 'story_parse' && storyId === activeStoryId) {
-                try {
-                    const parsed = JSON.parse(job.text ?? job.message);
-                    if (parsed.characters || parsed.locations || parsed.lorebooks) {
-                        toast.success("AI finished parsing story! Saving entities...");
-                        
-                        const newLorebookIds = [];
-                        const newCharacterIds = [];
-
-                        // 1. Insert characters
-                        for (const char of (parsed.characters || [])) {
-                            const res = await fetch('/api/world_vault/characters', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ name: char.name, description: char.description || '', persona: char.personality || '' })
-                            });
-                            if (res.ok) {
-                                const data = await res.json();
-                                newCharacterIds.push(data.id);
-                            }
-                        }
-
-                        // 2. Insert lorebooks (combining locations and lorebooks)
-                        const allLore = [...(parsed.locations || []), ...(parsed.lorebooks || [])];
-                        for (const lore of allLore) {
-                            const res = await fetch('/api/world_vault/lorebooks', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ name: lore.name, description: lore.description || '' })
-                            });
-                            if (res.ok) {
-                                const data = await res.json();
-                                newLorebookIds.push(data.id);
-                            }
-                        }
-
-                        // 3. Link to story
-                        if (newCharacterIds.length > 0 || newLorebookIds.length > 0) {
-                            const currentStoryRes = await fetch(`/api/world_vault/stories/${storyId}`);
-                            if (currentStoryRes.ok) {
-                                const currentStory = await currentStoryRes.json();
-                                const uniqueCharIds = Array.from(new Set([...(currentStory.character_ids || []), ...newCharacterIds]));
-                                const uniqueLoreIds = Array.from(new Set([...(currentStory.lorebook_ids || []), ...newLorebookIds]));
-                                
-                                await fetch(`/api/world_vault/stories/${storyId}`, {
-                                    method: 'PATCH',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        character_ids: uniqueCharIds,
-                                        lorebook_ids: uniqueLoreIds
-                                    })
-                                });
-                            }
-                        }
-
-                        // Refresh the world vault to show new entities
-                        queryClient.invalidateQueries({ queryKey: ['world_vault'] });
-                        toast.success("Successfully imported Characters & Lore!");
-                    }
-                } catch (e) {
-                    console.error("Failed to parse story entities from LLM", e);
-                }
+                // Entity creation (characters, lorebooks) and story linking is
+                // handled entirely by the backend's _handle_story_parse handler.
+                // The frontend just needs to refresh its cached queries.
+                queryClient.invalidateQueries({ queryKey: ['world_vault'] });
+                toast.success("Story parsed! Characters & lorebooks imported.");
                 return;
             }
             
@@ -566,6 +522,11 @@ export default function StorySandbox() {
         }
     };
 
+    const handleExportStory = useCallback(() => {
+        if (!activeStoryId) return;
+        exportStory.mutate({ storyId: activeStoryId });
+    }, [activeStoryId, exportStory]);
+
     const handleDeleteChapter = async (chapterId) => {
         if (!activeStoryId) return;
         try {
@@ -737,6 +698,7 @@ export default function StorySandbox() {
                                     mobileTab={mobileTab}
                                     onOpenContextMobile={() => { setIsPanelOpen(!isPanelOpen); setMobileTab('context'); }}
                                     onTitleChange={handleStoryTitleUpdate}
+                                    onExport={handleExportStory}
                                 />
                                 <StoryEditor
                                     isPreviewMode={isPreviewMode}
@@ -745,6 +707,8 @@ export default function StorySandbox() {
                                     textareaRef={textareaRef}
                                     isStreaming={isStreaming}
                                     activeChapterId={activeChapterId}
+                                    wordCount={wordCount}
+                                    readingTimeMinutes={readingTimeMinutes}
                                 />
                                 {activeChapterId && (
                                     <div className="px-2 sm:px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">

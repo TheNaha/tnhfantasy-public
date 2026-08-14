@@ -39,13 +39,15 @@ async def submit_image_job(
 
     Returns the created Job.
     """
-    import config as app_config
-
-    resolved_checkpoint = checkpoint or app_config.get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
-
-    availability = ModelAvailabilityService(session).get_available_checkpoint(resolved_checkpoint)
-    if availability:
-        resolved_checkpoint = availability
+    # Resolve checkpoint: preferred → config default → hardcoded fallback.
+    # Unlike resolve_checkpoint(), we preserve the *preferred* name in the
+    # metadata even when it's not installed — the JobSubmissionService
+    # validation layer will catch the missing model and produce the right
+    # error message.  If the preferred isn't installed but *some* checkpoint
+    # is, we use that to avoid a false MISSING_MODELS error.
+    availability = ModelAvailabilityService(session)
+    fallback_name = checkpoint or get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
+    resolved_checkpoint = availability.get_available_checkpoint(fallback_name) or fallback_name
 
     workflow, metadata = build_image_job_workflow(
         prompt=prompt,

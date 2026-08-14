@@ -19,7 +19,8 @@ import {
     useCharacterCollection, useEditMessage, useRollbackChat,
     useRegenerateReply, useChatJobs, usePatchCharacter,
     useImpersonateMessage, usePinMessage, useSwipeMessage, useGenerateSwipe, useChatImages,
-    useIllustrateChat, useGenerateScene, useNarrateMessage
+    useIllustrateChat, useGenerateScene, useNarrateMessage, useDeleteMessage,
+    useSearchChats
 } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -154,8 +155,11 @@ export default function ChatWorkspace() {
 
     const CHAT_PAGE_SIZE = 50;
     const [chatOffset, setChatOffset] = useState(0);
+    const [chatSearchQuery, setChatSearchQuery] = useState('');
     const { data: chats, isLoading: isChatsLoading } = useChats({ limit: CHAT_PAGE_SIZE, offset: chatOffset });
-    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE;
+    const { data: searchResults } = useSearchChats(chatSearchQuery);
+    const activeChatList = chatSearchQuery.trim() ? (searchResults || []) : chats;
+    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim();
 
     // Message pagination: page 0 is the newest 100 messages (ascending order,
     // newest last). Older pages are appended above them on demand.
@@ -217,6 +221,7 @@ export default function ChatWorkspace() {
     const rollbackMutation = useRollbackChat();
     const regenerateMutation = useRegenerateReply();
     const patchCharacterMutation = usePatchCharacter();
+    const deleteMessageMutation = useDeleteMessage();
     const impersonateMutation = useImpersonateMessage();
     const pinMessageMutation = usePinMessage();
     const swipeMessageMutation = useSwipeMessage();
@@ -840,32 +845,25 @@ export default function ChatWorkspace() {
     const handleMessageIllustrate = useCallback(async (msgId) => {
         try {
             const msg = messages.find(m => m.id === msgId);
-            const res = await fetch(`/api/v2/chats/${activeChatId}/illustrate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image_prompt: msg?.content || '' })
+            const res = await illustrateMutation.mutateAsync({
+                chatId: activeChatId,
+                imagePrompt: msg?.content || ''
             });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.job_id) {
-                    setStreamingJob(queryClient, data.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'image' });
-                    toast.success('Illustration started', { icon: '✨' });
-                }
-            } else {
-                toast.error('Failed to start illustration');
+            if (res?.job_id) {
+                setStreamingJob(queryClient, res.job_id, { text: '', status: 'running', chatId: activeChatId, type: 'image' });
+                toast.success('Illustration started', { icon: '✨' });
             }
         } catch { toast.error('Failed to start illustration'); }
-    }, [activeChatId, messages, queryClient]);
+    }, [activeChatId, messages, illustrateMutation, queryClient]);
 
     const handleDeleteMessage = useCallback(async (msgId) => {
         try {
-            await fetch(`/api/world_vault/chats/${activeChatId}/messages/${msgId}`, { method: 'DELETE' });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', activeChatId] });
+            await deleteMessageMutation.mutateAsync({ chatId: activeChatId, msgId });
             toast.success('Message deleted');
         } catch {
             toast.error('Failed to delete message');
         }
-    }, [activeChatId, queryClient]);
+    }, [activeChatId, deleteMessageMutation]);
 
     const handleExportChat = () => {
         if (!messages.length) { toast.error('No messages to export'); return; }
@@ -1040,6 +1038,16 @@ export default function ChatWorkspace() {
                     </button>
                 </div>
 
+                <div className="px-3 py-2 border-b border-white/5 shrink-0">
+                    <input
+                        type="text"
+                        value={chatSearchQuery}
+                        onChange={(e) => { setChatSearchQuery(e.target.value); setChatOffset(0); }}
+                        placeholder="Search chats..."
+                        className="w-full bg-gray-800/60 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40"
+                    />
+                </div>
+
                 <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
                     {isChatsLoading ? (
                         <div className="flex justify-center p-4"><Loader2 className="animate-spin text-gray-500" size={20} /></div>
@@ -1049,7 +1057,7 @@ export default function ChatWorkspace() {
                             <p>No chats yet</p>
                             <p className="text-xs mt-1">Click + to create one</p>
                         </div>
-                    ) : chats?.map(chat => (
+                     ) : activeChatList?.map(chat => (
                         <div key={chat.id} className="relative group">
                             {renamingChatId === chat.id ? (
                                 <div className="flex items-center gap-1 px-1">
@@ -1088,8 +1096,8 @@ export default function ChatWorkspace() {
                                     })()}
                                     <span className="truncate flex-1">{chat.name || 'Unnamed Chat'}</span>
                                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                        <button onClick={e => { e.stopPropagation(); startRename(chat); }} className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
-                                        <button onClick={e => { e.stopPropagation(); handleDeleteChat(chat); }} className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
+                                        <button onClick={e => { e.stopPropagation(); startRename(chat); }} aria-label="Rename chat" className="p-1 hover:text-white text-gray-500 rounded"><Edit3 size={11} /></button>
+                                        <button onClick={e => { e.stopPropagation(); handleDeleteChat(chat); }} aria-label="Delete chat" className="p-1 hover:text-red-400 text-gray-500 rounded"><Trash2 size={11} /></button>
                                     </div>
                                 </div>
                             )}
@@ -1456,6 +1464,7 @@ export default function ChatWorkspace() {
                                 <button
                                     onClick={handleSendMessage}
                                     disabled={!canSend}
+                                    aria-label="Send message"
                                     className={clsx(
                                         "p-1.5 sm:p-2 transition-all rounded-xl",
                                         canSend

@@ -5,17 +5,17 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_session
-from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry
+from api.deps import get_job_service, get_session
+from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character
 from core.exceptions import NotFoundError
 from core.workflow_builder import build_image_workflow
+from services.llm_config import get_default_llm_model as _get_default_llm_model
+from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
+from services.job_service import JobService
 from services.job_queue import queue_manager
+from services.model_availability_service import ModelAvailabilityService
 
 router = APIRouter()
-
-
-from services.llm_config import get_default_llm_model as _get_default_llm_model
-from services.model_availability_service import ModelAvailabilityService
 
 
 class StoryContinueRequest(BaseModel):
@@ -123,6 +123,73 @@ def get_story(story_id: str, session: Session = Depends(get_session)):
         raise NotFoundError("Story", story_id)
     return story
 
+
+@router.get("/{story_id}/export")
+def export_story(story_id: str, session: Session = Depends(get_session)):
+    story = session.get(Story, story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+    chapters = session.exec(
+        select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)
+    ).all()
+
+    characters = session.exec(
+        select(Character).where(Character.id.in_(story.character_ids or []))
+    ).all() if story.character_ids else []
+    lorebooks = session.exec(
+        select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids or []))
+    ).all() if story.lorebook_ids else []
+
+    def _serialize_chapter(ch: StoryChapter) -> dict:
+        return {
+            "id": ch.id,
+            "title": ch.title,
+            "content": ch.content,
+            "chapter_number": ch.chapter_number,
+            "beats": ch.beats or [],
+            "image_paths": ch.image_paths or [],
+            "created_at": ch.created_at.isoformat() if ch.created_at else None,
+            "updated_at": ch.updated_at.isoformat() if ch.updated_at else None,
+        }
+
+    payload = {
+        "story": {
+            "id": story.id,
+            "title": story.title,
+            "description": story.description,
+            "genre": story.genre,
+            "memory": story.memory,
+            "created_at": story.created_at.isoformat() if story.created_at else None,
+            "updated_at": story.updated_at.isoformat() if story.updated_at else None,
+        },
+        "characters": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "description": c.description,
+                "personality": c.personality,
+            }
+            for c in characters
+        ],
+        "lorebooks": [
+            {
+                "id": l.id,
+                "name": l.name,
+                "description": l.description,
+            }
+            for l in lorebooks
+        ],
+        "chapters": [_serialize_chapter(ch) for ch in chapters],
+        "meta": {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "chapter_count": len(chapters),
+            "character_count": len(characters),
+            "lorebook_count": len(lorebooks),
+        },
+    }
+    return payload
+
+
 @router.put("/{story_id}", response_model=Story)
 def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
@@ -140,6 +207,27 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
     session.commit()
     session.refresh(story)
     return story
+
+
+class ChapterReorderRequest(BaseModel):
+    chapter_ids: list[str]
+
+
+@router.post("/{story_id}/chapters/reorder")
+def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session)):
+    story = session.get(Story, story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+    chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
+    chapter_map = {ch.id: ch for ch in chapters}
+    for idx, ch_id in enumerate(req.chapter_ids):
+        ch = chapter_map.get(ch_id)
+        if ch:
+            ch.chapter_number = idx + 1
+            session.add(ch)
+    session.commit()
+    return {"message": "Chapters reordered"}
+
 
 @router.delete("/{story_id}")
 def delete_story(story_id: str, session: Session = Depends(get_session)):
@@ -215,7 +303,6 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
 async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session)):
     from services.context_builder import build_chat_context_async
-    from services.job_queue import queue_manager
     from services.llm_config import get_default_llm_model as _get_default_llm_model
 
     chapter = session.get(StoryChapter, chapter_id)
@@ -256,8 +343,6 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         story_character_ids=story.character_ids or None,
     )
     
-    from services.llm_workflow import build_llm_workflow
-    from services.job_service import JobService
 
     job_service = JobService(session)
     workflow, metadata = build_llm_workflow(
@@ -375,7 +460,6 @@ async def illustrate_chapter(
     data: StoryIllustrateRequest,
     session: Session = Depends(get_session),
 ):
-    from services.job_service import JobService
 
     chapter = session.get(StoryChapter, chapter_id)
     if not chapter or chapter.story_id != story_id:
@@ -386,7 +470,6 @@ async def illustrate_chapter(
     # Resolve checkpoint: story characters > fallback to an installed model
     checkpoint = _resolve_default_checkpoint(session)
     if story and story.character_ids:
-        from core.entities import Character
         char = session.get(Character, story.character_ids[0])
         if char and char.checkpoint:
             checkpoint = _resolve_default_checkpoint(session, char.checkpoint)
@@ -420,10 +503,13 @@ async def illustrate_chapter(
         system_prompt += f"\nThe genre is {story.genre}."
 
     if story and story.character_ids:
-        from core.entities import Character
+        chars = session.exec(
+            select(Character).where(Character.id.in_(story.character_ids))
+        ).all()
+        char_map = {c.id: c for c in chars}
         characters_content = []
         for char_id in story.character_ids:
-            char = session.get(Character, char_id)
+            char = char_map.get(char_id)
             if char:
                 char_text = f"Character: {char.name}\n"
                 if char.visual_tags:
@@ -438,13 +524,22 @@ async def illustrate_chapter(
     # For high-fidelity semantic retrieval, consider routing through
     # build_system_prompt_sections_async (which uses pgvector top-K retrieval).
     if story and story.lorebook_ids:
+        # Batch-load all lorebooks + their entries in 2 queries instead of 2N
+        lorebooks = session.exec(
+            select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids))
+        ).all()
+        lb_map = {lb.id: lb for lb in lorebooks}
+        all_entries = session.exec(
+            select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(story.lorebook_ids))
+        ).all()
+        entries_by_lb: dict[str, list] = {}
+        for entry in all_entries:
+            entries_by_lb.setdefault(entry.lorebook_id, []).append(entry)
         lorebooks_content = []
         for lb_id in story.lorebook_ids:
-            lb = session.get(Lorebook, lb_id)
+            lb = lb_map.get(lb_id)
             if lb:
-                entries = session.exec(
-                    select(LorebookEntry).where(LorebookEntry.lorebook_id == lb.id)
-                ).all()
+                entries = entries_by_lb.get(lb.id, [])
                 if entries:
                     lb_text = f"Lorebook: {lb.name}\n"
                     for entry in entries:
@@ -455,7 +550,6 @@ async def illustrate_chapter(
             system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
 
     job_service = JobService(session)
-    from services.llm_workflow import build_llm_workflow
 
     workflow, metadata = build_llm_workflow(
         messages=[
@@ -504,23 +598,19 @@ def list_story_images(story_id: str, session: Session = Depends(get_session)):
 def _resolve_default_checkpoint(session: Session, preferred: str | None = None) -> str:
     """Find a checkpoint that is actually installed on an enabled provider.
 
-    Falls back to the configured default (sd_xl_base_1.0.safetensors) when
-    no providers have checkpoints yet, so the error message from the
-    provider-level validation will name a concrete model rather than a
-    placeholder.
+    Falls back to the configured default when no providers have checkpoints
+    yet, so the error message from the provider-level validation will name a
+    concrete model rather than a placeholder.
+
+    Delegates to :meth:`ModelAvailabilityService.resolve_checkpoint` which
+    consolidates the full resolution chain (preferred → available → config
+    default → ``sd_xl_base_1.0.safetensors``).
     """
-    service = ModelAvailabilityService(session)
-    resolved = service.get_available_checkpoint(preferred)
-    if resolved:
-        return resolved
-    return get_config().get("generator", {}).get("default_checkpoint", "sd_xl_base_1.0.safetensors")
+    return ModelAvailabilityService(session).resolve_checkpoint(preferred)
 
 
 @router.post("/parse")
 async def parse_story(req: ParseStoryRequest, session: Session = Depends(get_session)) -> dict:
-    from services.job_queue import queue_manager
-    from api.deps import get_job_service
-    from services.llm_workflow import build_chat_llm_workflow
 
     system_prompt = """You are an AI worldbuilder. Parse the provided story text and extract the following:
 1. Characters (name, physical appearance, personality)

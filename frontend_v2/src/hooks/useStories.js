@@ -52,8 +52,36 @@ export const useCreateChapter = () => {
 };
 
 export const useContinueChapter = () => {
+    const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ storyId, chapterId, prompt }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/continue`, { prompt: prompt || '' }),
+        onMutate: async ({ storyId, chapterId, prompt }) => {
+            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                return old.map((ch) => {
+                    if (ch.id !== chapterId) return ch;
+                    return {
+                        ...ch,
+                        content: (ch.content || '') + (prompt ? `\n\n${prompt}` : ''),
+                        _isStreaming: true,
+                    };
+                });
+            });
+            return { previous };
+        },
+        onError: (_, { storyId }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['world_vault', 'stories', storyId, 'chapters'], context.previous);
+            }
+        },
+        onSuccess: (_, variables) => {
+            queryClient.setQueryData(['world_vault', 'stories', variables.storyId, 'chapters'], (old) =>
+                old?.map((ch) => ch.id === variables.chapterId ? { ...ch, _isStreaming: false } : ch)
+            );
+        },
     });
 };
 
@@ -72,6 +100,33 @@ export const useAddStoryBeat = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ storyId, chapterId, content, role }) => api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats`, { content, role: role || 'user' }),
+        onMutate: async ({ storyId, chapterId, content, role }) => {
+            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            const optimisticBeat = {
+                id: `temp-${crypto.randomUUID()}`,
+                parent_beat_id: null,
+                role: role || 'user',
+                content,
+            };
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                return old.map((ch) => {
+                    if (ch.id !== chapterId) return ch;
+                    return {
+                        ...ch,
+                        beats: [...(ch.beats || []), optimisticBeat],
+                    };
+                });
+            });
+            return { previous };
+        },
+        onError: (_, { storyId }, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(['world_vault', 'stories', storyId, 'chapters'], context.previous);
+            }
+        },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
         }
@@ -123,6 +178,22 @@ export const useParseStory = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories'] });
+        }
+    });
+};
+
+export const useExportStory = () => {
+    return useMutation({
+        mutationFn: ({ storyId }) => api.get(`/api/v2/stories/${storyId}/export`),
+        onSuccess: (data) => {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `story-${data.story?.title || 'export'}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
         }
     });
 };

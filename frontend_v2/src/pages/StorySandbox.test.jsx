@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,6 +54,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useStoryImages: () => ({ data: [] }),
     useUpdateCharacter: () => ({ mutateAsync: vi.fn() }),
     useParseStory: () => ({ mutateAsync: vi.fn() }),
+    useExportStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
 }));
 
 vi.mock('../api/websocket', () => ({
@@ -206,6 +207,69 @@ describe('StorySandbox page', () => {
         renderWithProviders(<StorySandbox />);
         await waitFor(() => {
             expect(screen.getByPlaceholderText(/story beat/i)).toBeInTheDocument();
+        });
+    });
+
+    it('continues story when Continue button is clicked', async () => {
+        const mockMutate = vi.fn().mockResolvedValue({ job_id: 'job-continue' });
+        mockContinueChapter.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByText('Continue')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+        expect(mockMutate).toHaveBeenCalledWith({
+            storyId: 'story-1',
+            chapterId: 'ch-1',
+        });
+    });
+
+    it('adds a story beat when beat text is entered and Add is clicked', async () => {
+        const mockMutate = vi.fn().mockResolvedValue({});
+        mockAddStoryBeat.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByPlaceholderText(/story beat/i)).toBeInTheDocument();
+        });
+        const beatInput = screen.getByPlaceholderText(/story beat/i);
+        fireEvent.change(beatInput, { target: { value: 'A new challenge arises' } });
+        fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+        expect(mockMutate).toHaveBeenCalledWith({
+            storyId: 'story-1',
+            chapterId: 'ch-1',
+            content: 'A new challenge arises',
+        });
+    });
+
+    it('opens illustrate modal when Illustrate button is clicked', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByText('Illustrate')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByText('Illustrate'));
+        await waitFor(() => {
+            expect(screen.getByText('Generate Illustration')).toBeInTheDocument();
+        });
+    });
+
+    it('illustrates chapter when prompt is submitted in modal', async () => {
+        const mockMutate = vi.fn().mockResolvedValue({ job_id: 'img-1' });
+        mockIllustrateChapter.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByText('Illustrate')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByText('Illustrate'));
+        await waitFor(() => {
+            expect(screen.getByText('Generate Illustration')).toBeInTheDocument();
+        });
+        const promptInput = screen.getByPlaceholderText(/moonlit/i);
+        fireEvent.change(promptInput, { target: { value: 'A dark castle' } });
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        expect(mockMutate).toHaveBeenCalledWith({
+            storyId: 'story-1',
+            chapterId: 'ch-1',
+            image_prompt: 'A dark castle',
         });
     });
 });

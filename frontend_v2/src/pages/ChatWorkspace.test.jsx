@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -72,6 +72,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useNarrateMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useIllustrateChat: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useGenerateScene: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useSearchChats: () => ({ data: [] }),
     getAvatarUrl: () => '',
 }));
 
@@ -90,6 +91,11 @@ vi.mock('../api/collectionsApi', () => ({
 vi.mock('../api/websocket', () => ({
     useWebSocket: () => ({ subscribe: vi.fn(() => vi.fn()), unsubscribe: vi.fn() }),
     EventTypes: { JOB_PROGRESS: 'job.progress', JOB_COMPLETED: 'job.completed', JOB_FAILED: 'job.failed' },
+}));
+
+vi.mock('../store/confirmationStore', () => ({
+    useConfirmation: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+    useConfirmationStore: { getState: vi.fn(), setState: vi.fn() },
 }));
 
 vi.mock('react-hot-toast', () => ({
@@ -167,5 +173,58 @@ describe('ChatWorkspace page', () => {
     it('renders the Chats sidebar header', () => {
         renderWithProviders(<ChatWorkspace />);
         expect(screen.getAllByText('Chats').length).toBeGreaterThan(0);
+    });
+
+    it('sends a message when the send button is clicked', async () => {
+        mockActiveChatId.mockReturnValue('chat-1');
+        mockUpdateChat.mockReturnValue({ mutate: vi.fn() });
+        const sendMsg = vi.fn().mockResolvedValue({ user_message_id: 'msg-1', job_id: null });
+        mockSendMessage.mockReturnValue({ mutateAsync: sendMsg, isPending: false });
+
+        renderWithProviders(<ChatWorkspace />);
+
+        const textarea = screen.getByPlaceholderText(/Type a message/);
+        fireEvent.change(textarea, { target: { value: 'Hello world' } });
+        fireEvent.click(screen.getByLabelText('Send message'));
+
+        await waitFor(() => {
+            expect(sendMsg).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    chatId: 'chat-1',
+                    message: expect.objectContaining({ content: 'Hello world' }),
+                })
+            );
+        });
+    });
+
+    it('deletes a chat via the sidebar context menu', async () => {
+        const delChat = vi.fn().mockResolvedValue({});
+        mockDeleteChat.mockReturnValue({ mutateAsync: delChat, isPending: false });
+
+        renderWithProviders(<ChatWorkspace />);
+
+        fireEvent.click(screen.getByLabelText('Delete chat'));
+
+        await waitFor(() => {
+            expect(delChat).toHaveBeenCalledWith('chat-1');
+        });
+    });
+
+    it('enters rename mode and updates chat name', async () => {
+        const rename = vi.fn().mockResolvedValue({});
+        mockRenameChat.mockReturnValue({ mutateAsync: rename, isPending: false });
+
+        renderWithProviders(<ChatWorkspace />);
+
+        fireEvent.click(screen.getByLabelText('Rename chat'));
+        const renameInput = screen.getByDisplayValue('Test Chat');
+        fireEvent.change(renameInput, { target: { value: 'Updated Chat' } });
+        fireEvent.blur(renameInput);
+
+        await waitFor(() => {
+            expect(rename).toHaveBeenCalledWith(
+                expect.objectContaining({ chatId: 'chat-1', name: 'Updated Chat' })
+            );
+        });
     });
 });

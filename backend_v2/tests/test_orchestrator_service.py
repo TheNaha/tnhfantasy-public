@@ -121,9 +121,10 @@ async def test_execute_tool_narrate_scene_dispatches(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_tool_update_world_state_dispatches(monkeypatch):
-    # _tool_update_world_state is synchronous (unlike the async tools)
+    # _tool_update_world_state is async (opens its own DB session), so the
+    # mock must be a coroutine function — execute_tool awaits it.
     calls = []
-    def fake_update_world_state(args, **kwargs):
+    async def fake_update_world_state(args, **kwargs):
         calls.append((args, kwargs))
         return {"status": "ok"}
     monkeypatch.setattr("services.orchestrator_service._tool_update_world_state", fake_update_world_state)

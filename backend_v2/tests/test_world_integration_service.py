@@ -11,6 +11,8 @@ from core.entities import (
     Collection,
     CollectionImage,
     Job,
+    Lorebook,
+    LorebookEntry,
     Message,
     MessageKind,
     MessageRole,
@@ -19,6 +21,7 @@ from core.entities import (
 )
 import services.world_integration_service as wis
 from infrastructure import database as infra_database
+from services.model_availability_service import AvailabilityResult
 
 # The handlers open their own Session via get_session_context(); point the
 # underlying engine at the test engine so all DB operations use in-memory SQLite.
@@ -177,6 +180,17 @@ async def test_handle_story_illustrate_enqueues_image_job(session, wired_engine,
         "services.model_availability_service.ModelAvailabilityService.get_available_checkpoint",
         fake_checkpoint,
     )
+    monkeypatch.setattr(
+        "services.model_availability_service.ModelAvailabilityService.check_availability",
+        lambda self, required: AvailabilityResult(
+            valid=True,
+            eligible_providers=["test-provider"],
+            missing_models={},
+            global_missing={},
+            can_trigger_download=False,
+            required_models=required,
+        ),
+    )
     monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
 
     job_data = {
@@ -273,3 +287,349 @@ async def test_handle_chat_reply_stores_tool_calls_transcript(session, wired_eng
 @pytest.mark.asyncio
 async def test_handle_chat_reply_missing_chat_is_noop(session, wired_engine):
     await wis._handle_chat_reply({"metadata": {}, "outputs": [{"content": "x"}]})
+
+
+# ── _handle_impersonation ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_impersonation_inserts_user_message_and_enqueues_reply(session, wired_engine, monkeypatch):
+    from sqlmodel import select
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="Imp Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    # seed a user message so there's conversation history
+    _add_msg(session, chat, MessageRole.USER, "Hello there")
+    _add_msg(session, chat, MessageRole.CHAR, "Hi!")
+
+    enqueue = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+    job_data = {
+        "id": "imp-job-1",
+        "metadata": {"chat_id": chat.id, "character_id": char.id, "hint": "be formal"},
+        "outputs": [{"content": "Good morrow, fair traveler."}],
+    }
+    await wis._handle_impersonation(job_data)
+
+    enqueue.assert_awaited_once()
+    # Verify the user message was inserted
+    with Session(wired_engine) as check:
+        msgs = check.exec(select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)).all()
+        user_msgs = [m for m in msgs if m.role == MessageRole.USER]
+        assert any(m.content == "Good morrow, fair traveler." for m in user_msgs)
+        # Verify the impersonated user message was tagged
+        imp_msg = [m for m in user_msgs if m.message_metadata and m.message_metadata.get("source") == "impersonation"]
+        assert len(imp_msg) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_impersonation_noop_missing_chat(session, wired_engine):
+    job_data = {
+        "metadata": {"chat_id": "nonexistent"},
+        "outputs": [{"content": "Hello"}],
+    }
+    # Should not raise
+    await wis._handle_impersonation(job_data)
+
+
+@pytest.mark.asyncio
+async def test_handle_impersonation_noop_no_text(session, wired_engine):
+    job_data = {"metadata": {"chat_id": "x"}, "outputs": []}
+    await wis._handle_impersonation(job_data)
+
+
+# ── _handle_narrator ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_narrator_inserts_system_message(session, wired_engine):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="Narrator Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    job_data = {
+        "id": "narr-job-1",
+        "metadata": {"chat_id": chat.id},
+        "outputs": [{"content": "The sun sets over the valley."}],
+    }
+    await wis._handle_narrator(job_data)
+
+    with Session(wired_engine) as check:
+        msgs = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        assert len(msgs) == 1
+        assert msgs[0].role == MessageRole.SYSTEM
+        assert msgs[0].kind == MessageKind.NARRATOR
+        assert msgs[0].content == "The sun sets over the valley."
+        assert msgs[0].message_metadata.get("source") == "narrator"
+
+
+@pytest.mark.asyncio
+async def test_handle_narrator_noop_missing_chat(session, wired_engine):
+    """_handle_narrator doesn't validate chat existence (it just inserts the
+    message with the given chat_id). It's still a noop when there's no text."""
+    await wis._handle_narrator({"metadata": {"chat_id": "nope"}, "outputs": []})
+    with Session(wired_engine) as check:
+        assert check.exec(select(Message)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_handle_narrator_noop_no_content(session, wired_engine):
+    await wis._handle_narrator({"metadata": {}, "outputs": []})
+
+
+# ── _handle_scene_prompt ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_scene_prompt_enqueues_image_job(session, wired_engine, monkeypatch):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="Scene Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    enqueue = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+    monkeypatch.setattr(
+        "services.model_availability_service.ModelAvailabilityService.check_availability",
+        lambda self, required: AvailabilityResult(
+            valid=True, eligible_providers=["test-provider"], required_models=required
+        ),
+    )
+
+    job_data = {
+        "id": "scene-job-1",
+        "metadata": {"chat_id": chat.id, "character_id": char.id},
+        "outputs": [{"content": "A heroic warrior standing on a cliff, dramatic lighting"}],
+    }
+    await wis._handle_scene_prompt(job_data)
+
+    enqueue.assert_awaited_once()
+    assert enqueue.await_args.kwargs["task_type"] == "image"
+    with Session(wired_engine) as check:
+        image_jobs = check.exec(select(Job).where(Job.task_type == "image")).all()
+        assert len(image_jobs) == 1
+        job = image_jobs[0]
+        assert job.metadata_["workspace"] == "chat"
+        assert job.metadata_["chat_id"] == chat.id
+        assert job.metadata_["source"] == "scene_illustrate"
+
+
+@pytest.mark.asyncio
+async def test_handle_scene_prompt_noop_no_prompt(session, wired_engine):
+    enqueue = AsyncMock()
+    await wis._handle_scene_prompt({"metadata": {}, "outputs": []})
+    enqueue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_scene_prompt_noop_no_chat(session, wired_engine):
+    enqueue = AsyncMock()
+    await wis._handle_scene_prompt({"metadata": {}, "outputs": [{"content": "a scene"}]})
+    enqueue.assert_not_called()
+
+
+# ── _handle_story_parse ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_story_parse_creates_characters_and_lorebooks(session, wired_engine):
+    story = Story(title="Parsed Story")
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    job_data = {
+        "id": "parse-job-1",
+        "metadata": {"story_id": story.id},
+        "outputs": [{
+            "content": '{"characters": [{"name": "Alice", "description": "Brave", "personality": "Bold"}, {"name": "Bob", "description": "Clever", "personality": "Witty"}], "locations": [{"name": "The Shire", "description": "A peaceful valley"}], "lorebooks": [{"name": "Ancient Lore", "description": "Old secrets"}]}'
+        }],
+    }
+    await wis._handle_story_parse(job_data)
+
+    with Session(wired_engine) as check:
+        chars = check.exec(select(Character).where(Character.name.in_(["Alice", "Bob"]))).all()
+        assert len(chars) == 2
+        alice = check.exec(select(Character).where(Character.name == "Alice")).one()
+        assert alice.description == "Brave"
+        assert alice.personality == "Bold"
+
+        lorebooks = check.exec(select(Lorebook).where(Lorebook.name.in_(["The Shire", "Ancient Lore"]))).all()
+        assert len(lorebooks) == 2
+
+        updated_story = check.get(Story, story.id)
+        assert "Alice" in [check.get(Character, cid).name for cid in updated_story.character_ids]
+        assert "Bob" in [check.get(Character, cid).name for cid in updated_story.character_ids]
+        # The Shire and Ancient Lore are linked as lorebooks
+        assert len(updated_story.lorebook_ids) == 2
+
+
+@pytest.mark.asyncio
+async def test_handle_story_parse_invalid_json_noop(session, wired_engine):
+    story = Story(title="Parse Fail")
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    await wis._handle_story_parse({
+        "metadata": {"story_id": story.id},
+        "outputs": [{"content": "not json at all"}],
+    })
+    with Session(wired_engine) as check:
+        assert check.exec(select(Character)).all() == []
+        assert check.exec(select(Lorebook)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_handle_story_parse_missing_story_noop(session, wired_engine):
+    await wis._handle_story_parse({
+        "metadata": {"story_id": "nonexistent"},
+        "outputs": [{"content": '{"characters": [], "locations": [], "lorebooks": []}'}],
+    })
+
+
+@pytest.mark.asyncio
+async def test_handle_story_parse_empty_arrays_noop(session, wired_engine):
+    story = Story(title="Empty Parse")
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    await wis._handle_story_parse({
+        "metadata": {"story_id": story.id},
+        "outputs": [{"content": '{"characters": [], "locations": [], "lorebooks": []}'}],
+    })
+    with Session(wired_engine) as check:
+        assert check.exec(select(Character)).all() == []
+        assert check.exec(select(Lorebook)).all() == []
+
+
+@pytest.mark.asyncio
+async def test_handle_story_parse_skips_missing_name(session, wired_engine):
+    story = Story(title="Skip Test")
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    await wis._handle_story_parse({
+        "metadata": {"story_id": story.id},
+        "outputs": [{"content": '{"characters": [{"description": "no name"}], "locations": [], "lorebooks": []}'}],
+    })
+    with Session(wired_engine) as check:
+        assert check.exec(select(Character)).all() == []
+
+
+# ── _handle_chat_tts ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_chat_tts_attaches_audio_path(session, wired_engine):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="TTS Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    msg = Message(role=MessageRole.CHAR, content="Hello", chat_id=chat.id)
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+
+    await wis._handle_chat_tts({
+        "id": "tts-job-1",
+        "metadata": {"chat_id": chat.id, "message_id": msg.id},
+        "outputs": [{"relative_path": "2026/08/11/audio.mp3"}],
+    })
+
+    with Session(wired_engine) as check:
+        updated = check.get(Message, msg.id)
+        assert updated.message_metadata["audio_path"] == "2026/08/11/audio.mp3"
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_tts_noop_missing_msg(session, wired_engine):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="TTS Test 2", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+
+    await wis._handle_chat_tts({
+        "metadata": {"chat_id": chat.id, "message_id": "nonexistent"},
+        "outputs": [{"relative_path": "audio.mp3"}],
+    })
+    # No crash, no messages
+    with Session(wired_engine) as check:
+        msgs = check.exec(select(Message).where(Message.chat_id == chat.id)).all()
+        assert len(msgs) == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_chat_tts_noop_no_audio(session, wired_engine):
+    await wis._handle_chat_tts({"metadata": {}, "outputs": []})
+
+
+# ── _handle_chat_reply (swipe alternate path) ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_handle_chat_reply_swipe_appends_alternate(session, wired_engine):
+    char = Character(name="Aria")
+    session.add(char)
+    session.commit()
+    session.refresh(char)
+    chat = Chat(name="Swipe Test", character_id=char.id)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
+    msg = Message(
+        role=MessageRole.CHAR,
+        content="Original reply",
+        chat_id=chat.id,
+        message_metadata={"alternates": ["Original reply"], "active_index": 0},
+    )
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+
+    await wis._handle_chat_reply({
+        "id": "swipe-job-1",
+        "metadata": {
+            "chat_id": chat.id,
+            "is_swipe": True,
+            "target_message_id": msg.id,
+        },
+        "outputs": [{"content": "Alternate reply"}],
+    })
+
+    with Session(wired_engine) as check:
+        updated = check.get(Message, msg.id)
+        assert updated.content == "Alternate reply"
+    alternates = updated.message_metadata["alternates"]
+    assert "Alternate reply" in alternates
+    assert updated.message_metadata["active_index"] == len(alternates) - 1
+    assert updated.tool_calls is None
+
+
+# ── helper ───────────────────────────────────────────────────────────────────
+
+def _add_msg(session: Session, chat: Chat, role: MessageRole, content: str) -> Message:
+    msg = Message(role=role, content=content, chat_id=chat.id)
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+    return msg

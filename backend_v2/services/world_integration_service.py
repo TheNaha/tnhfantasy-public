@@ -78,7 +78,7 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                 _sp, _ctx = await build_chat_context_async(
                     session,
                     _past,
-                    character=_character,
+                    characters=[_character] if _character else None,
                     lorebook_ids=_chat.active_lorebook_ids or None,
                     persona_name=_chat.persona_name,
                     story_time=_chat.story_time,
@@ -240,7 +240,7 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
                 # Append as alternate to existing message
                 target_msg = session.get(Message, metadata["target_message_id"])
                 if target_msg:
-                    target_meta = target_msg.message_metadata or {}
+                    target_meta = dict(target_msg.message_metadata or {})
                     alternates = target_meta.get("alternates", [target_msg.content])
                     if target_msg.content not in alternates:
                         alternates.insert(0, target_msg.content)
@@ -433,6 +433,8 @@ async def _handle_story_parse(job_data: dict[str, Any]):
             if not story:
                 return
 
+            new_character_ids: list[str] = []
+
             for char_data in (parsed.get("characters") or []):
                 if not char_data.get("name"):
                     continue
@@ -444,6 +446,9 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 session.add(character)
                 session.commit()
                 session.refresh(character)
+                new_character_ids.append(character.id)
+
+            new_lorebook_ids: list[str] = []
 
             for loc_data in (parsed.get("locations") or []):
                 if not loc_data.get("name"):
@@ -461,6 +466,7 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     keys=[loc_data.get("name", "")],
                 )
                 session.add(entry)
+                new_lorebook_ids.append(lorebook.id)
 
             for lore_data in (parsed.get("lorebooks") or []):
                 if not lore_data.get("name"):
@@ -478,8 +484,24 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                     keys=[lore_data.get("name", "")],
                 )
                 session.add(entry)
+                new_lorebook_ids.append(lorebook.id)
 
-            session.commit()
+            # Link created entities to the story
+            if new_character_ids or new_lorebook_ids:
+                existing_chars = set(story.character_ids or [])
+                existing_lore = set(story.lorebook_ids or [])
+                story.character_ids = list(existing_chars | set(new_character_ids))
+                story.lorebook_ids = list(existing_lore | set(new_lorebook_ids))
+                session.add(story)
+                session.commit()
+
+            logger.info(
+                "story_parse_entities_created",
+                job_id=job_data.get("id"),
+                story_id=story_id,
+                characters=new_character_ids,
+                lorebooks=new_lorebook_ids,
+            )
         except Exception as e:
             session.rollback()
             logger.warning("story_parse_failed", job_id=job_data.get("id"), error=str(e))

@@ -172,16 +172,6 @@ def can_continue_agentic(metadata: dict[str, Any] | None, chat_or_story=None) ->
     return get_agentic_depth(metadata) < get_max_agentic_depth(chat_or_story, metadata)
 
 
-def _available_checkpoint(session, preferred: str | None) -> str | None:
-    """Pick a checkpoint that is actually installed on an enabled provider."""
-    return ModelAvailabilityService(session).get_available_checkpoint(preferred)
-
-
-def _available_lora(session, preferred: str | None) -> str | None:
-    """Pick a LoRA that is actually installed on an enabled provider (or None)."""
-    return ModelAvailabilityService(session).get_available_lora(preferred)
-
-
 async def execute_tool(
     tool_call: dict[str, Any],
     *,
@@ -479,12 +469,9 @@ async def _tool_generate_image(
         submission = JobSubmissionService(session)
 
         # 1. Start with system default checkpoint
-        import config as app_config
-        default_ckpt = app_config.get_config().get("generator", {}).get("default_checkpoint") or "sd_xl_base_1.0.safetensors"
-        
-        ckpt_name = default_ckpt
+        ckpt_name = None
         lora_name = None
-        
+
         # 2. Override with frontend user setting if provided via the parent LLM job metadata
         if source_job_id:
             from core.entities import Job
@@ -508,7 +495,8 @@ async def _tool_generate_image(
                     prompt = f"{prompt}, {tags}" if prompt else tags
 
         # 4. Ensure the chosen models are actually installed on an enabled provider
-        resolved_ckpt = _available_checkpoint(session, ckpt_name)
+        availability = ModelAvailabilityService(session)
+        resolved_ckpt = availability.get_available_checkpoint(ckpt_name)
         if not resolved_ckpt:
             logger.error(
                 "tool_generate_image_no_checkpoint",
@@ -521,9 +509,9 @@ async def _tool_generate_image(
                     "Install a checkpoint before using the image generation tool."
                 ),
             }
-        if resolved_ckpt != ckpt_name:
+        if resolved_ckpt != (ckpt_name or ""):
             logger.warning("tool_generate_image_ckpt_fallback", preferred=ckpt_name, used=resolved_ckpt)
-        resolved_lora = _available_lora(session, lora_name)
+        resolved_lora = availability.get_available_lora(lora_name)
         if lora_name and resolved_lora is None:
             logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
 

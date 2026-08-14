@@ -2,7 +2,7 @@ import React from 'react';
 import { Sparkles } from 'lucide-react';
 import MDEditor from '@uiw/react-md-editor';
 
-export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId }) {
+export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId, wordCount, readingTimeMinutes }) {
     return (
         <div className="flex-1 overflow-y-auto custom-scrollbar flex justify-center p-6 lg:p-12" data-color-mode="dark">
             {!activeChapterId ? (
@@ -27,6 +27,13 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                             }}
                         />
                     </div>
+                    
+                    {!isPreviewMode && (
+                        <div className="flex items-center justify-between text-[10px] text-gray-600 mt-2 px-1">
+                            <span>{wordCount?.toLocaleString?.() || 0} words</span>
+                            <span>{readingTimeMinutes || 0} min read</span>
+                        </div>
+                    )}
                     
                     {isStreaming && (
                         <div className="flex items-center gap-2 text-indigo-400 font-serif mt-4 story-stream-pulse">

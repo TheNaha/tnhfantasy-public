@@ -463,7 +463,7 @@ async def _finalize_llm_job(
             await finalize_persisted_job_outputs(
                 job_service=job_service,
                 job_id=job_id,
-                outputs=outputs,
+                outputs=[],
                 provider_id=provider_id,
                 load_balancer=load_balancer,
                 process_image_background_fn=None,

@@ -323,3 +323,29 @@ class ModelAvailabilityService:
         """
         result = self.check_availability(required_models)
         return result.missing_models.get(provider_id, {})
+
+    def resolve_checkpoint(self, preferred: str | None = None) -> str:
+        """Resolve a checkpoint that is actually available on an enabled provider.
+
+        Resolution chain:
+        1. If *preferred* is provided and available on a provider, use it.
+        2. Otherwise, use any installed checkpoint (get_available_checkpoint).
+        3. Fall back to the configured default checkpoint (config.json).
+        4. Hard fallback: ``sd_xl_base_1.0.safetensors``.
+
+        This consolidates what was previously duplicated across
+        ``chats.py`` (generate_scene + illustrate_chat), ``stories.py``
+        (``_resolve_default_checkpoint``), ``orchestrator_service.py``
+        (``_available_checkpoint``), and ``image_submission.py``.
+        """
+        available = self.get_available_checkpoint(preferred)
+        if available:
+            return available
+        try:
+            from config import get_config
+            cfg_default = (get_config() or {}).get("generator", {}).get("default_checkpoint")
+            if cfg_default:
+                return cfg_default
+        except Exception:
+            pass
+        return "sd_xl_base_1.0.safetensors"
