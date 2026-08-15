@@ -50,7 +50,7 @@ test.describe.serial('mobile chrome', () => {
       .toBeGreaterThanOrEqual(0);
     await expect(page.getByRole('button', { name: 'Close mobile menu' })).toBeVisible();
 
-    await page.getByRole('link', { name: 'Gallery' }).click();
+    await page.getByRole('link', { name: 'Gallery', exact: true }).click();
     await expect(page).toHaveURL(/\/gallery$/);
     await expectSidebarClosed(page);
 
@@ -117,9 +117,9 @@ test.describe.serial('chat workspace on mobile', () => {
 
     await chatsTab.click();
     await expect(chatsTab).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByRole('button', { name: chat.name, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: new RegExp(chat.name) })).toBeVisible();
 
-    await page.getByRole('button', { name: chat.name, exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(chat.name) }).click();
     await expect(roleplayTab).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('heading', { name: chat.name })).toBeVisible();
 
@@ -169,9 +169,10 @@ test.describe.serial('story sandbox on mobile', () => {
 
     await page.getByRole('button', { name: new RegExp(story.title) }).click();
     await expect(writeTab).toHaveAttribute('aria-pressed', 'true');
-    await expect(page).toHaveURL(new RegExp(`/story/${story.id}$`));
+    // The chapter auto-selector navigates to the first chapter shortly after a
+    // story is chosen — accept either URL form.
+    await expect(page).toHaveURL(new RegExp(`/story/${story.id}(/chapter/[^/]+)?$`));
     await expect(page.getByText('No Story Selected')).toBeHidden();
-    await expect(page.getByText('Select a chapter')).toBeVisible();
 
     await contextTab.click();
     await expect(contextTab).toHaveAttribute('aria-pressed', 'true');
@@ -226,12 +227,12 @@ test.describe.serial('generators on mobile', () => {
     await expect(
       page.getByRole('button', { name: 'Generate Img2Img', exact: true }).filter({ visible: true })
     ).toHaveCount(1);
-    await expect(page.getByTitle('Add to queue')).toBeVisible();
+    await expect(page.getByTitle('Add to queue').filter({ visible: true })).toHaveCount(1);
 
     await page.goto('/inpaint');
     await expect(
       page.getByRole('button', { name: 'Generate Inpaint', exact: true }).filter({ visible: true })
     ).toHaveCount(1);
-    await expect(page.getByTitle('Add to queue')).toBeVisible();
+    await expect(page.getByTitle('Add to queue').filter({ visible: true })).toHaveCount(1);
   });
 });

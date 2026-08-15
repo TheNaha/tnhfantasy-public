@@ -9,6 +9,7 @@ dist/
 __pycache__/
 .venv/
 .pytest_cache/
+test-results/
 
 # Output/Input directories created by user
 input/

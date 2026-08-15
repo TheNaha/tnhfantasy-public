@@ -72,14 +72,18 @@ test.describe('Cross-Pillar Flows (Module E)', () => {
     created.push({ kind: 'chapter', id: `${story.id}:${chapter.id}` });
 
     await page.goto(`/story/${story.id}/chapter/${chapter.id}`);
-    const editor = page.getByPlaceholder(/once upon a time/i).first();
+    const editor = page.getByPlaceholder(/begin your story/i).first();
     await expect(editor).toBeVisible({ timeout: 10000 });
 
     await editor.fill('The wizard raised his glowing staff, channeling ancient magic.');
 
-    const illustrateBtn = page.getByRole('button', { name: /Illustrate/i }).first();
+    const illustrateBtn = page.getByRole('button', { name: /illus/i }).first();
     await expect(illustrateBtn).toBeVisible({ timeout: 10000 });
     await illustrateBtn.click();
+
+    const generateBtn = page.getByRole('button', { name: 'Generate', exact: true });
+    await expect(generateBtn).toBeVisible({ timeout: 10000 });
+    await generateBtn.click();
 
     await expect(illustrateBtn).toBeDisabled({ timeout: 5000 });
     await expectToast(page, /illustration prompt|illustrate/i, 180000);

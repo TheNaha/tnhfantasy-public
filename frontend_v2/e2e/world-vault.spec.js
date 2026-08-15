@@ -98,7 +98,7 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
     await nameInput.fill('Updated Character Name');
     await page.getByRole('button', { name: /update/i }).first().click();
     await expectToast(page, /updated/i, 5000);
-    await expect(page.getByRole('heading', { name: 'Updated Character Name' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Updated Character Name' }).first()).toBeVisible();
   });
 
   test('@fullstack Character chat linkage and agentic image appears in character gallery', async ({ page }) => {

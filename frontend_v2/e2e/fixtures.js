@@ -286,7 +286,8 @@ async function cleanupEntities(page, entities) {
       continue;
     }
     try {
-      await apiDelete(page, path);
+      const res = await page.request.delete(API_BASE + path);
+      if (!res.ok() && res.status() !== 404) errors.push(`${kind} ${id}: HTTP ${res.status()}`);
     } catch (e) {
       errors.push(`${kind} ${id}: ${e.message}`);
     }

@@ -32,7 +32,7 @@ export default function RelationshipGraph() {
     const fetchRelationships = async () => {
         setLoading(true);
         try {
-            const result = await api.get('/api/v2/relationships');
+            const result = await api.get('/api/v2/world-vault/relationships');
             setData(result);
         } catch {
             // silent
@@ -42,7 +42,7 @@ export default function RelationshipGraph() {
     };
 
     const nodes = useMemo(() => {
-        if (!data) return [];
+        if (!data) return { nodes: [], edges: [] };
         const nodeMap = new Map();
         const edges = [];
 

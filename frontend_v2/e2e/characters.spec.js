@@ -60,7 +60,12 @@ test.describe('Character Vault (Module D)', () => {
     const character = await seedCharacter(page, { name: uniqueName('e2e-char') });
     created.push({ kind: 'character', id: character.id });
 
-    await page.goto(`/characters/${character.id}`);
+    await page.goto('/characters');
+    await expect(page.getByRole('heading', { name: character.name }).first()).toBeVisible({ timeout: 10000 });
+
+    const editBtn = page.getByRole('button', { name: /edit/i }).first();
+    await expect(editBtn).toBeVisible({ timeout: 10000 });
+    await editBtn.click();
 
     const autoFillBtn = page.getByRole('button', { name: /auto-fill/i }).first();
     await expect(autoFillBtn).toBeVisible({ timeout: 10000 });
@@ -79,7 +84,7 @@ test.describe('Character Vault (Module D)', () => {
     await expect(deleteBtn).toBeVisible({ timeout: 10000 });
     await deleteBtn.click();
 
-    const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
+    const confirmBtn = page.getByRole('button', { name: 'Delete', exact: true });
     await expect(confirmBtn).toBeVisible();
     await confirmBtn.click();
     await expectToast(page, /deleted/i, 5000);

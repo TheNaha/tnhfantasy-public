@@ -175,7 +175,7 @@ function CharacterCard({ character, onChat, onNavigateToCharacter }) {
                         </button>
                     </div>
                     <div className="max-h-32 overflow-hidden rounded-lg">
-                        <SceneGallery images={collection?.images?.slice(0, 8) || []} compact lightboxAction />
+                        <SceneGallery images={collection?.images?.slice(0, 8) || []} compact />
                     </div>
                 </div>
             )}

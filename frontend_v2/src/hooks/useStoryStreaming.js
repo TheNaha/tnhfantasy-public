@@ -32,7 +32,7 @@ export function useStoryStreaming({
         const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
             const job = getJob(event);
             const meta = job.metadata_ ?? job.metadata ?? {};
-            if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId) {
+            if (meta.story_id === activeStoryId && meta.chapter_id === activeChapterId && meta.type === 'story_continue') {
                 const streamText = job.text ?? job.message ?? null;
                 if (streamText) {
                     setIsStreaming(true);
@@ -61,7 +61,7 @@ export function useStoryStreaming({
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'story', 'images', activeStoryId] });
                     toast.success('Illustration complete');
-                } else {
+                } else if (meta.type === 'story_continue') {
                     const finalStreamedText = streamingRef.current;
                     streamingRef.current = '';
                     setIsStreaming(false);

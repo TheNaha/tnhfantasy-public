@@ -68,7 +68,7 @@ test.describe('Roleplay Workspace (Module B)', () => {
     await expect(editBtn).toBeVisible({ timeout: 10000 });
     await editBtn.click();
 
-    const editable = page.locator('[contenteditable="true"], textarea, input[type="text"]').first();
+    const editable = page.getByRole('textbox', { name: 'Edit message content' });
     await expect(editable).toBeVisible();
     await editable.fill('Edited message content');
     await editable.press('Enter');
@@ -140,11 +140,11 @@ test.describe('Roleplay Workspace (Module B)', () => {
     const chatInput = page.getByPlaceholder(/type a message/i);
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
-    const renameTrigger = page.getByRole('button', { name: /rename|edit/i }).first();
-    await expect(renameTrigger).toBeVisible({ timeout: 10000 });
-    await renameTrigger.click();
+    const chatRow = page.getByRole('button', { name: new RegExp(chat.name) }).first();
+    await expect(chatRow).toBeVisible({ timeout: 10000 });
+    await chatRow.getByRole('button', { name: 'Rename chat' }).click();
 
-    const nameInput = page.locator('input[value*="New Chat"], input[placeholder*="name" i], input[aria-label*="name" i]').first();
+    const nameInput = page.getByRole('textbox', { name: 'Chat name' });
     await expect(nameInput).toBeVisible();
     await nameInput.fill('Renamed Playwright Chat');
     await nameInput.press('Enter');
@@ -159,11 +159,11 @@ test.describe('Roleplay Workspace (Module B)', () => {
     const chatInput = page.getByPlaceholder(/type a message/i);
     await expect(chatInput).toBeVisible({ timeout: 10000 });
 
-    const deleteBtn = page.getByRole('button', { name: /delete|trash/i }).first();
-    await expect(deleteBtn).toBeVisible({ timeout: 10000 });
-    await deleteBtn.click();
+    const chatRow = page.getByRole('button', { name: new RegExp(chat.name) }).first();
+    await expect(chatRow).toBeVisible({ timeout: 10000 });
+    await chatRow.getByRole('button', { name: 'Delete chat' }).click();
 
-    const confirmBtn = page.getByRole('button', { name: /delete/i }).first();
+    const confirmBtn = page.getByRole('button', { name: 'Delete', exact: true }).first();
     await expect(confirmBtn).toBeVisible();
     await confirmBtn.click();
     await expectToast(page, /deleted/i, 5000);

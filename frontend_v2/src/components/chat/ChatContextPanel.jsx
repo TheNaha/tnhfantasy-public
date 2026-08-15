@@ -7,25 +7,33 @@ import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
+import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
-function ChatContextPanel({
-    activeChat,
-    linkedCharacter,
-    chatJobs,
-    chatCollection,
-    activeStreamEntries,
-    sceneJobId,
-    characters,
-    lorebooks,
-    selectedLorebooks,
-    systemPromptData,
-    availableModels,
-    defaultLlmConfig,
-    onChatUpdate,
-    onCharacterPatch,
-    onShowCharacterDetails,
-    onShowScenes,
-}) {
+function ChatContextPanel() {
+    const {
+        activeChat,
+        linkedCharacter,
+        chatJobs,
+        chatCollection,
+        activeStreamEntries,
+        sceneJobId,
+        characters,
+        lorebooks,
+        selectedLorebooks,
+        patchCharacterMutation,
+        systemPromptData,
+        availableModels,
+        defaultLlmConfig,
+        setShowCharacterDetails,
+        setShowScenesModal,
+        handleChatUpdate,
+    } = useChatWorkspace();
+
+    const onChatUpdate = (data) => handleChatUpdate(data);
+    const onCharacterPatch = (data) => patchCharacterMutation.mutate(data);
+    const onShowCharacterDetails = () => setShowCharacterDetails(true);
+    const onShowScenes = () => setShowScenesModal(true);
+
     return (
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-4">
             {/* Persona Name */}

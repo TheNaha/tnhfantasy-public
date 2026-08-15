@@ -6,9 +6,8 @@ import clsx from 'clsx';
 import toast from 'react-hot-toast';
 import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
-import { useWebSocket, EventTypes } from '../api/websocket';
+
 import { useQueryClient } from '@tanstack/react-query';
-import { clearStreamingJob } from '../hooks/useStreamingJobs';
 import { useStoryStreaming } from '../hooks/useStoryStreaming';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
@@ -40,8 +39,7 @@ export default function StorySandbox() {
     const [showParseModal, setShowParseModal] = useState(false);
     const [newStoryTitle, setNewStoryTitle] = useState('');
     const textareaRef = useRef(null);
-    const streamingRef = useRef('');
-    const streamingBaseRef = useRef('');
+    const isDirtyRef = useRef(false);
     const loadedChapterIdRef = useRef(null);
 
     const queryClient = useQueryClient();
@@ -78,10 +76,12 @@ export default function StorySandbox() {
         const trimmed = text.trim();
         if (!trimmed) return 0;
         return trimmed.split(/\s+/).length;
+     
     }, [editorContent]);
 
     const readingTimeMinutes = useMemo(() => {
         return Math.max(1, Math.ceil(wordCount / 200));
+     
     }, [wordCount]);
 
     const {
@@ -121,26 +121,26 @@ export default function StorySandbox() {
     const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
     // True once the user manually edits the editor — suppresses server-pushed
     // content updates (post-refetch sync) so typing is never clobbered.
-    const isDirtyRef = useRef(false);
     // Cancels the 30x1s title-generation poll when navigating away.
     const titlePollCancelledRef = useRef(false);
 
     useEffect(() => {
         titlePollCancelledRef.current = true;
+     
     }, [activeChapterId]);
 
     useEffect(() => {
         const handler = () => setShowParseModal(true);
         window.addEventListener('open-parse-story', handler);
         return () => window.removeEventListener('open-parse-story', handler);
+     
     }, []);
 
     const { data: llmModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
     const updateStory = useUpdateStory();
 
-    const { subscribe } = useWebSocket();
-    const runLLMJob = useLLMJobResult();
+        const runLLMJob = useLLMJobResult();
     const { confirm } = useConfirmation();
 
     const activeChapter = chapters?.find(ch => ch.id === activeChapterId);
@@ -150,6 +150,7 @@ export default function StorySandbox() {
         if (stories?.length > 0 && !activeStoryId) {
             navigate(`/story/${stories[0].id}`, { replace: true });
         }
+     
     }, [stories, activeStoryId, navigate]);
 
     // Auto-select first chapter
@@ -159,6 +160,7 @@ export default function StorySandbox() {
             const timer = setTimeout(() => navigate(`/story/${activeStoryId}/chapter/${chapters[0].id}`, { replace: true }), 0);
             return () => clearTimeout(timer);
         }
+     
     }, [chapters, activeStoryId, activeChapterId, navigate]);
 
     // Load chapter content into editor
@@ -172,11 +174,11 @@ export default function StorySandbox() {
             // Wait for next tick to avoid synchronous cascading renders
             const timer = setTimeout(() => {
                 setEditorContent(activeChapter.content || '');
-                streamingRef.current = '';
                 streamingBaseRef.current = activeChapter.content || '';
             }, 0);
             return () => clearTimeout(timer);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeChapterId, activeChapter]);
 
     const handleParseStoryComplete = async (text) => {
@@ -214,6 +216,7 @@ export default function StorySandbox() {
             }
         }, 150);
         return () => clearTimeout(timer);
+     
     }, [editorContent]);
 
     // Auto-save chapter content — debounced (2s after last keystroke) so we
@@ -241,6 +244,7 @@ export default function StorySandbox() {
             }
         }, 2000);
         return () => clearTimeout(autoSaveTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editorContent, activeChapterId, isStreaming, activeStoryId, updateChapter, activeChapter?.content]);
 
     const handleContinue = useCallback(async () => {
@@ -254,6 +258,7 @@ export default function StorySandbox() {
             toast.error('Failed to start story continuation');
             setIsStreaming(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent]);
 
     const handleAutoGenerateTitle = async () => {
@@ -306,6 +311,7 @@ export default function StorySandbox() {
         } catch {
             toast.error('Failed to add beat');
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [beatInput, activeStoryId, activeChapterId, addStoryBeat, queryClient, editorContent]);
 
     const handleBranchFromBeat = useCallback(async (beatId) => {
@@ -331,6 +337,7 @@ export default function StorySandbox() {
         } finally {
             setBranchingBeatId(null);
         }
+     
     }, [activeStoryId, activeChapterId, isStreaming, branchChapter, confirm, queryClient, navigate]);
 
     const handleCreateStory = async (data) => {
@@ -380,6 +387,7 @@ export default function StorySandbox() {
     const handleExportStory = useCallback(() => {
         if (!activeStoryId) return;
         setIsExportModalOpen(true);
+     
     }, [activeStoryId]);
 
     const handlePublishStory = useCallback(() => {
@@ -394,6 +402,7 @@ export default function StorySandbox() {
             },
             onError: (e) => toast.error(`Publish failed: ${e.message}`),
         });
+     
     }, [activeStoryId, publishStory]);
 
     const handleNarrateChapter = useCallback((chapterId) => {
@@ -402,6 +411,7 @@ export default function StorySandbox() {
             onSuccess: () => toast.success('Narration job queued'),
             onError: (e) => toast.error(`Narration failed: ${e.message}`),
         });
+     
     }, [activeStoryId, narrateChapter]);
 
     const handleDeleteChapter = async (chapterId) => {
@@ -435,11 +445,13 @@ export default function StorySandbox() {
         } catch {
             toast.error('Failed to save chapter');
         }
+     
     }, [activeStoryId, activeChapterId, editorContent, isStreaming, updateChapter]);
 
     const handleIllustrate = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isIllustrating) return;
         setShowIllustrateModal(true);
+     
     }, [activeStoryId, activeChapterId, isIllustrating]);
 
     const handleConfirmIllustrate = useCallback(async () => {
@@ -458,6 +470,7 @@ export default function StorySandbox() {
             toast.error('Failed to start illustration');
             setIsIllustrating(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, illustratePrompt, illustrateChapter]);
 
     const handleStoryTitleUpdate = async (e) => {
@@ -477,6 +490,7 @@ export default function StorySandbox() {
         } catch {
             toast.error('Failed to save image');
         }
+     
     }, [queryClient]);
 
     return (

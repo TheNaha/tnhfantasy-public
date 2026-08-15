@@ -94,6 +94,8 @@ export default React.memo(function StoryHeader({
                         </button>
                 <button
                     onClick={onOpenContextMobile}
+                    aria-label="Open context panel"
+                    title="Context panel"
                     className={clsx(
                         "p-2 rounded-lg transition-colors border flex lg:hidden",
                         mobileTab === 'context' ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"
@@ -103,6 +105,8 @@ export default React.memo(function StoryHeader({
                 </button>
                 <button
                     onClick={onTogglePanel}
+                    aria-label="Toggle context panel"
+                    title="Context panel"
                     className={clsx(
                         "p-2 rounded-lg transition-colors border hidden lg:flex",
                         isPanelOpen ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" : "bg-white/5 text-gray-400 border-white/5 hover:text-white hover:bg-white/10"

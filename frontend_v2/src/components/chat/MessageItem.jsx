@@ -91,6 +91,13 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         <textarea
                             value={draft}
                             onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    saveEdit();
+                                }
+                            }}
+                            aria-label="Edit message content"
                             rows={3}
                             className="px-3 py-2 rounded-2xl text-sm bg-gray-900/80 border border-blue-500/40 text-gray-200 focus:outline-none resize-none"
                         />

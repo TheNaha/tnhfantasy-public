@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { FaceSmile } from 'lucide-react';
-import { useExpression, useUpdateExpressions } from '../../hooks/useWorldVault';
+import { Smile } from 'lucide-react';
+import { useExpressions, useUpdateExpressions } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 
 /**
@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
  * Shows a preview of each expression and allows switching the active one.
  */
 export default function ExpressionSelector({ characterId, character, inline = false }) {
-    const { data: expressions = {}, isLoading } = useExpression(characterId);
+    const { data: expressions = {}, isLoading } = useExpressions(characterId);
     const { mutate: updateExpressions } = useUpdateExpressions();
 
     const expressionData = character?.expressions || expressions;
@@ -18,7 +18,7 @@ export default function ExpressionSelector({ characterId, character, inline = fa
         if (inline) return null;
         return (
             <div className="text-center py-8 text-gray-500">
-                <FaceSmile size={32} className="mx-auto mb-2 opacity-30" />
+                <Smile size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No expressions configured</p>
             </div>
         );
@@ -68,7 +68,7 @@ export default function ExpressionSelector({ characterId, character, inline = fa
                                 />
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center">
-                                    <FaceSmile size={24} className="text-gray-500" />
+                                    <Smile size={24} className="text-gray-500" />
                                 </div>
                             )}
                             <div className={`absolute bottom-0 left-0 right-0 py-1 text-xs font-medium text-center ${labelClass}`}>
@@ -88,7 +88,7 @@ export default function ExpressionSelector({ characterId, character, inline = fa
     return (
         <div className="p-4">
             <div className="flex items-center gap-2 mb-4">
-                <FaceSmile size={20} className="text-gray-400" />
+                <Smile size={20} className="text-gray-400" />
                 <h3 className="font-medium text-white">Expressions</h3>
             </div>
             {renderGrid()}
