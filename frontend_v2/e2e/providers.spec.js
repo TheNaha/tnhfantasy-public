@@ -1,9 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
     apiGet,
-    apiPost,
     apiPut,
-    apiDelete,
     uniqueName,
     expectToast,
     providerCard,
