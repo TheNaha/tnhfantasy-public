@@ -432,7 +432,6 @@ async def _tool_narrate_scene(
                 if _chat:
                     _char = session.get(_Char, _chat.character_id) if _chat.character_id else None
                     _sections = await build_system_prompt_sections_async(
-                        session,
                         character=_char,
                         system_prompt_override=_chat.system_prompt_override,
                         append_system_prompt=_chat.append_system_prompt,
@@ -952,7 +951,14 @@ async def process_tool_calls_and_chain(
             "max_agentic_depth": metadata.get("max_agentic_depth"),
         },
     )
-    followup_workflow["tools"] = AGENTIC_TOOLS
+    if allowed_tools is not None:
+        followup_workflow["tools"] = [
+            t
+            for t in AGENTIC_TOOLS
+            if t.get("function", {}).get("name") in allowed_tools
+        ]
+    else:
+        followup_workflow["tools"] = AGENTIC_TOOLS
 
     try:
         followup_job = await job_service.create_job(

@@ -680,7 +680,6 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     )
     
     system_prompt, context = await build_chat_context_async(
-        session,
         [{"role": "user", "content": chapter.content.strip()}],
         lorebook_ids=story.lorebook_ids or None,
         system_prompt_override=base_prompt,

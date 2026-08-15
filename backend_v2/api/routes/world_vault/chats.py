@@ -260,12 +260,10 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
     ctx_kwargs = _chat_context_kwargs(chat, characters=characters)
 
     sections = await build_system_prompt_sections_async(
-        session,
         **ctx_kwargs,
     )
 
     system_prompt, context = await build_chat_context_async(
-        session,
         past_messages,
         **ctx_kwargs,
     )
@@ -354,7 +352,6 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
             active_character_id=request.target_character_id,
         )
         system_prompt, context = await build_chat_context_async(
-            session, 
             past_messages, 
             **ctx_kwargs,
         )
@@ -633,7 +630,6 @@ async def generate_swipe(
         max_context_tokens=_resolve_context_tokens(chat),
     )
     system_prompt, context = await build_chat_context_async(
-        session,
         remaining,
         **ctx_kwargs,
     )
@@ -675,7 +671,7 @@ async def generate_swipe(
         orch = OrchestratorService(session)
         await orch.handle_new_turn(job.id, metadata)
     else:
-        await queue_manager.enqueue(job.id)
+        await queue_manager.enqueue(job.id, task_type="llm")
 
     return {"job_id": job.id}
 
@@ -813,7 +809,6 @@ async def regenerate_reply(
         max_context_tokens=_resolve_context_tokens(chat),
     )
     system_prompt, context = await build_chat_context_async(
-        session,
         remaining,
         **ctx_kwargs,
     )
@@ -877,14 +872,13 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
-    characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
+    character = session.get(Character, chat.character_id) if chat.character_id else None
 
     user_name = chat.persona_name or "User"
     char_name = character.name if character else "the AI"
 
     # Build world-state context without character identity (same approach as suggest)
     world_sections = await build_system_prompt_sections_async(
-        session,
         **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
@@ -967,7 +961,6 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     from config import get_system_prompt_blocks
 
     world_sections = await build_system_prompt_sections_async(
-        session,
         **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
@@ -1059,9 +1052,8 @@ async def generate_scene(
     chat_id: str, 
     session: Session = Depends(get_session),
 ):
-    from services.job_submission_service import JobSubmissionService
     from services.job_queue import queue_manager
-    
+
     chat = session.get(Chat, chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -1095,7 +1087,7 @@ async def generate_scene(
     )
 
     job_service = JobService(session)
-    from services.orchestrator_service import AGENTIC_TOOLS
+    from services.orchestrator_service import AGENTIC_TOOLS, filter_agentic_tools
 
     workflow, metadata = build_chat_llm_workflow(
         messages=[
@@ -1115,7 +1107,11 @@ async def generate_scene(
             "orchestrator_depth": 0,
         },
     )
-    workflow["tools"] = AGENTIC_TOOLS
+    workflow["tools"] = filter_agentic_tools(
+        AGENTIC_TOOLS,
+        allow_image=chat.allow_image_generation,
+        allow_narration=chat.allow_narration,
+    )
 
     prompt_job = await job_service.create_job(
         task_type="llm",

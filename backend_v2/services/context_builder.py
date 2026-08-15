@@ -695,7 +695,6 @@ def build_chat_context(
 
 
 async def build_chat_context_async(
-    session: Session,
     messages: list,
     **kwargs: Any,
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -703,8 +702,9 @@ async def build_chat_context_async(
 
     The context build runs local SBERT embedding (CPU-bound) plus pgvector
     semantic queries; executing it on the event loop stalls every other
-    request. A fresh session is used inside the worker thread so the
-    request-scoped session is never touched from another thread.
+    request. A fresh session is opened inside the worker thread so no
+    request-scoped session is ever touched from another thread — callers
+    must NOT pass their own session here.
     """
     import asyncio
 
@@ -718,7 +718,6 @@ async def build_chat_context_async(
 
 
 async def build_system_prompt_sections_async(
-    session: Session,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Run build_system_prompt_sections off the event loop with a dedicated session."""

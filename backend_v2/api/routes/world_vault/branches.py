@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from api.deps import get_session
-from core.entities import Chat, Message, MessageRole
-from core.exceptions import NotFoundError, ValidationError
+from core.entities import Chat, Message
+from core.exceptions import NotFoundError
 
 router = APIRouter()
 
@@ -97,32 +97,44 @@ def create_branch(
     ).all()
 
     if not branch_msgs:
-        # Fallback: use parent_id chain
-        branch_msgs = []
+        # Fallback for legacy chats without branch_id: walk the parent_id
+        # chain from the anchor up to the root so the new branch contains
+        # the full linear history.
+        chain: list[Message] = []
+        cursor: Message | None = anchor
+        seen: set[str] = set()
+        while cursor is not None and cursor.id not in seen:
+            seen.add(cursor.id)
+            chain.append(cursor)
+            if cursor.parent_id is None:
+                break
+            cursor = session.get(Message, cursor.parent_id)
+            if cursor is None or cursor.chat_id != chat_id:
+                break
+        branch_msgs = list(reversed(chain))
 
     for msg in branch_msgs:
-        if msg.id == anchor.id or (msg.created_at <= anchor.created_at and msg.parent_id is None):
-            new_id = str(uuid4())
-            old_to_new[msg.id] = new_id
-            new_msg = Message(
-                id=new_id,
-                chat_id=chat_id,
-                role=msg.role,
-                kind=msg.kind,
-                content=msg.content,
-                image_path=msg.image_path,
-                tool_calls=dict(msg.tool_calls) if msg.tool_calls else None,
-                message_metadata=dict(msg.message_metadata) if msg.message_metadata else None,
-                pinned=msg.pinned,
-                parent_id=msg.parent_id,
-                branch_id=new_branch_id,
-                branch_name=branch_name,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            session.add(new_msg)
-        else:
-            break  # Stop at the anchor
+        if msg.id != anchor.id and msg.created_at > anchor.created_at:
+            break  # Stop at the anchor; ignore descendants past it
+        new_id = str(uuid4())
+        old_to_new[msg.id] = new_id
+        new_msg = Message(
+            id=new_id,
+            chat_id=chat_id,
+            role=msg.role,
+            kind=msg.kind,
+            content=msg.content,
+            image_path=msg.image_path,
+            tool_calls=dict(msg.tool_calls) if msg.tool_calls else None,
+            message_metadata=dict(msg.message_metadata) if msg.message_metadata else None,
+            pinned=msg.pinned,
+            parent_id=old_to_new.get(msg.parent_id) if msg.parent_id else None,
+            branch_id=new_branch_id,
+            branch_name=branch_name,
+            created_at=msg.created_at,
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(new_msg)
 
     session.commit()
 

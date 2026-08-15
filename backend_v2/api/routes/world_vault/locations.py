@@ -6,7 +6,7 @@ from sqlmodel import Session, select, func
 
 from api.deps import get_session
 from core.entities import Location
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import NotFoundError
 
 router = APIRouter()
 
@@ -47,6 +47,17 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
     session.commit()
     session.refresh(location)
     return location
+
+
+@router.get("/search", response_model=list[Location])
+def search_locations(q: str, session: Session = Depends(get_session)):
+    pattern = f"%{q}%"
+    return session.exec(
+        select(Location).where(
+            func.lower(Location.name).like(func.lower(pattern))
+            | func.lower(Location.description).like(func.lower(pattern))
+        ).order_by(Location.name)
+    ).all()
 
 
 @router.get("/{location_id}", response_model=Location)
@@ -100,14 +111,3 @@ def delete_location(location_id: str, session: Session = Depends(get_session)):
     session.delete(location)
     session.commit()
     return {"message": "Location deleted"}
-
-
-@router.get("/search", response_model=list[Location])
-def search_locations(q: str, session: Session = Depends(get_session)):
-    pattern = f"%{q}%"
-    return session.exec(
-        select(Location).where(
-            func.lower(Location.name).like(func.lower(pattern))
-            | func.lower(Location.description).like(func.lower(pattern))
-        ).order_by(Location.name)
-    ).all()

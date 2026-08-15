@@ -76,7 +76,6 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     .order_by(Message.created_at)
                 ).all()
                 _sp, _ctx = await build_chat_context_async(
-                    session,
                     _past,
                     characters=[_character] if _character else None,
                     lorebook_ids=_chat.active_lorebook_ids or None,

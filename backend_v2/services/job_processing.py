@@ -414,8 +414,18 @@ async def _finalize_llm_job(
         if job_type == "chat_reply" and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
-                # Decoupled DB checks; grant basic safe tool access by default.
-                allowed_tools = {"generate_image", "narrate_scene", "update_world_state"}
+                # Inherit the tool set the parent job exposed to the model
+                # (already filtered by the chat's allow_image_generation /
+                # allow_narration flags), falling back to safe basics if the
+                # parent defined no tools.
+                job_workflow = job.workflow if isinstance(job.workflow, dict) else {}
+                allowed_tools = {
+                    t.get("function", {}).get("name")
+                    for t in (job_workflow.get("tools") or [])
+                    if isinstance(t, dict) and t.get("function", {}).get("name")
+                }
+                if not allowed_tools:
+                    allowed_tools = {"generate_image", "narrate_scene", "update_world_state"}
                 from services.orchestrator_service import process_tool_calls_and_chain
                 from services.job_queue import queue_manager
 
