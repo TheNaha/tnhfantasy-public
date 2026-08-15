@@ -103,6 +103,7 @@ export default function StorySandbox() {
     const [showGallery, setShowGallery] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [editingLorebook, setEditingLorebook] = useState(null);
+    const [showLorebookModal, setShowLorebookModal] = useState(false);
 
     const updateCharacter = useUpdateCharacter();
 
@@ -559,12 +560,6 @@ export default function StorySandbox() {
                                 onSave={handleSaveCharacter}
                             />
                         )}
-
-                        <LorebookModal
-                            isOpen={!!editingLorebook}
-                            onClose={() => setEditingLorebook(null)}
-                            lorebook={editingLorebook}
-                        />
                     </>
                 ) : (
                     <>
@@ -665,11 +660,17 @@ export default function StorySandbox() {
                             onShowGallery={() => setShowGallery(true)}
                             onUpdateStory={(updates) => { if (activeStoryId) updateStory.mutate({ id: activeStoryId, ...updates }); }}
                             onEditCharacter={setEditingCharacter}
-                            onEditLorebook={setEditingLorebook}
+                            onEditLorebook={(lb) => { setEditingLorebook(lb); setShowLorebookModal(true); }}
                         />
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <LorebookModal
+                isOpen={showLorebookModal}
+                onClose={() => { setEditingLorebook(null); setShowLorebookModal(false); }}
+                lorebook={editingLorebook}
+            />
 
             <IllustrateModal
                 open={showIllustrateModal}

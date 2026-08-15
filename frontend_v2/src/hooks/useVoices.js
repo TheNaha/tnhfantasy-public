@@ -12,13 +12,7 @@ export const useVoices = (characterId = null) => {
     });
 };
 
-export const useVoice = (voiceId) => {
-    return useQuery({
-        queryKey: ['world_vault', 'voices', voiceId],
-        queryFn: () => api.get(`/api/v2/voices/${voiceId}`),
-        enabled: !!voiceId,
-    });
-};
+
 
 export const useCreateVoice = () => {
     const queryClient = useQueryClient();

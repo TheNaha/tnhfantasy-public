@@ -131,14 +131,4 @@ export function useSetLLMDefault() {
     });
 }
 
-/**
- * Invalidate all LLM status caches (useful after adding/removing providers).
- */
-export function useRefreshLLMStatus() {
-    const queryClient = useQueryClient();
-    return () => {
-        queryClient.invalidateQueries({ queryKey: LLM_PROVIDERS_KEY });
-        queryClient.invalidateQueries({ queryKey: LLM_MODELS_KEY });
-        queryClient.invalidateQueries({ queryKey: LLM_DEFAULT_KEY });
-    };
-}
+

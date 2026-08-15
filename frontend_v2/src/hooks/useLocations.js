@@ -48,10 +48,4 @@ export const useDeleteLocation = () => {
     });
 };
 
-export const useSearchLocations = (query) => {
-    return useQuery({
-        queryKey: buildQueryKey('locations', 'search', query),
-        queryFn: () => api.get(`/api/v2/locations/search?q=${encodeURIComponent(query)}`),
-        enabled: !!query && query.length > 0,
-    });
-};
+

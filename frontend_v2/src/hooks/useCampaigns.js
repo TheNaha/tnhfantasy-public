@@ -9,13 +9,7 @@ export const useCampaigns = () => {
     });
 };
 
-export const useCampaign = (campaignId) => {
-    return useQuery({
-        queryKey: buildQueryKey('campaigns', campaignId),
-        queryFn: () => api.get(`/api/v2/campaigns/${campaignId}`),
-        enabled: !!campaignId,
-    });
-};
+
 
 export const useCampaignDashboard = (campaignId) => {
     return useQuery({

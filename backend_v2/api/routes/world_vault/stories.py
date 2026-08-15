@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character
 from core.exceptions import ComfyError, NotFoundError
 from core.workflow_builder import build_image_workflow
@@ -581,6 +582,7 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
     if not story:
         raise NotFoundError("Story", story_id)
     
+    scrub_entity_references(session, "story", story_id)
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
     for ch in chapters:
         session.delete(ch)

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Character
 from core.exceptions import NotFoundError, ValidationError
 
@@ -295,6 +296,7 @@ def delete_character(character_id: str, session: Session = Depends(get_session))
     if not character:
         raise NotFoundError("Character", character_id)
     
+    scrub_entity_references(session, "character", character_id)
     session.delete(character)
     session.commit()
     return {"message": "Character deleted"}

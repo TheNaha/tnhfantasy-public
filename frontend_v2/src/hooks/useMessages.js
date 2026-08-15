@@ -23,15 +23,15 @@ export const useEditMessage = () => {
             api.patch(`/api/v2/chats/${chatId}/messages/${msgId}`, { content }),
         onMutate: async ({ chatId, msgId, content }) => {
             await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
-            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
-            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) =>
-                old?.map((m) => m.id === msgId ? { ...m, content } : m) || []
+            const previous = queryClient.getQueriesData({ queryKey: ['world_vault', 'messages', chatId] });
+            queryClient.setQueriesData({ queryKey: ['world_vault', 'messages', chatId] }, (old) =>
+                Array.isArray(old) ? old.map((m) => m.id === msgId ? { ...m, content } : m) : old
             );
             return { previous };
         },
-        onError: (_, { chatId }, context) => {
+        onError: (_, _vars, context) => {
             if (context?.previous) {
-                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+                context.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
             }
         },
         onSuccess: (_, variables) => {
@@ -47,15 +47,15 @@ export const useDeleteMessage = () => {
             api.delete(`/api/v2/chats/${chatId}/messages/${msgId}`),
         onMutate: async ({ chatId, msgId }) => {
             await queryClient.cancelQueries({ queryKey: ['world_vault', 'messages', chatId] });
-            const previous = queryClient.getQueryData(['world_vault', 'messages', chatId]);
-            queryClient.setQueryData(['world_vault', 'messages', chatId], (old) =>
-                old?.filter((m) => m.id !== msgId) || []
+            const previous = queryClient.getQueriesData({ queryKey: ['world_vault', 'messages', chatId] });
+            queryClient.setQueriesData({ queryKey: ['world_vault', 'messages', chatId] }, (old) =>
+                Array.isArray(old) ? old.filter((m) => m.id !== msgId) : old
             );
             return { previous };
         },
-        onError: (_, { chatId }, context) => {
+        onError: (_, _vars, context) => {
             if (context?.previous) {
-                queryClient.setQueryData(['world_vault', 'messages', chatId], context.previous);
+                context.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
             }
         },
         onSuccess: (_, variables) => {

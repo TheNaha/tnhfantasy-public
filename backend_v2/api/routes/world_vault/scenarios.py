@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Scenario, Chat, Story
 from core.exceptions import NotFoundError, ValidationError
 
@@ -62,6 +63,7 @@ def delete_scenario(scenario_id: str, session: Session = Depends(get_session)):
     if not scenario:
         raise NotFoundError("Scenario", scenario_id)
     
+    scrub_entity_references(session, "scenario", scenario_id)
     session.delete(scenario)
     session.commit()
     return {"message": "Scenario deleted"}

@@ -1,34 +1,47 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Save } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { useCreateLorebook, useUpdateLorebook } from '../../hooks/useLorebooks';
 
 export function LorebookModal({ isOpen, onClose, lorebook }) {
     const [form, setForm] = useState({ name: '', description: '' });
     const [saving, setSaving] = useState(false);
     const queryClient = useQueryClient();
+    const createLorebook = useCreateLorebook();
+    const updateLorebook = useUpdateLorebook();
 
     useEffect(() => {
-        if (lorebook) {
-            setForm({ name: lorebook.name || '', description: lorebook.description || '' });
+        if (isOpen) {
+            setForm({
+                name: lorebook?.name || '',
+                description: lorebook?.description || '',
+            });
         }
-    }, [lorebook]);
+    }, [isOpen, lorebook]);
 
     if (!isOpen) return null;
 
     const handleSave = async () => {
-        if (!lorebook) return;
+        if (!form.name.trim()) {
+            toast.error('Name is required');
+            return;
+        }
         setSaving(true);
         try {
-            await fetch(`/api/v2/lorebooks/${lorebook.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(form)
-            });
+            if (lorebook) {
+                await updateLorebook.mutateAsync({ id: lorebook.id, ...form });
+                toast.success('Lorebook updated');
+            } else {
+                await createLorebook.mutateAsync(form);
+                toast.success('Lorebook created');
+            }
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
             onClose();
         } catch (e) {
             console.error(e);
+            toast.error('Failed to save lorebook');
         } finally {
             setSaving(false);
         }
@@ -53,7 +66,7 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
                     {/* Header */}
                     <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-900/50">
                         <h2 className="text-xl font-semibold text-gray-100">
-                            Edit Lorebook
+                            {lorebook ? 'Edit Lorebook' : 'Create Lorebook'}
                         </h2>
                         <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors">
                             <X size={20} />
@@ -99,7 +112,7 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
                             className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
                         >
                             <Save size={16} />
-                            {saving ? 'Saving...' : 'Save Changes'}
+                            {saving ? 'Saving...' : lorebook ? 'Save Changes' : 'Create Lorebook'}
                         </button>
                     </div>
                 </motion.div>

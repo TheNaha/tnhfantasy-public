@@ -30,7 +30,9 @@ export default function AvatarGallery() {
     }, [characters, searchQuery]);
 
     const handleChat = (characterId) => {
-        navigate(`/chat/${characterId}`);
+        // ChatWorkspaceContext auto-creates (or reuses) a chat for this
+        // character when /chat is entered with location.state.characterId.
+        navigate('/chat', { state: { characterId } });
     };
 
     const handleCharacterClick = () => {
@@ -182,7 +184,7 @@ function CharacterCard({ character, onChat, onNavigateToCharacter }) {
 
             <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/5">
                     <button
-                        onClick={() => onChat()}
+                        onClick={() => onChat(character.id)}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors"
                     >
                     <MessageSquare size={14} /> Chat

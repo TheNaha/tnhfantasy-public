@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Users, BookOpen, MessageSquare, MapPin, Globe, RefreshCw } from 'lucide-react';
-import { api } from '../api';
+import { useWorldVaultRelationships } from '../hooks/useWorldVault';
 
 const NODE_COLORS = {
     character: '#8b5cf6',
@@ -21,25 +21,9 @@ const NODE_ICONS = {
 };
 
 export default function RelationshipGraph() {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all');
 
-    useEffect(() => {
-        fetchRelationships();
-    }, []);
-
-    const fetchRelationships = async () => {
-        setLoading(true);
-        try {
-            const result = await api.get('/api/v2/world-vault/relationships');
-            setData(result);
-        } catch {
-            // silent
-        } finally {
-            setLoading(false);
-        }
-    };
+    const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
 
     const nodes = useMemo(() => {
         if (!data) return { nodes: [], edges: [] };
@@ -89,7 +73,7 @@ export default function RelationshipGraph() {
         return nodes.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
     }, [nodes.edges, filteredNodes]);
 
-    if (loading) {
+    if (isLoading) {
         return (
             <div className="flex items-center justify-center h-64 text-gray-400">
                 <RefreshCw className="animate-spin mr-2" size={20} />
@@ -98,7 +82,7 @@ export default function RelationshipGraph() {
         );
     }
 
-    if (!data) {
+    if (isError) {
         return (
             <div className="text-center py-12 text-gray-400">
                 Failed to load relationships
@@ -127,11 +111,11 @@ export default function RelationshipGraph() {
                         <option value="voice">Voices</option>
                     </select>
                     <button
-                        onClick={fetchRelationships}
+                        onClick={() => refetch()}
                         className="p-2 bg-gray-800 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition-colors"
                         title="Refresh"
                     >
-                        <RefreshCw size={16} />
+                        <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
                     </button>
                 </div>
             </div>

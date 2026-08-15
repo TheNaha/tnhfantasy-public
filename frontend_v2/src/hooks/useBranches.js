@@ -21,10 +21,4 @@ export const useCreateBranch = () => {
     });
 };
 
-export const useAlternates = (chatId, messageId) => {
-    return useQuery({
-        queryKey: ['world_vault', 'messages', messageId, 'alternates'],
-        queryFn: () => api.get(`/api/v2/chats/${chatId}/messages/${messageId}/alternates`),
-        enabled: !!chatId && !!messageId,
-    });
-};
+

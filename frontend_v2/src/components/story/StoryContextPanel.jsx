@@ -1,5 +1,5 @@
 import React from 'react';
-import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2 } from 'lucide-react';
+import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 
@@ -79,9 +79,18 @@ export default React.memo(function StoryContextPanel({
                 </div>
 
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
-                    <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                        <Layers size={14} /> Lorebooks
-                    </h4>
+                    <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                            <Layers size={14} /> Lorebooks
+                        </h4>
+                        <button
+                            onClick={() => onEditLorebook?.(null)}
+                            className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 transition-colors"
+                            title="New Lorebook"
+                        >
+                            <Plus size={14} />
+                        </button>
+                    </div>
                     {lorebooks.length === 0 ? (
                         <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No lorebooks</p>
                     ) : (

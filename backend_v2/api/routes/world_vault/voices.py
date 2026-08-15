@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
+from services.reference_cleanup import scrub_entity_references
 from core.entities import VoiceModel, Character
 from core.exceptions import NotFoundError, ValidationError
 
@@ -93,6 +94,7 @@ def delete_voice(voice_id: str, session: Session = Depends(get_session)):
     voice = session.get(VoiceModel, voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
+    scrub_entity_references(session, "voice", voice_id)
     session.delete(voice)
     session.commit()
     return {"message": "Voice model deleted"}

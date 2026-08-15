@@ -8,14 +8,6 @@ export const useScenarios = () => {
     });
 };
 
-export const useScenario = (scenarioId) => {
-    return useQuery({
-        queryKey: ['world_vault', 'scenarios', scenarioId],
-        queryFn: () => api.get(`/api/v2/scenarios/${scenarioId}`),
-        enabled: !!scenarioId,
-    });
-};
-
 export const useCreateScenario = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -37,16 +29,7 @@ export const useUpdateScenario = () => {
     });
 };
 
-export const usePatchScenario = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, ...data }) => api.patch(`/api/v2/scenarios/${id}`, data),
-        onSuccess: (_, variables) => {
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios'] });
-            queryClient.invalidateQueries({ queryKey: ['world_vault', 'scenarios', variables.id] });
-        }
-    });
-};
+
 
 export const useDeleteScenario = () => {
     const queryClient = useQueryClient();

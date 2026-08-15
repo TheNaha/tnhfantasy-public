@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Chat, Character, Job, JobStatus, VoiceModel, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
@@ -220,6 +221,7 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
+    scrub_entity_references(session, "chat", chat_id)
     # Issue a direct SQL DELETE for messages first so the FK constraint is
     # satisfied before the chat row is removed.  The ORM unit-of-work can
     # reorder session.delete() calls and execute the chat DELETE before the

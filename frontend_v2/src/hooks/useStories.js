@@ -183,20 +183,7 @@ export const useParseStory = () => {
     });
 };
 
-export const useExportStory = () => {
-    return useMutation({
-        mutationFn: ({ storyId }) => api.get(`/api/v2/stories/${storyId}/export`),
-        onSuccess: (data) => {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `story-${data.story?.title || 'export'}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    });
-};
+
 
 export const useExportStoryFormatted = (format = 'json') => {
     return useMutation({

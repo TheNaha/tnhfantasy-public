@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Filter, Users, MessageSquare, BookOpen, Music, Shield, Tag } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useWorldVaultSearch, useWorldVaultDashboard } from '../hooks/useWorldVaultSearch';
+import { useDebounce } from '../hooks/useDebounce';
 
 const ENTITY_ICONS = {
     character: Users,
@@ -28,7 +30,8 @@ const ENTITY_COLORS = {
 export default function WorldVaultHub() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedType, setSelectedType] = useState('all');
-    const [debouncedQuery, setDebouncedQuery] = useState('');
+    const debouncedQuery = useDebounce(searchQuery, 300);
+    const navigate = useNavigate();
 
     const { data: entities, isLoading: entitiesLoading } = useWorldVaultDashboard();
     const { data: searchResults, isLoading: searchLoading } = useWorldVaultSearch(debouncedQuery, selectedType !== 'all' ? selectedType : null);
@@ -36,11 +39,32 @@ export default function WorldVaultHub() {
     const isLoading = entitiesLoading || searchLoading;
     const displayResults = debouncedQuery ? searchResults : entities?.recent || [];
 
-    const handleSearch = (e) => {
-        const value = e.target.value;
-        setSearchQuery(value);
-        const handler = setTimeout(() => setDebouncedQuery(value), 300);
-        return () => clearTimeout(handler);
+    const openEntity = (entity) => {
+        const id = entity.id ?? entity.entity_id;
+        switch (entity.type) {
+            case 'chat':
+                navigate(`/chat/${id}`);
+                break;
+            case 'story':
+                navigate(`/story/${id}`);
+                break;
+            case 'character':
+                navigate(`/characters`);
+                break;
+            case 'lorebook':
+            case 'scenario':
+            case 'voice':
+                navigate(`/${entity.type}s`);
+                break;
+            case 'branch':
+                navigate(`/chat/${entity.chat_id || id}`);
+                break;
+            case 'memory':
+                navigate(`/characters`);
+                break;
+            default:
+                navigate('/world-vault');
+        }
     };
 
     const entityTypes = [
@@ -62,7 +86,7 @@ export default function WorldVaultHub() {
                         placeholder="Search across all entities..."
                         className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         value={searchQuery}
-                        onChange={handleSearch}
+                        onChange={(e) => setSearchQuery(e.target.value)}
                     />
                 </div>
                 <select
@@ -117,7 +141,16 @@ export default function WorldVaultHub() {
                         return (
                             <motion.div
                                 key={entity.id || i}
-                                className="bg-gray-900 border border-gray-700 rounded-xl p-4 flex items-center gap-4"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => openEntity(entity)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        openEntity(entity);
+                                    }
+                                }}
+                                className="bg-gray-900 border border-gray-700 rounded-xl p-4 flex items-center gap-4 cursor-pointer hover:border-gray-500 transition-colors"
                             >
                                 <div className={`p-2 rounded-lg ${colorClass}`}>
                                     <Icon size={20} />

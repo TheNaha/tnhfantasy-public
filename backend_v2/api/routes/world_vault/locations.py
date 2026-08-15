@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from api.deps import get_session
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
 from core.exceptions import NotFoundError
 
@@ -108,6 +109,7 @@ def delete_location(location_id: str, session: Session = Depends(get_session)):
     location = session.get(Location, location_id)
     if not location:
         raise NotFoundError("Location", location_id)
+    scrub_entity_references(session, "location", location_id)
     session.delete(location)
     session.commit()
     return {"message": "Location deleted"}

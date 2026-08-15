@@ -195,17 +195,4 @@ export const useSearchChats = (query) => {
     });
 };
 
-export const useExportChat = () => {
-    return useMutation({
-        mutationFn: ({ chatId }) => api.get(`/api/v2/chats/${chatId}/export`),
-        onSuccess: (data, variables) => {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `chat-${variables.chatId}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    });
-};
+

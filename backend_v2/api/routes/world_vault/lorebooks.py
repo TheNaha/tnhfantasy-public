@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_embedding_service, get_session
+from services.reference_cleanup import scrub_entity_references
 from core.entities import Lorebook, LorebookEntry
 from core.exceptions import NotFoundError
 from services.embedding_service import EmbeddingService
@@ -65,6 +66,7 @@ def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
         
+    scrub_entity_references(session, "lorebook", lorebook_id)
     entries = session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)).all()
     for entry in entries:
         session.delete(entry)
