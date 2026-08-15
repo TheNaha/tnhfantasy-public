@@ -197,3 +197,49 @@ export const useExportStory = () => {
         }
     });
 };
+
+export const useExportStoryFormatted = (format = 'json') => {
+    return useMutation({
+        mutationFn: ({ storyId }) => api.get(`/api/v2/stories/${storyId}/export?format=${format}`),
+        onSuccess: (data, { storyId }) => {
+            let blob, filename;
+            if (format === 'md' || format === 'markdown') {
+                blob = new Blob([data.content || ''], { type: 'text/markdown' });
+                filename = `story-${storyId}.md`;
+            } else if (format === 'epub') {
+                blob = new Blob([data.content || ''], { type: 'application/epub+zip' });
+                filename = `story-${storyId}.epub`;
+            } else {
+                blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                filename = `story-${storyId}.json`;
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    });
+};
+
+export const useNarrateChapter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/narrate`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId] });
+        },
+    });
+};
+
+export const usePublishStory = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId }) => api.post(`/api/v2/stories/${storyId}/publish`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId] });
+        },
+    });
+};

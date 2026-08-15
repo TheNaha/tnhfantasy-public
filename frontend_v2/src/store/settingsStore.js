@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS = {
         // Wired to backend config (config.json `ai` block via /api/settings):
         temperature: 0.8,
         maxContextTokens: 4096,
+        ttsEnabled: false,
         // Character enrichment prompts (consumed by Characters page):
         charGenDescriptionPrompt: 'You are an expert character creator. Expand the provided character details into a rich, detailed background description. Return ONLY the text for the description, no markdown or extra chat.',
         charGenPersonalityPrompt: 'You are an expert character creator. Expand the provided character details into a detailed personality profile covering traits, quirks, and mannerisms. Return ONLY the text, no markdown.',
