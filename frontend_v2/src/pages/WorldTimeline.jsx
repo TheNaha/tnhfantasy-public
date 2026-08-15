@@ -119,7 +119,19 @@ export default function WorldTimeline() {
             )}
 
             {isLoading ? (
-                <div className="text-center py-12 text-gray-400">Loading timeline...</div>
+                <div className="space-y-8 relative">
+                    <div className="absolute left-8 top-0 bottom-0 w-px bg-white/10" />
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="relative flex items-start gap-4">
+                            <div className="w-16 h-16 rounded-xl bg-gray-800/40 border border-white/5 animate-pulse z-10 shrink-0" />
+                            <div className="flex-1 p-4 rounded-xl border border-white/10 bg-gray-800/40 animate-pulse mt-2">
+                                <div className="h-5 bg-gray-700 rounded w-1/3 mb-2" />
+                                <div className="h-4 bg-gray-700 rounded w-full mb-1" />
+                                <div className="h-4 bg-gray-700 rounded w-5/6" />
+                            </div>
+                        </div>
+                    ))}
+                </div>
             ) : events.length === 0 ? (
                 <EmptyState
                     icon={Calendar}

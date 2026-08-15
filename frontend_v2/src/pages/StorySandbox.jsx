@@ -9,6 +9,7 @@ import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearStreamingJob } from '../hooks/useStreamingJobs';
+import { useStoryStreaming } from '../hooks/useStoryStreaming';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import { useCollections } from '../hooks/useCollections';
@@ -83,19 +84,22 @@ export default function StorySandbox() {
         return Math.max(1, Math.ceil(wordCount / 200));
     }, [wordCount]);
 
-    const [isStreaming, setIsStreaming] = useState(false);
-    // Keep a ref in sync so WebSocket handlers can read the live value
-    // without being listed in effect deps (avoids re-registering on every render).
-    const isStreamingRef = useRef(false);
-    useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
-    // Safety net: if the terminal WS event is missed (reconnect gap, WS down),
-    // don't leave Continue/textarea/Save locked forever. LLM jobs time out at
-    // 180s and image jobs well under 5 min, so this only fires on real gaps.
-    const streamSafetyTimerRef = useRef(null);
+    const {
+        isStreaming,
+        setIsStreaming,
+        isIllustrating,
+        setIsIllustrating,
+        streamingBaseRef,
+        isStreamingRef
+    } = useStoryStreaming({
+        activeStoryId,
+        activeChapterId,
+        setEditorContent,
+        isDirtyRef
+    });
 
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
-    const [isIllustrating, setIsIllustrating] = useState(false);
     const [showGallery, setShowGallery] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [editingLorebook, setEditingLorebook] = useState(null);
@@ -199,159 +203,7 @@ export default function StorySandbox() {
         }
     };
 
-    // WebSocket for streaming story continuation
-    useEffect(() => {
-        const getJob = (event) => event?.data?.job || {};
 
-        const unsubProgress = subscribe(EventTypes.JOB_PROGRESS, (event) => {
-            const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
-            const storyId = meta.story_id;
-            const chapterId = meta.chapter_id;
-            
-            if (storyId === activeStoryId && chapterId === activeChapterId) {
-                const streamText = job.text ?? job.message ?? null;
-                if (streamText) {
-                    setIsStreaming(true);
-                    streamingRef.current = streamText;
-                    // Show accumulated text in editor while generating.
-                    // Use streamingBaseRef (set at generation start) to avoid
-                    // capturing the stale editorContent closure value.
-                    setEditorContent(() => {
-                        const baseContent = streamingBaseRef.current || '';
-                        return baseContent ? baseContent + '\n\n' + streamText : streamText;
-                    });
-                }
-            }
-        });
-
-        const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, async (event) => {
-            const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
-            const storyId = meta.story_id;
-            const chapterId = meta.chapter_id;
-            const eventType = job.task_type || meta.workspace;
-            
-            if (meta.type === 'story_parse' && storyId === activeStoryId) {
-                // Entity creation (characters, lorebooks) and story linking is
-                // handled entirely by the backend's _handle_story_parse handler.
-                // The frontend just needs to refresh its cached queries.
-                queryClient.invalidateQueries({ queryKey: ['world_vault'] });
-                toast.success("Story parsed! Characters & lorebooks imported.");
-                return;
-            }
-            
-            if (storyId === activeStoryId && chapterId === activeChapterId) {
-                if (eventType === 'image') {
-                    setIsIllustrating(false);
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'story', 'images', activeStoryId] });
-                    toast.success('Illustration complete');
-                } else {
-                    // Capture the final streamed content from the ref (always current)
-                    // before clearing streaming state, so the base is correct.
-                    const finalStreamedText = streamingRef.current;
-                    streamingRef.current = '';
-
-                    // Turn off streaming FIRST so the chapter-load effect guard
-                    // (isStreamingRef) allows the incoming refetch to update state.
-                    setIsStreaming(false);
-
-                    // Update base to the complete streamed content so any subsequent
-                    // continuation appends from the right position.
-                    setEditorContent(prev => {
-                        const newBase = finalStreamedText
-                            ? (streamingBaseRef.current
-                                ? streamingBaseRef.current + '\n\n' + finalStreamedText
-                                : finalStreamedText)
-                            : prev;
-                        streamingBaseRef.current = newBase;
-                        return newBase;
-                    });
-
-                    // Invalidate chapter data from server — the chapter-load effect
-                    // will only overwrite editor content if the chapter ID changes,
-                    // so this is safe.
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] }).then(() => {
-                        // Sync the editor with the persisted continuation once the
-                        // refetch lands — unless the user has typed since.
-                        if (isDirtyRef.current) return;
-                        const data = queryClient.getQueryData(['world_vault', 'stories', activeStoryId, 'chapters']);
-                        const freshChapter = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
-                        if (freshChapter?.content && freshChapter.content !== (streamingBaseRef.current || '')) {
-                            setEditorContent(freshChapter.content);
-                            streamingBaseRef.current = freshChapter.content;
-                        }
-                    });
-                    if (job.id) {
-                        clearStreamingJob(queryClient, job.id);
-                    }
-                }
-            }
-        });
-
-        const unsubFailed = subscribe(EventTypes.JOB_FAILED, (event) => {
-            const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
-            const storyId = meta.story_id;
-            const chapterId = meta.chapter_id;
-
-            if (storyId === activeStoryId && chapterId === activeChapterId) {
-                setIsStreaming(false);
-                setIsIllustrating(false);
-                streamingRef.current = '';
-                toast.error('Job failed: ' + (job.error || 'Unknown error'));
-                if (job.id) {
-                    clearStreamingJob(queryClient, job.id);
-                }
-            }
-        });
-
-        // JOB_CANCELLED unhandled before: isStreaming stayed true forever,
-        // permanently disabling Save/Continue. Mirror the failed-path cleanup.
-        const unsubCancelled = subscribe(EventTypes.JOB_CANCELLED, (event) => {
-            const job = getJob(event);
-            const meta = job.metadata_ ?? job.metadata ?? {};
-            const storyId = meta.story_id;
-            const chapterId = meta.chapter_id;
-
-            if (storyId === activeStoryId && chapterId === activeChapterId) {
-                setIsStreaming(false);
-                setIsIllustrating(false);
-                streamingRef.current = '';
-                if (job.id) {
-                    clearStreamingJob(queryClient, job.id);
-                }
-            }
-        });
-
-        return () => {
-            unsubProgress();
-            unsubCompleted();
-            unsubFailed();
-            unsubCancelled();
-        };
-    // NOTE: editorContent intentionally excluded — we use refs for live values
-    // inside the WebSocket handlers to avoid stale closure overwrites.
-    }, [subscribe, activeStoryId, activeChapterId, queryClient]);
-
-    // Safety valve for the streaming lock: arm whenever streaming starts,
-    // clear whenever it stops (terminal WS event or manual reset).
-    useEffect(() => {
-        if (!isStreaming) return;
-        streamSafetyTimerRef.current = window.setTimeout(() => {
-            setIsStreaming(false);
-            setIsIllustrating(false);
-            streamingRef.current = '';
-            toast.error('Connection lost — streaming stopped. Your story is saved.');
-        }, 300000);
-        return () => {
-            if (streamSafetyTimerRef.current) {
-                window.clearTimeout(streamSafetyTimerRef.current);
-                streamSafetyTimerRef.current = null;
-            }
-        };
-    }, [isStreaming]);
 
     // Auto-resize textarea — debounced to avoid layout thrashing on mobile
     useEffect(() => {

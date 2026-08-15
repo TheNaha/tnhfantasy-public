@@ -173,7 +173,24 @@ export default function Locations() {
             </div>
 
             {isLoading ? (
-                <div className="text-center py-12 text-gray-400">Loading locations...</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {[1, 2, 3, 4, 5, 6].map(i => (
+                        <div key={i} className="p-4 rounded-xl border border-white/10 bg-gray-800/40 animate-pulse">
+                            <div className="flex items-start justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 bg-gray-700 rounded-full" />
+                                    <div className="h-5 bg-gray-700 rounded w-24" />
+                                </div>
+                            </div>
+                            <div className="h-4 bg-gray-700 rounded w-full mb-2" />
+                            <div className="h-4 bg-gray-700 rounded w-2/3 mb-4" />
+                            <div className="flex gap-1">
+                                <div className="h-5 bg-gray-700 rounded-full w-12" />
+                                <div className="h-5 bg-gray-700 rounded-full w-16" />
+                            </div>
+                        </div>
+                    ))}
+                </div>
             ) : filteredLocations.length === 0 ? (
                 <EmptyState
                     icon={MapPin}
