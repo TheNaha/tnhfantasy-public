@@ -63,53 +63,47 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
     const runningProviderCount = providerEntries.filter((entry) => entry.summary.isOnline).length;
 
     return (
-        <div className="p-4 border-t border-white/5">
-            <div className="glass-panel rounded-xl p-4 border border-white/10">
-                <div className="flex items-center justify-between mb-3">
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
-                    <span className={`inline-block h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
+        <div className="p-3 border-t border-white/5">
+            <div className="glass-panel rounded-xl p-3 border border-white/10">
+                <div className="flex items-center justify-between mb-2">
+                    <span className="text-[9px] font-semibold uppercase tracking-widest text-gray-400">System Status</span>
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full shadow-[0_0_6px_currentColor] ${runningProviderCount > 0 ? 'text-green-400 bg-green-400' : 'text-gray-500 bg-gray-500'}`} />
                 </div>
                 {providerEntries.length > 0 ? (
-                    <div className="space-y-2">
+                    <div className="space-y-1 max-h-52 overflow-y-auto custom-scrollbar pr-1">
                         {providerEntries.map(({ provider, summary }) => {
                             const statusMeta = [
                                 summary.jobsAssigned > 0 ? `${summary.jobsAssigned} jobs` : null,
                                 summary.downloadsActive > 0 ? `${summary.downloadsActive} dl` : null,
                                 summary.downloadsQueued > 0 ? `${summary.downloadsQueued} queued` : null,
                             ].filter(Boolean).join(' · ');
-
                             const subtitle = [summary.message, statusMeta].filter(Boolean).join(' · ');
 
                             return (
-                                <div key={provider.id} className="flex items-start gap-2.5 group">
-                                    <span className={`mt-1 provider-dot shadow-[0_0_5px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5">
-                                            <span className={`text-xs truncate font-medium ${providerTextToneClass(summary.stage)}`}>
-                                                {provider.id}
-                                            </span>
-                                            <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
-                                                {summary.label}
-                                            </span>
-                                            {summary.isDisabled && (
-                                                <span className="text-[9px] text-gray-500 ml-auto font-medium">off</span>
-                                            )}
-                                        </div>
-                                        {subtitle && (
-                                            <p className="mt-1 truncate text-[10px] text-gray-500 group-hover:text-gray-400 transition-colors" title={subtitle}>
-                                                {subtitle}
-                                            </p>
-                                        )}
-                                    </div>
+                                <div
+                                    key={provider.id}
+                                    className="flex items-center gap-1.5 group"
+                                    title={subtitle}
+                                >
+                                    <span className={`provider-dot shadow-[0_0_4px_currentColor] ${providerDotToneClass(summary.dotTone)}`} />
+                                    <span className={`text-[10px] truncate font-medium ${providerTextToneClass(summary.stage)}`}>
+                                        {provider.id}
+                                    </span>
+                                    <span className={`inline-flex items-center rounded border px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider bg-white/5 ${providerBadgeToneClass(summary.stage)}`}>
+                                        {summary.label}
+                                    </span>
+                                    {summary.isDisabled && (
+                                        <span className="text-[8px] text-gray-500 ml-auto font-medium">off</span>
+                                    )}
                                 </div>
                             );
                         })}
                     </div>
                 ) : (
-                    <p className="text-xs text-gray-500">No providers connected</p>
+                    <p className="text-[11px] text-gray-500">No providers connected</p>
                 )}
-                <div className="mt-3 pt-3 border-t border-white/5 text-[10px] font-medium text-gray-500 flex justify-between">
-                    <span>Active Providers</span>
+                <div className="mt-2 pt-2 border-t border-white/5 text-[9px] font-medium text-gray-500 flex justify-between">
+                    <span>Active</span>
                     <span className="text-gray-300">{runningProviderCount}/{providers.length}</span>
                 </div>
             </div>
