@@ -5,8 +5,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
-from core.entities import Scenario
-from core.exceptions import NotFoundError
+from core.entities import Scenario, Chat, Story
+from core.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
 
@@ -65,3 +65,44 @@ def delete_scenario(scenario_id: str, session: Session = Depends(get_session)):
     session.delete(scenario)
     session.commit()
     return {"message": "Scenario deleted"}
+
+
+class ApplyScenarioRequest(BaseModel):
+    target_type: str  # "chat" or "story"
+    target_id: str
+
+
+@router.post("/{scenario_id}/apply")
+def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session = Depends(get_session)):
+    """Apply a scenario's prompt_template and defaults to a chat or story."""
+    scenario = session.get(Scenario, scenario_id)
+    if not scenario:
+        raise NotFoundError("Scenario", scenario_id)
+
+    result = {"scenario_id": scenario_id, "scenario_name": scenario.name}
+
+    if req.target_type == "chat":
+        chat = session.get(Chat, req.target_id)
+        if not chat:
+            raise NotFoundError("Chat", req.target_id)
+        # Apply the prompt template as a system prompt override
+        chat.system_prompt_override = scenario.prompt_template
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        result["applied_to"] = "chat"
+        result["chat_id"] = req.target_id
+    elif req.target_type == "story":
+        story = session.get(Story, req.target_id)
+        if not story:
+            raise NotFoundError("Story", req.target_id)
+        story.scenario_id = scenario_id
+        session.add(story)
+        session.commit()
+        session.refresh(story)
+        result["applied_to"] = "story"
+        result["story_id"] = req.target_id
+    else:
+        raise ValidationError(f"target_type must be 'chat' or 'story', got '{req.target_type}'")
+
+    return result

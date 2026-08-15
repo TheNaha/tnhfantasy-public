@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
-from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole
+from core.entities import Chat, Character, Job, JobStatus, VoiceModel, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context
@@ -508,22 +508,33 @@ async def narrate_message(
         raise ComfyError("Message has no content to narrate")
 
     from core.workflow_builder import build_tts_workflow
-    
-    # Optional: If you had character-specific voice profiles, you'd fetch it here.
+
+    # Resolve voice profile: prefer voice_model_id → fallback to voice_profile string
     voice_profile = None
+    voice_model_id = None
+    language = None
     if chat.character_id:
         char = session.get(Character, chat.character_id)
         if char:
-            voice_profile = getattr(char, "voice_profile", None)
+            voice_model_id = getattr(char, "voice_model_id", None)
+            if voice_model_id:
+                vm = session.get(VoiceModel, voice_model_id)
+                if vm:
+                    voice_profile = vm.voice_profile or vm.name
+                    language = vm.language
+            if not voice_profile:
+                voice_profile = getattr(char, "voice_profile", None)
 
     workflow, metadata = build_tts_workflow(
         text=message.content,
         voice_profile=voice_profile,
+        voice_model_id=voice_model_id,
+        language=language,
         chat_id=chat_id,
         character_id=chat.character_id,
         extra_metadata={
             "source": "chat_tts",
-            "message_id": message_id
+            "message_id": message_id,
         }
     )
 

@@ -1,18 +1,20 @@
 from datetime import datetime, timezone
+from io import BytesIO
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
+from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session
+from api.deps import get_job_service, get_session, get_queue_manager
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character
-from core.exceptions import NotFoundError
+from core.exceptions import ComfyError, NotFoundError
 from core.workflow_builder import build_image_workflow
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
 from services.job_service import JobService
-from services.job_queue import queue_manager
+from services.job_queue import QueueManager, queue_manager
 from services.model_availability_service import ModelAvailabilityService
 
 router = APIRouter()
@@ -125,7 +127,7 @@ def get_story(story_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{story_id}/export")
-def export_story(story_id: str, session: Session = Depends(get_session)):
+def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session)):
     story = session.get(Story, story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -151,6 +153,243 @@ def export_story(story_id: str, session: Session = Depends(get_session)):
             "created_at": ch.created_at.isoformat() if ch.created_at else None,
             "updated_at": ch.updated_at.isoformat() if ch.updated_at else None,
         }
+
+    if format in ("md", "markdown"):
+        # Generate Markdown export with inline images
+        md_parts = []
+        md_parts.append(f"# {story.title}\n")
+        if story.description:
+            md_parts.append(f"*{story.description}*\n")
+        if story.genre:
+            md_parts.append(f"**Genre:** {story.genre}\n")
+        if story.memory:
+            md_parts.append(f"\n## Author's Note\n\n{story.memory}\n")
+        if characters:
+            md_parts.append("\n## Characters\n")
+            for c in characters:
+                md_parts.append(f"- **{c.name}**")
+                if c.description:
+                    md_parts.append(f": {c.description}")
+                md_parts.append("\n")
+        md_parts.append("\n---\n")
+        for ch in chapters:
+            md_parts.append(f"## Chapter {ch.chapter_number}: {ch.title or 'Untitled'}\n")
+            content = ch.content.strip()
+            if content:
+                md_parts.append(f"\n{content}\n")
+            for path in (ch.image_paths or []):
+                md_parts.append(f"\n![Image]({path})\n")
+        return {"type": "markdown", "content": "\n".join(md_parts)}
+
+    if format == "epub":
+        # Generate a minimal ePub (ZIP with required files)
+        import zipfile, io, html as html_lib
+        from uuid import uuid4 as _uuid4
+
+        epub_id = str(_uuid4())
+        title = story.title or "Untitled Story"
+
+        def _build_epub() -> bytes:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                # mimetype (must be first and uncompressed)
+                zf.writestr("mimetype", "application/epub+zip")
+                # META-INF/container.xml
+                zf.writestr(
+                    "META-INF/container.xml",
+                    f'''<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>'''
+                )
+                # OEBPS/content.opf
+                manifest_items = '<item id="css" href="style.css" media-type="text/css"/>'
+                spine_items = ""
+                for idx, ch in enumerate(chapters):
+                    manifest_items += f'<item id="chap{idx}" href="chapter{idx}.xhtml" media-type="application/xhtml+xml"/>'
+                    spine_items += f'<itemref idref="chap{idx}"/>'
+                zf.writestr(
+                    "OEBPS/content.opf",
+                    f'''<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="bookid">{epub_id}</dc:identifier>
+    <dc:title>{html_lib.escape(title)}</dc:title>
+    <dc:creator>Auto-exported by TNHComfy</dc:creator>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    {manifest_items}
+  </manifest>
+  <spine>
+    {spine_items}
+  </spine>
+</package>'''
+                )
+                # CSS
+                zf.writestr("OEBPS/style.css", "body { font-family: serif; margin: 2em; line-height: 1.6; } h1 { color: #333; }")
+                # Chapters
+                for idx, ch in enumerate(chapters):
+                    content = html_lib.escape(ch.content.strip() or "")
+                    images = "".join(
+                        f'<img src="{html_lib.escape(p)}" alt="Illustration" style="max-width:100%;"/>'
+                        for p in (ch.image_paths or [])
+                    )
+                    zf.writestr(
+                        f"OEBPS/chapter{idx}.xhtml",
+                        f'''<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title>Chapter {idx + 1}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
+  <body>
+    <h1>Chapter {idx + 1}: {html_lib.escape(ch.title or '')}</h1>
+    <p>{content}</p>
+    {images}
+  </body>
+</html>'''
+                    )
+            return buf.getvalue()
+
+        epub_bytes = _build_epub()
+        return Response(
+            content=epub_bytes,
+            media_type="application/epub+zip",
+            headers={
+                "Content-Disposition": f'inline; filename="{title.replace(" ", "_")}.epub"',
+                "Content-Type": "application/epub+zip",
+            },
+        )
+
+    if format == "comic":
+        comic_pages = []
+        panel_w, panel_h = 800, 1200
+        margin = 40
+        for ch in chapters:
+            text = ch.content.strip() or ""
+            paragraphs = text.split("\n\n") if text else []
+            images = ch.image_paths or []
+            combined = []
+            for p in paragraphs:
+                combined.append(("text", p))
+            for img_path in images:
+                combined.append(("image", img_path))
+            if not combined:
+                combined.append(("text", ch.title or "Untitled"))
+
+            page = Image.new("RGB", (panel_w, panel_h), (30, 30, 30))
+            draw = ImageDraw.Draw(page)
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+            except Exception:
+                font = ImageFont.load_default()
+
+            y = margin
+            draw.text((margin, y), ch.title or f"Chapter {ch.chapter_number}", fill=(255, 255, 255), font=font)
+            y += 60
+            for kind, value in combined:
+                if kind == "text":
+                    lines = value.split("\n")
+                    for line in lines:
+                        draw.text((margin, y), line, fill=(220, 220, 220), font=font)
+                        y += 40
+                elif kind == "image":
+                    try:
+                        img = Image.open(value)
+                        img.thumbnail((panel_w - margin * 2, panel_h // 2))
+                        page.paste(img, (margin, y))
+                        y += img.height + 10
+                    except Exception:
+                        pass
+                if y > panel_h - margin:
+                    break
+            comic_pages.append(page)
+
+        if not comic_pages:
+            comic_pages.append(Image.new("RGB", (panel_w, panel_h), (30, 30, 30)))
+
+        buf = BytesIO()
+        comic_pages[0].save(buf, format="PDF", save_all=True, append_images=comic_pages[1:])
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{title.replace(" ", "_")}_comic.pdf"',
+                "Content-Type": "application/pdf",
+            },
+        )
+
+    if format == "webtoon":
+        webtoon_w = 800
+        margin = 40
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+        except Exception:
+            font = ImageFont.load_default()
+
+        segments = []
+        for ch in chapters:
+            text = ch.content.strip() or ""
+            paragraphs = text.split("\n\n") if text else []
+            images = ch.image_paths or []
+            for p in paragraphs:
+                segments.append(("text", p))
+            for img_path in images:
+                segments.append(("image", img_path))
+            if not segments:
+                segments.append(("text", ch.title or "Untitled"))
+
+        total_height = margin
+        for kind, value in segments:
+            if kind == "text":
+                lines = value.split("\n")
+                total_height += len(lines) * 40 + 10
+            elif kind == "image":
+                try:
+                    with Image.open(value) as img:
+                        ratio = (webtoon_w - margin * 2) / img.width
+                        total_height += int(img.height * ratio) + 10
+                except Exception:
+                    total_height += 200
+        total_height += margin
+
+        webtoon = Image.new("RGB", (webtoon_w, total_height), (30, 30, 30))
+        draw = ImageDraw.Draw(webtoon)
+        y = margin
+        for ch in chapters:
+            draw.text((margin, y), ch.title or f"Chapter {ch.chapter_number}", fill=(255, 255, 255), font=font)
+            y += 60
+        for kind, value in segments:
+            if kind == "text":
+                lines = value.split("\n")
+                for line in lines:
+                    draw.text((margin, y), line, fill=(220, 220, 220), font=font)
+                    y += 40
+            elif kind == "image":
+                try:
+                    img = Image.open(value)
+                    ratio = (webtoon_w - margin * 2) / img.width
+                    new_h = int(img.height * ratio)
+                    img = img.resize((webtoon_w - margin * 2, new_h))
+                    webtoon.paste(img, (margin, y))
+                    y += new_h + 10
+                except Exception:
+                    y += 200
+
+        buf = BytesIO()
+        webtoon.save(buf, format="PNG")
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="image/png",
+            headers={
+                "Content-Disposition": f'inline; filename="{title.replace(" ", "_")}_webtoon.png"',
+                "Content-Type": "image/png",
+            },
+        )
+
+    # Default: JSON export (existing behaviour)
 
     payload = {
         "story": {
@@ -188,6 +427,113 @@ def export_story(story_id: str, session: Session = Depends(get_session)):
         },
     }
     return payload
+
+
+@router.post("/{story_id}/publish", response_model=dict)
+def publish_story(story_id: str, session: Session = Depends(get_session)):
+    """Publish a story and generate a shareable token for public reading."""
+    from secrets import token_urlsafe
+
+    story = session.get(Story, story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+
+    if not story.is_published:
+        story.published_token = token_urlsafe(32)
+        story.is_published = True
+        story.published_at = datetime.now(timezone.utc)
+    else:
+        # Regenerate token on re-publish
+        story.published_token = token_urlsafe(32)
+        story.published_at = datetime.now(timezone.utc)
+
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    return {
+        "story_id": story_id,
+        "title": story.title,
+        "published_token": story.published_token,
+        "is_published": story.is_published,
+        "published_at": story.published_at.isoformat() if story.published_at else None,
+        "read_url": f"/read/story/{story.published_token}",
+    }
+
+
+@router.post("/{story_id}/unpublish", response_model=dict)
+def unpublish_story(story_id: str, session: Session = Depends(get_session)):
+    """Unpublish a story (revoke its public token)."""
+    story = session.get(Story, story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+
+    story.is_published = False
+    story.published_token = None
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    return {
+        "story_id": story_id,
+        "is_published": False,
+        "published_token": None,
+    }
+
+
+@router.get("/published/{token}")
+def read_published_story(token: str, session: Session = Depends(get_session)):
+    """Read a published story by its token (public, read-only)."""
+    story = session.exec(
+        select(Story).where(Story.published_token == token, Story.is_published == True)
+    ).first()
+    if not story:
+        raise NotFoundError("PublishedStory", token)
+
+    chapters = session.exec(
+        select(StoryChapter).where(StoryChapter.story_id == story.id).order_by(StoryChapter.chapter_number)
+    ).all()
+
+    characters = session.exec(
+        select(Character).where(Character.id.in_(story.character_ids or []))
+    ).all() if story.character_ids else []
+
+    return {
+        "story": {
+            "title": story.title,
+            "description": story.description,
+            "genre": story.genre,
+            "memory": story.memory,
+            "published_at": story.published_at.isoformat() if story.published_at else None,
+        },
+        "characters": [
+            {"name": c.name, "description": c.description, "personality": c.personality}
+            for c in characters
+        ],
+        "chapters": [
+            {
+                "chapter_number": ch.chapter_number,
+                "title": ch.title,
+                "content": ch.content,
+                "image_paths": ch.image_paths or [],
+            }
+            for ch in chapters
+        ],
+    }
+
+
+@router.get("/published/{token}/export")
+def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session)):
+    """Export a published story by its token (public, read-only)."""
+    story = session.exec(
+        select(Story).where(Story.published_token == token, Story.is_published == True)
+    ).first()
+    if not story:
+        raise NotFoundError("PublishedStory", token)
+
+    # Build a minimal story dict and reuse the same export logic
+    # by calling export_story with the resolved story_id
+    return export_story(story.id, format=format, session=session)
 
 
 @router.put("/{story_id}", response_model=Story)
@@ -593,6 +939,67 @@ def list_story_images(story_id: str, session: Session = Depends(get_session)):
                 "chapter_title": chapter.title,
             })
     return images
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/narrate", response_model=dict)
+async def narrate_chapter(
+    story_id: str,
+    chapter_id: str,
+    session: Session = Depends(get_session),
+    job_service: JobService = Depends(get_job_service),
+    queue_manager: QueueManager = Depends(get_queue_manager),
+):
+    """Trigger TTS narration for an entire story chapter."""
+    from core.workflow_builder import build_tts_workflow
+    from core.entities import VoiceModel
+
+    story = session.get(Story, story_id)
+    if not story:
+        raise NotFoundError("Story", story_id)
+    chapter = session.get(StoryChapter, chapter_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+
+    text = chapter.content.strip()
+    if not text:
+        raise ComfyError("Chapter has no content to narrate")
+
+    # Resolve voice model from story or first character
+    voice_profile = None
+    voice_model_id = None
+    language = None
+    if story.character_ids:
+        char = session.get(Character, story.character_ids[0])
+        if char:
+            voice_model_id = getattr(char, "voice_model_id", None)
+            if voice_model_id:
+                vm = session.get(VoiceModel, voice_model_id)
+                if vm:
+                    voice_profile = vm.voice_profile or vm.name
+                    language = vm.language
+            if not voice_profile:
+                voice_profile = getattr(char, "voice_profile", None)
+
+    workflow, metadata = build_tts_workflow(
+        text=text,
+        voice_profile=voice_profile,
+        voice_model_id=voice_model_id,
+        language=language,
+        story_id=story_id,
+        chapter_id=chapter_id,
+        extra_metadata={
+            "source": "story_tts",
+        }
+    )
+
+    job = await job_service.create_job(
+        task_type="image",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+
+    return {"job_id": job.id, "chapter_id": chapter_id, "story_id": story_id}
 
 
 def _resolve_default_checkpoint(session: Session, preferred: str | None = None) -> str:

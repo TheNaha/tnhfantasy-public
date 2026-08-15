@@ -35,7 +35,10 @@ class CharacterUpdateRequest(BaseModel):
     visual_tags: list[str] | None = None
     lora_triggers: list[str] | None = None
     voice_profile: str | None = None
+    voice_model_id: str | None = None
     alternate_greetings: list[str] | None = None
+    expressions: dict[str, str] | None = None
+    expressions_lora: list[str] | None = None
     checkpoint: str | None = None
     lora: str | None = None
     default_time: str | None = None
