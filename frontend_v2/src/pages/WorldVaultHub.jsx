@@ -54,18 +54,26 @@ export default function WorldVaultHub() {
                 navigate(`/story/${id}`);
                 break;
             case 'character':
-                navigate(`/characters`);
+                navigate(`/characters#char-${id}`);
                 break;
+            case 'memory':
+                // Deep-link to the character if the search result includes character_id
+                if (entity.character_id) {
+                    navigate(`/characters#char-${entity.character_id}`);
+                } else {
+                    navigate(`/characters`);
+                }
+                break;
+            case 'location':
+            case 'campaign':
             case 'lorebook':
             case 'scenario':
             case 'voice':
+                // Navigate to the entity list page (deep-link support pending on target page)
                 navigate(`/${entity.type}s`);
                 break;
             case 'branch':
                 navigate(`/chat/${entity.chat_id || id}`);
-                break;
-            case 'memory':
-                navigate(`/characters`);
                 break;
             default:
                 navigate('/world-vault');

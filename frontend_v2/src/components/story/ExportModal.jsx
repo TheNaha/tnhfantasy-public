@@ -1,24 +1,29 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate } from 'lucide-react';
-import { useExportStoryFormatted, usePublishStory } from '../../hooks/useWorldVault';
+import { useExportStoryFormatted, useExportPublishedStory, usePublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 
 /**
  * ExportModal — Modal for exporting/publishing a story in multiple formats.
  */
-export default function ExportModal({ story, storyId, isOpen, onClose }) {
+export default function ExportModal({ story, storyId, token, isOpen, onClose }) {
     const exportMutation = useExportStoryFormatted();
+    const exportPublishedMutation = useExportPublishedStory();
     const publishMutation = usePublishStory();
 
     const handleExport = (format) => {
-        exportMutation.mutate({ storyId, format }, {
-            onSuccess: () => {
-                toast.success(`Exported as ${format.toUpperCase()}`);
-                onClose();
-            },
-            onError: (e) => toast.error(`Export failed: ${e.message}`),
-        });
+        const onSuccess = () => {
+            toast.success(`Exported as ${format.toUpperCase()}`);
+            onClose();
+        };
+        const onError = (e) => toast.error(`Export failed: ${e.message}`);
+
+        if (token) {
+            exportPublishedMutation.mutate({ token, format }, { onSuccess, onError });
+        } else {
+            exportMutation.mutate({ storyId, format }, { onSuccess, onError });
+        }
     };
 
     const handlePublish = () => {
@@ -32,7 +37,7 @@ export default function ExportModal({ story, storyId, isOpen, onClose }) {
         });
     };
 
-    const isExporting = exportMutation.isPending;
+    const isExporting = exportMutation.isPending || exportPublishedMutation.isPending;
     const isPublishing = publishMutation.isPending;
 
     return (

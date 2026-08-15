@@ -283,7 +283,7 @@ describe('useExportStoryFormatted', () => {
             apiMock.get.mockResolvedValue({ id: 's1', title: 'T', content: 'x' });
             const { wrapper } = createWrapper();
             const { result } = renderHook(() => useExportStoryFormatted(), { wrapper });
-            await act(async () => result.current.mutateAsync({ storyId: 's1' }));
+            await act(async () => result.current.mutateAsync({ storyId: 's1', format: 'json' }));
 
             expect(apiMock.get).toHaveBeenCalledWith('/api/v2/stories/s1/export?format=json');
             expect(click).toHaveBeenCalledTimes(1);

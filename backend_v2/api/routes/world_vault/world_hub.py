@@ -10,6 +10,7 @@ from api.deps import get_session
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry, Message,
     Story, StoryChapter, Scenario, VoiceModel, CharacterMemory,
+    Location, Campaign,
 )
 from core.exceptions import NotFoundError
 
@@ -28,6 +29,8 @@ def get_entity_dashboard(session: Session = Depends(get_session)):
         "scenarios": session.exec(select(func.count()).select_from(Scenario)).one(),
         "voices": session.exec(select(func.count()).select_from(VoiceModel)).one(),
         "memories": session.exec(select(func.count()).select_from(CharacterMemory)).one(),
+        "locations": session.exec(select(func.count()).select_from(Location)).one(),
+        "campaigns": session.exec(select(func.count()).select_from(Campaign)).one(),
     }
 
     # Recent activity: last 5 characters, chats, stories
@@ -109,11 +112,36 @@ def get_relationships(session: Session = Depends(get_session)):
         ).all()
     ]
 
+    # Story → Locations (via location_ids JSON)
+    story_location_links = []
+    for story in session.exec(select(Story).limit(100)).all():
+        locations = session.exec(
+            select(Location).where(Location.id.in_(story.location_ids or []))
+        ).all()
+        for loc in locations:
+            story_location_links.append({
+                "story_id": story.id,
+                "story_title": story.title,
+                "location_id": loc.id,
+                "location_name": loc.name,
+            })
+
+    # Chat → Locations (via location_id FK)
+    chat_location_links = [
+        tuple(row) for row in session.exec(
+            select(Chat.id, Chat.name, Location.id, Location.name)
+            .join(Location, Location.id == Chat.location_id)
+            .limit(100)
+        ).all()
+    ]
+
     return {
         "character_chats": char_chat_links,
         "character_stories": char_story_links,
         "story_lorebooks": story_lorebook_links,
         "character_voices": voice_links,
+        "story_locations": story_location_links,
+        "chat_locations": chat_location_links,
     }
 
 

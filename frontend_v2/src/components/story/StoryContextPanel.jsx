@@ -1,5 +1,5 @@
 import React from 'react';
-import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus } from 'lucide-react';
+import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 
@@ -8,6 +8,7 @@ export default React.memo(function StoryContextPanel({
     activeChapter,
     characters,
     lorebooks,
+    locations,
     storyImages,
     chapters,
     llmModels,
@@ -16,7 +17,8 @@ export default React.memo(function StoryContextPanel({
     onShowGallery,
     onUpdateStory,
     onEditCharacter,
-    onEditLorebook
+    onEditLorebook,
+    onEditLocation
 }) {
     return (
         <>
@@ -123,6 +125,61 @@ export default React.memo(function StoryContextPanel({
                                             }}
                                             className="p-1 rounded text-gray-500 hover:text-indigo-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
                                             title="Edit Lorebook"
+                                        >
+                                            <Edit2 size={12} />
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="glass-panel p-4 rounded-xl border border-white/5">
+                    <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                            <MapPin size={14} className="text-emerald-400" /> Locations
+                        </h4>
+                        <button
+                            onClick={() => onEditLocation?.(null)}
+                            className="p-1 rounded text-gray-500 hover:text-emerald-400 hover:bg-white/10 transition-colors"
+                            title="New Location"
+                        >
+                            <Plus size={14} />
+                        </button>
+                    </div>
+                    {locations.length === 0 ? (
+                        <p className="text-sm text-gray-500 text-center py-3 border border-dashed border-gray-700/50 rounded-lg">No locations</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {locations.map(loc => {
+                                const isActive = (activeStory?.location_ids || []).includes(loc.id);
+                                return (
+                                    <div key={loc.id} className={clsx(
+                                        "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors group",
+                                        isActive ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-gray-800/30 text-gray-400 hover:bg-white/5 border border-transparent"
+                                    )}>
+                                        <button
+                                            onClick={() => {
+                                                const current = activeStory?.location_ids || [];
+                                                const newIds = isActive ? current.filter(id => id !== loc.id) : [...current, loc.id];
+                                                onUpdateStory({ location_ids: newIds });
+                                            }}
+                                            className="flex-1 text-left flex items-center gap-2 min-w-0"
+                                        >
+                                            {isActive ? <Check size={14} className="text-emerald-400 shrink-0" /> : <div className="w-3.5 h-3.5 rounded border border-gray-600 shrink-0" />}
+                                            <div className="min-w-0">
+                                                <p className="truncate font-medium">{loc.name}</p>
+                                                {loc.description && <p className="text-[10px] text-gray-500 truncate">{loc.description}</p>}
+                                            </div>
+                                        </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onEditLocation?.(loc);
+                                            }}
+                                            className="p-1 rounded text-gray-500 hover:text-emerald-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            title="Edit Location"
                                         >
                                             <Edit2 size={12} />
                                         </button>

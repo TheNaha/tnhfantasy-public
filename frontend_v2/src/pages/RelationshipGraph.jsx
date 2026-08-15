@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Users, BookOpen, MessageSquare, MapPin, Globe, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw } from 'lucide-react';
 import { useWorldVaultRelationships } from '../hooks/useWorldVault';
 
 const NODE_COLORS = {
@@ -16,62 +16,218 @@ const NODE_ICONS = {
     story: BookOpen,
     chat: MessageSquare,
     lorebook: Globe,
-    voice: Globe,
+    voice: Volume2,
     location: MapPin,
 };
+
+const NODE_LABELS = {
+    character: 'Characters',
+    story: 'Stories',
+    chat: 'Chats',
+    lorebook: 'Lorebooks',
+    voice: 'Voices',
+    location: 'Locations',
+};
+
+const SVG_WIDTH = 900;
+const SVG_HEIGHT = 700;
+const CENTER_X = SVG_WIDTH / 2;
+const CENTER_Y = SVG_HEIGHT / 2;
+
+// Simple force-directed layout using a physics simulation.
+// Runs in a requestAnimationFrame loop; no external libraries required.
+function useForceDirectedLayout(nodes, edges, iterations = 300) {
+    const [positions, setPositions] = useState(() => {
+        // Random initial positions within the SVG viewport
+        return new Map(
+            nodes.map(n => [
+                n.id,
+                {
+                    x: Math.random() * (SVG_WIDTH - 100) + 50,
+                    y: Math.random() * (SVG_HEIGHT - 100) + 50,
+                    vx: 0,
+                    vy: 0,
+                },
+            ])
+        );
+    });
+
+    useEffect(() => {
+        if (!nodes.length) return;
+
+        const pos = new Map();
+        nodes.forEach(n => {
+            pos.set(n.id, {
+                x: Math.random() * (SVG_WIDTH - 100) + 50,
+                y: Math.random() * (SVG_HEIGHT - 100) + 50,
+                vx: 0,
+                vy: 0,
+            });
+        });
+
+        const k_repel = 6000; // repulsion strength
+        const k_spring = 0.05; // spring strength
+        const rest_length = 180; // ideal edge length
+        const damping = 0.85;
+        const bounds = 44; // keep nodes at least nodeRadius+20 from edges
+
+        const edgeSet = new Set(edges.map(e => `${e.source}→${e.target}`));
+
+        let frame = 0;
+        const animate = () => {
+            frame++;
+
+            // Repulsion between all pairs
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const a = pos.get(nodes[i].id);
+                    const b = pos.get(nodes[j].id);
+                    if (!a || !b) continue;
+                    const dx = a.x - b.x;
+                    const dy = a.y - b.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+                    if (dist < 2) dist = 2;
+                    // Skip repulsion for connected nodes (handled by spring)
+                    if (edgeSet.has(`${nodes[i].id}→${nodes[j].id}`) || edgeSet.has(`${nodes[j].id}→${nodes[i].id}`)) {
+                        dist = Math.max(dist, rest_length * 0.6);
+                    }
+                    const force = k_repel / (dist * dist);
+                    const fx = (dx / dist) * force;
+                    const fy = (dy / dist) * force;
+                    a.vx += fx;
+                    a.vy += fy;
+                    b.vx -= fx;
+                    b.vy -= fy;
+                }
+            }
+
+            // Spring attraction along edges
+            for (const edge of edges) {
+                const a = pos.get(edge.source);
+                const b = pos.get(edge.target);
+                if (!a || !b) continue;
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                let dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
+                const force = k_spring * (dist - rest_length);
+                const fx = (dx / dist) * force;
+                const fy = (dy / dist) * force;
+                a.vx += fx;
+                a.vy += fy;
+                b.vx -= fx;
+                b.vy -= fy;
+            }
+
+            // Centering force + velocity integration + damping
+            for (const n of nodes) {
+                const p = pos.get(n.id);
+                if (!p) continue;
+
+                // Centering
+                p.vx += (CENTER_X - p.x) * 0.0005;
+                p.vy += (CENTER_Y - p.y) * 0.0005;
+
+                p.vx *= damping;
+                p.vy *= damping;
+
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Keep inside bounds
+                const minX = bounds;
+                const maxX = SVG_WIDTH - bounds;
+                const minY = bounds;
+                const maxY = SVG_HEIGHT - bounds;
+                if (p.x < minX) { p.x = minX; p.vx *= -0.3; }
+                if (p.x > maxX) { p.x = maxX; p.vx *= -0.3; }
+                if (p.y < minY) { p.y = minY; p.vy *= -0.3; }
+                if (p.y > maxY) { p.y = maxY; p.vy *= -0.3; }
+            }
+
+            if (frame < iterations) {
+                requestAnimationFrame(animate);
+            } else {
+                setPositions(new Map(pos));
+            }
+        };
+
+        requestAnimationFrame(animate);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodes, edges]);
+
+    return positions;
+}
 
 export default function RelationshipGraph() {
     const [filter, setFilter] = useState('all');
 
     const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
 
-    const nodes = useMemo(() => {
+    const { nodes, edges } = useMemo(() => {
         if (!data) return { nodes: [], edges: [] };
         const nodeMap = new Map();
-        const edges = [];
+        const edgeList = [];
 
         const addNode = (id, label, type) => {
             if (!nodeMap.has(id)) {
                 nodeMap.set(id, { id, label, type });
             }
+            return id;
         };
 
         data.character_chats?.forEach(([charId, charName, chatId, chatName]) => {
             addNode(charId, charName, 'character');
             addNode(chatId, chatName, 'chat');
-            edges.push({ source: charId, target: chatId });
+            edgeList.push({ source: charId, target: chatId });
         });
 
         data.character_stories?.forEach(({ character_id, character_name, story_id, story_title }) => {
             addNode(character_id, character_name, 'character');
             addNode(story_id, story_title, 'story');
-            edges.push({ source: character_id, target: story_id });
+            edgeList.push({ source: character_id, target: story_id });
         });
 
         data.story_lorebooks?.forEach(({ story_id, story_title, lorebook_id, lorebook_name }) => {
             addNode(story_id, story_title, 'story');
             addNode(lorebook_id, lorebook_name, 'lorebook');
-            edges.push({ source: story_id, target: lorebook_id });
+            edgeList.push({ source: story_id, target: lorebook_id });
         });
 
         data.character_voices?.forEach(([voiceId, voiceName, charId, charName]) => {
             addNode(voiceId, voiceName, 'voice');
             addNode(charId, charName, 'character');
-            edges.push({ source: charId, target: voiceId });
+            edgeList.push({ source: charId, target: voiceId });
         });
 
-        return { nodes: Array.from(nodeMap.values()), edges };
+        // New: Story ↔ Locations
+        data.story_locations?.forEach(({ story_id, story_title, location_id, location_name }) => {
+            addNode(story_id, story_title, 'story');
+            addNode(location_id, location_name, 'location');
+            edgeList.push({ source: story_id, target: location_id });
+        });
+
+        // New: Chat ↔ Locations
+        data.chat_locations?.forEach(([chatId, chatName, locId, locName]) => {
+            addNode(chatId, chatName, 'chat');
+            addNode(locId, locName, 'location');
+            edgeList.push({ source: chatId, target: locId });
+        });
+
+        return { nodes: Array.from(nodeMap.values()), edges: edgeList };
     }, [data]);
 
+    // Run the force-directed physics simulation
+    const positions = useForceDirectedLayout(nodes, edges, 500);
+
     const filteredNodes = useMemo(() => {
-        if (filter === 'all') return nodes.nodes;
-        return nodes.nodes.filter(n => n.type === filter);
+        if (filter === 'all') return nodes;
+        return nodes.filter(n => n.type === filter);
     }, [nodes, filter]);
 
     const filteredEdges = useMemo(() => {
         const nodeIds = new Set(filteredNodes.map(n => n.id));
-        return nodes.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-    }, [nodes.edges, filteredNodes]);
+        return edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+    }, [edges, filteredNodes]);
 
     if (isLoading) {
         return (
@@ -95,7 +251,7 @@ export default function RelationshipGraph() {
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-white mb-1">Relationship Graph</h1>
-                    <p className="text-gray-400 text-sm">Visualize connections between characters, stories, and more</p>
+                    <p className="text-gray-400 text-sm">Drag nodes to reposition. Visualize connections between characters, stories, chats, and more.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <select
@@ -104,11 +260,9 @@ export default function RelationshipGraph() {
                         className="px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
                     >
                         <option value="all">All Entities</option>
-                        <option value="character">Characters</option>
-                        <option value="story">Stories</option>
-                        <option value="chat">Chats</option>
-                        <option value="lorebook">Lorebooks</option>
-                        <option value="voice">Voices</option>
+                        {Object.entries(NODE_LABELS).map(([type, label]) => (
+                            <option key={type} value={type}>{label}</option>
+                        ))}
                     </select>
                     <button
                         onClick={() => refetch()}
@@ -120,43 +274,60 @@ export default function RelationshipGraph() {
                 </div>
             </div>
 
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 mb-4 text-xs">
+                {Object.entries(NODE_LABELS).map(([type, label]) => {
+                    const Icon = NODE_ICONS[type] || Globe;
+                    return (
+                        <div key={type} className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-800/40 rounded-lg border border-white/5">
+                            <Icon size={12} style={{ color: NODE_COLORS[type] }} />
+                            <span className="text-gray-400">{label}</span>
+                        </div>
+                    );
+                })}
+            </div>
+
             {filteredNodes.length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
                     No relationships found. Create characters, stories, and chats to see connections.
                 </div>
             ) : (
                 <div className="bg-gray-800/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
-                    <svg width={Math.max(800, filteredNodes.length * 120)} height={Math.max(600, filteredNodes.length * 80)} className="mx-auto">
+                    <svg width={SVG_WIDTH} height={SVG_HEIGHT} className="mx-auto">
                         <defs>
                             <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
                                 <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
                             </marker>
                         </defs>
+                        {/* Edges */}
                         {filteredEdges.map((edge, idx) => {
-                            const source = filteredNodes.find(n => n.id === edge.source);
-                            const target = filteredNodes.find(n => n.id === edge.target);
-                            if (!source || !target) return null;
+                            const sourcePos = positions.get(edge.source);
+                            const targetPos = positions.get(edge.target);
+                            if (!sourcePos || !targetPos) return null;
                             return (
                                 <line
                                     key={idx}
-                                    x1={filteredNodes.indexOf(source) * 120 + 40}
-                                    y1={filteredNodes.indexOf(source) * 80 + 40}
-                                    x2={filteredNodes.indexOf(target) * 120 + 40}
-                                    y2={filteredNodes.indexOf(target) * 80 + 40}
+                                    x1={sourcePos.x}
+                                    y1={sourcePos.y}
+                                    x2={targetPos.x}
+                                    y2={targetPos.y}
                                     stroke="#4b5563"
                                     strokeWidth="1.5"
                                     markerEnd="url(#arrowhead)"
                                 />
                             );
                         })}
-                        {filteredNodes.map((node, idx) => {
+                        {/* Nodes */}
+                        {filteredNodes.map((node) => {
                             const Icon = NODE_ICONS[node.type] || Globe;
-                            const x = idx * 120 + 40;
-                            const y = idx * 80 + 40;
+                            const color = NODE_COLORS[node.type] || '#6b7280';
+                            const pos = positions.get(node.id);
+                            if (!pos) return null;
+                            const label = node.label;
                             return (
-                                <g key={node.id} transform={`translate(${x}, ${y})`}>
-                                    <circle r="20" fill={NODE_COLORS[node.type] || '#6b7280'} opacity="0.2" />
-                                    <circle r="12" fill={NODE_COLORS[node.type] || '#6b7280'} />
+                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                                    <circle r="22" fill={color} opacity="0.15" />
+                                    <circle r="14" fill={color} />
                                     <foreignObject x="-8" y="-8" width="16" height="16">
                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
                                             <Icon size={12} color="white" />
@@ -164,13 +335,13 @@ export default function RelationshipGraph() {
                                     </foreignObject>
                                     <text
                                         x="0"
-                                        y="32"
+                                        y="30"
                                         textAnchor="middle"
                                         fill="#9ca3af"
                                         fontSize="10"
                                         fontFamily="sans-serif"
                                     >
-                                        {node.label.length > 15 ? node.label.slice(0, 12) + '...' : node.label}
+                                        {label}
                                     </text>
                                 </g>
                             );

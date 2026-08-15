@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole
+from core.entities import Chat, Character, Job, JobStatus, Location, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context
@@ -40,6 +40,7 @@ class UpdateChatRequest(BaseModel):
     persona_description: str | None = None
     story_time: str | None = None
     story_location: str | None = None
+    location_id: str | None = None
     active_lorebook_ids: list[str] | None = None
     llm_model: str | None = None
     allow_image_generation: bool | None = None
@@ -58,6 +59,7 @@ class CreateChatRequest(BaseModel):
     override_greeting: str | None = None
     story_time: str | None = None
     story_location: str | None = None
+    location_id: str | None = None
     active_lorebook_ids: list[str] = []
     max_agentic_depth: int | None = None
 
@@ -151,6 +153,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         persona_name=req.persona_name,
         story_time=req.story_time,
         story_location=req.story_location,
+        location_id=req.location_id,
         active_lorebook_ids=req.active_lorebook_ids or [],
         max_agentic_depth=req.max_agentic_depth,
     )
@@ -194,6 +197,7 @@ def _chat_context_kwargs(chat, **overrides):
         "persona_description": getattr(chat, "persona_description", None),
         "story_time": chat.story_time,
         "story_location": chat.story_location,
+        "location_id": getattr(chat, "location_id", None),
         "system_prompt_override": chat.system_prompt_override,
         "append_system_prompt": chat.append_system_prompt,
     }
@@ -228,7 +232,6 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
     # message DELETEs, causing an IntegrityError (messages_chat_id_fkey).
     session.exec(sql_delete(Message).where(Message.chat_id == chat_id))
     session.flush()   # commit the message deletes to the DB within the same txn
-
     session.delete(chat)
     session.commit()
     return {"message": "Chat deleted"}
@@ -288,6 +291,11 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if not chat:
         raise NotFoundError("Chat", chat_id)
     update_fields = data.model_dump(exclude_unset=True)
+    # Validate location_id if provided
+    if "location_id" in update_fields and update_fields["location_id"] is not None:
+        location = session.get(Location, update_fields["location_id"])
+        if not location:
+            raise NotFoundError("Location", update_fields["location_id"])
     changed_state = {}
     if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
         changed_state["time"] = update_fields["story_time"]
@@ -295,6 +303,9 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if "story_location" in update_fields and update_fields["story_location"] != chat.story_location:
         changed_state["location"] = update_fields["story_location"]
         changed_state["old_location"] = chat.story_location
+    if "location_id" in update_fields and update_fields["location_id"] != chat.location_id:
+        changed_state["location_id"] = update_fields["location_id"]
+        changed_state["old_location_id"] = chat.location_id
     for key, value in update_fields.items():
         setattr(chat, key, value)
     chat.updated_at = datetime.now(timezone.utc)

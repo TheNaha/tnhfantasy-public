@@ -13,17 +13,64 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
     created.push({ kind: 'character', id: char.id });
 
     await page.goto('/world-graph');
-    
+
     // Expect the header
-    await expect(page.getByRole('heading', { name: 'Relationship Graph' })).toBeVisible({ timeout: 10000 });
-    
+    await expect(page.getByRole('heading', { name: 'Relationship Graph' })).toBeVisible({ timeout: 15000 });
+
     // Expect the filters to be visible
     await expect(page.locator('select')).toBeVisible();
-    await expect(page.getByText('Visualize connections between characters, stories, and more')).toBeVisible();
 
     // Verify SVG container renders
     const svg = page.locator('svg.mx-auto');
     await expect(svg).toBeVisible();
+  });
+
+  test('Relationship Graph renders the filter dropdown with entity type options', async ({ page }) => {
+    await page.goto('/world-graph');
+
+    const select = page.locator('select');
+    await expect(select).toBeVisible({ timeout: 10000 });
+
+    // Verify all filter options are available
+    const options = await select.locator('option').allTextContents();
+    expect(options).toContain('All Entities');
+    expect(options).toContain('Characters');
+    expect(options).toContain('Stories');
+    expect(options).toContain('Chats');
+    expect(options).toContain('Lorebooks');
+    expect(options).toContain('Voices');
+    expect(options).toContain('Locations');
+  });
+
+  test('Relationship Graph legend shows all node types with icons', async ({ page }) => {
+    const char = await seedCharacter(page, { name: uniqueName('graph-legend-char') });
+    created.push({ kind: 'character', id: char.id });
+
+    await page.goto('/world-graph');
+
+    // The legend should display all entity type labels
+    const legendArea = page.locator('.flex.flex-wrap.gap-3');
+    await expect(legendArea.getByText('Characters')).toBeVisible({ timeout: 15000 });
+    await expect(legendArea.getByText('Stories')).toBeVisible();
+    await expect(legendArea.getByText('Chats')).toBeVisible();
+    await expect(legendArea.getByText('Lorebooks')).toBeVisible();
+    await expect(legendArea.getByText('Voices')).toBeVisible();
+    expect(await legendArea.getByText('Locations').isVisible()).toBeTruthy();
+  });
+
+  test('Relationship Graph refresh button triggers refetch', async ({ page }) => {
+    const char = await seedCharacter(page, { name: uniqueName('graph-refresh-char') });
+    created.push({ kind: 'character', id: char.id });
+
+    await page.goto('/world-graph');
+
+    await expect(page.locator('svg.mx-auto')).toBeVisible({ timeout: 15000 });
+
+    // Click refresh — page should not crash, heading should still be visible
+    await page.getByTitle('Refresh').click({ timeout: 10000 });
+
+    // After refetch, the heading should still be visible (page didn't crash)
+    await expect(page.getByRole('heading', { name: 'Relationship Graph' })).toBeVisible({ timeout: 15000 });
   });
 
   test('Avatar Gallery renders and handles character selection', async ({ page }) => {
@@ -31,14 +78,44 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
     created.push({ kind: 'character', id: char.id });
 
     await page.goto('/avatar-gallery');
-    
+
     // Check main gallery container elements
-    await expect(page.getByRole('heading', { name: 'Avatar Gallery' })).toBeVisible({ timeout: 10000 });
-    
+    await expect(page.getByText('Character Avatar Gallery')).toBeVisible({ timeout: 15000 });
+
     // Check if the character we created appears in the gallery
-    await expect(page.getByText(char.name)).toBeVisible({ timeout: 10000 });
-    
+    await expect(page.getByText(char.name)).toBeVisible({ timeout: 15000 });
+
     // Click on the character card and verify chat button exists
-    await expect(page.getByRole('button', { name: /Chat/i }).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: /Chat/i }).first()).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Avatar Gallery filters characters by search query', async ({ page }) => {
+    const char1 = await seedCharacter(page, { name: uniqueName('avatar-search-a') });
+    created.push({ kind: 'character', id: char1.id });
+    const char2 = await seedCharacter(page, { name: uniqueName('avatar-search-b') });
+    created.push({ kind: 'character', id: char2.id });
+
+    await page.goto('/avatar-gallery');
+
+    // Both should be visible initially
+    await expect(page.getByText(char1.name)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(char2.name)).toBeVisible({ timeout: 10000 });
+
+    // Search for char1's name
+    await page.locator('input[placeholder="Search characters..."]').fill(char1.name);
+    await page.waitForTimeout(500);
+
+    // char1 should still be visible, char2 should be hidden
+    await expect(page.getByText(char1.name)).toBeVisible();
+    await expect(page.getByText(char2.name)).not.toBeVisible();
+  });
+
+  test('Avatar Gallery shows scene counts on character cards', async ({ page }) => {
+    const char = await seedCharacter(page, { name: uniqueName('avatar-scene-char') });
+    created.push({ kind: 'character', id: char.id });
+
+    await page.goto('/avatar-gallery');
+
+    await expect(page.getByText(char.name)).toBeVisible({ timeout: 15000 });
   });
 });

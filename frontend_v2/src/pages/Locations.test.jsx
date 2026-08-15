@@ -10,6 +10,7 @@ const mockLocations = vi.hoisted(() => vi.fn());
 const mockCreateLocation = vi.hoisted(() => vi.fn());
 const mockUpdateLocation = vi.hoisted(() => vi.fn());
 const mockDeleteLocation = vi.hoisted(() => vi.fn());
+const mockSearchLocations = vi.hoisted(() => vi.fn());
 const mockConfirm = vi.hoisted(() => vi.fn());
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
@@ -18,6 +19,7 @@ vi.mock('../hooks/useLocations', () => ({
     useCreateLocation: (...args) => mockCreateLocation(...args),
     useUpdateLocation: (...args) => mockUpdateLocation(...args),
     useDeleteLocation: (...args) => mockDeleteLocation(...args),
+    useSearchLocations: (...args) => mockSearchLocations(...args),
 }));
 
 vi.mock('../store/confirmationStore', () => ({
@@ -86,6 +88,12 @@ describe('Locations page', () => {
         mockUpdateLocation.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
         mockDeleteLocation.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockConfirm.mockResolvedValue(true);
+        // By default, server search returns the same list as the full locations
+        // list (so tests that don't assert on search results work normally).
+        mockSearchLocations.mockReturnValue({
+            data: DEFAULT_LOCATIONS,
+            isFetching: false,
+        });
     });
 
     it('renders the page heading, subtitle, search box, and New Location button', () => {
@@ -122,6 +130,10 @@ describe('Locations page', () => {
     });
 
     it('filters the location list by search query', () => {
+        mockSearchLocations.mockReturnValue({
+            data: [DEFAULT_LOCATIONS[0]],
+            isFetching: false,
+        });
         renderWithProviders(<Locations />);
         fireEvent.change(screen.getByPlaceholderText('Search locations...'), { target: { value: 'castle' } });
         expect(screen.getByText('Castle Black')).toBeInTheDocument();

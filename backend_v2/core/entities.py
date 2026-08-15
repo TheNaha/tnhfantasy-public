@@ -825,6 +825,7 @@ class Chat(SQLModel, table=True):
     additional_character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     story_time: str | None = Field(default=None)
     story_location: str | None = Field(default=None)
+    location_id: str | None = Field(default=None, foreign_key="locations.id", index=True)  # Links to a Location entity
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
     allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
     allow_narration: bool = Field(default=True) # Gates the agentic narrate_scene tool
@@ -976,6 +977,7 @@ class Story(SQLModel, table=True):
     # World Vault associations
     character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # protagonist characters
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active lorebooks
+    location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active locations
     scenario_id: str | None = Field(default=None)  # base scenario
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
     memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory

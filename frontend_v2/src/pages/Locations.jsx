@@ -7,6 +7,7 @@ import {
     useCreateLocation,
     useUpdateLocation,
     useDeleteLocation,
+    useSearchLocations,
 } from '../hooks/useLocations';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
@@ -63,15 +64,16 @@ export default function Locations() {
     const deleteMutation = useDeleteLocation();
     const { confirm } = useConfirmation();
 
+    // Server-side search when query is >= 2 chars; fall back to full list otherwise
+    const isSearching = searchQuery.trim().length >= 2;
+    const { data: searchResults, isFetching: isSearchFetching } = useSearchLocations(
+        isSearching ? searchQuery.trim() : null
+    );
+
     const filteredLocations = useMemo(() => {
-        if (!searchQuery.trim()) return locations;
-        const q = searchQuery.toLowerCase();
-        return locations.filter(loc =>
-            loc.name.toLowerCase().includes(q) ||
-            (loc.description && loc.description.toLowerCase().includes(q)) ||
-            (loc.tags && loc.tags.some(t => t.toLowerCase().includes(q)))
-        );
-    }, [locations, searchQuery]);
+        if (isSearching) return searchResults ?? [];
+        return locations;
+    }, [isSearching, searchResults, locations]);
 
     const resetForm = () => {
         setForm(DEFAULT_FORM);
@@ -172,7 +174,7 @@ export default function Locations() {
                 </div>
             </div>
 
-            {isLoading ? (
+            {isLoading || (isSearching && isSearchFetching && !searchResults) ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {[1, 2, 3, 4, 5, 6].map(i => (
                         <div key={i} className="p-4 rounded-xl border border-white/10 bg-gray-800/40 animate-pulse">

@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles } from 'lucide-react';
+import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
@@ -11,6 +11,8 @@ import useSettingsStore from '../store/settingsStore';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import filesApi from '../api/files';
+import MemoriesPanel from '../components/chat/MemoriesPanel';
+
 
 const CHARACTER_FIELDS = [
     { key: 'name', label: 'Name', type: 'text', required: true, placeholder: 'Character name' },
@@ -32,7 +34,7 @@ const DEFAULT_FORM = {
     visual_tags: [], lora_triggers: [], voice_profile: '',
 };
 
-export function CharacterModal({ isOpen, onClose, character, onSave }) {
+export function CharacterModal({ isOpen, onClose, character, onSave, activeTab = 'details', onTabChange }) {
     const [form, setForm] = useState(() => {
         if (character) {
             return {
@@ -329,21 +331,64 @@ export function CharacterModal({ isOpen, onClose, character, onSave }) {
                     className="bg-gray-900 rounded-xl border border-gray-700 w-full max-w-2xl max-h-[85vh] shadow-2xl flex flex-col"
                     onClick={e => e.stopPropagation()}
                 >
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/50 shrink-0">
-                        <div className="flex items-center gap-3">
-                            <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
-                            <button 
-                                onClick={handleEnrichProfile}
-                                className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-yellow-500/20 text-yellow-300 rounded-lg hover:bg-yellow-500/30 transition-colors border border-yellow-500/30"
-                                title="Auto-fill missing information using AI"
-                            >
-                                <Sparkles size={14} /> Enrich
-                            </button>
+                    <div className="shrink-0">
+                        {/* Modal title + actions */}
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700/50">
+                            <div className="flex items-center gap-3">
+                                <h2 className="text-lg font-bold text-gray-100">{isEditing ? 'Edit Character' : 'Create Character'}</h2>
+                                {activeTab === 'details' && (
+                                    <button 
+                                        onClick={handleEnrichProfile}
+                                        className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-yellow-500/20 text-yellow-300 rounded-lg hover:bg-yellow-500/30 transition-colors border border-yellow-500/30"
+                                        title="Auto-fill missing information using AI"
+                                    >
+                                        <Sparkles size={14} /> Enrich
+                                    </button>
+                                )}
+                            </div>
+                            <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
                         </div>
-                        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
+
+                        {/* Tab bar (only visible when editing) */}
+                        {isEditing && (
+                            <div className="flex items-center gap-1 px-6 py-2 border-b border-gray-700/30 bg-gray-900/40">
+                                <button
+                                    type="button"
+                                    onClick={() => onTabChange('details')}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                        activeTab === 'details'
+                                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                            : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                                    }`}
+                                >
+                                    <User size={12} /> Details
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => onTabChange('memories')}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                        activeTab === 'memories'
+                                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                            : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                                    }`}
+                                >
+                                    <Brain size={12} /> Memories
+                                </button>
+                            </div>
+                        )}
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar">
+                    {/* Tab: Memories */}
+                    {activeTab === 'memories' && isEditing && (
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                            <MemoriesPanel characterId={character.id} />
+                        </div>
+                    )}
+
+                    {/* Tab: Details (always shown for new characters; toggled for editing) */}
+                    <div className={`flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar ${
+                        activeTab === 'memories' ? 'hidden' : ''
+                    }`}>
                         <div className="flex items-center gap-4">
                             <div 
                                 className="relative w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 cursor-pointer group overflow-hidden"
@@ -492,6 +537,8 @@ export function CharacterModal({ isOpen, onClose, character, onSave }) {
                         </div>
                     </div>
 
+                    {/* Footer: hide Save/Cancel on the Memories tab */}
+                    {activeTab !== 'memories' && (
                     <div className="flex gap-3 px-6 py-4 border-t border-gray-700/50 shrink-0">
                         <button onClick={onClose} className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-medium transition-colors">Cancel</button>
                         <button onClick={handleSave} disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">
@@ -499,6 +546,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave }) {
                             {isEditing ? 'Update' : 'Create'}
                         </button>
                     </div>
+                    )}
 
                     {/* Gallery Picker Modal Overlay */}
                     <AnimatePresence>
@@ -610,6 +658,7 @@ export default function Characters() {
     const [searchQuery, setSearchQuery] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
+    const [activeTab, setActiveTab] = useState('details');
     const fileInputRef = useRef(null);
 
     const navigate = useNavigate();
@@ -621,6 +670,21 @@ export default function Characters() {
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
+
+    // Handle URL hash deep-link: /characters#char-{id}
+    const deepLinkCharRef = useRef(null);
+    useEffect(() => {
+        const hash = window.location.hash;
+        if (!hash.startsWith('#char-')) return;
+        const charId = hash.slice(6);
+        if (characters.length === 0) return;
+        const targetChar = characters.find(c => c.id === charId);
+        if (!targetChar) return;
+        if (editingCharacter?.id === charId) return;
+        deepLinkCharRef.current = targetChar;
+        setEditingCharacter(deepLinkCharRef.current);
+        setModalOpen(true);
+    }, [characters, editingCharacter?.id]);
 
     const filteredCharacters = useMemo(() => {
         if (!searchQuery.trim()) return characters;
@@ -790,6 +854,8 @@ export default function Characters() {
                 onClose={() => { setModalOpen(false); setEditingCharacter(null); }}
                 character={editingCharacter}
                 onSave={handleSave}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
             />
 
         </motion.div>

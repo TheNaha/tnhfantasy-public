@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { useCreateResource, useDeleteResource } from './useWorldVaultResource';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 const CHAT_LIST_KEY = ['world_vault', 'chats'];
 const CHAT_DETAIL_KEY = (chatId) => ['world_vault', 'chats', chatId];
@@ -189,7 +190,7 @@ export const useChatImages = (chatId) => {
 
 export const useSearchChats = (query) => {
     return useQuery({
-        queryKey: ['world_vault', 'chats', 'search', query],
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, 'search', query),
         queryFn: () => api.get('/api/v2/chats', { params: { q: query } }),
         enabled: !!query && query.trim().length > 0,
     });

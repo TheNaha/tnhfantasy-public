@@ -955,6 +955,10 @@ async def process_tool_calls_and_chain(
             if t.get("function", {}).get("name") in allowed_tools
         ]
     else:
+        # No explicit allow-list was provided.  This branch is only hit
+        # when the caller (job_processing.py) omits allowed_tools —
+        # normally the parent job's already-filtered tool list is passed
+        # through, so this is just a safe fallback to the full tool set.
         followup_workflow["tools"] = AGENTIC_TOOLS
 
     try:

@@ -34,6 +34,7 @@ vi.mock('framer-motion', () => ({
             return <div {...safe}>{children}</div>;
         },
     },
+    AnimatePresence: ({ children }) => <>{children}</>,
 }));
 
 const storyData = {

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -28,6 +28,7 @@ import StoryGalleryModal from '../components/story/StoryGalleryModal';
 import ParseStoryModal from '../components/story/ParseStoryModal';
 import { CharacterModal } from './Characters';
 import { LorebookModal } from '../components/story/LorebookModal';
+import { LocationModal } from '../components/story/LocationModal';
 
 export default function StorySandbox() {
     // Only default the context panel open on desktop — on phones/tablets the
@@ -53,6 +54,7 @@ export default function StorySandbox() {
     const { data: chapters = [], isLoading: chaptersLoading } = useStoryChapters(activeStoryId);
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
+    const { data: locations = [] } = useLocations();
     const { data: storyImages = [] } = useStoryImages(activeStoryId);
     const { data: collectionsMap = {} } = useCollections('story');
     const collectionsList = Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -104,6 +106,8 @@ export default function StorySandbox() {
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [editingLorebook, setEditingLorebook] = useState(null);
     const [showLorebookModal, setShowLorebookModal] = useState(false);
+    const [editingLocation, setEditingLocation] = useState(null);
+    const [showLocationModal, setShowLocationModal] = useState(false);
 
     const updateCharacter = useUpdateCharacter();
 
@@ -189,10 +193,12 @@ export default function StorySandbox() {
             const title = titleMatch ? titleMatch : 'Imported Story';
             
             const newStory = await createStory.mutateAsync({ title });
-            await updateChapter.mutateAsync({ 
-                storyId: newStory.id, 
-                chapterId: newStory.chapters?.[0]?.id || '1', 
-                updates: { content: text }
+            // create_story doesn't create an initial chapter — create one
+            // with the full parsed text as content, then let the AI parser
+            // extract characters/lorebooks/locations in the background.
+            await createChapter.mutateAsync({
+                storyId: newStory.id,
+                data: { title: 'Chapter 1', content: text },
             });
             
             await parseStory.mutateAsync({ storyId: newStory.id, text });
@@ -652,6 +658,7 @@ export default function StorySandbox() {
                             activeChapter={activeChapter}
                             characters={characters}
                             lorebooks={lorebooks}
+                            locations={locations}
                             storyImages={storyImages}
                             chapters={chapters}
                             llmModels={llmModels}
@@ -661,6 +668,7 @@ export default function StorySandbox() {
                             onUpdateStory={(updates) => { if (activeStoryId) updateStory.mutate({ id: activeStoryId, ...updates }); }}
                             onEditCharacter={setEditingCharacter}
                             onEditLorebook={(lb) => { setEditingLorebook(lb); setShowLorebookModal(true); }}
+                            onEditLocation={(loc) => { setEditingLocation(loc); setShowLocationModal(true); }}
                         />
                     </motion.div>
                 )}
@@ -670,6 +678,12 @@ export default function StorySandbox() {
                 isOpen={showLorebookModal}
                 onClose={() => { setEditingLorebook(null); setShowLorebookModal(false); }}
                 lorebook={editingLorebook}
+            />
+
+            <LocationModal
+                isOpen={showLocationModal}
+                onClose={() => { setEditingLocation(null); setShowLocationModal(false); }}
+                location={editingLocation}
             />
 
             <IllustrateModal

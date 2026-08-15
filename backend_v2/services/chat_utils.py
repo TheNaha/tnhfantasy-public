@@ -118,6 +118,8 @@ def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> 
         parts.append(f"Location: {changed['location']}")
     if changed.get("time"):
         parts.append(f"Time: {changed['time']}")
+    if changed.get("location_id"):
+        parts.append(f"Linked Location: {changed['location_id']}")
     if changed.get("expression"):
         parts.append(f"Expression: {changed['expression']}")
     if not parts:

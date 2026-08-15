@@ -185,10 +185,10 @@ export const useParseStory = () => {
 
 
 
-export const useExportStoryFormatted = (format = 'json') => {
+export const useExportStoryFormatted = () => {
     return useMutation({
-        mutationFn: ({ storyId }) => api.get(`/api/v2/stories/${storyId}/export?format=${format}`),
-        onSuccess: (data, { storyId }) => {
+        mutationFn: ({ storyId, format }) => api.get(`/api/v2/stories/${storyId}/export?format=${format}`),
+        onSuccess: (data, { storyId, format }) => {
             let blob, filename;
             if (format === 'md' || format === 'markdown') {
                 blob = new Blob([data.content || ''], { type: 'text/markdown' });
@@ -200,6 +200,26 @@ export const useExportStoryFormatted = (format = 'json') => {
                 blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 filename = `story-${storyId}.json`;
             }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    });
+};
+
+// Token-based export for the public StoryReader (published stories).
+// The read_published_story endpoint does not expose the DB story id, so
+// we use the /published/{token}/export route instead.
+export const useExportPublishedStory = () => {
+    return useMutation({
+        mutationFn: ({ token, format }) => api.get(`/api/v2/stories/published/${token}/export?format=${format}`, {
+            responseType: 'blob',
+        }),
+        onSuccess: (blob, { format }) => {
+            const filename = `story.${format}`;
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

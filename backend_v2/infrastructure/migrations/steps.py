@@ -1526,6 +1526,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create campaigns table for campaign/chronicle mode",
             apply_fn=_migration_046_create_campaigns,
         ),
+        MigrationStep(
+            version="047_add_chat_location_id",
+            description="Add location_id FK to chats table for Location ↔ Chat integration",
+            apply_fn=_migration_047_add_chat_location_id,
+        ),
+        MigrationStep(
+            version="048_add_story_location_ids",
+            description="Add location_ids JSONB column to stories table for Location ↔ Story integration",
+            apply_fn=_migration_048_add_story_location_ids,
+        ),
     ]
 def _migration_040_create_voice_models(conn) -> bool:
     """Create voice_models table for managing TTS voice profiles."""
@@ -1790,5 +1800,58 @@ def _migration_046_create_campaigns(conn) -> bool:
         conn.execute(text("CREATE INDEX idx_campaigns_name ON campaigns(name)"))
 
     logger.info("migration_campaigns_created")
+    return True
+
+
+def _migration_047_add_chat_location_id(conn) -> bool:
+    """Add location_id FK column to chats table for Location ↔ Chat integration."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "chats" not in table_names:
+        logger.info("migration_047_skipped", reason="chats_table_missing")
+        return False
+    # Only add the column if the locations table exists (created in 045)
+    # and the column isn't already present.
+    if "locations" not in table_names:
+        logger.info("migration_047_skipped", reason="locations_table_missing")
+        return False
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "location_id" in columns:
+        logger.info("migration_047_skipped", reason="column_exists")
+        return False
+    # Add the FK column — nullable so existing chats are unaffected.
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("ALTER TABLE chats ADD COLUMN location_id VARCHAR"))
+        conn.execute(text("CREATE INDEX idx_chats_location_id ON chats(location_id)"))
+        conn.execute(text(
+            "ALTER TABLE chats ADD CONSTRAINT fk_chats_location_id "
+            "FOREIGN KEY (location_id) REFERENCES locations(id)"
+        ))
+    else:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN location_id VARCHAR"))
+        conn.execute(text("CREATE INDEX idx_chats_location_id ON chats(location_id)"))
+
+    logger.info("migration_047_chat_location_id_added")
+    return True
+
+
+def _migration_048_add_story_location_ids(conn) -> bool:
+    """Add location_ids JSONB column to stories table for Location ↔ Story integration."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "stories" not in table_names:
+        logger.info("migration_048_skipped", reason="stories_table_missing")
+        return False
+    columns = {col["name"] for col in inspector.get_columns("stories")}
+    if "location_ids" in columns:
+        logger.info("migration_048_skipped", reason="column_exists")
+        return False
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("ALTER TABLE stories ADD COLUMN location_ids JSONB DEFAULT '[]'"))
+        conn.execute(text("UPDATE stories SET location_ids = '[]' WHERE location_ids IS NULL"))
+    else:
+        conn.execute(text("ALTER TABLE stories ADD COLUMN location_ids TEXT DEFAULT '[]'"))
+
+    logger.info("migration_048_story_location_ids_added")
     return True
 

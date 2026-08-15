@@ -13,4 +13,5 @@ export * from './useTimeline';
 export * from './useCampaigns';
 export * from './useWorldVaultSearch';
 
+export * from './useMemories';
 export { useLLMDefaultProvider, useLLMAvailableModels } from './useLLMProviderStatus';

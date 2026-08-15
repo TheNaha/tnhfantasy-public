@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useConfirmation } from '../store/confirmationStore';
@@ -782,6 +782,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                 ai: {
                     maxContextTokens: Number(settings.maxContextTokens),
                     temperature: Number(settings.temperature),
+                    ttsEnabled: settings.ttsEnabled,
                 }
             });
             toast.success('AI settings saved to backend');
@@ -928,6 +929,29 @@ function AISettings({ settings, onUpdate, onReset }) {
                         />
                         <span className="text-white font-bold text-sm w-16 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.temperature.toFixed(1)}</span>
                     </div>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="TTS (Text-to-Speech)"
+                    description="Enable text-to-speech narration for chat messages"
+                    action={
+                        <button
+                            onClick={() => onUpdate('ttsEnabled', !settings.ttsEnabled)}
+                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                                settings.ttsEnabled
+                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
+                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
+                            }`}
+                        >
+                            {settings.ttsEnabled ? 'On' : 'Off'}
+                        </button>
+                    }
+                >
+                    <p className="text-xs text-gray-500">
+                        {settings.ttsEnabled
+                            ? 'TTS narration is enabled. Messages will show a Play button to generate speech.'
+                            : 'TTS narration is disabled. Enable to unlock voice generation for character messages.'}
+                    </p>
                 </SettingGroup>
 
                 <SettingGroup title="CharGen: Description Prompt" description="System prompt for generating character description">

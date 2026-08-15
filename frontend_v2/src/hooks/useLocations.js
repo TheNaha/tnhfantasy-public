@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
-import { buildQueryKey } from '../constants/queryKeys';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
 export const useLocations = () => {
     return useQuery({
@@ -45,6 +45,14 @@ export const useDeleteLocation = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey('locations') });
         },
+    });
+};
+
+export const useSearchLocations = (query) => {
+    return useQuery({
+        queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS, 'search', query),
+        queryFn: () => api.get('/api/v2/locations/search', { params: { q: query } }),
+        enabled: !!query && query.length >= 2,
     });
 };
 

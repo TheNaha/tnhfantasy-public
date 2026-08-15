@@ -35,8 +35,8 @@ export default function AvatarGallery() {
         navigate('/chat', { state: { characterId } });
     };
 
-    const handleCharacterClick = () => {
-        navigate(`/characters`);
+    const handleCharacterClick = (characterId) => {
+        navigate(`/characters#char-${characterId}`);
     };
 
     return (

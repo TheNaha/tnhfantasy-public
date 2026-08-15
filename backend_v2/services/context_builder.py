@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from core.entities import Character, LorebookEntry, MessageRole
+from core.entities import Character, Location, LorebookEntry, MessageRole
 
 logger = logging.getLogger("context_builder")
 
@@ -217,6 +217,7 @@ def build_system_prompt_sections(
     persona_description: str | None = None,
     story_time: str | None = None,
     story_location: str | None = None,
+    location_id: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
     include_roleplay_default: bool = True,
@@ -227,6 +228,7 @@ def build_system_prompt_sections(
     active_character_id: str | None = None,
     character_id: str | None = None,
     _memory_query: str | None = None,
+    location_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -460,6 +462,47 @@ def build_system_prompt_sections(
             "source": "world_state",
         })
 
+    # Inject the linked Location entity's description into the system prompt
+    # so the LLM has rich sensory details about the setting.
+    if location_id:
+        location = session.get(Location, location_id)
+        if location:
+            loc_parts = [f"[Location: {location.name}]"]
+            if location.description:
+                loc_parts.append(location.description)
+            if location.atmosphere:
+                loc_parts.append(f"Atmosphere: {location.atmosphere}")
+            if location.tags:
+                loc_parts.append(f"Tags: {', '.join(location.tags)}")
+            sections.append({
+                "key": "location_detail",
+                "label": f"Location — {location.name}",
+                "content": "\n".join(loc_parts),
+                "source": "lorebook",  # treated as world information
+            })
+
+    # Inject multiple Location entities (for story continuation context)
+    if location_ids:
+        locations = session.exec(
+            select(Location).where(Location.id.in_(location_ids))
+        ).all()
+        if locations:
+            loc_parts = ["[Active Locations]"]
+            for loc in locations:
+                loc_parts.append(f"Location: {loc.name}")
+                if loc.description:
+                    loc_parts.append(f"  {loc.description}")
+                if loc.atmosphere:
+                    loc_parts.append(f"  Atmosphere: {loc.atmosphere}")
+                if loc.tags:
+                    loc_parts.append(f"  Tags: {', '.join(loc.tags)}")
+            sections.append({
+                "key": "story_locations",
+                "label": f"Story locations ({len(locations)})",
+                "content": "\n".join(loc_parts),
+                "source": "lorebook",  # treated as world information
+            })
+
     if story_genre:
         sections.append({
             "key": "story_genre",
@@ -558,6 +601,7 @@ def build_chat_context(
     persona_description: str | None = None,
     story_time: str | None = None,
     story_location: str | None = None,
+    location_id: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
     story_genre: str | None = None,
@@ -565,6 +609,7 @@ def build_chat_context(
     story_character_ids: list[str] | None = None,
     active_character_id: str | None = None,
     character_id: str | None = None,
+    location_ids: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -599,6 +644,7 @@ def build_chat_context(
         persona_description=persona_description,
         story_time=story_time,
         story_location=story_location,
+        location_id=location_id,
         system_prompt_override=system_prompt_override,
         append_system_prompt=append_system_prompt,
         _lorebook_query=_lorebook_query or None,
@@ -608,6 +654,7 @@ def build_chat_context(
         active_character_id=active_character_id,
         character_id=character_id,
         _memory_query=_lorebook_query or None,
+        location_ids=location_ids,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 

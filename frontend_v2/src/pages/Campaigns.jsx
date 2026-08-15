@@ -442,8 +442,8 @@ function CampaignDashboardModal({ campaignId, onClose, onNavigate }) {
                             <p className="text-sm text-gray-400">{data.description}</p>
                         )}
                         <div className="grid grid-cols-2 gap-4">
-                            <DashboardSection title="Characters" items={data?.characters || []} onNavigate={() => onNavigate(`/characters`)} icon={Users} />
-                            <DashboardSection title="Stories" items={data?.stories || []} onNavigate={() => onNavigate(`/story`)} icon={BookOpen} />
+                            <DashboardSection title="Characters" items={data?.characters || []} onNavigate={(cid) => onNavigate(`/characters#char-${cid}`)} icon={Users} />
+                            <DashboardSection title="Stories" items={data?.stories || []} onNavigate={(sid) => onNavigate(`/story/${sid}`)} icon={BookOpen} />
                             <DashboardSection title="Chats" items={data?.chats || []} onNavigate={(cid) => onNavigate(`/chat/${cid}`)} icon={MessageSquare} />
                             <DashboardSection title="Locations" items={data?.locations || []} onNavigate={() => onNavigate(`/locations`)} icon={MapPin} />
                         </div>

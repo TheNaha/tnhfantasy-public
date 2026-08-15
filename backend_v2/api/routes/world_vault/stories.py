@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character
+from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location
 from core.exceptions import ComfyError, NotFoundError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
@@ -49,6 +49,7 @@ class CreateStoryRequest(BaseModel):
     genre: str | None = None
     character_ids: list[str] = []
     lorebook_ids: list[str] = []
+    location_ids: list[str] = []
     scenario_id: str | None = None
     llm_model: str | None = None
     memory: str | None = None
@@ -61,6 +62,7 @@ class UpdateStoryRequest(BaseModel):
     genre: str | None = None
     character_ids: list[str] | None = None
     lorebook_ids: list[str] | None = None
+    location_ids: list[str] | None = None
     scenario_id: str | None = None
     llm_model: str | None = None
     memory: str | None = None
@@ -106,6 +108,7 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
         genre=req.genre,
         character_ids=req.character_ids,
         lorebook_ids=req.lorebook_ids,
+        location_ids=req.location_ids,
         scenario_id=req.scenario_id,
         llm_model=req.llm_model,
         memory=req.memory,
@@ -114,6 +117,17 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at
     session.add(story)
+    session.commit()
+    session.refresh(story)
+    # Create a default placeholder chapter so every story starts with
+    # at least one writable chapter.  The frontend auto-selects this.
+    default_chapter = StoryChapter(
+        story_id=story.id,
+        chapter_number=1,
+        title="Chapter 1",
+        content="",
+    )
+    session.add(default_chapter)
     session.commit()
     session.refresh(story)
     return story
@@ -141,6 +155,9 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
     lorebooks = session.exec(
         select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids or []))
     ).all() if story.lorebook_ids else []
+    locations = session.exec(
+        select(Location).where(Location.id.in_(story.location_ids or []))
+    ).all() if story.location_ids else []
 
     def _serialize_chapter(ch: StoryChapter) -> dict:
         return {
@@ -418,12 +435,22 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
             }
             for l in lorebooks
         ],
+        "locations": [
+            {
+                "id": loc.id,
+                "name": loc.name,
+                "description": loc.description,
+                "atmosphere": loc.atmosphere,
+            }
+            for loc in locations
+        ],
         "chapters": [_serialize_chapter(ch) for ch in chapters],
         "meta": {
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "chapter_count": len(chapters),
             "character_count": len(characters),
             "lorebook_count": len(lorebooks),
+            "location_count": len(locations),
         },
     }
     return payload
@@ -498,8 +525,13 @@ def read_published_story(token: str, session: Session = Depends(get_session)):
         select(Character).where(Character.id.in_(story.character_ids or []))
     ).all() if story.character_ids else []
 
+    locations = session.exec(
+        select(Location).where(Location.id.in_(story.location_ids or []))
+    ).all() if story.location_ids else []
+
     return {
         "story": {
+            "id": story.id,
             "title": story.title,
             "description": story.description,
             "genre": story.genre,
@@ -509,6 +541,10 @@ def read_published_story(token: str, session: Session = Depends(get_session)):
         "characters": [
             {"name": c.name, "description": c.description, "personality": c.personality}
             for c in characters
+        ],
+        "locations": [
+            {"name": l.name, "description": l.description, "atmosphere": l.atmosphere}
+            for l in locations
         ],
         "chapters": [
             {
@@ -543,7 +579,7 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
         raise NotFoundError("Story", story_id)
     
     update_data = req.model_dump(exclude_unset=True)
-    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth'}
+    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'location_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth'}
     for key, value in update_data.items():
         if key in allowed:
             setattr(story, key, value)
@@ -585,7 +621,6 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
     for ch in chapters:
         session.delete(ch)
-        
     session.delete(story)
     session.commit()
     return {"message": "Story deleted"}
@@ -687,6 +722,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         story_genre=story.genre,
         story_memory=story.memory,
         story_character_ids=story.character_ids or None,
+        location_ids=story.location_ids or None,
     )
     
 

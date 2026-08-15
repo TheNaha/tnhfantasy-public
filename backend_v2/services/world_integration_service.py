@@ -14,6 +14,7 @@ from core.entities import (
     Story,
     Lorebook,
     LorebookEntry,
+    Location,
 )
 from core.events import event_bus, EventType
 from infrastructure.database import get_session_context
@@ -470,10 +471,23 @@ async def _handle_story_parse(job_data: dict[str, Any]):
                 new_character_ids.append(character.id)
 
             new_lorebook_ids: list[str] = []
+            new_location_ids: list[str] = []
 
             for loc_data in (parsed.get("locations") or []):
                 if not loc_data.get("name"):
                     continue
+                location = Location(
+                    name=loc_data.get("name", ""),
+                    description=loc_data.get("description"),
+                    atmosphere=loc_data.get("atmosphere"),
+                    tags=loc_data.get("tags", []),
+                )
+                session.add(location)
+                session.commit()
+                session.refresh(location)
+                new_location_ids.append(location.id)
+                # Also create a Lorebook entry so the location's description
+                # is available in chat/story context via the lorebook pipeline.
                 lorebook = Lorebook(
                     name=loc_data.get("name", ""),
                     description=loc_data.get("description"),
