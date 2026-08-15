@@ -225,6 +225,8 @@ def build_system_prompt_sections(
     story_memory: str | None = None,
     story_character_ids: list[str] | None = None,
     active_character_id: str | None = None,
+    character_id: str | None = None,
+    _memory_query: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the ordered list of system-prompt sections that make up a chat context.
@@ -502,6 +504,50 @@ def build_system_prompt_sections(
             "source": "story_characters",
         })
 
+    # Character long-term memories (semantic retrieval)
+    if character_id:
+        try:
+            from services.embedding_service import EmbeddingService, get_embedding_service
+            from core.entities import CharacterMemory
+            from sqlalchemy import func
+
+            _mem_query = _memory_query or _lorebook_query or ""
+            _mem_svc = get_embedding_service()
+            _mem_top_k = 10
+
+            # Try semantic search via pgvector on PostgreSQL
+            _mem_stmt = (
+                select(CharacterMemory)
+                .where(CharacterMemory.character_id == character_id)
+            )
+            if session.bind and session.bind.dialect.name == "postgresql":
+                _q_vec = _mem_svc.generate_embedding(_mem_query.strip()) if _mem_query.strip() else None
+                if _q_vec:
+                    _mem_stmt = _mem_stmt.where(CharacterMemory.embedding.is_not(None)).order_by(
+                        CharacterMemory.embedding.cosine_distance(_q_vec)
+                    ).limit(_mem_top_k)
+                else:
+                    _mem_stmt = _mem_stmt.limit(_mem_top_k)
+            else:
+                # SQLite fallback: keyword matching
+                if _mem_query.strip():
+                    _mem_stmt = _mem_stmt.where(
+                        func.lower(CharacterMemory.content).like(f"%{_mem_query.strip().lower()}%")
+                    )
+                _mem_stmt = _mem_stmt.limit(_mem_top_k)
+
+            _memories = session.exec(_mem_stmt).all()
+            if _memories:
+                mem_block = "\n".join(f"- {m.content}" for m in _memories)
+                sections.append({
+                    "key": "character_memories",
+                    "label": f"Character memories ({len(_memories)} retrieved)",
+                    "content": f"[Relevant Memories]\n{mem_block}",
+                    "source": "character_memories",
+                })
+        except Exception as _mem_err:
+            logger.warning("character_memory_injection_failed", character_id=character_id, error=str(_mem_err))
+
     return sections
 
 
@@ -521,6 +567,7 @@ def build_chat_context(
     story_memory: str | None = None,
     story_character_ids: list[str] | None = None,
     active_character_id: str | None = None,
+    character_id: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     Build the complete chat context.
@@ -562,6 +609,8 @@ def build_chat_context(
         story_memory=story_memory,
         story_character_ids=story_character_ids,
         active_character_id=active_character_id,
+        character_id=character_id,
+        _memory_query=_lorebook_query or None,
     )
     system_prompt = "\n\n".join(s["content"] for s in sections)
 

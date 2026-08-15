@@ -108,12 +108,18 @@ def substitute_tavern_vars(text: str, *, char: str = "", user: str = "User") -> 
 
 
 def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> None:
-    """Insert a UI-only world-state divider marker message after a time/location change."""
+    """Insert a UI-only world-state divider marker message after a time/location change.
+
+    Supports 'time', 'location', 'expression', and 'expression_avatar' keys.
+    If none of the recognized fields are present, no marker is inserted.
+    """
     parts = []
     if changed.get("location"):
         parts.append(f"Location: {changed['location']}")
     if changed.get("time"):
         parts.append(f"Time: {changed['time']}")
+    if changed.get("expression"):
+        parts.append(f"Expression: {changed['expression']}")
     if not parts:
         return
     marker = Message(

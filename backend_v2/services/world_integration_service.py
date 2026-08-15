@@ -328,6 +328,45 @@ async def _handle_chat_tts(job_data: dict[str, Any]):
             session.rollback()
             logger.warning("chat_tts_msg_failed", job_id=job_data.get("id"), error=str(e))
 
+
+async def _handle_story_tts(job_data: dict[str, Any]):
+    """Store the audio path from a story chapter TTS job into the chapter's beats metadata."""
+    from core.entities import StoryChapter
+
+    outputs = job_data.get("outputs", [])
+    story_id = job_data.get("metadata", {}).get("story_id")
+    chapter_id = job_data.get("metadata", {}).get("chapter_id")
+    audio_path = (
+        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
+    ) or job_data.get("image_path")
+
+    if not story_id or not chapter_id or not audio_path:
+        return
+
+    async with get_session_context() as session:
+        try:
+            chapter = session.get(StoryChapter, chapter_id)
+            if chapter and chapter.story_id == story_id:
+                from core.entities import StoryChapter as _SC
+                # Append audio_path to the chapter's metadata or create a beat entry
+                meta = dict(chapter.beats[-1]) if chapter.beats else {}
+                if meta.get("role") == "system_tts":
+                    meta["audio_path"] = audio_path
+                else:
+                    meta = {
+                        "id": str(uuid4()),
+                        "parent_beat_id": (chapter.beats[-1].get("id") if chapter.beats else None),
+                        "role": "system_tts",
+                        "content": "",
+                        "audio_path": audio_path,
+                    }
+                    chapter.beats.append(meta)
+                session.add(chapter)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning("story_tts_chapter_failed", job_id=job_data.get("id"), error=str(e))
+
 async def _handle_chat_image(job_data: dict[str, Any]):
     outputs = job_data.get("outputs", [])
     chat_id = job_data.get("metadata", {}).get("chat_id")
@@ -544,6 +583,8 @@ async def start_world_integration_service():
                 await _handle_chat_image(job_data)
             elif event_type == "chat_tts":
                 await _handle_chat_tts(job_data)
+            elif event_type == "story_tts":
+                await _handle_story_tts(job_data)
             elif event_type == "story_image":
                 await _handle_story_image(job_data)
             elif event_type == "story_parse":

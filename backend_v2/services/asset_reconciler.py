@@ -27,7 +27,6 @@ from infrastructure.image_processor import (
     generate_thumbnails,
     get_output_path,
     read_image_metadata,
-    read_png_metadata,
 )
 from infrastructure.logging import get_logger
 
@@ -150,19 +149,11 @@ def _parse_generated_at(png_meta: dict, full_path: str) -> datetime | None:
 
 
 def _extract_meta(path: str) -> dict:
-    """PNG embedded metadata, with sidecar/legacy fallback for old files."""
+    """Read image metadata (embedded PNG or sidecar JSON fallback)."""
     try:
-        meta = read_png_metadata(path) or {}
+        return read_image_metadata(path) or {}
     except Exception:
-        meta = {}
-    # read_png_metadata returns {"parameters": <raw text>} for legacy files —
-    # try the sidecar .json or embedded read before giving up.
-    if not meta or (set(meta) == {"parameters"} and not meta.get("parameters")):
-        try:
-            meta = read_image_metadata(path) or {}
-        except Exception:
-            pass
-    return meta
+        return {}
 
 
 def _derived_workspace(job_metadata: dict | None, png_meta: dict) -> str:

@@ -11,6 +11,7 @@ Works as a post-completion processor inside job_processing.py:
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from core.entities import JobStatus
@@ -119,6 +120,87 @@ AGENTIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": (
+                "Search the character's long-term memories for relevant information. "
+                "Use this when the character needs to remember something from a previous "
+                "conversation or when the user asks about past events. Returns the top-K "
+                "most semantically relevant memories."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to search memories for — a question, topic, or keyword.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of memories to return (default 5, max 20).",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "store_memory",
+            "description": (
+                "Store a new memory for the character — something important that happened, "
+                "a fact about the user, or a piece of world knowledge the character should "
+                "remember in future conversations. Use this when something significant is "
+                "established in the conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The memory to store — a concise summary of the key fact or event.",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tags to categorize the memory (e.g. ['relationship', 'quest']).",
+                    },
+                    "importance": {
+                        "type": "integer",
+                        "description": "Importance level 1-10 (default 5). Higher importance memories are prioritized in context.",
+                        "default": 5,
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_expression",
+            "description": (
+                "Change the character's current facial expression / avatar. "
+                "Use this when the character's emotional state changes in a way "
+                "that should be reflected visually — anger, surprise, joy, etc. "
+                "The expression name must match one configured on the character."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "The expression name to switch to (e.g. 'happy', 'angry', 'surprised', 'neutral').",
+                    },
+                },
+                "required": ["expression"],
+            },
+        },
+    },
 ]
 
 
@@ -142,6 +224,8 @@ def filter_agentic_tools(
             continue
         if name == "narrate_scene" and not allow_narration:
             continue
+        # recall_memory, store_memory, and set_expression are always available
+        # for chats that have a character
         allowed.append(tool)
     return allowed
 
@@ -209,6 +293,26 @@ async def execute_tool(
     if name == "update_world_state":
         return await _tool_update_world_state(
             args,
+            chat_id=chat_id,
+            source_job_id=source_job_id,
+        )
+
+    if name == "recall_memory":
+        return await _tool_recall_memory(
+            args,
+            character_id=character_id,
+        )
+
+    if name == "store_memory":
+        return await _tool_store_memory(
+            args,
+            character_id=character_id,
+        )
+
+    if name == "set_expression":
+        return await _tool_set_expression(
+            args,
+            character_id=character_id,
             chat_id=chat_id,
             source_job_id=source_job_id,
         )
@@ -562,6 +666,195 @@ async def _tool_generate_image(
         return {"status": "error", "error": f"Image generation {final_status}"}
 
     return {"status": "error", "error": f"Image generation ended with status: {final_status}"}
+
+
+async def _tool_recall_memory(
+    args: dict[str, Any],
+    *,
+    character_id: str | None = None,
+) -> dict[str, Any]:
+    """Search the character's memories for relevant information."""
+    from infrastructure.database import get_session_context
+    from core.entities import CharacterMemory
+    from services.embedding_service import get_embedding_service
+    from sqlmodel import select, func
+
+    query = args.get("query", "")
+    limit = min(args.get("limit", 5), 20)
+
+    if not character_id:
+        return {"status": "error", "error": "No character_id available for memory recall"}
+    if not query:
+        return {"status": "error", "error": "Query parameter is required for memory recall"}
+
+    async with get_session_context() as session:
+        try:
+            # Generate embedding for the query
+            emb_svc = get_embedding_service()
+            q_vec = emb_svc.generate_embedding(query)
+
+            # Try semantic search (pgvector); fallback to keyword if embedding unavailable
+            if session.bind and session.bind.dialect.name == "postgresql":
+                stmt = (
+                    select(CharacterMemory)
+                    .where(CharacterMemory.character_id == character_id)
+                    .where(CharacterMemory.embedding.is_not(None))
+                    .order_by(func.cosine_distance(CharacterMemory.embedding, q_vec))
+                    .limit(limit)
+                )
+            else:
+                stmt = (
+                    select(CharacterMemory)
+                    .where(CharacterMemory.character_id == character_id)
+                    .where(func.lower(CharacterMemory.content).like(f"%{query.lower()}%"))
+                    .limit(limit)
+                )
+
+            memories = session.exec(stmt).all()
+
+            # Update last_accessed_at for retrieved memories
+            for mem in memories:
+                mem.last_accessed_at = datetime.now(timezone.utc)
+            session.add_all(memories)
+            session.commit()
+
+            results = [
+                {
+                    "content": mem.content,
+                    "tags": mem.tags,
+                    "importance": mem.importance,
+                }
+                for mem in memories
+            ]
+
+            return {
+                "status": "success",
+                "results": results,
+                "count": len(results),
+            }
+        except Exception as exc:
+            logger.error("tool_recall_memory_failed", character_id=character_id, error=str(exc))
+            return {"status": "error", "error": str(exc)}
+
+
+async def _tool_store_memory(
+    args: dict[str, Any],
+    *,
+    character_id: str | None = None,
+) -> dict[str, Any]:
+    """Store a new memory for the character."""
+    from infrastructure.database import get_session_context
+    from core.entities import CharacterMemory
+    from services.embedding_service import get_embedding_service
+
+    content = args.get("content", "")
+    tags = args.get("tags") or []
+    importance = min(max(args.get("importance", 5), 1), 10)
+
+    if not character_id:
+        return {"status": "error", "error": "No character_id available for storing memory"}
+    if not content:
+        return {"status": "error", "error": "Content parameter is required for storing memory"}
+
+    async with get_session_context() as session:
+        try:
+            mem = CharacterMemory(
+                character_id=character_id,
+                content=content,
+                tags=tags,
+                importance=importance,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+
+            # Generate embedding
+            emb_svc = get_embedding_service()
+            try:
+                mem.embedding = emb_svc.generate_embedding(content)
+            except Exception:
+                pass  # Embedding is optional
+
+            session.add(mem)
+            session.commit()
+            session.refresh(mem)
+
+            logger.info(
+                "tool_store_memory",
+                character_id=character_id,
+                memory_id=mem.id,
+                tags=tags,
+            )
+            return {
+                "status": "success",
+                "memory_id": mem.id,
+                "content": content,
+                "tags": tags,
+                "importance": importance,
+            }
+        except Exception as exc:
+            logger.error("tool_store_memory_failed", character_id=character_id, error=str(exc))
+            session.rollback()
+            return {"status": "error", "error": str(exc)}
+
+
+async def _tool_set_expression(
+    args: dict[str, Any],
+    *,
+    character_id: str | None = None,
+    chat_id: str | None = None,
+    source_job_id: str | None = None,
+) -> dict[str, Any]:
+    """Update a character's current expression in the chat context."""
+    from infrastructure.database import get_session_context
+    from core.entities import Character
+
+    expression = args.get("expression", "")
+
+    if not character_id:
+        return {"status": "error", "error": "No character_id available for expression change"}
+    if not expression:
+        return {"status": "error", "error": "Expression parameter is required"}
+
+    async with get_session_context() as session:
+        try:
+            char = session.get(Character, character_id)
+            if not char:
+                return {"status": "error", "error": f"Character {character_id} not found"}
+
+            expressions = char.expressions or {}
+            if expression not in expressions:
+                return {
+                    "status": "error",
+                    "error": f"Character '{char.name}' has no expression '{expression}'. Available: {list(expressions.keys())}",
+                }
+
+            # Store the expression as a world-state marker so the frontend
+            # can display the correct avatar for subsequent messages.
+            from services.chat_utils import insert_world_state_marker
+
+            if chat_id:
+                insert_world_state_marker(
+                    session,
+                    chat_id=chat_id,
+                    changed={"expression": expression, "expression_avatar": expressions[expression]},
+                )
+
+            logger.info(
+                "tool_set_expression",
+                character_id=character_id,
+                chat_id=chat_id,
+                expression=expression,
+                job_id=source_job_id,
+            )
+            return {
+                "status": "success",
+                "expression": expression,
+                "avatar_path": expressions[expression],
+            }
+        except Exception as exc:
+            logger.error("tool_set_expression_failed", character_id=character_id, error=str(exc))
+            session.rollback()
+            return {"status": "error", "error": str(exc)}
 
 
 async def process_tool_calls_and_chain(

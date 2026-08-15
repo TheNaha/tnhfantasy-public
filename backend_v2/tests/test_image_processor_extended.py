@@ -13,6 +13,12 @@ from infrastructure.image_processor import (
     process_image,
 )
 
+try:
+    import blurhash as _blurhash_pkg
+    HAS_BLURHASH = True
+except ModuleNotFoundError:
+    HAS_BLURHASH = False
+
 
 @pytest.fixture
 def tmp_dir():
@@ -28,6 +34,7 @@ def create_png(directory: str, filename: str = "test.png", size=(100, 100)) -> s
     return path
 
 
+@pytest.mark.skipif(not HAS_BLURHASH, reason="blurhash package not installed")
 class TestEncodeBlurHash:
     def test_returns_string(self, tmp_dir):
         path = create_png(tmp_dir)

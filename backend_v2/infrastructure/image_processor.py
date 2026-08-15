@@ -53,24 +53,8 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
 
 
 def read_png_metadata(path: str) -> dict:
-    """Read embedded generation metadata back out of a saved PNG (best-effort)."""
-    import json as _json
-    try:
-        from PIL import Image
-        from PIL.PngImagePlugin import PngInfo
-        with Image.open(path) as img:
-            raw = img.info.get("comfy_metadata") or img.info.get("parameters") or img.info.get("Comment")
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8", "ignore")
-            if not raw:
-                return {}
-            # comfy_metadata is JSON; parameters/Comment are free text.
-            try:
-                return _json.loads(raw)
-            except Exception:
-                return {"parameters": raw}
-    except Exception:
-        return {}
+    """Deprecated: use read_image_metadata instead. This is a compatibility alias."""
+    return read_image_metadata(path)
 
 
 def get_thumb_output_path(base_dir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
