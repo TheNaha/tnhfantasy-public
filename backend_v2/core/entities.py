@@ -812,7 +812,10 @@ class Character(SQLModel, table=True):
         back_populates="character",
         sa_relationship_kwargs={"foreign_keys": "VoiceModel.character_id"},
     )
-    memories: list["CharacterMemory"] = Relationship(back_populates="character")
+    memories: list["CharacterMemory"] = Relationship(
+        back_populates="character",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 class Chat(SQLModel, table=True):
     __tablename__ = "chats"

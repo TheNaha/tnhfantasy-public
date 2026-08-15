@@ -8,8 +8,9 @@ import os
 
 import pytest
 from PIL import Image, PngImagePlugin
+from sqlmodel import select
 
-from core.entities import Character, Collection
+from core.entities import Character, CharacterMemory, Collection
 
 
 def _card_png(card_data: dict) -> bytes:
@@ -141,3 +142,23 @@ class TestAvatar:
     def test_upload_avatar_missing_character_404(self, client):
         resp = client.post("/api/v2/characters/nope/avatar", files={"file": ("a.png", b"x", "image/png")})
         assert resp.status_code == 404
+
+class TestDeleteCharacterCascadesMemories:
+    """Regression: deleting a Character must cascade-delete its
+    CharacterMemory rows. Without `cascade="all, delete-orphan"` on the
+    Character.memories relationship, SQLAlchemy issues an UPDATE that sets
+    character_memories.character_id = NULL, violating the NOT NULL FK
+    constraint (500 IntegrityError on Postgres; same on SQLite)."""
+
+    def test_delete_removes_child_memories(self, client, session):
+        char = _seed_char(client, name="Remembered")
+        for i in range(3):
+            session.add(CharacterMemory(character_id=char["id"], content=f"memory {i}"))
+        session.commit()
+        assert session.exec(select(CharacterMemory).where(CharacterMemory.character_id == char["id"])).all().__len__() == 3
+
+        resp = client.delete(f"/api/v2/characters/{char['id']}")
+        assert resp.status_code == 200, resp.text
+        assert session.get(Character, char["id"]) is None
+        remaining = session.exec(select(CharacterMemory).where(CharacterMemory.character_id == char["id"])).all()
+        assert remaining == []
