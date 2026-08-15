@@ -41,11 +41,12 @@ vi.mock('framer-motion', () => ({
 }));
 
 const dashboardData = {
-    recent: [
-        { id: 'char-1', type: 'character', name: 'Aria the Mage', description: 'A powerful sorceress' },
-        { id: 'chat-1', type: 'chat', name: 'The Tavern Chat', description: 'Evening roleplay' },
-    ],
-    counts: { character: 3, chat: 5, story: 2 },
+    recent: {
+        characters: [{ id: 'char-1', name: 'Aria the Mage', created_at: '2026-08-01T00:00:00Z' }],
+        chats: [{ id: 'chat-1', name: 'The Tavern Chat', created_at: '2026-08-01T00:00:00Z' }],
+        stories: [],
+    },
+    counts: { characters: 3, chats: 5, stories: 2 },
 };
 
 function renderWithProviders(ui) {
@@ -83,7 +84,6 @@ describe('WorldVaultHub page', () => {
         renderWithProviders(<WorldVaultHub />);
         expect(screen.getByText('Aria the Mage')).toBeInTheDocument();
         expect(screen.getByText('The Tavern Chat')).toBeInTheDocument();
-        expect(screen.getByText('Evening roleplay')).toBeInTheDocument();
     });
 
     it('shows loading state while fetching', () => {
@@ -94,15 +94,19 @@ describe('WorldVaultHub page', () => {
     });
 
     it('shows empty state when there are no entities', () => {
-        mockDashboard.mockReturnValue({ data: { recent: [], counts: {} }, isLoading: false });
+        mockDashboard.mockReturnValue({ data: { recent: {}, counts: {} }, isLoading: false });
         renderWithProviders(<WorldVaultHub />);
         expect(screen.getByText('No entities yet')).toBeInTheDocument();
     });
 
     it('displays search results once a query is typed', () => {
-        mockDashboard.mockReturnValue({ data: { recent: [], counts: {} }, isLoading: false });
+        mockDashboard.mockReturnValue({ data: { recent: {}, counts: {} }, isLoading: false });
         mockSearch.mockReturnValue({
-            data: [{ id: 'c-9', type: 'character', name: 'Aria Found', description: 'found via search' }],
+            data: {
+                query: 'aria',
+                total: 1,
+                results: [{ id: 'c-9', type: 'character', title: 'Aria Found', subtitle: 'found via search' }],
+            },
             isLoading: false,
         });
         renderWithProviders(<WorldVaultHub />);
@@ -110,10 +114,12 @@ describe('WorldVaultHub page', () => {
             target: { value: 'aria' },
         });
         expect(screen.getByText('Aria Found')).toBeInTheDocument();
+        expect(screen.getByText('found via search')).toBeInTheDocument();
     });
 
     it('shows a no-results message when the search finds nothing', () => {
-        mockDashboard.mockReturnValue({ data: { recent: [], counts: {} }, isLoading: false });
+        mockDashboard.mockReturnValue({ data: { recent: {}, counts: {} }, isLoading: false });
+        mockSearch.mockReturnValue({ data: { query: 'zzz', results: [], total: 0 }, isLoading: false });
         renderWithProviders(<WorldVaultHub />);
         fireEvent.change(screen.getByPlaceholderText('Search across all entities...'), {
             target: { value: 'zzz' },
@@ -134,8 +140,8 @@ describe('WorldVaultHub page', () => {
     });
 
     it('passes the selected entity type as a filter to the search hook', () => {
-        mockDashboard.mockReturnValue({ data: { recent: [], counts: {} }, isLoading: false });
-        mockSearch.mockReturnValue({ data: [], isLoading: false });
+        mockDashboard.mockReturnValue({ data: { recent: {}, counts: {} }, isLoading: false });
+        mockSearch.mockReturnValue({ data: { query: 'aria', results: [], total: 0 }, isLoading: false });
         renderWithProviders(<WorldVaultHub />);
         fireEvent.change(screen.getByPlaceholderText('Search across all entities...'), {
             target: { value: 'aria' },

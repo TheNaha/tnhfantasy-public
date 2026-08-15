@@ -210,6 +210,57 @@ async function seedStoryChapter(page, storyId, overrides = {}) {
   });
 }
 
+async function seedChatMessage(page, chatId, overrides = {}) {
+  return apiPost(page, `/v2/chats/${chatId}/messages`, {
+    role: overrides.role || 'char',
+    content: overrides.content || uniqueName('e2e-message'),
+    ...overrides,
+  });
+}
+
+async function seedLocation(page, overrides = {}) {
+  return apiPost(page, '/v2/locations', {
+    name: overrides.name || uniqueName('e2e-location'),
+    description: overrides.description || 'A misty valley where the gates of the test realm open.',
+    atmosphere: overrides.atmosphere || 'Misty and quiet.',
+    tags: overrides.tags || [],
+    ...overrides,
+  });
+}
+
+async function seedCampaign(page, overrides = {}) {
+  return apiPost(page, '/v2/campaigns', {
+    name: overrides.name || uniqueName('e2e-campaign'),
+    description: overrides.description || 'A chronicle of the e2e realm.',
+    character_ids: overrides.character_ids || [],
+    story_ids: overrides.story_ids || [],
+    chat_ids: overrides.chat_ids || [],
+    location_ids: overrides.location_ids || [],
+    ...overrides,
+  });
+}
+
+async function seedScenario(page, overrides = {}) {
+  return apiPost(page, '/v2/scenarios', {
+    name: overrides.name || uniqueName('e2e-scenario'),
+    description: overrides.description || 'A test scenario created by the e2e suite.',
+    prompt_template: overrides.prompt_template ?? 'You stand at the edge of the E2ELAND, where every choice echoes through the mist.',
+    ...overrides,
+  });
+}
+
+async function seedVoice(page, overrides = {}) {
+  return apiPost(page, '/v2/voices', {
+    name: overrides.name || uniqueName('e2e-voice'),
+    description: overrides.description || 'A test voice model created by the e2e suite.',
+    type: overrides.type || 'xtts',
+    voice_profile: overrides.voice_profile ?? 'e2e_speaker',
+    language: overrides.language ?? 'en',
+    preview_text: overrides.preview_text ?? 'Hello traveler, the e2e suite greets you.',
+    ...overrides,
+  });
+}
+
 async function seedPrompt(page, overrides = {}) {
   const body = {
     name: overrides.name || uniqueName('e2e-prompt'),
@@ -275,6 +326,10 @@ const DELETE_PATHS = {
   prompt: (id) => `/prompts/${id}`,
   job: (id) => `/jobs/${id}`,
   model: (id) => `/v2/models/${id}`,
+  location: (id) => `/v2/locations/${id}`,
+  campaign: (id) => `/v2/campaigns/${id}`,
+  scenario: (id) => `/v2/scenarios/${id}`,
+  voice: (id) => `/v2/voices/${id}`,
 };
 
 async function cleanupEntities(page, entities) {
@@ -353,6 +408,11 @@ export {
   seedChat,
   seedStory,
   seedStoryChapter,
+  seedChatMessage,
+  seedLocation,
+  seedCampaign,
+  seedScenario,
+  seedVoice,
   seedPrompt,
   seedCollection,
   seedModel,

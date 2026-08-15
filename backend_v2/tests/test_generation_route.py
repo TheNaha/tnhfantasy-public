@@ -49,6 +49,23 @@ class TestGenerationRoute:
         assert "jobs" in data
         assert data["count"] == 2
 
+    def test_generate_batch_merges_per_workflow_metadata(self, client, sample_workflow):
+        payload = {
+            "workflows": [
+                {**sample_workflow, "metadata": {"prompt": "first prompt", "seed": 11}},
+                {**sample_workflow, "metadata": {"prompt": "second prompt"}},
+            ],
+            "metadata": {"prompt": "request-level prompt"}
+        }
+        response = client.post("/api/generate/batch", json=payload)
+        assert response.status_code == 200
+        jobs = response.json()["jobs"]
+        assert jobs[0]["metadata"]["prompt"] == "first prompt"
+        assert jobs[0]["metadata"]["seed"] == 11
+        assert jobs[1]["metadata"]["prompt"] == "second prompt"
+        assert jobs[0]["metadata"]["batch_index"] == 0
+        assert jobs[1]["metadata"]["batch_index"] == 1
+
     def test_generate_batch_empty(self, client):
         response = client.post("/api/generate/batch", json={"workflows": []})
         assert response.status_code == 400

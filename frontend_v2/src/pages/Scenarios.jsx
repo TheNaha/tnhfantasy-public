@@ -82,7 +82,12 @@ export default function Scenarios() {
     };
 
     const handleDelete = async (id, name) => {
-        const ok = await confirm(`Delete "${name}"?`, 'This cannot be undone.');
+        const ok = await confirm({
+            title: 'Delete Scenario',
+            message: `Are you sure you want to delete "${name}"?`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
         if (!ok) return;
         deleteScenario(id, {
             onSuccess: () => toast.success('Scenario deleted'),
@@ -94,7 +99,7 @@ export default function Scenarios() {
         const targetType = prompt('Apply to (chat/story):', 'chat') || 'chat';
         const targetId = prompt('Target ID:', '');
         if (!targetId) return toast.error('Target ID is required');
-        applyScenario({ scenarioId: scenario.id, target_type: targetType, target_id: targetId }, {
+        applyScenario({ scenarioId: scenario.id, targetType, targetId }, {
             onSuccess: () => toast.success(`Applied to ${targetType}`),
             onError: (e) => toast.error(`Failed: ${e.message}`),
         });

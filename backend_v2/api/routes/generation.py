@@ -136,9 +136,11 @@ async def generate_batch(
             created_jobs = []
 
             for i, workflow in enumerate(workflows):
-                # Add batch index to metadata
+                # Add batch index to metadata; per-workflow metadata (e.g. the
+                # frontend's per-prompt entries) wins over the request-level one.
                 job_metadata = {
                     **request.metadata,
+                    **(workflow.get("metadata") or {}),
                     "batch_index": i,
                     "batch_total": len(workflows),
                 }

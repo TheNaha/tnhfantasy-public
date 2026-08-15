@@ -37,7 +37,12 @@ export default function WorldVaultHub() {
     const { data: searchResults, isLoading: searchLoading } = useWorldVaultSearch(debouncedQuery, selectedType !== 'all' ? selectedType : null);
 
     const isLoading = entitiesLoading || searchLoading;
-    const displayResults = debouncedQuery ? searchResults : entities?.recent || [];
+    const RECENT_TYPE_KEYS = { characters: 'character', chats: 'chat', stories: 'story' };
+    const displayResults = debouncedQuery
+        ? (searchResults?.results || [])
+        : Object.entries(entities?.recent || {}).flatMap(([key, items]) =>
+              items.map((item) => ({ ...item, type: RECENT_TYPE_KEYS[key] || key }))
+          );
 
     const openEntity = (entity) => {
         const id = entity.id ?? entity.entity_id;
@@ -160,9 +165,9 @@ export default function WorldVaultHub() {
                                     {entity.type && (
                                         <span className="text-xs text-gray-500 capitalize">{entity.type}</span>
                                     )}
-                                    {(entity.description || entity.content) && (
+                                    {(entity.description || entity.content || entity.subtitle) && (
                                         <p className="text-sm text-gray-400 mt-1 line-clamp-2">
-                                            {entity.description || entity.content}
+                                            {entity.description || entity.content || entity.subtitle}
                                         </p>
                                     )}
                                 </div>

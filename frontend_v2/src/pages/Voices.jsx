@@ -82,7 +82,12 @@ export default function Voices() {
     };
 
     const handleDelete = async (id, name) => {
-        const ok = await confirm(`Delete "${name}"?`, 'This cannot be undone.');
+        const ok = await confirm({
+            title: 'Delete Voice Model',
+            message: `Are you sure you want to delete "${name}"?`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
         if (!ok) return;
         deleteVoice(id, {
             onSuccess: () => toast.success('Voice model deleted'),

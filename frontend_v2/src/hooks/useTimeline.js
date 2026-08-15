@@ -10,7 +10,7 @@ export const useTimeline = (filters = {}) => {
             Object.entries(filters).forEach(([key, value]) => {
                 if (value) params.set(key, value);
             });
-            return api.get(`/api/v2/timeline?${params.toString()}`);
+            return api.get(`/api/v2/timeline/timeline?${params.toString()}`);
         },
         enabled: true,
     });
