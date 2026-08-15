@@ -657,12 +657,9 @@ async def generate_swipe(
     job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
     session.commit()
 
-    if prev_agentic:
-        from services.orchestrator_service import OrchestratorService
-        orch = OrchestratorService(session)
-        await orch.handle_new_turn(job.id, metadata)
-    else:
-        await queue_manager.enqueue(job.id, task_type="llm")
+    # Agentic chaining happens when the job completes with tool calls
+    # (see job_processing.py) — this route only enqueues the job.
+    await queue_manager.enqueue(job.id, task_type="llm")
 
     return {"job_id": job.id}
 

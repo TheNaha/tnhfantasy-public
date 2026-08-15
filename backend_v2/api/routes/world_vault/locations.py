@@ -93,7 +93,6 @@ def patch_location(location_id: str, update_data: LocationUpdate, session: Sessi
         raise NotFoundError("Location", location_id)
 
     update_dict = update_data.model_dump(exclude_unset=True)
-    update_dict = {k: v for k, v in update_dict.items() if v is not None}
     for key, value in update_dict.items():
         setattr(location, key, value)
 

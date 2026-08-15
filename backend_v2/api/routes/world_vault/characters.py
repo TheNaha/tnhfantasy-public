@@ -89,21 +89,24 @@ def _decode_chara_payload(raw: bytes) -> dict | None:
     if not value:
         return None
 
-    # Try base64 decode
+    # Candidate payloads: the raw text first (plain-JSON cards), then the
+    # base64-decoded bytes, optionally zlib-decompressed (V2/V3 exports).
+    candidates = [value]
     try:
         decoded = base64.b64decode(value)
         try:
-            decoded = zlib.decompress(decoded)
+            candidates.append(zlib.decompress(decoded).decode("utf-8", errors="replace"))
         except zlib.error:
-            pass
-        value = decoded.decode("utf-8", errors="replace")
+            candidates.append(decoded.decode("utf-8", errors="replace"))
     except Exception:
         pass
 
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def parse_character_card(png_bytes: bytes) -> dict:
@@ -244,7 +247,10 @@ def import_character_card(
     session.add(collection)
     session.commit()
 
-    return character
+    # The final commit expires `character`; refresh so serialization works
+    session.refresh(character)
+
+    return _character_to_dict(character)
 
 @router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session)):
@@ -365,7 +371,10 @@ def clone_character(character_id: str, session: Session = Depends(get_session)):
     )
     session.add(collection)
     session.commit()
-        
+
+    # The second commit expires `new_char`; refresh so serialization works
+    session.refresh(new_char)
+
     return _character_to_dict(new_char)
 
 

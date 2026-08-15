@@ -2,7 +2,7 @@
 World Timeline — chronological aggregation of all events across entities.
 """
 from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from api.deps import get_session
 from core.entities import Chat, Message, StoryChapter, CharacterMemory, Asset
@@ -32,16 +32,22 @@ def get_timeline(
     fetch_limit = limit + offset
 
     # Messages
+    msg_count_query = select(func.count(Message.id))
     msg_query = select(Message).order_by(Message.created_at.desc()).limit(fetch_limit)
     if chat_id:
+        msg_count_query = msg_count_query.where(Message.chat_id == chat_id)
         msg_query = msg_query.where(Message.chat_id == chat_id)
     if character_id or location:
         # Single join; both filters apply to the same chats table.
+        msg_count_query = msg_count_query.join(Chat)
         msg_query = msg_query.join(Chat)
         if character_id:
+            msg_count_query = msg_count_query.where(Chat.character_id == character_id)
             msg_query = msg_query.where(Chat.character_id == character_id)
         if location:
+            msg_count_query = msg_count_query.where(Chat.story_location == location)
             msg_query = msg_query.where(Chat.story_location == location)
+    total_messages = session.exec(msg_count_query).one()
     messages = session.exec(msg_query).all()
     for msg in messages:
         events.append({
@@ -56,9 +62,12 @@ def get_timeline(
         })
 
     # Chapter updates
+    chapter_count_query = select(func.count(StoryChapter.id))
     chapter_query = select(StoryChapter).order_by(StoryChapter.updated_at.desc()).limit(fetch_limit)
     if story_id:
+        chapter_count_query = chapter_count_query.where(StoryChapter.story_id == story_id)
         chapter_query = chapter_query.where(StoryChapter.story_id == story_id)
+    total_chapters = session.exec(chapter_count_query).one()
     chapters = session.exec(chapter_query).all()
     for ch in chapters:
         events.append({
@@ -71,9 +80,12 @@ def get_timeline(
         })
 
     # Memories
+    memory_count_query = select(func.count(CharacterMemory.id))
     memory_query = select(CharacterMemory).order_by(CharacterMemory.created_at.desc()).limit(fetch_limit)
     if character_id:
+        memory_count_query = memory_count_query.where(CharacterMemory.character_id == character_id)
         memory_query = memory_query.where(CharacterMemory.character_id == character_id)
+    total_memories = session.exec(memory_count_query).one()
     memories = session.exec(memory_query).all()
     for mem in memories:
         events.append({
@@ -87,11 +99,15 @@ def get_timeline(
         })
 
     # Image generations (assets)
+    asset_count_query = select(func.count(Asset.id))
     asset_query = select(Asset).order_by(Asset.created_at.desc()).limit(fetch_limit)
     if character_id:
+        asset_count_query = asset_count_query.where(Asset.character_id == character_id)
         asset_query = asset_query.where(Asset.character_id == character_id)
     if story_id:
+        asset_count_query = asset_count_query.where(Asset.story_id == story_id)
         asset_query = asset_query.where(Asset.story_id == story_id)
+    total_assets = session.exec(asset_count_query).one()
     assets = session.exec(asset_query).all()
     for a in assets:
         created = a.generated_at or a.created_at
@@ -110,7 +126,7 @@ def get_timeline(
     # Sort by timestamp descending
     events.sort(key=lambda e: e.get("timestamp") or "", reverse=True)
 
-    total = len(events)
+    total = total_messages + total_chapters + total_memories + total_assets
     return {
         "events": events[offset:offset + limit],
         "total": total,
