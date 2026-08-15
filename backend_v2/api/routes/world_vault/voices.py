@@ -5,8 +5,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_session
+from core.entities import VoiceModel
 from services.reference_cleanup import scrub_entity_references
-from core.entities import VoiceModel, Character
 from core.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()

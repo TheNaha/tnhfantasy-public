@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from core.entities import Asset, AssetKind
+from core.entities import Asset
 from infrastructure.image_processor import (
     encode_blurhash,
     generate_thumbnails,

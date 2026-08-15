@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from api.deps import get_session
-from core.entities import Character, CharacterMemory, Message
+from core.entities import Character, CharacterMemory
 from core.exceptions import NotFoundError, ValidationError
 
 router = APIRouter()
@@ -132,7 +132,6 @@ def search_memories(
     except Exception:
         raise ValidationError("Could not generate embedding for search query")
 
-    from pgvector.sqlalchemy import Vector
     stmt = (
         select(CharacterMemory)
         .where(CharacterMemory.character_id == character_id)

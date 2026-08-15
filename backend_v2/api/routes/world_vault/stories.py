@@ -11,7 +11,6 @@ from api.deps import get_job_service, get_session, get_queue_manager
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character
 from core.exceptions import ComfyError, NotFoundError
-from core.workflow_builder import build_image_workflow
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
 from services.job_service import JobService
@@ -952,7 +951,7 @@ async def narrate_chapter(
 ):
     """Trigger TTS narration for an entire story chapter."""
     from core.workflow_builder import build_tts_workflow
-    from core.entities import VoiceModel
+    from services.chat_utils import resolve_voice_for_character
 
     story = session.get(Story, story_id)
     if not story:
@@ -966,20 +965,10 @@ async def narrate_chapter(
         raise ComfyError("Chapter has no content to narrate")
 
     # Resolve voice model from story or first character
-    voice_profile = None
-    voice_model_id = None
-    language = None
+    voice_profile = voice_model_id = language = None
     if story.character_ids:
         char = session.get(Character, story.character_ids[0])
-        if char:
-            voice_model_id = getattr(char, "voice_model_id", None)
-            if voice_model_id:
-                vm = session.get(VoiceModel, voice_model_id)
-                if vm:
-                    voice_profile = vm.voice_profile or vm.name
-                    language = vm.language
-            if not voice_profile:
-                voice_profile = getattr(char, "voice_profile", None)
+        voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
 
     workflow, metadata = build_tts_workflow(
         text=text,

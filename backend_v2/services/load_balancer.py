@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from core.entities import LoadBalancerState, Provider, Job, JobStatus
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
-from infrastructure.providers.runtime import get_provider_worker_base_url, provider_container_name
+from infrastructure.providers.runtime import provider_container_name, resolve_provider_health_url
 from infrastructure.repositories import ProviderRepository
 
 logger = get_logger("load_balancer")
@@ -325,8 +325,8 @@ class LoadBalancer:
             if provider.container_config and "port" in provider.container_config:
                 port = provider.container_config["port"]
             
-            # Default target name (inside Docker network / container DNS)
-            url = f"{get_provider_worker_base_url(provider.id, port)}/health"
+            # Prefer configured worker_url (serverless) → Docker network DNS fallback
+            url = resolve_provider_health_url(provider, port)
             
             client = get_http_client()
             response = await client.get(url, timeout=2.0)
@@ -517,7 +517,7 @@ class LoadBalancer:
                         if selected_provider.container_config and "port" in selected_provider.container_config:
                             port = selected_provider.container_config["port"]
                         
-                        url = f"{get_provider_worker_base_url(selected_provider.id, port)}/health"
+                        url = resolve_provider_health_url(selected_provider, port)
                         client = get_http_client()
                         res = await client.get(url, timeout=1.0)
                         if res.status_code == 200:

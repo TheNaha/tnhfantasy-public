@@ -366,7 +366,7 @@ def clone_character(character_id: str, session: Session = Depends(get_session)):
     session.add(collection)
     session.commit()
         
-    return new_char
+    return _character_to_dict(new_char)
 
 
 @router.get("/{character_id}/export")

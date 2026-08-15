@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +15,7 @@ from core.entities import (
     Lorebook,
     LorebookEntry,
 )
-from core.events import event_bus, EventType, Event
+from core.events import event_bus, EventType
 from infrastructure.database import get_session_context
 from infrastructure.logging import get_logger
 from sqlmodel import select
@@ -27,22 +26,8 @@ from services.llm_config import get_default_llm_model
 
 logger = get_logger("world_integration")
 
+from services.chat_utils import extract_first_text as _first_text
 from services.chat_utils import resolve_context_tokens as _resolve_context_tokens
-
-
-def _first_text(job_data: dict[str, Any]) -> str | None:
-    """Extract reply text from a completion payload.
-
-    LLM job outputs are [{'role': 'assistant', 'content': ...}] — the text
-    lives under 'content', not 'text'. Fall back to the event_extra fields
-    (some branches complete with outputs=[] and carry text top-level).
-    """
-    outputs = job_data.get("outputs") or []
-    if outputs and isinstance(outputs[0], dict):
-        v = outputs[0].get("content") or outputs[0].get("text")
-        if v:
-            return v
-    return job_data.get("content") or job_data.get("prompt")
 
 
 async def _handle_impersonation(job_data: dict[str, Any]):
@@ -149,8 +134,6 @@ async def _handle_story_illustrate(job_data: dict[str, Any]):
 
 async def _handle_scene_prompt(job_data: dict[str, Any]):
     """Chain a chat scene prompt into an image job (non-agentic fallback path)."""
-    from core.workflow_builder import build_image_workflow, DEFAULT_NEGATIVE_PROMPT
-    from services.model_availability_service import ModelAvailabilityService
 
     prompt = _first_text(job_data)
     metadata = job_data.get("metadata", {})
@@ -172,6 +155,7 @@ async def _handle_scene_prompt(job_data: dict[str, Any]):
     )
     try:
         async with get_session_context() as session:
+            from core.workflow_builder import DEFAULT_NEGATIVE_PROMPT
             from services.image_submission import submit_image_job
 
             img_job = await submit_image_job(
@@ -346,7 +330,6 @@ async def _handle_story_tts(job_data: dict[str, Any]):
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter and chapter.story_id == story_id:
-                from core.entities import StoryChapter as _SC
                 # Append audio_path to the chapter's metadata or create a beat entry
                 meta = dict(chapter.beats[-1]) if chapter.beats else {}
                 if meta.get("role") == "system_tts":

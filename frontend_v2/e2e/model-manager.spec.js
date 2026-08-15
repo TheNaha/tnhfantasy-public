@@ -12,28 +12,22 @@
 // Live CivitAI search is deliberately NOT exercised (network-dependent).
 
 import { test, expect } from '@playwright/test';
-import { apiGet, uniqueName, expectToast, cleanupEntities, seedModel } from './fixtures.js';
+import {
+    apiGet,
+    uniqueName,
+    expectToast,
+    cleanupEntities,
+    seedModel,
+    sortSelect,
+    readPersisted,
+    sortNewestFirst,
+} from './fixtures.js';
 
 const created = [];
 
 test.afterEach(async ({ page }) => {
   await cleanupEntities(page, created.splice(0));
 });
-
-function sortSelect(page) {
-  // DOM order on /models/discover: [source, sort, nsfw, period] selects.
-  return page.locator('select').nth(1);
-}
-
-async function readPersisted(page, key) {
-  return page.evaluate((k) => JSON.parse(localStorage.getItem(k) || 'null'), key);
-}
-
-// Installed list paginates (~20 items/page); fresh seeds sort LAST alphabetically.
-// Sort by date (desc, newest first) so the seeded row is on the first page.
-async function sortNewestFirst(page) {
-  await page.locator('select').first().selectOption('date');
-}
 
 test.describe('Model manager — Discover', () => {
   test('discover page loads with search, source select and URL import', async ({ page }) => {

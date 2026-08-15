@@ -132,3 +132,59 @@ def insert_world_state_marker(session: Session, chat_id: str, changed: dict) -> 
     )
     session.add(marker)
     session.commit()
+
+
+# ---------------------------------------------------------------------------
+# LLM output extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_first_text(job_data: dict) -> str | None:
+    """Extract reply text from a completion payload.
+
+    LLM job outputs are ``[{'role': 'assistant', 'content': ...}]`` — the text
+    lives under ``content``, not ``text``. Fall back to the event_extra fields
+    (some branches complete with ``outputs=[]`` and carry text top-level).
+
+    Previously duplicated in world_integration_service.py (_first_text) and
+    three inline copies in job_processing.py.
+    """
+    if not isinstance(job_data, dict):
+        return None
+    outputs = job_data.get("outputs") or []
+    if outputs and isinstance(outputs[0], dict):
+        v = outputs[0].get("content") or outputs[0].get("text")
+        if v:
+            return v
+    return job_data.get("content") or job_data.get("prompt")
+
+
+# ---------------------------------------------------------------------------
+# TTS voice resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_voice_for_character(session: Session, char) -> tuple:
+    """Resolve the TTS voice for a character.
+
+    Priority: attached ``VoiceModel`` (voice_profile or name + language) →
+    legacy ``voice_profile`` string field.
+
+    Returns ``(voice_profile, voice_model_id, language)``, all ``None`` when
+    ``char`` is falsy or has no voice configured. Previously duplicated in
+    ``chats.py`` (narrate_message) and ``stories.py`` (narrate_chapter).
+    """
+    if not char:
+        return None, None, None
+    voice_profile = None
+    voice_model_id = getattr(char, "voice_model_id", None)
+    language = None
+    if voice_model_id:
+        from core.entities import VoiceModel
+        vm = session.get(VoiceModel, voice_model_id)
+        if vm:
+            voice_profile = vm.voice_profile or vm.name
+            language = vm.language
+    if not voice_profile:
+        voice_profile = getattr(char, "voice_profile", None)
+    return voice_profile, voice_model_id, language

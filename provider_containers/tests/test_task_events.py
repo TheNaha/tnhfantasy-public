@@ -63,8 +63,13 @@ class TestComfyStatusToTaskEvent:
         assert te.node == "KSampler"
 
     def test_cached_and_interrupted_are_skipped(self):
-        for status in ("execution_cached", "execution_interrupted", "execution_start"):
+        for status in ("execution_interrupted", "execution_start"):
             assert comfy_status_to_task_event({"status": status}, job_id="j") is None
+
+    def test_execution_cached_maps_to_cached_nodes(self):
+        te = comfy_status_to_task_event({"status": "execution_cached", "nodes": ["A"]}, job_id="job-7")
+        assert te.event == "cached_nodes"
+        assert te.nodes == ["A"]
 
     def test_progress_with_plain_value(self):
         te = comfy_status_to_task_event({"status": "progress", "value": 0.5}, job_id="job-6")
@@ -113,13 +118,13 @@ class TestTranslateTaskEvents:
 
     @pytest.mark.asyncio
     async def test_unparseable_lines_skipped(self):
-        source = _async_iter(["not-json", "", "42", {"status": "execution_cached"}])
+        source = _async_iter(["not-json", "", "42"])
         out = [line async for line in translate_task_events(source, job_id="job-4")]
         assert out == []
 
     @pytest.mark.asyncio
     async def test_keepalive_status_skipped(self):
-        source = _async_iter([{"status": "execution_cached", "nodes": []}])
+        source = _async_iter([{"status": "execution_start"}])
         out = [line async for line in translate_task_events(source, job_id="job-5")]
         assert out == []
 

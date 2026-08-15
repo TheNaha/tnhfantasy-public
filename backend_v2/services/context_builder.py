@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from core.entities import Character, LorebookEntry, MessageKind, MessageRole
+from core.entities import Character, LorebookEntry, MessageRole
 
 logger = logging.getLogger("context_builder")
 
@@ -359,7 +359,6 @@ def build_system_prompt_sections(
         entries: list[dict] = []
         try:
             from services.embedding_service import EmbeddingService
-            from sqlalchemy import text as _sql_text
 
             _svc = EmbeddingService()
             _TOP_K = 5  # max entries per lorebook when using semantic search
@@ -389,8 +388,6 @@ def build_system_prompt_sections(
                     try:
                         q_vec = _svc.generate_embedding(_query_text.strip())
                         # pgvector cosine distance via raw SQL for reliability
-                        from sqlalchemy import func, cast
-                        from pgvector.sqlalchemy import Vector as _Vector
 
                         results = session.exec(
                             select(LorebookEntry)

@@ -267,17 +267,25 @@ async def worker_websocket(
                 if job_id:
                     updates = {}
 
-                    if "status" in payload:
-                        try:
-                            updates["status"] = JobStatus(payload["status"])
-                        except ValueError:
-                            pass
-                    if "progress" in payload:
-                        updates["progress"] = payload["progress"]
-                    if "overall_progress" in payload:
-                        updates["overall_progress"] = payload["overall_progress"]
-                    elif "progress" in payload:
-                        updates["overall_progress"] = payload["progress"]
+                    # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": 0..1}
+                    if payload.get("event") == "progress" and payload.get("value") is not None:
+                        val = payload["value"]
+                        percent = int(val * 100) if val <= 1 else int(val)
+                        updates["progress"] = percent
+                        updates["overall_progress"] = percent
+                    else:
+                        # Legacy ad-hoc fields: raw progress / overall_progress
+                        if "status" in payload:
+                            try:
+                                updates["status"] = JobStatus(payload["status"])
+                            except ValueError:
+                                pass
+                        if "progress" in payload:
+                            updates["progress"] = payload["progress"]
+                        if "overall_progress" in payload:
+                            updates["overall_progress"] = payload["overall_progress"]
+                        elif "progress" in payload:
+                            updates["overall_progress"] = payload["progress"]
                     if "message" in payload:
                         updates["message"] = payload["message"]
 

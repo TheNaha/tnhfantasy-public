@@ -133,10 +133,9 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
             p_max = progress.get("max") or 0
             p_cur = progress.get("value") or 0
             value = (p_cur / p_max) if p_max else None
-    
-    # Value is now a 0-1 fraction. Convert to 0-100 percentage.
-    if value is not None:
-        value = value * 100
+    elif value is not None and value > 1:
+        # Defensive: legacy workers may emit 0-100 percent instead of a 0..1 fraction.
+        value = value / 100
 
     return TaskEvent(event="progress", job_id=job_id, value=value)
 

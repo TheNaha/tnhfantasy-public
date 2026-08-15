@@ -2,11 +2,11 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlmodel import Session, select, func
 
 from api.deps import get_session
 from core.entities import Campaign, Location, Character, Story, Chat
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import NotFoundError
+from sqlmodel import Session, select
 
 router = APIRouter()
 

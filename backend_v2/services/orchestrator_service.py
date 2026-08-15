@@ -8,14 +8,11 @@ Works as a post-completion processor inside job_processing.py:
   3. Repeat until plain text response (max depth enforced)
 """
 
-import asyncio
 import json
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from core.entities import JobStatus
-from core.workflow_builder import build_image_workflow
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService

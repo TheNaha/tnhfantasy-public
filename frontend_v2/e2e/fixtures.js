@@ -361,3 +361,52 @@ export {
   closeModal,
   drawMaskOnCanvas,
 };
+
+// --- Shared e2e helpers (migrated from spec-local copies) -------------------
+
+// /models/discover sort control (DOM order: [source, sort, nsfw, period]).
+export function sortSelect(page) {
+  return page.locator('select').nth(1);
+}
+
+export async function readPersisted(page, key) {
+  return page.evaluate((k) => JSON.parse(localStorage.getItem(k) || 'null'), key);
+}
+
+// Installed list paginates (~20 items/page); fresh seeds sort LAST alphabetically.
+// Sort by date (desc, newest first) so a seeded row lands on the first page.
+export async function sortNewestFirst(page) {
+  await page.locator('select').first().selectOption('date');
+}
+
+// ProviderListItem renders the whole card as a clickable role=button whose
+// accessible name is its full text content (including the id).
+export function providerCard(page, id) {
+  return page.getByRole('button', { name: new RegExp(id) }).first();
+}
+
+export async function seedProvider(page, id, { enabled = false, priority = 1 } = {}) {
+  return apiPost(page, '/providers', {
+    id,
+    type: 'llm-local',
+    worker_type: 'llm',
+    enabled,
+    priority,
+    credentials: { endpoint_url: 'http://127.0.0.1:9' },
+    runtime_config: { mode: 'container', port: 8001 },
+    deploy_config: { deploy_mode: 'manual' },
+  });
+}
+
+export async function fetchProvider(page, id) {
+  const { providers = [] } = await apiGet(page, '/providers');
+  return providers.find((p) => p.id === id) || null;
+}
+
+export async function cleanupProvider(page, id) {
+  try {
+    await apiDelete(page, `/providers/${id}`);
+  } catch {
+    // Already deleted by the test itself.
+  }
+}

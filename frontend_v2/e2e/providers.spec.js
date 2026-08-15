@@ -1,5 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { apiGet, apiPost, apiPut, apiDelete, uniqueName, expectToast } from './fixtures.js';
+import {
+    apiGet,
+    apiPost,
+    apiPut,
+    apiDelete,
+    uniqueName,
+    expectToast,
+    providerCard,
+    seedProvider,
+    fetchProvider,
+    cleanupProvider,
+} from './fixtures.js';
 
 // ---------------------------------------------------------------------------
 // Provider Management (Module E) — strict rewrite.
@@ -23,38 +34,6 @@ const STRATEGY_LABELS = {
     'priority-round-robin': 'Priority + RR',
     'priority-least-connections': 'Priority + LC',
 };
-
-function providerCard(page, id) {
-    // ProviderListItem renders the whole card as a clickable role=button whose
-    // accessible name is its full text content (including the id).
-    return page.getByRole('button', { name: new RegExp(id) }).first();
-}
-
-async function seedProvider(page, id, { enabled = false, priority = 1 } = {}) {
-    return apiPost(page, '/providers', {
-        id,
-        type: 'llm-local',
-        worker_type: 'llm',
-        enabled,
-        priority,
-        credentials: { endpoint_url: 'http://127.0.0.1:9' },
-        runtime_config: { mode: 'container', port: 8001 },
-        deploy_config: { deploy_mode: 'manual' },
-    });
-}
-
-async function fetchProvider(page, id) {
-    const { providers = [] } = await apiGet(page, '/providers');
-    return providers.find((p) => p.id === id) || null;
-}
-
-async function cleanupProvider(page, id) {
-    try {
-        await apiDelete(page, `/providers/${id}`);
-    } catch {
-        // Already deleted by the test itself.
-    }
-}
 
 test.describe('Provider Management (Module E)', () => {
     test.setTimeout(90000);

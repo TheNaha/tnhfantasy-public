@@ -6,9 +6,9 @@ from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, VoiceModel, Message, MessageRole
+from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
-from services.chat_utils import insert_world_state_marker, substitute_tavern_vars
+from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
@@ -436,7 +436,6 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
 @router.get("/{chat_id}/jobs")
 def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
     """Recent jobs (LLM + image) assigned to this chat, newest first."""
-    from sqlalchemy import JSON
 
     chat = session.get(Chat, chat_id)
     if not chat:
@@ -509,20 +508,10 @@ async def narrate_message(
     from core.workflow_builder import build_tts_workflow
 
     # Resolve voice profile: prefer voice_model_id → fallback to voice_profile string
-    voice_profile = None
-    voice_model_id = None
-    language = None
+    voice_profile = voice_model_id = language = None
     if chat.character_id:
         char = session.get(Character, chat.character_id)
-        if char:
-            voice_model_id = getattr(char, "voice_model_id", None)
-            if voice_model_id:
-                vm = session.get(VoiceModel, voice_model_id)
-                if vm:
-                    voice_profile = vm.voice_profile or vm.name
-                    language = vm.language
-            if not voice_profile:
-                voice_profile = getattr(char, "voice_profile", None)
+        voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
 
     workflow, metadata = build_tts_workflow(
         text=message.content,
@@ -1145,7 +1134,6 @@ async def illustrate_chat(
     the image lands in the chat as a kind=IMAGE message via the chat_image
     event (world_integration_service) and in the roleplay workspace.
     """
-    from core.workflow_builder import build_image_workflow
     from services.job_queue import queue_manager
     from services.model_availability_service import ModelAvailabilityService
 

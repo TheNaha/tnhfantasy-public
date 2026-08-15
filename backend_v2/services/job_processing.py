@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import io
 import os
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -11,6 +9,7 @@ from core.entities import JobStatus
 from core.exceptions import NotFoundError
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
+from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
 from services.orchestrator_service import MAX_AGENTIC_DEPTH
 
@@ -289,12 +288,7 @@ async def _finalize_llm_job(
     job_type = _classify_llm_job_type(job, final_result)
 
     if job_type == "impersonation":
-        imp_text = ""
-        if final_result.get("outputs") and isinstance(final_result["outputs"], list):
-            imp_text = (final_result["outputs"][0] or {}).get("content", "")
-        if not imp_text and final_result.get("text"):
-            imp_text = final_result["text"]
-        imp_text = imp_text.strip()
+        imp_text = (extract_first_text(final_result) or "").strip()
 
         imp_chat_id = job.metadata_.get("chat_id")
         
@@ -315,12 +309,7 @@ async def _finalize_llm_job(
         return
 
     if job_type == "story_illustrate_prompt":
-        generated_prompt = ""
-        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
-            generated_prompt = (final_result.get("outputs")[0] or {}).get("content", "")
-        if not generated_prompt and final_result.get("text"):
-            generated_prompt = final_result.get("text")
-        generated_prompt = generated_prompt.strip()
+        generated_prompt = (extract_first_text(final_result) or "").strip()
 
         story_id   = job.metadata_.get("story_id")
         chapter_id = job.metadata_.get("chapter_id")
@@ -350,11 +339,7 @@ async def _finalize_llm_job(
         return
 
     if job_type == "narrator":
-        narrator_content = ""
-        if final_result.get("outputs") and isinstance(final_result.get("outputs"), list):
-            narrator_content = (final_result.get("outputs")[0] or {}).get("content", "")
-        if not narrator_content and final_result.get("text"):
-            narrator_content = final_result.get("text")
+        narrator_content = extract_first_text(final_result) or ""
 
         narrator_chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
         if not narrator_chat_id:
