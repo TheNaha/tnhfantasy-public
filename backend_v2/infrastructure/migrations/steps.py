@@ -1491,4 +1491,304 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add additional_character_ids column to chats table for group chats",
             apply_fn=_migration_add_chat_additional_character_ids,
         ),
+        MigrationStep(
+            version="040_create_voice_models",
+            description="Create voice_models table for TTS voice profile management",
+            apply_fn=_migration_040_create_voice_models,
+        ),
+        MigrationStep(
+            version="041_create_character_memories",
+            description="Create character_memories table with pgvector embedding for semantic search",
+            apply_fn=_migration_041_create_character_memories,
+        ),
+        MigrationStep(
+            version="042_add_branching_and_expressions",
+            description="Add parent_id/branch_id to messages and expressions to characters",
+            apply_fn=_migration_042_add_branching_and_expressions,
+        ),
+        MigrationStep(
+            version="043_add_story_publishing_fields",
+            description="Add publishing fields to stories for shareable story export",
+            apply_fn=_migration_043_add_story_publishing_fields,
+        ),
+        MigrationStep(
+            version="044_add_character_voice_model_fk",
+            description="Add voice_model_id FK to characters for TTS voice profile linking",
+            apply_fn=_migration_044_add_character_voice_model_fk,
+        ),
+        MigrationStep(
+            version="045_create_locations",
+            description="Create locations table for world-building location entities",
+            apply_fn=_migration_045_create_locations,
+        ),
+        MigrationStep(
+            version="046_create_campaigns",
+            description="Create campaigns table for campaign/chronicle mode",
+            apply_fn=_migration_046_create_campaigns,
+        ),
     ]
+def _migration_040_create_voice_models(conn) -> bool:
+    """Create voice_models table for managing TTS voice profiles."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "voice_models" in table_names:
+        logger.info("migration_voice_models_skipped", reason="table_exists")
+        return False
+    if "characters" not in table_names:
+        logger.info("migration_voice_models_skipped", reason="characters_table_missing")
+        return False
+
+    conn.execute(text("""
+        CREATE TABLE voice_models (
+            id VARCHAR PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            description TEXT,
+            type VARCHAR NOT NULL DEFAULT 'xtts',
+            voice_profile VARCHAR,
+            model_path VARCHAR,
+            language VARCHAR,
+            preview_text TEXT,
+            character_id VARCHAR REFERENCES characters(id) ON DELETE SET NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_voice_models_character ON voice_models(character_id)"))
+
+    logger.info("migration_voice_models_created")
+    return True
+
+
+def _migration_041_create_character_memories(conn) -> bool:
+    """Create character_memories table with pgvector embedding for semantic search."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "character_memories" in table_names:
+        logger.info("migration_character_memories_skipped", reason="table_exists")
+        return False
+    if "characters" not in table_names:
+        logger.info("migration_character_memories_skipped", reason="characters_table_missing")
+        return False
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("""
+            CREATE TABLE character_memories (
+                id VARCHAR PRIMARY KEY,
+                character_id VARCHAR NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                embedding VECTOR(384),
+                tags JSONB DEFAULT '[]',
+                importance INTEGER DEFAULT 5,
+                last_accessed_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_character_memories_char ON character_memories(character_id)"))
+        conn.execute(text(
+            "CREATE INDEX idx_character_memories_embedding ON character_memories "
+            "USING hnsw (embedding vector_cosine_ops)"
+        ))
+    else:
+        # SQLite fallback — store embedding as JSON array
+        conn.execute(text("""
+            CREATE TABLE character_memories (
+                id VARCHAR PRIMARY KEY,
+                character_id VARCHAR NOT NULL,
+                content TEXT NOT NULL,
+                embedding TEXT,
+                tags TEXT DEFAULT '[]',
+                importance INTEGER DEFAULT 5,
+                last_accessed_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_character_memories_char ON character_memories(character_id)"))
+
+    logger.info("migration_character_memories_created")
+    return True
+
+
+def _migration_042_add_branching_and_expressions(conn) -> bool:
+    """Add branching fields to messages and expressions to characters."""
+    inspector = inspect(conn)
+    touched = False
+
+    # --- Messages: add parent_id, branch_id, branch_name ---
+    if "messages" in set(inspector.get_table_names()):
+        columns = {col["name"] for col in inspector.get_columns("messages")}
+        for col_name, col_type in (
+            ("parent_id", "TEXT"),
+            ("branch_id", "TEXT"),
+            ("branch_name", "VARCHAR(128)"),
+        ):
+            if col_name not in columns:
+                conn.execute(text(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}"))
+                logger.info("migration_column_added", table="messages", column=col_name)
+                touched = True
+        # Self-referential FK for parent_id (deferred on SQLite)
+        if "parent_id" in {col["name"] for col in inspector.get_columns("messages")}:
+            if conn.dialect.name == "postgresql":
+                conn.execute(text(
+                    "ALTER TABLE messages ADD CONSTRAINT fk_messages_parent "
+                    "FOREIGN KEY (parent_id) REFERENCES messages(id)"
+                ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_message_parent ON messages(parent_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_message_branch ON messages(chat_id, branch_id)"
+            ))
+
+    # --- Characters: add expressions JSON column ---
+    if "characters" in set(inspector.get_table_names()):
+        columns = {col["name"] for col in inspector.get_columns("characters")}
+        if "expressions" not in columns:
+            conn.execute(text("ALTER TABLE characters ADD COLUMN expressions JSON DEFAULT '{}'"))
+            logger.info("migration_column_added", table="characters", column="expressions")
+            touched = True
+
+    # --- Characters: add expressions_lora JSON column ---
+    if "characters" in set(inspector.get_table_names()):
+        columns = {col["name"] for col in inspector.get_columns("characters")}
+        if "expressions_lora" not in columns:
+            conn.execute(text("ALTER TABLE characters ADD COLUMN expressions_lora JSON DEFAULT '[]'"))
+            logger.info("migration_column_added", table="characters", column="expressions_lora")
+            touched = True
+
+    return touched
+
+
+def _migration_043_add_story_publishing_fields(conn) -> bool:
+    """Add publishing fields to stories for shareable story export."""
+    inspector = inspect(conn)
+    if "stories" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("stories")}
+    touched = False
+
+    for col_name, col_type, default in [
+        ("published_token", "VARCHAR(128)", None),
+        ("is_published", "BOOLEAN", "FALSE"),
+        ("published_at", "TIMESTAMP", None),
+    ]:
+        if col_name not in columns:
+            sql = f"ALTER TABLE stories ADD COLUMN {col_name} {col_type}"
+            if default is not None:
+                sql += f" DEFAULT {default}"
+            conn.execute(text(sql))
+            logger.info("migration_column_added", table="stories", column=col_name)
+            touched = True
+
+    # Unique index on published_token (only where not null)
+    if conn.dialect.name == "postgresql":
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_stories_published_token "
+            "ON stories (published_token) WHERE is_published"
+        ))
+
+    return touched
+
+
+def _migration_044_add_character_voice_model_fk(conn) -> bool:
+    """Add voice_model_id FK to characters (replaces raw voice_profile string)."""
+    inspector = inspect(conn)
+    if "characters" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+    if "voice_model_id" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN voice_model_id VARCHAR REFERENCES voice_models(id) ON DELETE SET NULL"))
+        logger.info("migration_column_added", table="characters", column="voice_model_id")
+        return True
+    return False
+
+
+def _migration_045_create_locations(conn) -> bool:
+    """Create locations table for world-building location entities."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "locations" in table_names:
+        logger.info("migration_locations_skipped", reason="table_exists")
+        return False
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("""
+            CREATE TABLE locations (
+                id VARCHAR PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                description TEXT,
+                atmosphere TEXT,
+                tags JSONB DEFAULT '[]',
+                image_path VARCHAR,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_locations_name ON locations(name)"))
+        conn.execute(text("CREATE INDEX idx_locations_tags ON locations USING GIN (tags)"))
+    else:
+        conn.execute(text("""
+            CREATE TABLE locations (
+                id VARCHAR PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                description TEXT,
+                atmosphere TEXT,
+                tags TEXT DEFAULT '[]',
+                image_path VARCHAR,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_locations_name ON locations(name)"))
+
+    logger.info("migration_locations_created")
+    return True
+
+
+def _migration_046_create_campaigns(conn) -> bool:
+    """Create campaigns table for campaign/chronicle mode."""
+    inspector = inspect(conn)
+    table_names = set(inspector.get_table_names())
+    if "campaigns" in table_names:
+        logger.info("migration_campaigns_skipped", reason="table_exists")
+        return False
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("""
+            CREATE TABLE campaigns (
+                id VARCHAR PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                description TEXT,
+                character_ids JSONB DEFAULT '[]',
+                story_ids JSONB DEFAULT '[]',
+                chat_ids JSONB DEFAULT '[]',
+                location_ids JSONB DEFAULT '[]',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_campaigns_name ON campaigns(name)"))
+    else:
+        conn.execute(text("""
+            CREATE TABLE campaigns (
+                id VARCHAR PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                description TEXT,
+                character_ids TEXT DEFAULT '[]',
+                story_ids TEXT DEFAULT '[]',
+                chat_ids TEXT DEFAULT '[]',
+                location_ids TEXT DEFAULT '[]',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX idx_campaigns_name ON campaigns(name)"))
+
+    logger.info("migration_campaigns_created")
+    return True
+

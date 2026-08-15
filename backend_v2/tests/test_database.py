@@ -195,6 +195,8 @@ class TestRunMigrations:
             "025_add_jobs_claimed_at",
             "035_add_composite_indexes",
             "036_add_job_typed_columns",
+            "045_create_locations",
+            "046_create_campaigns",
         }
 
     def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
@@ -295,6 +297,8 @@ class TestRunMigrations:
             "025_add_jobs_claimed_at",
             "035_add_composite_indexes",
             "036_add_job_typed_columns",
+            "045_create_locations",
+            "046_create_campaigns",
         ]
 
     def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):

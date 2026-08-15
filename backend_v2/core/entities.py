@@ -744,6 +744,26 @@ class DeletedFileTombstone(SQLModel, table=True):
 # WORLD VAULT (ROLEPLAY & STORY)
 # ============================================================================
 
+class VoiceModel(SQLModel, table=True):
+    __tablename__ = "voice_models"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = Field(default=None, sa_column=Column(Text))
+    type: str = Field(default="xtts")  # "xtts", "bark", "embedding"
+    voice_profile: str | None = Field(default=None)  # Profile name or speaker reference
+    model_path: str | None = Field(default=None)  # Path to model files
+    language: str | None = Field(default=None)  # e.g. "en", "ja"
+    preview_text: str | None = Field(default=None, sa_column=Column(Text))
+    character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    character: Optional["Character"] = Relationship(
+        back_populates="voice_models",
+        sa_relationship_kwargs={"foreign_keys": "VoiceModel.character_id"},
+    )
+
+
 class Character(SQLModel, table=True):
     __tablename__ = "characters"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -763,7 +783,10 @@ class Character(SQLModel, table=True):
     visual_tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     lora_triggers: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))
     voice_profile: str | None = Field(default=None) # Optional voice model profile
+    voice_model_id: str | None = Field(foreign_key="voice_models.id", default=None, index=True)
     alternate_greetings: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))
+    expressions: dict[str, str] | None = Field(default=None, sa_column=Column(JSONColumn))  # emotion name → avatar_path
+    expressions_lora: list[str] | None = Field(default=None, sa_column=Column(JSONColumn))  # LORA triggers per expression
     
     # Generation Settings
     checkpoint: str | None = Field(default=None)
@@ -785,6 +808,11 @@ class Character(SQLModel, table=True):
         back_populates="character",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+    voice_models: list["VoiceModel"] = Relationship(
+        back_populates="character",
+        sa_relationship_kwargs={"foreign_keys": "VoiceModel.character_id"},
+    )
+    memories: list["CharacterMemory"] = Relationship(back_populates="character")
 
 class Chat(SQLModel, table=True):
     __tablename__ = "chats"
@@ -868,10 +896,38 @@ class Message(SQLModel, table=True):
     tool_calls: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     message_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     pinned: bool = Field(default=False)
+    # Branching / timeline support
+    parent_id: str | None = Field(default=None, foreign_key="messages.id", index=True, description="Parent message this is a reply/alternate of")
+    branch_id: str | None = Field(default=None, index=True, description="UUID grouping messages within the same conversation branch")
+    branch_name: str | None = Field(default=None, description="Human-readable branch label, e.g. 'Original', 'Branch 1'")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     chat: Optional["Chat"] = Relationship(back_populates="messages")
+    children: list["Message"] = Relationship(
+        sa_relationship_kwargs={"remote_side": "Message.id"},
+        back_populates="parent",
+    )
+    parent: Optional["Message"] = Relationship(back_populates="children")
+
+
+class CharacterMemory(SQLModel, table=True):
+    __tablename__ = "character_memories"
+    __table_args__ = (
+        Index('idx_character_memory_char', 'character_id'),
+        Index('idx_character_memory_accessed', 'last_accessed_at'),
+    )
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    character_id: str = Field(foreign_key="characters.id", index=True)
+    content: str = Field(sa_column=Column(Text))
+    embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
+    tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    importance: int = Field(default=5, ge=1, le=10)
+    last_accessed_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    character: Optional["Character"] = Relationship(back_populates="memories")
 
 class Lorebook(SQLModel, table=True):
     __tablename__ = "lorebooks"
@@ -927,6 +983,10 @@ class Story(SQLModel, table=True):
     is_archived: bool = Field(default=False)
     # Per-story agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
     max_agentic_depth: int | None = Field(default=None)
+    # Publishing / export
+    published_token: str | None = Field(default=None, index=True)
+    is_published: bool = Field(default=False)
+    published_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     chapters: list["StoryChapter"] = Relationship(
@@ -958,3 +1018,29 @@ class StoryChapter(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     story: Optional["Story"] = Relationship(back_populates="chapters")
+
+
+class Location(SQLModel, table=True):
+    __tablename__ = "locations"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = Field(default=None, sa_column=Column(Text))
+    atmosphere: str | None = Field(default=None, sa_column=Column(Text))
+    tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    image_path: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Campaign(SQLModel, table=True):
+    __tablename__ = "campaigns"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = Field(default=None, sa_column=Column(Text))
+    character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    story_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    chat_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
