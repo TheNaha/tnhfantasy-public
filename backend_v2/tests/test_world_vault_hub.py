@@ -31,7 +31,7 @@ def setup_entities(session):
 
 def test_world_vault_entities(client, session, setup_entities):
     char, chat, lorebook, story = setup_entities
-    response = client.get("/api/v2/entities")
+    response = client.get("/api/v2/world-vault/entities")
     assert response.status_code == 200
     data = response.json()
     assert "counts" in data
@@ -41,7 +41,7 @@ def test_world_vault_entities(client, session, setup_entities):
 
 def test_world_vault_relationships(client, session, setup_entities):
     char, chat, lorebook, story = setup_entities
-    response = client.get("/api/v2/relationships")
+    response = client.get("/api/v2/world-vault/relationships")
     assert response.status_code == 200
     data = response.json()
     assert "character_chats" in data
@@ -51,7 +51,7 @@ def test_world_vault_relationships(client, session, setup_entities):
 
 def test_world_vault_search(client, session, setup_entities):
     char, chat, lorebook, story = setup_entities
-    response = client.get("/api/v2/search?q=Hub")
+    response = client.get("/api/v2/world-vault/search?q=Hub")
     assert response.status_code == 200
     data = response.json()
     assert "results" in data
@@ -60,7 +60,7 @@ def test_world_vault_search(client, session, setup_entities):
 
 def test_world_vault_search_with_types(client, session, setup_entities):
     char, chat, lorebook, story = setup_entities
-    response = client.get("/api/v2/search?q=Story&type=story")
+    response = client.get("/api/v2/world-vault/search?q=Story&type=story")
     assert response.status_code == 200
     data = response.json()
     assert len(data["results"]) >= 1

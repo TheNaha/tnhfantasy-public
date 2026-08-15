@@ -4,6 +4,7 @@ across all entity types.
 """
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func
+from sqlalchemy import cast, String
 
 from api.deps import get_session
 from core.entities import (
@@ -63,17 +64,19 @@ def get_entity_dashboard(session: Session = Depends(get_session)):
 def get_relationships(session: Session = Depends(get_session)):
     """Return entity relationship graph data."""
     # Character → Chats
-    char_chat_links = session.exec(
-        select(Character.id, Character.name, Chat.id, Chat.name)
-        .join(Chat, Chat.character_id == Character.id)
-        .limit(100)
-    ).all()
+    char_chat_links = [
+        tuple(row) for row in session.exec(
+            select(Character.id, Character.name, Chat.id, Chat.name)
+            .join(Chat, Chat.character_id == Character.id)
+            .limit(100)
+        ).all()
+    ]
 
     # Character → Stories (via character_ids JSON)
     char_story_links = []
     for char in session.exec(select(Character).limit(100)).all():
         stories = session.exec(
-            select(Story).where(Story.character_ids.contains([char.id]))
+            select(Story).where(cast(Story.character_ids, String).contains(char.id))
         ).all()
         for s in stories:
             char_story_links.append({
@@ -98,11 +101,13 @@ def get_relationships(session: Session = Depends(get_session)):
             })
 
     # Character → VoiceModels
-    voice_links = session.exec(
-        select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
-        .join(Character, Character.id == VoiceModel.character_id)
-        .limit(50)
-    ).all()
+    voice_links = [
+        tuple(row) for row in session.exec(
+            select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
+            .join(Character, Character.id == VoiceModel.character_id)
+            .limit(50)
+        ).all()
+    ]
 
     return {
         "character_chats": char_chat_links,
