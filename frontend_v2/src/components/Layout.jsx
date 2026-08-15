@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch } from 'lucide-react';
 import { useMemo, useState, memo } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -192,6 +192,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/" icon={Home} label="Home" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/gallery" icon={Images} label="Gallery" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/generate" icon={Wand2} label="Simple Generate" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/batch-generate" icon={Sparkles} label="Batch Generate" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/img2img" icon={ImagePlus} label="Img2Img" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/inpaint" icon={Paintbrush} label="Inpaint" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/advanced" icon={Settings} label="Advanced" />
@@ -200,6 +201,12 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/chat" icon={MessageSquare} label="Chat Workspace" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/story" icon={BookOpen} label="Story Sandbox" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/characters" icon={Users} label="Characters" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/avatar-gallery" icon={User} label="Avatar Gallery" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-timeline" icon={Calendar} label="World Timeline" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/campaigns" icon={Swords} label="Campaigns" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-graph" icon={GitBranch} label="World Graph" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/world-vault" icon={Globe} label="World Vault" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/locations" icon={MapPin} label="Locations" />
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />

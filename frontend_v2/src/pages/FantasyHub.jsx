@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2 } from 'lucide-react';
+import { Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2, Tag, Volume2 } from 'lucide-react';
 import clsx from 'clsx';
 
 const CARDS = [
@@ -30,6 +30,33 @@ const CARDS = [
         gradient: 'from-amber-500/20 to-orange-500/20',
         iconColor: 'text-amber-400',
         borderColor: 'group-hover:border-amber-500/30',
+    },
+    {
+        to: '/world-vault',
+        icon: Sparkles,
+        title: 'World Vault',
+        description: 'Central hub for managing all your entities — characters, chats, stories, voices, memories, and more. Search and explore relationships.',
+        gradient: 'from-teal-500/20 to-cyan-500/20',
+        iconColor: 'text-teal-400',
+        borderColor: 'group-hover:border-teal-500/30',
+    },
+    {
+        to: '/scenarios',
+        icon: Tag,
+        title: 'Scenarios',
+        description: 'Define reusable prompt templates and world settings. Apply them to chats and stories with one click.',
+        gradient: 'from-violet-500/20 to-purple-500/20',
+        iconColor: 'text-violet-400',
+        borderColor: 'group-hover:border-violet-500/30',
+    },
+    {
+        to: '/voices',
+        icon: Volume2,
+        title: 'Voice Models',
+        description: 'Manage TTS voice models for character narration. Preview voices and link them to characters.',
+        gradient: 'from-rose-500/20 to-pink-500/20',
+        iconColor: 'text-rose-400',
+        borderColor: 'group-hover:border-rose-500/30',
     },
 ];
 
@@ -103,15 +130,29 @@ export default function FantasyHub() {
                 ))}
             </motion.div>
 
-            <motion.div
-                className="mt-16 flex items-center gap-6 text-sm text-gray-500"
+            <motion.div className="mt-16 flex items-center gap-6 text-sm text-gray-500"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.8 }}
             >
                 <div className="flex items-center gap-2">
                     <Gamepad2 size={16} />
-                    <span>Three pillars of creation</span>
+                    <span>Image Generation</span>
+                </div>
+                <div className="w-1 h-1 rounded-full bg-gray-600" />
+                <div className="flex items-center gap-2">
+                    <MessageSquare size={16} />
+                    <span>Roleplay Chat</span>
+                </div>
+                <div className="w-1 h-1 rounded-full bg-gray-600" />
+                <div className="flex items-center gap-2">
+                    <BookOpen size={16} />
+                    <span>Story Sandbox</span>
+                </div>
+                <div className="w-1 h-1 rounded-full bg-gray-600" />
+                <div className="flex items-center gap-2">
+                    <Sparkles size={16} />
+                    <span>World Vault</span>
                 </div>
                 <div className="w-1 h-1 rounded-full bg-gray-600" />
                 <div className="flex items-center gap-2">
@@ -120,7 +161,7 @@ export default function FantasyHub() {
                 </div>
                 <div className="w-1 h-1 rounded-full bg-gray-600" />
                 <div className="flex items-center gap-2">
-                    <Sparkles size={16} />
+                    <Volume2 size={16} />
                     <span>Agentic AI workflows</span>
                 </div>
             </motion.div>

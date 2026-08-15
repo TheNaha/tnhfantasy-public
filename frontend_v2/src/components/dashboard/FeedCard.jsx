@@ -17,7 +17,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 
-import { api, ApiError, createIdempotencyKey } from "../../api";
+import { api, ApiError, createIdempotencyKey, generateApi } from "../../api";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
@@ -136,40 +136,39 @@ const FeedCard = memo(function FeedCard({
       // Generate new random seed
       const newSeed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
 
-      // Build workflow using WorkflowBuilder (import dynamically to avoid circular deps)
-      const { WorkflowBuilder } = await import("../../utils/workflowBuilder");
-      const builder = new WorkflowBuilder();
-      const workflow = builder.build({
-        prompt: meta.prompt,
-        negativePrompt: meta.negativePrompt,
+      // Build options
+      const options = {
+        mode: meta.type || 't2i',
+        ...meta,
         seed: newSeed,
-        steps: meta.steps,
-        cfg: meta.cfg,
-        sampler: meta.sampler,
-        scheduler: meta.scheduler,
-        width: meta.width,
-        height: meta.height,
-        checkpoint:
-          typeof meta.checkpoint === "object"
-            ? meta.checkpoint.name
-            : meta.checkpoint,
-        loras: meta.loras || [],
-        hiresFix: meta.hiresFix,
-        hiresUpscaler: meta.hiresUpscaler,
-        adetailer: meta.adetailer,
-        adetailerModel: meta.adetailerModel,
-      });
-
-      // Submit job
-      const jobData = {
-        workflow,
-        metadata: {
-          ...meta,
-          seed: newSeed,
-        },
+        // Override the image input to make sure it feeds correctly for img2img
+        inputImage: meta.sourceImage, 
+        checkpoint: meta.checkpoint?.name || meta.checkpoint,
+        unet: meta.unet?.name || meta.unet,
+        clip: meta.clip?.name || meta.clip,
+        vae: meta.vae?.name || meta.vae,
+        clip2: meta.clip2?.name || meta.clip2,
+        loras: meta.loras?.map(l => ({ name: l.name || l, strength: l.strength || 1.0 })),
+        controlnets: meta.controlnets?.map(c => ({
+            name: c.name || c,
+            image: c.image,
+            preprocessor: c.preprocessor || "None",
+            strength: c.strength || 1.0
+        })),
+        ipAdapters: meta.ipAdapters?.map(ip => ({
+            model: ip.model,
+            clipVision: ip.clipVision,
+            image: ip.image,
+            weight: ip.weight || 1.0
+        }))
       };
 
-      await api.post("/api/generate", jobData, {
+      const metadata = {
+        ...meta,
+        seed: newSeed,
+      };
+
+      await generateApi.workflow(options, metadata, {
         idempotencyKey: createIdempotencyKey("generate-remix"),
       });
       toast.success("Remix queued! Creating variation...", {

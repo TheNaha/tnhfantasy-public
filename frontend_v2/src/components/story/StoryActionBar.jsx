@@ -1,5 +1,5 @@
 import React from 'react';
-import { GitBranch, Play, ImageIcon, Loader2 } from 'lucide-react';
+import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen } from 'lucide-react';
 import clsx from 'clsx';
 
 export default React.memo(function StoryActionBar({
@@ -14,6 +14,11 @@ export default React.memo(function StoryActionBar({
     beatInput,
     onBeatInputChange,
     onAddBeat,
+    onExport,
+    onPublish,
+    isPublished,
+    onNarrate,
+    activeChapterId,
 }) {
     return (
         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
@@ -82,6 +87,36 @@ export default React.memo(function StoryActionBar({
                 >
                     Add
                 </button>
+            </div>
+
+            <div className="flex gap-2 shrink-0">
+                {activeChapterId && onNarrate && (
+                    <button
+                        onClick={() => onNarrate(activeChapterId)}
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-all text-sm"
+                        title="Narrate chapter with TTS"
+                    >
+                        <Play size={14} /> <span className="hidden sm:inline">Narrate</span>
+                    </button>
+                )}
+                {onExport && (
+                    <button
+                        onClick={onExport}
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-800 text-gray-300 rounded-lg font-medium hover:bg-gray-700 transition-all text-sm"
+                        title="Export story"
+                    >
+                        <FileDown size={14} /> <span className="hidden sm:inline">Export</span>
+                    </button>
+                )}
+                {onPublish && !isPublished && (
+                    <button
+                        onClick={onPublish}
+                        className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-all text-sm"
+                        title="Publish story to web"
+                    >
+                        <BookOpen size={14} /> <span className="hidden sm:inline">Publish</span>
+                    </button>
+                )}
             </div>
         </div>
     );

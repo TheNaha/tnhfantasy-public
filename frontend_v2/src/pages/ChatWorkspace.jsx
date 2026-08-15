@@ -6,7 +6,7 @@ import {
     Plus, Loader2, Trash2, Edit3, BookOpen, Wand2,
     X, Clock, MapPin,
     Activity, Download, Ghost,
-    MoreHorizontal, Palette
+    MoreHorizontal, Palette, GitBranch
 } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
@@ -46,13 +46,16 @@ import NewChatModal from '../components/chat/NewChatModal';
 import GreetingPickerModal from '../components/chat/GreetingPickerModal';
 import CharacterDetailsModal from '../components/chat/CharacterDetailsModal';
 import ChatContextPanel from '../components/chat/ChatContextPanel';
+import ChatTimeline from '../components/chat/ChatTimeline';
 import CommandPalette from '../components/chat/CommandPalette';
 import { COMMANDS } from '../components/chat/chatCommands';
 import StreamingInput from '../components/chat/StreamingInput';
 
 
 export default function ChatWorkspace() {
-    const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context'
+    const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context', 'timeline'
+    const [timelineVisible, setTimelineVisible] = useState(false);
+    const [activeBranch, setActiveBranch] = useState(null);
     const [chatsCollapsed, setChatsCollapsed] = useState(() => {
         try { return localStorage.getItem('cw.chatsCollapsed') === '1'; } catch { return false; }
     });
@@ -935,6 +938,7 @@ export default function ChatWorkspace() {
                     onAvatarClick={handleAvatarClick}
                     onGenerateTTS={handleGenerateTTS}
                     onIllustrate={handleMessageIllustrate}
+                    ttsEnabled={settings.ai?.ttsEnabled}
                 />
             );
         }
@@ -1181,6 +1185,13 @@ export default function ChatWorkspace() {
                         title="Export chat as Markdown"
                     >
                         <Download size={18} />
+                    </button>
+                    <button
+                        onClick={() => setTimelineVisible(true)}
+                        className="hidden lg:flex p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors shrink-0"
+                        title="Show Branch Timeline"
+                    >
+                        <GitBranch size={18} />
                     </button>
                     {contextCollapsed && (
                         <button
@@ -1544,6 +1555,47 @@ export default function ChatWorkspace() {
                     onShowScenes={() => setShowScenesModal(true)}
                 />
             </div>
+
+            {/* === TIMELINE PANEL (Overlay on desktop) === */}
+            <AnimatePresence>
+                {timelineVisible && (
+                    <motion.div
+                        initial={{ x: 360, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        exit={{ x: 360, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: 'easeInOut' }}
+                        className="fixed lg:absolute inset-y-0 right-0 z-40 w-80 bg-gray-900 border-l border-white/10 overflow-hidden flex flex-col"
+                    >
+                        <div className="h-14 border-b border-white/5 flex items-center justify-between px-4 shrink-0 bg-gray-900/60 backdrop-blur-md">
+                            <h3 className="font-semibold text-gray-200 flex items-center gap-2 text-sm">
+                                <GitBranch size={14} className="text-gray-400" />
+                                Branch Timeline
+                            </h3>
+                            <button
+                                onClick={() => setTimelineVisible(false)}
+                                className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+                                title="Close timeline"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                            {activeChatId && (
+                                <ChatTimeline
+                                    chatId={activeChatId}
+                                    activeBranch={activeBranch}
+                                    onBranchChange={() => {
+                                        setTimelineVisible(false);
+                                    }}
+                                    onNewBranch={(data) => {
+                                        setActiveBranch(data.branch_id);
+                                    }}
+                                />
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
             </div>{/* === END THREE-COLUMN ROW === */}
 
             {/* === MODALS === */}

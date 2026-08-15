@@ -55,6 +55,9 @@ vi.mock('../hooks/useWorldVault', () => ({
     useUpdateCharacter: () => ({ mutateAsync: vi.fn() }),
     useParseStory: () => ({ mutateAsync: vi.fn() }),
     useExportStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useExportStoryFormatted: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    usePublishStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useNarrateChapter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
 }));
 
 vi.mock('../api/websocket', () => ({

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, useExportStory } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
@@ -20,6 +20,7 @@ import StoryHeader from '../components/story/StoryHeader';
 import StoryEditor from '../components/story/StoryEditor';
 import StoryBeatsPanel from '../components/story/StoryBeatsPanel';
 import StoryActionBar from '../components/story/StoryActionBar';
+import ExportModal from '../components/story/ExportModal';
 import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import IllustrateModal from '../components/story/IllustrateModal';
@@ -67,8 +68,10 @@ export default function StorySandbox() {
     const updateChapter = useUpdateChapter();
     const illustrateChapter = useIllustrateChapter();
     const parseStory = useParseStory();
-    const exportStory = useExportStory();
+    const publishStory = usePublishStory();
+    const narrateChapter = useNarrateChapter();
 
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const wordCount = useMemo(() => {
         const text = editorContent || '';
         const trimmed = text.trim();
@@ -524,8 +527,30 @@ export default function StorySandbox() {
 
     const handleExportStory = useCallback(() => {
         if (!activeStoryId) return;
-        exportStory.mutate({ storyId: activeStoryId });
-    }, [activeStoryId, exportStory]);
+        setIsExportModalOpen(true);
+    }, [activeStoryId]);
+
+    const handlePublishStory = useCallback(() => {
+        if (!activeStoryId) return;
+        publishStory.mutate({ storyId: activeStoryId }, {
+            onSuccess: (data) => {
+                toast.success('Story published!');
+                if (data?.read_url) {
+                    navigator.clipboard.writeText(window.location.origin + data.read_url);
+                    toast('Shareable link copied to clipboard!', { icon: '🔗' });
+                }
+            },
+            onError: (e) => toast.error(`Publish failed: ${e.message}`),
+        });
+    }, [activeStoryId, publishStory]);
+
+    const handleNarrateChapter = useCallback((chapterId) => {
+        if (!activeStoryId) return;
+        narrateChapter.mutate({ storyId: activeStoryId, chapterId }, {
+            onSuccess: () => toast.success('Narration job queued'),
+            onError: (e) => toast.error(`Narration failed: ${e.message}`),
+        });
+    }, [activeStoryId, narrateChapter]);
 
     const handleDeleteChapter = async (chapterId) => {
         if (!activeStoryId) return;
@@ -734,6 +759,11 @@ export default function StorySandbox() {
                                             beatInput={beatInput}
                                             onBeatInputChange={setBeatInput}
                                             onAddBeat={handleAddBeat}
+                                            onExport={handleExportStory}
+                                            onPublish={handlePublishStory}
+                                            isPublished={activeStory?.is_published}
+                                            onNarrate={handleNarrateChapter}
+                                            activeChapterId={activeChapter?.id}
                                         />
                                     </div>
                                 )}
@@ -794,6 +824,14 @@ export default function StorySandbox() {
 
             {/* Shared mobile bottom tab bar for the StorySandbox workspaces. */}
             </div>
+
+            <ExportModal
+                story={activeStory}
+                storyId={activeStoryId}
+                isOpen={isExportModalOpen}
+                onClose={() => setIsExportModalOpen(false)}
+            />
+
             <BottomTabBar
                 inline
                 tabs={[

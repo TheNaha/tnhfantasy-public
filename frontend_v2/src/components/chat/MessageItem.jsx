@@ -8,7 +8,7 @@ import { thumbUrl, assetUrl } from '../../utils/assetUrl';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import TavernMessage from './TavernMessage';
 
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate, ttsEnabled = false }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(msg.content);
 
@@ -106,7 +106,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         {(msg.role === 'char' || msg.role === 'assistant') ? (
                             <div className="flex flex-col gap-1.5 w-full">
                                 {msg.content && <TavernMessage content={msg.content} />}
-                                {meta.audio_path && (
+                                {ttsEnabled && meta.audio_path && (
                                     <audio src={assetUrl(meta.audio_path)} controls className="h-8 rounded w-full max-w-xs mt-1" />
                                 )}
                                 {msg.tool_calls?.length > 0 && (
@@ -176,7 +176,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                         ) : msg.role === 'user' ? (
                             <div className="text-sm leading-relaxed break-words text-gray-100">
                                 <TavernMessage content={msg.content} alignRight />
-                                {meta.audio_path && (
+                                {ttsEnabled && meta.audio_path && (
                                     <audio src={assetUrl(meta.audio_path)} controls className="h-8 rounded w-full max-w-xs mt-1" />
                                 )}
                                 {msg.image_path && (
@@ -263,13 +263,15 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     <RotateCcw size={11} />
                                 </button>
                             )}
-                            <button
-                                onClick={() => onGenerateTTS?.(msg.id)}
-                                className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
-                                title="Generate TTS"
-                            >
-                                <Volume2 size={11} />
-                            </button>
+                            {ttsEnabled && (
+                                <button
+                                    onClick={() => onGenerateTTS?.(msg.id)}
+                                    className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                    title="Generate TTS"
+                                >
+                                    <Volume2 size={11} />
+                                </button>
+                            )}
                             <button
                                 onClick={() => onIllustrate?.(msg.id)}
                                 className="p-1 rounded-md text-gray-500 hover:text-purple-400 hover:bg-white/5 transition-colors"

@@ -6,6 +6,7 @@ import { getAvatarUrl } from '../../hooks/useWorldVault';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SystemPromptPanel from './SystemPromptPanel';
+import ExpressionSelector from './ExpressionSelector';
 
 function ChatContextPanel({
     activeChat,
@@ -467,6 +468,11 @@ function ChatContextPanel({
                     </p>
                 )}
             </div>
+
+            {/* Expressions (if character has any) */}
+            {linkedCharacter?.expressions && Object.keys(linkedCharacter.expressions).some(k => !k.startsWith('_')) && (
+                <ExpressionSelector character={linkedCharacter} characterId={linkedCharacter.id} inline />
+            )}
         </div>
     );
 }

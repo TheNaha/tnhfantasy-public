@@ -45,6 +45,16 @@ const Providers = lazy(() => import('./pages/Providers'));
 const Characters = lazy(() => import('./pages/Characters'));
 const ChatWorkspace = lazy(() => import('./pages/ChatWorkspace'));
 const StorySandbox = lazy(() => import('./pages/StorySandbox'));
+const StoryReader = lazy(() => import('./pages/StoryReader'));
+const Scenarios = lazy(() => import('./pages/Scenarios'));
+const Voices = lazy(() => import('./pages/Voices'));
+const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
+const Locations = lazy(() => import('./pages/Locations'));
+const AvatarGallery = lazy(() => import('./pages/AvatarGallery'));
+const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
+const WorldTimeline = lazy(() => import('./pages/WorldTimeline'));
+const Campaigns = lazy(() => import('./pages/Campaigns'));
+const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
 
 function AnimatedRoutes() {
     const location = useLocation();
@@ -75,6 +85,16 @@ function AnimatedRoutes() {
                     <Route path=":storyId/chapter/:chapterId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
                 </Route>
                 <Route path="/characters" element={<ErrorBoundary><Characters /></ErrorBoundary>} />
+                <Route path="/scenarios" element={<ErrorBoundary><Scenarios /></ErrorBoundary>} />
+                <Route path="/voices" element={<ErrorBoundary><Voices /></ErrorBoundary>} />
+                <Route path="/world-vault" element={<ErrorBoundary><WorldVaultHub /></ErrorBoundary>} />
+                <Route path="/locations" element={<ErrorBoundary><Locations /></ErrorBoundary>} />
+                <Route path="/avatar-gallery" element={<ErrorBoundary><AvatarGallery /></ErrorBoundary>} />
+                <Route path="/batch-generate" element={<ErrorBoundary><BatchGenerate /></ErrorBoundary>} />
+                <Route path="/world-timeline" element={<ErrorBoundary><WorldTimeline /></ErrorBoundary>} />
+                <Route path="/campaigns" element={<ErrorBoundary><Campaigns /></ErrorBoundary>} />
+                <Route path="/world-graph" element={<ErrorBoundary><RelationshipGraph /></ErrorBoundary>} />
+                <Route path="/read/story/:token" element={<ErrorBoundary><StoryReader /></ErrorBoundary>} />
                 <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
                 <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />
                 <Route path="/models" element={<Navigate to="/models/installed" replace />} />
