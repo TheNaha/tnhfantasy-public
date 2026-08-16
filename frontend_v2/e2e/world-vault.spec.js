@@ -127,22 +127,13 @@ test.describe('World Vault & Lorebooks (Module D)', () => {
 
     await expect(page.getByRole('button', { name: /regenerate|edit/i }).last()).toBeVisible({ timeout: 180000 });
 
-    await page.goto(`/characters/${character.id}`);
+    await page.goto(`/characters#char-${character.id}`);
     await expect(page.getByText(/scene|gallery|image/i).first()).toBeVisible({ timeout: 10000 });
   });
 });
 
 // ---------------------------------------------------------------------------
 // World Vault Hub (/world-vault) — counts, debounced search, type filter.
-//
-// KNOWN APP BUG (flagged, not fixed): the hub never renders its results list —
-// `displayResults` is set to the raw dashboard `recent` object (keyed by type)
-// or the raw search response `{query, results, total}`, neither of which is an
-// array, so both `length === 0` and `length > 0` branches are skipped. Entity
-// counts render, but recent-entity cards, search results and the empty state
-// are all dead UI. Tests below assert the working parts and drive the real
-// backend search via waitForResponse; the absent result cards are asserted as
-// the current (buggy) behavior.
 // ---------------------------------------------------------------------------
 
 test.describe('World Vault Hub', () => {

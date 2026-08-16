@@ -87,6 +87,7 @@ def search_entries(
     q: str, 
     limit: int = 5,
     session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
     """Semantic search for lorebook entries based on a query string."""
@@ -140,6 +141,7 @@ def create_entry(
     lorebook_id: str, 
     entry: LorebookEntry, 
     session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
     lorebook = lorebook_repo.get(lorebook_id)

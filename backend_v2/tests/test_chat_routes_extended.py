@@ -271,3 +271,58 @@ class TestGenerateScene:
     def test_scene_chat_404(self, client, session):
         resp = client.post("/api/v2/chats/nonexistent/scene")
         assert resp.status_code == 404
+
+
+# ── POST chat/impersonate ────────────────────────────────────────────────────
+
+class TestImpersonate:
+    """Regression coverage for the Batch 1.1 fix: impersonate must not
+    NameError, must queue an LLM job (task_type 'llm'), and must tag the
+    job as impersonation with the optional hint preserved."""
+
+    def _seed(self, session):
+        char = Character(name="Aria")
+        session.add(char)
+        session.commit()
+        session.refresh(char)
+        chat = _seed_chat(session, char)
+        _add_message(session, chat, MessageRole.USER, "Hello Aria")
+        _add_message(session, chat, MessageRole.CHAR, "Hello there, friend")
+        return char, chat
+
+    def test_impersonate_queues_llm_job(self, client, session, monkeypatch):
+        char, chat = self._seed(session)
+        monkeypatch.setattr("services.llm_config.get_default_llm_model", lambda: "test-model")
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/impersonate", json={"hint": "ask about the storm"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"]
+
+        enqueue.assert_awaited_once_with(body["job_id"], task_type="llm")
+        job = session.get(Job, body["job_id"])
+        assert job.task_type == "llm"
+        assert job.metadata_["is_impersonation"] is True
+        assert job.metadata_["hint"] == "ask about the storm"
+        # The roleplay voice prompt must reference the human (persona) and the char name
+        system = job.workflow["messages"][0]["content"]
+        assert "Aria" in system
+        assert "human participant" in system
+
+    def test_impersonate_without_hint(self, client, session, monkeypatch):
+        _, chat = self._seed(session)
+        monkeypatch.setattr("services.llm_config.get_default_llm_model", lambda: "test-model")
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/impersonate", json={})
+        assert resp.status_code == 200, resp.text
+        job = session.get(Job, resp.json()["job_id"])
+        assert job.metadata_["is_impersonation"] is True
+        assert "hint" not in job.metadata_
+
+    def test_impersonate_chat_404(self, client, session):
+        resp = client.post("/api/v2/chats/nonexistent/impersonate", json={"hint": "x"})
+        assert resp.status_code == 404

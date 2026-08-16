@@ -8,6 +8,12 @@ export default defineConfig({
   workers: 1,
   reporter: [['html', { open: 'never' }]],
   timeout: 90000,
+  webServer: {
+    command: 'npm run dev -- --host 0.0.0.0 --port 5174',
+    url: 'http://localhost:5174',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120000,
+  },
   use: {
     baseURL: 'http://localhost:5174',
     trace: 'on-first-retry',
