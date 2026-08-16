@@ -16,7 +16,7 @@
  */
 
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
@@ -24,6 +24,7 @@ import { Toaster } from 'react-hot-toast';
 import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ChatRouteGuard, StoryRouteGuard } from './components/RouteQueryGuard';
 import useSettingsStore from './store/settingsStore';
 import { useSettings } from './store/settingsStore';
 import { migrateLegacyCollections } from './hooks/useCollections';
@@ -55,6 +56,24 @@ const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
 const WorldTimeline = lazy(() => import('./pages/WorldTimeline'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
+const NotFound = lazy(() => import('./pages/NotFound'));
+
+// Keyed by routeKey so a crashed page resets when the user navigates away
+// (kept at module scope so its identity is stable across renders and
+// param-only navigations don't remount the page subtree).
+function Boundary({ routeKey, children }) {
+    return <ErrorBoundary key={routeKey}>{children}</ErrorBoundary>;
+}
+
+function GuardedChat({ children }) {
+    const { chatId } = useParams();
+    return <ChatRouteGuard chatId={chatId}>{children}</ChatRouteGuard>;
+}
+
+function GuardedStory({ children }) {
+    const { storyId } = useParams();
+    return <StoryRouteGuard storyId={storyId}>{children}</StoryRouteGuard>;
+}
 
 function AnimatedRoutes() {
     const location = useLocation();
@@ -69,39 +88,39 @@ function AnimatedRoutes() {
     return (
         <AnimatePresence mode="wait">
             <Routes location={location} key={routeKey}>
-                <Route path="/" element={<ErrorBoundary><FantasyHub /></ErrorBoundary>} />
-                <Route path="/gallery" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
-                <Route path="/generate" element={<ErrorBoundary><SimpleGenerator /></ErrorBoundary>} />
-                <Route path="/img2img" element={<ErrorBoundary><Img2ImgGenerator /></ErrorBoundary>} />
-                <Route path="/inpaint" element={<ErrorBoundary><InpaintGenerator /></ErrorBoundary>} />
-                <Route path="/advanced" element={<ErrorBoundary><AdvancedGenerator /></ErrorBoundary>} />
+                <Route path="/" element={<Boundary routeKey={routeKey}><FantasyHub /></Boundary>} />
+                <Route path="/gallery" element={<Boundary routeKey={routeKey}><Dashboard /></Boundary>} />
+                <Route path="/generate" element={<Boundary routeKey={routeKey}><SimpleGenerator /></Boundary>} />
+                <Route path="/img2img" element={<Boundary routeKey={routeKey}><Img2ImgGenerator /></Boundary>} />
+                <Route path="/inpaint" element={<Boundary routeKey={routeKey}><InpaintGenerator /></Boundary>} />
+                <Route path="/advanced" element={<Boundary routeKey={routeKey}><AdvancedGenerator /></Boundary>} />
                 <Route path="/chat" element={<Outlet />}>
-                    <Route index element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
-                    <Route path=":chatId" element={<ErrorBoundary><ChatWorkspace /></ErrorBoundary>} />
+                    <Route index element={<Boundary routeKey={routeKey}><ChatWorkspace /></Boundary>} />
+                    <Route path=":chatId" element={<Boundary routeKey={routeKey}><GuardedChat><ChatWorkspace /></GuardedChat></Boundary>} />
                 </Route>
                 <Route path="/story" element={<Outlet />}>
-                    <Route index element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
-                    <Route path=":storyId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
-                    <Route path=":storyId/chapter/:chapterId" element={<ErrorBoundary><StorySandbox /></ErrorBoundary>} />
+                    <Route index element={<Boundary routeKey={routeKey}><StorySandbox /></Boundary>} />
+                    <Route path=":storyId" element={<Boundary routeKey={routeKey}><GuardedStory><StorySandbox /></GuardedStory></Boundary>} />
+                    <Route path=":storyId/chapter/:chapterId" element={<Boundary routeKey={routeKey}><GuardedStory><StorySandbox /></GuardedStory></Boundary>} />
                 </Route>
-                <Route path="/characters" element={<ErrorBoundary><Characters /></ErrorBoundary>} />
-                <Route path="/scenarios" element={<ErrorBoundary><Scenarios /></ErrorBoundary>} />
-                <Route path="/voices" element={<ErrorBoundary><Voices /></ErrorBoundary>} />
-                <Route path="/world-vault" element={<ErrorBoundary><WorldVaultHub /></ErrorBoundary>} />
-                <Route path="/locations" element={<ErrorBoundary><Locations /></ErrorBoundary>} />
-                <Route path="/avatar-gallery" element={<ErrorBoundary><AvatarGallery /></ErrorBoundary>} />
-                <Route path="/batch-generate" element={<ErrorBoundary><BatchGenerate /></ErrorBoundary>} />
-                <Route path="/world-timeline" element={<ErrorBoundary><WorldTimeline /></ErrorBoundary>} />
-                <Route path="/campaigns" element={<ErrorBoundary><Campaigns /></ErrorBoundary>} />
-                <Route path="/world-graph" element={<ErrorBoundary><RelationshipGraph /></ErrorBoundary>} />
-                <Route path="/read/story/:token" element={<ErrorBoundary><StoryReader /></ErrorBoundary>} />
-                <Route path="/models/discover" element={<ErrorBoundary><DiscoverModels /></ErrorBoundary>} />
-                <Route path="/models/installed" element={<ErrorBoundary><InstalledModels /></ErrorBoundary>} />
+                <Route path="/characters" element={<Boundary routeKey={routeKey}><Characters /></Boundary>} />
+                <Route path="/scenarios" element={<Boundary routeKey={routeKey}><Scenarios /></Boundary>} />
+                <Route path="/voices" element={<Boundary routeKey={routeKey}><Voices /></Boundary>} />
+                <Route path="/world-vault" element={<Boundary routeKey={routeKey}><WorldVaultHub /></Boundary>} />
+                <Route path="/locations" element={<Boundary routeKey={routeKey}><Locations /></Boundary>} />
+                <Route path="/avatar-gallery" element={<Boundary routeKey={routeKey}><AvatarGallery /></Boundary>} />
+                <Route path="/batch-generate" element={<Boundary routeKey={routeKey}><BatchGenerate /></Boundary>} />
+                <Route path="/world-timeline" element={<Boundary routeKey={routeKey}><WorldTimeline /></Boundary>} />
+                <Route path="/campaigns" element={<Boundary routeKey={routeKey}><Campaigns /></Boundary>} />
+                <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
+                <Route path="/read/story/:token" element={<Boundary routeKey={routeKey}><StoryReader /></Boundary>} />
+                <Route path="/models/discover" element={<Boundary routeKey={routeKey}><DiscoverModels /></Boundary>} />
+                <Route path="/models/installed" element={<Boundary routeKey={routeKey}><InstalledModels /></Boundary>} />
                 <Route path="/models" element={<Navigate to="/models/installed" replace />} />
-                <Route path="/providers" element={<ErrorBoundary><Providers /></ErrorBoundary>} />
-                <Route path="/statistics" element={<ErrorBoundary><Statistics /></ErrorBoundary>} />
-                <Route path="/settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
-                <Route path="*" element={<Navigate to="/" replace />} />
+                <Route path="/providers" element={<Boundary routeKey={routeKey}><Providers /></Boundary>} />
+                <Route path="/statistics" element={<Boundary routeKey={routeKey}><Statistics /></Boundary>} />
+                <Route path="/settings" element={<Boundary routeKey={routeKey}><Settings /></Boundary>} />
+                <Route path="*" element={<Boundary routeKey={routeKey}><NotFound /></Boundary>} />
             </Routes>
         </AnimatePresence>
     );

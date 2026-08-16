@@ -15,6 +15,10 @@ class ErrorBoundary extends React.Component {
         console.error('ErrorBoundary caught an error:', error, errorInfo);
     }
 
+    reset = () => {
+        this.setState({ hasError: false, error: null });
+    };
+
     render() {
         if (this.state.hasError) {
             return (
@@ -23,7 +27,7 @@ class ErrorBoundary extends React.Component {
                         <AlertTriangle className="mx-auto mb-4 text-red-500" size={64} />
                         <h1 className="text-2xl font-bold mb-4">Oops! Something went wrong</h1>
                         <p className="text-gray-400 mb-6">
-                            The application encountered an unexpected error. Try refreshing the page.
+                            The application encountered an unexpected error.
                         </p>
                         {this.state.error && import.meta.env.DEV && (
                             <details className="text-left text-sm bg-gray-800 p-4 rounded mb-4">
@@ -33,12 +37,20 @@ class ErrorBoundary extends React.Component {
                                 </pre>
                             </details>
                         )}
-                        <button
-                            onClick={() => window.location.reload()}
-                            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-                        >
-                            Refresh Page
-                        </button>
+                        <div className="flex justify-center gap-3">
+                            <button
+                                onClick={this.reset}
+                                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                            >
+                                Try again
+                            </button>
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors"
+                            >
+                                Refresh Page
+                            </button>
+                        </div>
                     </div>
                 </div>
             );
