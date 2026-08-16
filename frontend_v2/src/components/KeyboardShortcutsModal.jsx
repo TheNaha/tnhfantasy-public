@@ -8,12 +8,14 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
             { keys: ['G'], description: 'Go to Generator' },
             { keys: ['M'], description: 'Go to Models' },
             { keys: ['A'], description: 'Go to Advanced' },
+            { keys: ['⌘', 'K'], description: 'Open command palette' },
         ],
         'Actions': [
             { keys: ['?'], description: 'Show this help' },
             { keys: ['Esc'], description: 'Close modals' },
             { keys: ['S'], description: 'Toggle selection mode' },
             { keys: ['R'], description: 'Refresh gallery' },
+            { keys: ['⌘', '⇧', 'Enter'], description: 'Send message' },
         ],
         'Gallery': [
             { keys: ['←', '→'], description: 'Navigate images' },

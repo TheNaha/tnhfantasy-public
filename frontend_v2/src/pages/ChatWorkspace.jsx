@@ -138,7 +138,8 @@ function ChatWorkspaceLayout() {
                                 <ChatTimeline
                                     chatId={activeChatId}
                                     activeBranch={activeBranch}
-                                    onBranchChange={() => {
+                                    onBranchChange={(branchId) => {
+                                        setActiveBranch(branchId);
                                         setTimelineVisible(false);
                                     }}
                                     onNewBranch={(data) => {

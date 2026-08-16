@@ -86,6 +86,7 @@ export function ChatWorkspaceProvider({ children }) {
     useEffect(() => {
         if (urlChatId && urlChatId !== activeChatId) {
             setActiveChatId(urlChatId);
+            setActiveBranch(null);
         }
     }, [urlChatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -147,10 +148,10 @@ export function ChatWorkspaceProvider({ children }) {
     const MESSAGE_PAGE_SIZE = 100;
     const MAX_MESSAGE_PAGES = 5;
     const [messagePageCount, setMessagePageCount] = useState(1);
-    
+
     const { data: messagesData = [] } = useMessages(
         activeChatId,
-        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0 }
+        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0, branchId: activeBranch }
     );
     
     const messages = messagesData;
@@ -427,6 +428,9 @@ export function ChatWorkspaceProvider({ children }) {
             return;
         }
         if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage();
+        } else if (e.key === 'Enter' && e.shiftKey && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             handleSendMessage();
         }

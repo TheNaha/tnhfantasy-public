@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch } from 'lucide-react';
-import { useMemo, useState, memo } from 'react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command } from 'lucide-react';
+import { useMemo, useState, memo, useEffect } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
+import GlobalCommandPalette from './GlobalCommandPalette';
 import { useBranding } from '../hooks/useBranding';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import {
@@ -15,7 +16,7 @@ import {
 
 const NavItem = ({ to, icon: Icon, label, onNavigate }) => {
     const location = useLocation();
-    const isActive = location.pathname === to;
+    const isActive = to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
 
     return (
         <Link
@@ -114,6 +115,7 @@ const ProviderStatusPanel = memo(function ProviderStatusPanel() {
 export default function Layout({ children }) {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+    const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { data: branding } = useBranding();
     const safeBranding = branding || { appName: 'TNH-Comfy', logoUrl: '/logo.png', faviconUrl: '/favicon.ico' };
     const location = useLocation();
@@ -124,6 +126,22 @@ export default function Layout({ children }) {
         onShowHelp: () => setShowShortcutsModal(true),
         onEscape: () => setShowShortcutsModal(false),
     });
+
+    // Cmd/Ctrl+K opens the global command palette (ignored while typing in an input)
+    useEffect(() => {
+        const onKeyDown = (e) => {
+            if (e.key.toLowerCase() !== 'k' || !(e.ctrlKey || e.metaKey)) return;
+            const target = e.target;
+            const typing =
+                target instanceof HTMLElement &&
+                (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+            if (typing) return;
+            e.preventDefault();
+            setShowCommandPalette((open) => !open);
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
 
     return (
         <div className="flex min-h-screen lg:h-screen bg-[#0B0E14] text-gray-100 lg:overflow-hidden overflow-x-hidden font-sans selection:bg-blue-500/30 relative">
@@ -147,6 +165,24 @@ export default function Layout({ children }) {
                     <h1 className="text-lg font-bold text-gradient-primary">
                         {safeBranding.appName}
                     </h1>
+                </div>
+                <div className="ml-auto flex items-center gap-1">
+                    <button
+                        onClick={() => setShowCommandPalette(true)}
+                        className="p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"
+                        aria-label="Open command palette"
+                        title="Command palette (Cmd/Ctrl+K)"
+                    >
+                        <Command size={20} aria-hidden="true" />
+                    </button>
+                    <button
+                        onClick={() => setShowShortcutsModal(true)}
+                        className="p-2 text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-blue-500 outline-none rounded-lg"
+                        aria-label="Keyboard shortcuts"
+                        title="Keyboard shortcuts (?)"
+                    >
+                        <HelpCircle size={20} aria-hidden="true" />
+                    </button>
                 </div>
             </div>
 
@@ -212,6 +248,25 @@ export default function Layout({ children }) {
                 </nav>
 
                 <ProviderStatusPanel />
+
+                <div className="flex items-center gap-1 p-2 border-t border-white/5">
+                    <button
+                        onClick={() => setShowCommandPalette(true)}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors text-xs font-medium"
+                        aria-label="Open command palette"
+                    >
+                        <Command size={15} aria-hidden="true" />
+                        <span>Quick search</span>
+                        <kbd className="kbd ml-auto">⌘K</kbd>
+                    </button>
+                    <button
+                        onClick={() => setShowShortcutsModal(true)}
+                        className="p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
+                        aria-label="Keyboard shortcuts"
+                    >
+                        <HelpCircle size={16} aria-hidden="true" />
+                    </button>
+                </div>
             </div>
 
             {/* Main Content */}
@@ -242,6 +297,13 @@ export default function Layout({ children }) {
                 isOpen={showShortcutsModal}
                 onClose={() => setShowShortcutsModal(false)}
             />
+
+            {/* Global Command Palette (Cmd/Ctrl+K) — conditionally mounted so state resets per open */}
+            {showCommandPalette && (
+                <GlobalCommandPalette
+                    onClose={() => setShowCommandPalette(false)}
+                />
+            )}
         </div>
     );
 }

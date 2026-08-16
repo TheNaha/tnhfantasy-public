@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
+from sqlalchemy import or_
 
 from api.deps import get_job_service, get_session, get_queue_manager, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
 from infrastructure.repositories.chat_repo import ChatRepository
@@ -241,13 +242,16 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo),   limit: int = 100, offset: int = 0):
+def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo),   limit: int = 100, offset: int = 0):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
-    return session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).offset(offset).limit(limit)
-    ).all()
+    query = select(Message).where(Message.chat_id == chat_id)
+    if branch_id:
+        query = query.where(Message.branch_id == branch_id)
+    elif chat.branch_id:
+        query = query.where(or_((Message.branch_id == chat.branch_id), (Message.branch_id.is_(None))))
+    return session.exec(query.order_by(Message.created_at).offset(offset).limit(limit)).all()
 
 
 @router.get("/{chat_id}/system-prompt")
