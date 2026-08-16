@@ -52,13 +52,13 @@ Status: **Batch 0–3 complete and verified.** Backend: 1443 passed / 2 skipped.
 |---|-------|--------|
 | 3.1 | Voice resolve ×3. | ✅ Canonical `resolve_voice_for_character` (chat_utils.py:169); used by chats.py:530 + stories.py:1023; orchestrator has none. |
 | 3.2 | First-text extraction ×2. | ✅ Canonical `extract_first_text` (chat_utils.py:144); world_integration_service aliases `as _first_text`, job_processing imports directly. |
-| 3.3 | Provider progress percent-vs-fraction drift. | ⏳ provider_core/models.py docstring + heuristic cleanup (provider containers). |
-| 3.4 | Modal/Beam + 4 LLM engine client duplication. | ⏳ extract shared `inference_loop()` in provider_core (works today — low priority). |
-| 3.5 | Second progress protocol in `worker_ws.py`. | ⏳ route external workers through `translate_task_events`. |
-| 3.6 | `runtime.py` hardcoded DNS/port; deploy_service vs deploy_orchestrator overlap. | ⏳ resolve health URL from Provider `worker_url` first. |
-| 3.7 | Dead imports sweep + cosine_distance idiom. | ✅ **Full AST-scan sweep**: 13 route/entry files re-homed from `api.deps` transitive re-exports to source modules (infrastructure.logging/http_client/request_dedup/cache/background_tasks/image_processor/providers, infrastructure.deps); `api.deps.py` trimmed to pure DI; branches/campaigns/characters/chats/scenarios/stories/world_hub/reference_cleanup genuine dead imports pruned; 2 test patches retargeted. `cosine_distance` uniform method form (memories.py, orchestrator_service.py:698, context_builder.py:402, lorebooks.py:110). api pkg import smoke: 46 modules, 0 failures. |
+| 3.3 | Provider progress percent-vs-fraction drift. | ✅ **Canonical percent 0..100 end-to-end** (commit a7b979c): comfy_status_to_task_event emits percent (value/max×100), models.py docstring updated, backend StreamReducer keeps defensive legacy-fraction conversion (deployed Modal containers are ephemeral copies — must tolerate until redeployed), worker_ws path documented. Tests updated + 2 added (`value/max` → 75, already-percent → 42). |
+| 3.4 | Modal/Beam + 4 LLM engine client duplication. | ⏳ **Deferred deliberately** — shared `inference_loop()` extraction in provider_core is a large cross-cutting refactor of working code; low value for solo user. Revisit if a 3rd provider family lands. |
+| 3.5 | Second progress protocol in `worker_ws.py`. | ⏳ **Deferred deliberately** — worker_ws is a separate transport for external/arbitrary workers (NOT the HTTP /inference NDJSON stream); defensive conversions + percent docstring already in place. Contract change risks breaking external workers for no solo-user gain. |
+| 3.6 | `runtime.py` hardcoded DNS/port; deploy_service vs deploy_orchestrator overlap. | ⚠️ **Partial.** `resolve_provider_runtime` container branch now honors `container_config.port` (default 8000) — provider_runtime.py:68-75. Hardcoded DNS name is intentional (docker network + container contract); discovery mode covers serverless-only deploys. deploy_service/orchestrator overlap: **deferred** (works today, invasive to untangle). |
+| 3.7 | Dead imports sweep + cosine_distance idiom. | ✅ **Full AST-scan sweep**: 13 route/entry files re-homed from `api.deps` transitive re-exports to source modules (infrastructure.logging/http_client/request_dedup/cache/background_tasks/image_processor/providers, infrastructure.deps); `api.deps.py` trimmed to pure DI; branches/campaigns/characters/chats/scenarios/stories/world_hub/reference_cleanup genuine dead imports pruned; 2 test patches retargeted. `cosine_distance` uniform method form (memories.py, orchestrator_service.py:698, context_builder.py:402, lorebooks.py:110). api pkg import smoke: 46 modules, 0 failures. Also: **except:pass sweep** (commit 9e70beb) — ~40 silent-swallow sites across routes/services now log structured `event_name` debug/warning (only intentional CancelledError/ImageNotFound/test patterns stay bare). |
 | 3.8 | characters.py inconsistent clone/import/export shapes. | ✅ `_character_to_dict` used by list/get/clone/import (5 sites); export_character verified full chara2.0 V2 card → PNG 'chara' tEXt chunk. |
-| 3.9 | e2e helper duplication. | ⏳ move `readPersisted`/sort/seed/upload helpers into fixtures.js. |
+| 3.9 | e2e helper duplication. | ⏳ **Deferred** — cosmetic; fixtures.js already owns seeding/toasts. |
 
 ## Batch 4 — Test Coverage & CI (open)
 
@@ -79,19 +79,28 @@ Status: **Batch 0–3 complete and verified.** Backend: 1443 passed / 2 skipped.
 
 ---
 
-## Verification results (2026-08-16)
+## Verification results (2026-08-16, final)
 
-- Backend: `docker exec tnhcomfy-backend python -m pytest -q` → **1443 passed, 2 skipped** (warnings pre-existing/harmless: pydantic importance float, worker_ws mock coroutine).
-- Frontend: `npx vitest run` → **67 files / 517 passed**; `npm run lint` → **0 errors, 0 warnings** (EntityModal deps memoized, stale eslint-disable removed).
+- Backend: `docker exec tnhcomfy-backend python -m pytest -q` → **1461 passed, 2 skipped** (warnings pre-existing/harmless).
+- Frontend: `npx vitest run` → **68 files / 528 passed**; `npm run lint` → **0 errors, 0 warnings**.
+- Provider containers: 24 passed / 6 env-only failures (missing `modal` pkg in throwaway env; CI installs it). Progress-event tests all pass.
+- E2E: chat specs 22/22; world-vault 8/8 (both after fixes). Full suite with `webServer` block now auto-starts the dev server locally.
 - API module smoke: 46 modules, 0 import failures.
-- E2E chat: roleplay + chat-nuances **22/22**.
+- Live stack: `POST /api/providers/detect` → 4 providers already registered via heartbeat; migration 049 seeded `demo-lyra` + `demo-sword-sorcery` (verified via API).
 - Containers: `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V` (note: `-V` wipes volumes — **remove when not desired**).
 
 ## Open decisions (awaiting user)
 
-1. Dead-hook disposition (2.1): wire `useMemories`/`useCampaign`/`useScenarios`/`useVoice`/`useWorldVaultRelationships` into pages, or delete the rest.
-2. Playwright CI (4.4): enable `webServer` block + gate on e2e/ changes, or keep local-only.
-3. Batch ordering: provider-side dedup (3.3–3.5) vs Batch 4 coverage vs Batch 5 feature work.
+1. ~~Dead-hook disposition (2.1)~~ ✅ RESOLVED — sweep proved 0 dead hooks (all wired or removed).
+2. ~~Playwright CI (4.4)~~ ✅ RESOLVED — local-only `webServer` block added; no CI job.
+3. Batch ordering ✅ RESOLVED — Batch 4 + DEMO_GAPS + provider-side 3.3 all executed this session.
+4. **Deferred items for sign-off**: 3.4 inference_loop extraction, 3.5 worker_ws protocol unification, 3.9 e2e helper dedup, deploy-service/orchestrator merge (part of 3.6). All documented as deliberate deferrals above — say the word and they move to the top of the next session.
+
+## DEMO_GAPS_PLAN progress (2026-08-16)
+
+- **Phase 1 (onboarding/self-config) DONE**: OnboardingWizard (4 steps, `tnhcomfy_setup_complete` localStorage gate, detect-providers + browse-discovery actions, seeded Lyra Vale tip) on FantasyHub; `POST /api/providers/detect` + Detect Containers button in Providers empty state; NoCheckpointCTA banner across all generator pages; FantasyHub quick-action tiles (New Chat `/chat?new=1` — ChatWorkspace honors it —, Write a Story, Pick a Scenario); migration 049 starter pack (demo character + scenario + disabled llm-local template).
+- **except:pass silent-swallow sweep DONE** (~40 sites → structured logging; 6 intentional sites stay bare).
+- **Phases 2–4 (starter-pack polish, power-user depth, guardrails)**: pending — see DEMO_GAPS_PLAN.md.
 
 ## Pre-existing PLAN.md note
 

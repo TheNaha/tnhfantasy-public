@@ -66,10 +66,11 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
             logger.debug("provider_runtime_status_probe_failed", provider_id=provider_id, error=str(exc))
 
         if docker_available and found:
+            port = container_config.get("port", 8000) if isinstance(container_config, dict) else 8000
             return ProviderRuntimeTarget(
                 provider_id=provider_id,
                 mode="container_http",
-                worker_url=f"http://{container_name}:8000",
+                worker_url=f"http://{container_name}:{port}",
                 container_name=container_name,
                 supports_setup=provider_type in ("modal", "modal_llm"),
                 supports_reconciliation=True,
