@@ -19,17 +19,11 @@ from fastapi import Depends, Request
 from sqlmodel import Session
 
 from core.events import EventBus, event_bus
-from infrastructure.deps import get_container_manager, get_session_context as _infra_get_session_context, get_session_sync as _infra_get_session_sync, set_global_container_manager
+from infrastructure.deps import get_container_manager, get_session_context as _infra_get_session_context, get_session_sync as _infra_get_session_sync
 from infrastructure.database import (
     get_session as db_get_session,
 )
-from infrastructure.logging import get_logger, api_logger, model_logger
-from infrastructure.request_dedup import deduplicated, make_key
-from infrastructure.http_client import get_http_client
-from infrastructure.cache import cache_stats
-from infrastructure.providers import create_provider_client
-from infrastructure.image_processor import read_image_metadata
-from infrastructure.background_tasks import start_background_task
+from infrastructure.logging import get_logger
 
 logger = get_logger("api_deps")
 

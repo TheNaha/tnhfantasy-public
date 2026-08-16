@@ -7,14 +7,11 @@ from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo, get_character_repo, get_lorebook_repo, get_location_repo
+from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
-from infrastructure.repositories.character_repo import CharacterRepository
-from infrastructure.repositories.lorebook_repo import LorebookRepository
-from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location
+from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario
 from core.exceptions import ComfyError, NotFoundError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
@@ -720,12 +717,19 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         "(e.g. 'Sure, here is the continuation:'). Just output the next part of the prose."
     )
     
+    story_scenario_template = None
+    if story and story.scenario_id:
+        scenario = session.get(Scenario, story.scenario_id)
+        if scenario and scenario.prompt_template:
+            story_scenario_template = scenario.prompt_template
+    
     system_prompt, context = await build_chat_context_async(
         [{"role": "user", "content": chapter.content.strip()}],
         lorebook_ids=story.lorebook_ids or None,
         system_prompt_override=base_prompt,
         story_genre=story.genre,
         story_memory=story.memory,
+        story_scenario=story_scenario_template,
         story_character_ids=story.character_ids or None,
         location_ids=story.location_ids or None,
     )

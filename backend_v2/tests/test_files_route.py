@@ -217,7 +217,7 @@ class TestFilesRoute:
 
         client.app.dependency_overrides[get_provider_service] = lambda: mock_service
 
-        with patch("api.deps.create_provider_client") as mock_create_provider:
+        with patch("infrastructure.providers.create_provider_client") as mock_create_provider:
             mock_instance = MagicMock()
             mock_proxy = MagicMock()
             mock_proxy.get_file = AsyncMock(return_value=b"content")

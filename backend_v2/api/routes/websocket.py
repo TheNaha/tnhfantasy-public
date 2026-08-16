@@ -20,13 +20,12 @@ import socketio
 
 from api.deps import (
     get_event_bus,
-    get_http_client,
     get_job_service,
     get_provider_service,
     get_session_context,
 )
-from config import settings
 from core.entities import JobStatus
+from infrastructure.http_client import get_http_client
 from services.job_queue import queue_manager
 from services.provider_runtime import resolve_provider_runtime
 

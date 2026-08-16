@@ -695,7 +695,7 @@ async def _tool_recall_memory(
                     select(CharacterMemory)
                     .where(CharacterMemory.character_id == character_id)
                     .where(CharacterMemory.embedding.is_not(None))
-                    .order_by(func.cosine_distance(CharacterMemory.embedding, q_vec))
+                    .order_by(CharacterMemory.embedding.cosine_distance(q_vec))
                     .limit(limit)
                 )
             else:

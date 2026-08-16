@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from api.deps import get_model_service_v2, get_session, model_logger
+from api.deps import get_model_service_v2, get_session
+from infrastructure.logging import model_logger
 
 from .schemas import UpdateProviderStatusRequest
 

@@ -17,15 +17,15 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import (
-    api_logger,
-    get_http_client,
     get_provider_service,
     get_provider_status_service,
     get_provider_worker_url,
     get_session,
-    start_background_task,
 )
 from core.entities import Provider
+from infrastructure.background_tasks import start_background_task
+from infrastructure.http_client import get_http_client
+from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime
 from services.provider_status_service import invalidate_provider_status_caches
 

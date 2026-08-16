@@ -224,6 +224,7 @@ def build_system_prompt_sections(
     _lorebook_query: str | None = None,
     story_genre: str | None = None,
     story_memory: str | None = None,
+    story_scenario: str | None = None,
     story_character_ids: list[str] | None = None,
     active_character_id: str | None = None,
     character_id: str | None = None,
@@ -255,7 +256,7 @@ def build_system_prompt_sections(
     7. Story-specific blocks (genre, memory, characters) when provided.
 
     Each section dict: {"key", "label", "content", "source"}
-    source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state" | "story_genre" | "story_memory" | "story_characters"
+    source ∈ "override" | "character" | "char_append" | "chat_append" | "config" | "lorebook" | "world_state" | "story_genre" | "story_memory" | "story_scenario" | "story_characters"
     """
     sections: list[dict[str, Any]] = []
 
@@ -519,6 +520,14 @@ def build_system_prompt_sections(
             "source": "story_memory",
         })
 
+    if story_scenario:
+        sections.append({
+            "key": "story_scenario",
+            "label": "Story scenario",
+            "content": f"[Scenario Directive]\n{story_scenario}",
+            "source": "story_scenario",
+        })
+
     if story_character_ids:
         characters_content = []
         chars = session.exec(
@@ -606,6 +615,7 @@ def build_chat_context(
     append_system_prompt: str | None = None,
     story_genre: str | None = None,
     story_memory: str | None = None,
+    story_scenario: str | None = None,
     story_character_ids: list[str] | None = None,
     active_character_id: str | None = None,
     character_id: str | None = None,
@@ -650,6 +660,7 @@ def build_chat_context(
         _lorebook_query=_lorebook_query or None,
         story_genre=story_genre,
         story_memory=story_memory,
+        story_scenario=story_scenario,
         story_character_ids=story_character_ids,
         active_character_id=active_character_id,
         character_id=character_id,

@@ -3,14 +3,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlmodel import Session, delete
 
 from api.deps import (
-    get_http_client,
     get_model_service_v2,
     get_session,
     get_session_context,
-    model_logger,
 )
 from api.routes.websocket import broadcast_to_all
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from infrastructure.http_client import get_http_client
+from infrastructure.logging import model_logger
 
 from .schemas import *
 
@@ -292,7 +292,7 @@ async def backfill_provider_statuses(
     Backfill provider_statuses for all models by querying each provider.
     Useful for migrating existing models or after worker issues.
     """
-    from api.deps import get_http_client
+    from infrastructure.http_client import get_http_client
     from services.model_reconciliation import _DIRECTORY_TO_MODEL_TYPE
     from services.provider_runtime import resolve_provider_runtime
 

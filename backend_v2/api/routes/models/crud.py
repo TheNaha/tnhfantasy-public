@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends
 from api.deps import (
     get_model_repo_v2,
     get_model_service_v2,
-    model_logger,
 )
 from core.exceptions import NotFoundError, ValidationError
+from infrastructure.logging import model_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_service import ModelServiceV2
 

@@ -4,10 +4,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from api.deps import get_session, get_chat_repo, get_message_repo
+from api.deps import get_session, get_chat_repo
 from infrastructure.repositories.chat_repo import ChatRepository
-from infrastructure.repositories.message_repo import MessageRepository
-from core.entities import Chat, Message
+from core.entities import Message
 from core.exceptions import NotFoundError
 
 router = APIRouter()

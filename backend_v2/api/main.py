@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
     Application lifespan handler.
     Runs on startup and shutdown.
     """
-    from api.deps import set_global_container_manager
+    from infrastructure.deps import set_global_container_manager
     from services.container_manager import ContainerManager
     
     try:

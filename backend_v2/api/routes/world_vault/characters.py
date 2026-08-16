@@ -11,11 +11,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from io import BytesIO
 from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from api.deps import get_session, get_character_repo, get_collection_repo
+from api.deps import get_session, get_character_repo
 from infrastructure.repositories.character_repo import CharacterRepository
-from infrastructure.repositories.collection_repo import CollectionRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Character, Collection
 from core.exceptions import NotFoundError, ValidationError

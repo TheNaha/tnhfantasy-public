@@ -8,7 +8,7 @@ broken dashboard links, etc.).
 """
 from sqlmodel import Session, select
 
-from core.entities import Campaign, Character, Chat, Location, Scenario, Story
+from core.entities import Campaign, Character, Chat, Story
 
 
 def _without(ids, entity_id):

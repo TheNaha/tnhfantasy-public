@@ -4,23 +4,13 @@ across all entity types.
 """
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func
-from sqlalchemy import cast, String
 
-from api.deps import get_session, get_character_repo, get_chat_repo, get_story_repo, get_lorebook_repo, get_scenario_repo, get_voice_model_repo, get_character_memory_repo, get_location_repo
-from infrastructure.repositories.character_repo import CharacterRepository
-from infrastructure.repositories.chat_repo import ChatRepository
-from infrastructure.repositories.story_repo import StoryRepository
-from infrastructure.repositories.lorebook_repo import LorebookRepository
-from infrastructure.repositories.scenario_repo import ScenarioRepository
-from infrastructure.repositories.voice_model_repo import VoiceModelRepository
-from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
-from infrastructure.repositories.location_repo import LocationRepository
+from api.deps import get_session
 from core.entities import (
-    Character, Chat, Lorebook, LorebookEntry, Message,
-    Story, StoryChapter, Scenario, VoiceModel, CharacterMemory,
+    Character, Chat, Lorebook, LorebookEntry,
+    Story, Scenario, VoiceModel, CharacterMemory,
     Location, Campaign,
 )
-from core.exceptions import NotFoundError
 
 router = APIRouter()
 
@@ -83,33 +73,59 @@ def get_relationships(session: Session = Depends(get_session)):
         ).all()
     ]
 
-    # Character → Stories (via character_ids JSON)
-    char_story_links = []
-    for char in session.exec(select(Character).limit(100)).all():
-        stories = session.exec(
-            select(Story).where(cast(Story.character_ids, String).contains(char.id))
+    # Character → Stories (via character_ids JSON).
+    # Exact membership matching in Python — substring `contains` on serialized
+    # JSON is both N+1-query-expensive and false-positive-prone (any partial
+    # id match would create a phantom link).
+    stories = session.exec(select(Story).limit(500)).all()
+    char_ids = {
+        char_id
+        for story in stories
+        for char_id in (story.character_ids or [])
+    }
+    if char_ids:
+        characters = session.exec(
+            select(Character.id, Character.name).where(Character.id.in_(char_ids))
         ).all()
-        for s in stories:
-            char_story_links.append({
-                "character_id": char.id,
-                "character_name": char.name,
-                "story_id": s.id,
-                "story_title": s.title,
-            })
+    else:
+        characters = []
+    char_name_map = dict(characters)
+    char_story_links = []
+    for story in stories:
+        for char_id in story.character_ids or []:
+            char_name = char_name_map.get(char_id)
+            if char_name is not None:
+                char_story_links.append({
+                    "character_id": char_id,
+                    "character_name": char_name,
+                    "story_id": story.id,
+                    "story_title": story.title,
+                })
 
     # Story → Lorebooks (via lorebook_ids JSON)
     story_lorebook_links = []
-    for story in session.exec(select(Story).limit(100)).all():
+    lorebook_ids = {
+        lb_id
+        for story in stories
+        for lb_id in (story.lorebook_ids or [])
+    }
+    if lorebook_ids:
         lorebooks = session.exec(
-            select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids or []))
+            select(Lorebook).where(Lorebook.id.in_(lorebook_ids))
         ).all()
-        for lb in lorebooks:
-            story_lorebook_links.append({
-                "story_id": story.id,
-                "story_title": story.title,
-                "lorebook_id": lb.id,
-                "lorebook_name": lb.name,
-            })
+    else:
+        lorebooks = []
+    lorebook_map = {lb.id: lb for lb in lorebooks}
+    for story in stories:
+        for lb_id in story.lorebook_ids or []:
+            lb = lorebook_map.get(lb_id)
+            if lb:
+                story_lorebook_links.append({
+                    "story_id": story.id,
+                    "story_title": story.title,
+                    "lorebook_id": lb.id,
+                    "lorebook_name": lb.name,
+                })
 
     # Character → VoiceModels
     voice_links = [
@@ -122,17 +138,28 @@ def get_relationships(session: Session = Depends(get_session)):
 
     # Story → Locations (via location_ids JSON)
     story_location_links = []
-    for story in session.exec(select(Story).limit(100)).all():
+    location_ids = {
+        loc_id
+        for story in stories
+        for loc_id in (story.location_ids or [])
+    }
+    if location_ids:
         locations = session.exec(
-            select(Location).where(Location.id.in_(story.location_ids or []))
+            select(Location).where(Location.id.in_(location_ids))
         ).all()
-        for loc in locations:
-            story_location_links.append({
-                "story_id": story.id,
-                "story_title": story.title,
-                "location_id": loc.id,
-                "location_name": loc.name,
-            })
+    else:
+        locations = []
+    location_map = {loc.id: loc for loc in locations}
+    for story in stories:
+        for loc_id in story.location_ids or []:
+            loc = location_map.get(loc_id)
+            if loc:
+                story_location_links.append({
+                    "story_id": story.id,
+                    "story_title": story.title,
+                    "location_id": loc.id,
+                    "location_name": loc.name,
+                })
 
     # Chat → Locations (via location_id FK)
     chat_location_links = [

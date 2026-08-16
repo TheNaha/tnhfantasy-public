@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Brain, Plus, Trash2, Search, X, Loader2 } from 'lucide-react';
+import { Brain, Plus, Trash2, Search, X, Loader2, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
     useCharacterMemories,
     useCreateMemory,
+    useUpdateMemory,
     useDeleteMemory,
     useSearchMemories,
 } from '../../hooks/useMemories';
@@ -69,8 +70,13 @@ export default function MemoriesPanel({ characterId }) {
     const { data: memories = [], isLoading } = useCharacterMemories(characterId);
     const { data: searchResults } = useSearchMemories(characterId, searchQuery);
     const createMutation = useCreateMemory();
+    const updateMutation = useUpdateMemory();
     const deleteMutation = useDeleteMemory();
     const { confirm } = useConfirmation();
+    const [editingMemory, setEditingMemory] = useState(null);
+    const [editContent, setEditContent] = useState('');
+    const [editImportance, setEditImportance] = useState(5);
+    const [editTags, setEditTags] = useState('');
 
     const isSearching = searchQuery.length >= 2;
     const displayed = isSearching ? (searchResults ?? []) : memories;
@@ -111,6 +117,41 @@ export default function MemoriesPanel({ characterId }) {
             toast.success('Memory deleted');
         } catch {
             toast.error('Failed to delete memory');
+        }
+    };
+
+    const startEdit = (memory) => {
+        setEditingMemory(memory);
+        setEditContent(memory.content);
+        setEditImportance(memory.importance ?? 5);
+        setEditTags((memory.tags || []).join(', '));
+    };
+
+    const cancelEdit = () => {
+        setEditingMemory(null);
+        setEditContent('');
+        setEditImportance(5);
+        setEditTags('');
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingMemory || !editContent.trim()) return;
+        const tags = editTags
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
+        try {
+            await updateMutation.mutateAsync({
+                id: editingMemory.id,
+                characterId,
+                content: editContent.trim(),
+                importance: editImportance,
+                tags,
+            });
+            toast.success('Memory updated');
+            cancelEdit();
+        } catch {
+            toast.error('Failed to update memory');
         }
     };
 
@@ -233,6 +274,78 @@ export default function MemoriesPanel({ characterId }) {
                 </div>
             )}
 
+            {/* ── Edit form ───────────────────────────────────────── */}
+            {editingMemory && (
+                <div className="glass-panel rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                        <label className="text-[10px] text-indigo-300 uppercase tracking-wider font-semibold">
+                            Editing memory
+                        </label>
+                        <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors"
+                            title="Cancel edit"
+                        >
+                            <X size={12} />
+                        </button>
+                    </div>
+                    <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        placeholder="Memory content…"
+                        rows={3}
+                        className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-500/40 resize-none"
+                        autoFocus
+                    />
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
+                                Importance
+                            </label>
+                            <span className={`text-xs font-bold ${
+                                editImportance >= 7
+                                    ? 'text-emerald-400'
+                                    : editImportance >= 4
+                                    ? 'text-yellow-400'
+                                    : 'text-red-400'
+                            }`}>
+                                {editImportance}/10
+                            </span>
+                        </div>
+                        <input
+                            type="range"
+                            min={1}
+                            max={10}
+                            step={1}
+                            value={editImportance}
+                            onChange={(e) => setEditImportance(Number(e.target.value))}
+                            className="w-full accent-indigo-500"
+                        />
+                    </div>
+                    <input
+                        type="text"
+                        value={editTags}
+                        onChange={(e) => setEditTags(e.target.value)}
+                        placeholder="Tags (comma-separated)"
+                        className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-1.5 text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-500/40"
+                    />
+                    <button
+                        type="button"
+                        onClick={handleSaveEdit}
+                        disabled={!editContent.trim() || updateMutation.isPending}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+                    >
+                        {updateMutation.isPending ? (
+                            <Loader2 size={12} className="animate-spin" />
+                        ) : (
+                            <Pencil size={12} />
+                        )}
+                        Save Changes
+                    </button>
+                </div>
+            )}
+
             {/* ── Memory list ─────────────────────────────────────── */}
             {isLoading ? (
                 <MemorySkeleton />
@@ -300,16 +413,26 @@ export default function MemoriesPanel({ characterId }) {
                                 </p>
                             </div>
 
-                            {/* Delete */}
-                            <button
-                                type="button"
-                                onClick={() => handleDelete(memory)}
-                                disabled={deleteMutation.isPending}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-red-500/70 hover:text-red-400 transition-all shrink-0 self-start mt-0.5 rounded"
-                                title="Delete memory"
-                            >
-                                <Trash2 size={13} />
-                            </button>
+                            {/* Actions */}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all shrink-0 self-start mt-0.5">
+                                <button
+                                    type="button"
+                                    onClick={() => startEdit(memory)}
+                                    className="p-1 text-gray-400 hover:text-indigo-400 rounded transition-colors"
+                                    title="Edit memory"
+                                >
+                                    <Pencil size={13} />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDelete(memory)}
+                                    disabled={deleteMutation.isPending}
+                                    className="p-1 text-red-500/70 hover:text-red-400 transition-all rounded"
+                                    title="Delete memory"
+                                >
+                                    <Trash2 size={13} />
+                                </button>
+                            </div>
                         </div>
                     ))}
                 </div>

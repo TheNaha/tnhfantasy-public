@@ -10,7 +10,7 @@ from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, Location, Message, MessageRole
+from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context

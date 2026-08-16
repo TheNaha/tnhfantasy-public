@@ -22,14 +22,13 @@ from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 
 from api.deps import (
-    api_logger,
-    deduplicated,
     get_job_service,
     get_job_submission_service,
-    make_key,
 )
 from core.entities import JobStatus
 from core.exceptions import ValidationError
+from infrastructure.logging import api_logger
+from infrastructure.request_dedup import deduplicated, make_key
 from services.job_service import JobService
 from services.job_submission_service import JobSubmissionService
 

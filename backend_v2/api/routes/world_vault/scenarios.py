@@ -2,13 +2,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
+from typing import Literal
 
 from api.deps import get_session, get_scenario_repo
 from infrastructure.repositories.scenario_repo import ScenarioRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Scenario, Chat, Story
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import NotFoundError
 
 router = APIRouter()
 
@@ -71,7 +72,7 @@ def delete_scenario(scenario_id: str, session: Session = Depends(get_session), s
 
 
 class ApplyScenarioRequest(BaseModel):
-    target_type: str  # "chat" or "story"
+    target_type: Literal["chat", "story"]
     target_id: str
 
 
@@ -105,7 +106,5 @@ def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session
         session.refresh(story)
         result["applied_to"] = "story"
         result["story_id"] = req.target_id
-    else:
-        raise ValidationError(f"target_type must be 'chat' or 'story', got '{req.target_type}'")
 
     return result

@@ -14,8 +14,10 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from api.deps import cache_stats, get_logger, get_session_sync
+from api.deps import get_session_sync
 from config import settings
+from infrastructure.cache import cache_stats
+from infrastructure.logging import get_logger
 from services.asset_reconciler import all_assets_as_file_data
 
 logger = get_logger("statistics_route")

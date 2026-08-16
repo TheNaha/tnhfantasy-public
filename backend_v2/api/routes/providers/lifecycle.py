@@ -17,9 +17,7 @@ import httpx
 from fastapi import APIRouter, Depends
 
 from api.deps import (
-    api_logger,
     get_container_manager,
-    get_http_client,
     get_model_repo_v2,
     get_model_service_v2,
     get_provider_lifecycle_service,
@@ -27,6 +25,8 @@ from api.deps import (
     get_provider_status_service,
 )
 from core.exceptions import ComfyError, NotFoundError, ProviderError, ValidationError
+from infrastructure.http_client import get_http_client
+from infrastructure.logging import api_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from infrastructure.providers.runtime import provider_container_name
 from services.model_service import ModelServiceV2
@@ -179,7 +179,7 @@ async def get_provider_live_metrics(
     """Fetch live metrics directly from the remote provider container."""
     import time
 
-    from api.deps import get_http_client
+    from infrastructure.http_client import get_http_client
     from services.provider_runtime import resolve_provider_runtime
     
     provider = await service.get_provider(provider_id)
@@ -280,7 +280,7 @@ async def remove_model_from_provider(
     provider_service: ProviderService = Depends(get_provider_service)
 ):
     """Delete a model file from one provider and mark it pending again in V2."""
-    from api.deps import create_provider_client
+    from infrastructure.providers import create_provider_client
 
     normalized_directory = directory.replace("models/", "", 1)
     file = service.repo.get_file_by_storage_path(normalized_directory, filename)

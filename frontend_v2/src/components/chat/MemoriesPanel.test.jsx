@@ -14,6 +14,7 @@ const mockConfirm = vi.hoisted(() => vi.fn());
 vi.mock('../../hooks/useMemories', () => ({
     useCharacterMemories: vi.fn(),
     useCreateMemory: vi.fn(),
+    useUpdateMemory: vi.fn(),
     useDeleteMemory: vi.fn(),
     useSearchMemories: vi.fn(),
 }));
@@ -35,6 +36,7 @@ vi.mock('lucide-react', async (importOriginal) => {
 import {
     useCharacterMemories,
     useCreateMemory,
+    useUpdateMemory,
     useDeleteMemory,
     useSearchMemories,
 } from '../../hooks/useMemories';
@@ -56,6 +58,7 @@ describe('MemoriesPanel', () => {
 
         useCharacterMemories.mockReturnValue({ data: mockMemories, isLoading: false });
         useCreateMemory.mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false });
+        useUpdateMemory.mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false });
         useDeleteMemory.mockReturnValue({ mutateAsync: mockMutateAsync, isPending: false });
         useSearchMemories.mockReturnValue({ data: null, isLoading: false });
         mockConfirm.mockResolvedValue(true);
@@ -263,5 +266,48 @@ describe('MemoriesPanel', () => {
         await waitFor(() => {
             expect(searchInput.value).toBe('');
         });
+    });
+
+    it('edits a memory with correct payload when saved', async () => {
+        const updateMock = vi.fn().mockResolvedValue({});
+        useUpdateMemory.mockReturnValue({ mutateAsync: updateMock, isPending: false });
+        const { wrapper } = createWrapper();
+        render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+        const editButtons = screen.getAllByTitle('Edit memory');
+        fireEvent.click(editButtons[0]);
+
+        const editTextarea = screen.getByPlaceholderText('Memory content…');
+        fireEvent.change(editTextarea, { target: { value: 'The hero was born under a red moon.' } });
+
+        fireEvent.click(screen.getByText('Save Changes'));
+
+        await waitFor(() => {
+            expect(updateMock).toHaveBeenCalledWith({
+                id: 'mem-1',
+                characterId: 'char-1',
+                content: 'The hero was born under a red moon.',
+                importance: 8,
+                tags: ['birth', 'omen'],
+            });
+        });
+
+        // Edit form closes after save
+        await waitFor(() => {
+            expect(screen.queryByText('Save Changes')).not.toBeInTheDocument();
+        });
+    });
+
+    it('cancels edit without saving', () => {
+        const updateMock = vi.fn();
+        useUpdateMemory.mockReturnValue({ mutateAsync: updateMock, isPending: false });
+        const { wrapper } = createWrapper();
+        render(<MemoriesPanel characterId="char-1" />, { wrapper });
+
+        fireEvent.click(screen.getAllByTitle('Edit memory')[0]);
+        expect(screen.getByText('Editing memory')).toBeInTheDocument();
+        fireEvent.click(screen.getByTitle('Cancel edit'));
+        expect(screen.queryByText('Editing memory')).not.toBeInTheDocument();
+        expect(updateMock).not.toHaveBeenCalled();
     });
 });

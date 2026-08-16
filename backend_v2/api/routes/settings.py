@@ -20,8 +20,9 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 import config as app_config
-from api.deps import get_logger, get_session
+from api.deps import get_session
 from core.exceptions import ComfyError, ValidationError
+from infrastructure.logging import get_logger
 
 logger = get_logger("settings_route")
 

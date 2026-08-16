@@ -18,7 +18,6 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import (
-    api_logger,
     get_event_bus,
     get_provider_lifecycle_service,
     get_provider_service,
@@ -26,6 +25,7 @@ from api.deps import (
 )
 from core.events import Event, EventType, emit_provider_stats
 from core.exceptions import ComfyError, ProviderError, ValidationError
+from infrastructure.logging import api_logger
 from services.provider_service import ProviderService
 
 from .lifecycle import _invalidate_provider_runtime_caches

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Response
 
-from api.deps import model_logger
+from infrastructure.logging import model_logger
 from core.exceptions import NotFoundError, ValidationError
 from services.model_preview_service import get_preview_deduplicated
 

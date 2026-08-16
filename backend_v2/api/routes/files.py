@@ -25,13 +25,12 @@ from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from api.deps import (
-    get_logger,
     get_model_service_v2,
     get_provider_service,
     get_session,
     get_session_sync,
 )
-from infrastructure.repositories.collection_repo import CollectionRepository
+from infrastructure.logging import get_logger
 from config import settings
 from core.entities import Asset
 from core.exceptions import ComfyError, NotFoundError, ValidationError
@@ -123,7 +122,7 @@ async def _sync_file_to_providers(session: Session, filename: str, content: byte
             active_providers.append({"id": p_id, "worker_url": runtime.worker_url})
 
         if active_providers:
-            from api.deps import get_http_client
+            from infrastructure.http_client import get_http_client
             http = get_http_client()
             payload = {
                 "filename": filename,
@@ -1488,7 +1487,7 @@ async def proxy_file(
     service: ProviderService = Depends(get_provider_service)
 ):
     """Proxy file from provider storage."""
-    from api.deps import create_provider_client
+    from infrastructure.providers import create_provider_client
     
     provider_data = await service.get_provider(provider_id)
     
@@ -1538,7 +1537,7 @@ async def batch_get_metadata(request: BatchMetadataRequest):
     Returns:
         Dict mapping paths to their metadata
     """
-    from api.deps import read_image_metadata
+    from infrastructure.image_processor import read_image_metadata
 
     def _process(paths: list[str]) -> dict:
         results = {}

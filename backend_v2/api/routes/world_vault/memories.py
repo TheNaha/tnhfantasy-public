@@ -37,6 +37,26 @@ def list_memories(
     return session.exec(query).all()
 
 
+@router.post("/reindex")
+def reindex_memories(session: Session = Depends(get_session)):
+    """Backfill missing embeddings for all stored memories (semantic-search index)."""
+    from services.embedding_service import get_embedding_service
+
+    emb_svc = get_embedding_service()
+    memories = session.exec(select(CharacterMemory).where(CharacterMemory.embedding.is_(None))).all()
+    updated = 0
+    for mem in memories:
+        try:
+            mem.embedding = emb_svc.generate_embedding(mem.content)
+            mem.updated_at = datetime.now(timezone.utc)
+            session.add(mem)
+            updated += 1
+        except Exception:
+            continue
+    session.commit()
+    return {"reindexed": updated, "total_missing": len(memories)}
+
+
 @router.post("")
 def create_memory(memory_in: MemoryCreate, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo)):
     character = character_repo.get(memory_in.character_id)
@@ -84,6 +104,17 @@ def update_memory(memory_id: str, update_data: MemoryUpdate, session: Session = 
     update_dict = update_data.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
         setattr(mem, key, value)
+
+    if "content" in update_dict:
+        # Content changed — regenerate the embedding so semantic search
+        # never matches against stale vectors.
+        try:
+            from services.embedding_service import get_embedding_service
+
+            emb_svc = get_embedding_service()
+            mem.embedding = emb_svc.generate_embedding(mem.content)
+        except Exception:
+            mem.embedding = None
 
     mem.updated_at = datetime.now(timezone.utc)
     session.add(mem)
@@ -137,7 +168,7 @@ def search_memories(
         select(CharacterMemory)
         .where(CharacterMemory.character_id == character_id)
         .where(CharacterMemory.embedding.is_not(None))
-        .order_by(func.cosine_distance(CharacterMemory.embedding, q_vec))
+        .order_by(CharacterMemory.embedding.cosine_distance(q_vec))
         .limit(limit)
     )
 

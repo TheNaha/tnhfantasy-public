@@ -3,12 +3,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from api.deps import get_session, get_campaign_repo, get_character_repo, get_story_repo, get_chat_repo, get_location_repo
+from api.deps import get_session, get_campaign_repo
 from infrastructure.repositories.campaign_repo import CampaignRepository
-from infrastructure.repositories.character_repo import CharacterRepository
-from infrastructure.repositories.story_repo import StoryRepository
-from infrastructure.repositories.chat_repo import ChatRepository
-from infrastructure.repositories.location_repo import LocationRepository
 from core.entities import Campaign, Location, Character, Story, Chat
 from core.exceptions import NotFoundError
 from sqlmodel import Session, select

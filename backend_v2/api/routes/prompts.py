@@ -19,10 +19,11 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, or_, select
 
-from api.deps import get_logger, get_session, get_prompt_repo
-from infrastructure.repositories.prompt_repo import PromptRepository
+from api.deps import get_session, get_prompt_repo
 from core.entities import Prompt
 from core.exceptions import ComfyError, NotFoundError
+from infrastructure.logging import get_logger
+from infrastructure.repositories.prompt_repo import PromptRepository
 
 logger = get_logger("prompts_route")
 
