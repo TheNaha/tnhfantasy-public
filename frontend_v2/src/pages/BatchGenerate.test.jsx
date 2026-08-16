@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import BatchGenerate from './BatchGenerate';
 
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -15,18 +16,34 @@ const createdJobs = [
 ];
 
 function renderPage() {
-    return render(<BatchGenerate />);
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+        <QueryClientProvider client={queryClient}>
+            <BatchGenerate />
+        </QueryClientProvider>
+    );
 }
 
 describe('BatchGenerate page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         globalThis.fetch = fetchMock;
-        fetchMock.mockResolvedValue({
-            ok: true,
-            json: async () => ({ count: 4, jobs: createdJobs }),
+        fetchMock.mockImplementation((url, init = {}) => {
+            if ((init.method || 'GET') !== 'POST') {
+                return Promise.resolve({ ok: true, json: async () => ({ files: [], total: 0 }) });
+            }
+            return Promise.resolve({
+                ok: true,
+                json: async () => ({ count: 4, jobs: createdJobs }),
+            });
         });
     });
+
+    function postCalls() {
+        return fetchMock.mock.calls.filter(c => c[1]?.method === 'POST');
+    }
 
     it('renders the main heading and subtitle', () => {
         renderPage();
@@ -93,9 +110,9 @@ describe('BatchGenerate page', () => {
         });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(postCalls()).toHaveLength(1));
 
-        const [url, init] = fetchMock.mock.calls[0];
+        const [url, init] = postCalls()[0];
         expect(url).toBe('/api/generate/batch');
         const body = JSON.parse(init.body);
         expect(body.workflows).toHaveLength(4);
@@ -116,8 +133,8 @@ describe('BatchGenerate page', () => {
         fireEvent.change(screen.getByPlaceholderText('Base seed'), { target: { value: '42' } });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-        const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+        await waitFor(() => expect(postCalls()).toHaveLength(1));
+        const body = JSON.parse(postCalls()[0][1].body);
         expect(body.workflows.map((w) => w.options.seed)).toEqual([42, 43, 44, 45]);
     });
 
@@ -127,8 +144,8 @@ describe('BatchGenerate page', () => {
         fireEvent.change(screen.getByPlaceholderText('Base seed'), { target: { value: '777' } });
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
 
-        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-        const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+        await waitFor(() => expect(postCalls()).toHaveLength(1));
+        const body = JSON.parse(postCalls()[0][1].body);
         expect(body.workflows.map((w) => w.options.seed)).toEqual([777, 777, 777, 777]);
     });
 

@@ -119,12 +119,31 @@ async def generate_batch(
         from core.workflow_builder import WorkflowBuilder
 
         workflows = request.workflows
-        
+
+        def _normalize_item(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+            """Return (workflow, metadata) for one batch entry.
+
+            Accepts three shapes:
+              - compiled workflow directly:             {nodes, edges, ...}
+              - wrapped entry from the UI:              {workflow: {...}, options: {...}, metadata: {...}}
+              - bare generator options (prompt only):   {prompt: ..., ...}
+            """
+            meta = item.get("metadata") or {}
+            wf = item.get("workflow")
+            if isinstance(wf, dict) and (wf.get("nodes") or wf.get("edges")):
+                return wf, meta
+            if isinstance(item.get("options"), dict):
+                return WorkflowBuilder().build(item["options"]), meta
+            if isinstance(item.get("nodes"), (list, dict)):
+                return {k: v for k, v in item.items() if k != "metadata"}, meta
+            if item.get("prompt"):
+                return WorkflowBuilder().build(item), meta
+            raise ValidationError("batch entry must provide workflow, options, or prompt", field="workflows")
+
         # If workflows are omitted but options are provided, treat it as a single-workflow batch
-        # This isn't commonly needed but ensures we don't break if someone passes options to batch
         if not workflows and request.options:
             builder = WorkflowBuilder()
-            workflows = [builder.build(request.options)]
+            workflows = [{"workflow": builder.build(request.options), "metadata": {}}]
 
         if not workflows:
             raise ValidationError("workflows array is required", field="workflows")
@@ -132,12 +151,13 @@ async def generate_batch(
         async def _create_batch_jobs():
             created_jobs = []
 
-            for i, workflow in enumerate(workflows):
+            for i, entry in enumerate(workflows):
+                workflow, entry_metadata = _normalize_item(entry)
                 # Add batch index to metadata; per-workflow metadata (e.g. the
                 # frontend's per-prompt entries) wins over the request-level one.
                 job_metadata = {
                     **request.metadata,
-                    **(workflow.get("metadata") or {}),
+                    **entry_metadata,
                     "batch_index": i,
                     "batch_total": len(workflows),
                 }
