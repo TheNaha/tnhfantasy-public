@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_embedding_service, get_session
+from api.deps import get_embedding_service, get_session, get_lorebook_repo, get_lorebook_entry_repo
+from infrastructure.repositories.lorebook_repo import LorebookRepository
+from infrastructure.repositories.lorebook_entry_repo import LorebookEntryRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Lorebook, LorebookEntry
 from core.exceptions import NotFoundError
@@ -23,11 +25,11 @@ class EntryUpdate(BaseModel):
     content: str | None = None
 
 @router.get("", response_model=list[Lorebook])
-def list_lorebooks(session: Session = Depends(get_session)):
-    return session.exec(select(Lorebook).order_by(Lorebook.name)).all()
+def list_lorebooks(session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+    return lorebook_repo.list()
 
 @router.post("", response_model=Lorebook)
-def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session)):
+def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
     lorebook.created_at = datetime.now(timezone.utc)
     lorebook.updated_at = lorebook.created_at
     session.add(lorebook)
@@ -36,15 +38,15 @@ def create_lorebook(lorebook: Lorebook, session: Session = Depends(get_session))
     return lorebook
 
 @router.get("/{lorebook_id}", response_model=Lorebook)
-def get_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
-    lorebook = session.get(Lorebook, lorebook_id)
+def get_lorebook(lorebook_id: str, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+    lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
     return lorebook
 
 @router.put("/{lorebook_id}", response_model=Lorebook)
-def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Session = Depends(get_session)):
-    lorebook = session.get(Lorebook, lorebook_id)
+def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
+    lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
     
@@ -61,13 +63,13 @@ def update_lorebook(lorebook_id: str, update_data: LorebookUpdate, session: Sess
     return lorebook
 
 @router.delete("/{lorebook_id}")
-def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session)):
-    lorebook = session.get(Lorebook, lorebook_id)
+def delete_lorebook(lorebook_id: str, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo), lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo)):
+    lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
         
     scrub_entity_references(session, "lorebook", lorebook_id)
-    entries = session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)).all()
+    entries = lorebook_entry_repo.list_by_lorebook(lorebook_id)
     for entry in entries:
         session.delete(entry)
         
@@ -88,7 +90,7 @@ def search_entries(
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
     """Semantic search for lorebook entries based on a query string."""
-    lorebook = session.get(Lorebook, lorebook_id)
+    lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
         
@@ -130,8 +132,8 @@ def search_entries(
 # ENTRIES CRUD
 # ============================================================================
 @router.get("/{lorebook_id}/entries", response_model=list[LorebookEntry])
-def list_entries(lorebook_id: str, session: Session = Depends(get_session)):
-    return session.exec(select(LorebookEntry).where(LorebookEntry.lorebook_id == lorebook_id)).all()
+def list_entries(lorebook_id: str, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo), lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo)):
+    return lorebook_entry_repo.list_by_lorebook(lorebook_id)
 
 @router.post("/{lorebook_id}/entries", response_model=LorebookEntry)
 def create_entry(
@@ -140,7 +142,7 @@ def create_entry(
     session: Session = Depends(get_session),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
-    lorebook = session.get(Lorebook, lorebook_id)
+    lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
         
@@ -166,9 +168,10 @@ def update_entry(
     entry_id: str, 
     update_data: EntryUpdate, 
     session: Session = Depends(get_session),
+    lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo),
     embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
-    entry = session.get(LorebookEntry, entry_id)
+    entry = lorebook_entry_repo.get(entry_id, lorebook_id)
     if not entry or entry.lorebook_id != lorebook_id:
         raise NotFoundError("LorebookEntry", entry_id)
         
@@ -196,8 +199,8 @@ def update_entry(
     return entry
 
 @router.delete("/{lorebook_id}/entries/{entry_id}")
-def delete_entry(lorebook_id: str, entry_id: str, session: Session = Depends(get_session)):
-    entry = session.get(LorebookEntry, entry_id)
+def delete_entry(lorebook_id: str, entry_id: str, session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo), lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo)):
+    entry = lorebook_entry_repo.get(entry_id, lorebook_id)
     if not entry or entry.lorebook_id != lorebook_id:
         raise NotFoundError("LorebookEntry", entry_id)
         

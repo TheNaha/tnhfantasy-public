@@ -4,7 +4,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from api.deps import get_session
+from api.deps import get_session, get_chat_repo, get_message_repo
+from infrastructure.repositories.chat_repo import ChatRepository
+from infrastructure.repositories.message_repo import MessageRepository
 from core.entities import Chat, Message
 from core.exceptions import NotFoundError
 
@@ -14,14 +16,13 @@ router = APIRouter()
 @router.get("/{chat_id}/branches")
 def list_branches(
     chat_id: str,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
     """Return all branch roots and their alternates for a chat.
 
     A "branch root" is a message that has children (alternates or replies in
     a different branch). The response groups messages by branch_id.
     """
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -64,15 +65,14 @@ class CreateBranchRequest(BaseModel):
 def create_branch(
     chat_id: str,
     data: CreateBranchRequest,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
     """Create a new conversation branch from a message.
 
     The new branch starts as a copy of the conversation up to `message_id`,
     allowing the user to continue from that point with different responses.
     Returns the new branch_id and the first message in the new branch.
     """
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -153,8 +153,7 @@ def create_branch(
 def get_alternates(
     chat_id: str,
     message_id: str,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
     """Get all alternate replies for a character message (the swipe alternates)."""
     msg = session.get(Message, message_id)
     if not msg or msg.chat_id != chat_id:

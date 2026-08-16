@@ -3,7 +3,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from api.deps import get_session_context
+from infrastructure.deps import get_session_context
 from config import settings
 from core.entities import JobStatus
 from core.exceptions import NotFoundError

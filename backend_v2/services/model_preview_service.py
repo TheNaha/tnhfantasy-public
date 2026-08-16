@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from api.deps import get_session_sync
+from infrastructure.deps import get_session_sync
 from infrastructure.config_helpers import (
     resolve_env_bool,
     resolve_env_float,

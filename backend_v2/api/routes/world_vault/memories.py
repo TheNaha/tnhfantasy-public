@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
-from api.deps import get_session
+from api.deps import get_session, get_character_memory_repo, get_character_repo
+from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
+from infrastructure.repositories.character_repo import CharacterRepository
 from core.entities import Character, CharacterMemory
 from core.exceptions import NotFoundError, ValidationError
 
@@ -28,8 +30,7 @@ class MemoryUpdate(BaseModel):
 @router.get("")
 def list_memories(
     character_id: str | None = None,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo), ):
     query = select(CharacterMemory).order_by(CharacterMemory.created_at.desc())
     if character_id is not None:
         query = query.where(CharacterMemory.character_id == character_id)
@@ -37,8 +38,8 @@ def list_memories(
 
 
 @router.post("")
-def create_memory(memory_in: MemoryCreate, session: Session = Depends(get_session)):
-    character = session.get(Character, memory_in.character_id)
+def create_memory(memory_in: MemoryCreate, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo)):
+    character = character_repo.get(memory_in.character_id)
     if not character:
         raise NotFoundError("Character", memory_in.character_id)
 
@@ -67,16 +68,16 @@ def create_memory(memory_in: MemoryCreate, session: Session = Depends(get_sessio
 
 
 @router.get("/{memory_id}")
-def get_memory(memory_id: str, session: Session = Depends(get_session)):
-    mem = session.get(CharacterMemory, memory_id)
+def get_memory(memory_id: str, session: Session = Depends(get_session), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo)):
+    mem = character_memory_repo.get(memory_id)
     if not mem:
         raise NotFoundError("CharacterMemory", memory_id)
     return mem
 
 
 @router.put("/{memory_id}")
-def update_memory(memory_id: str, update_data: MemoryUpdate, session: Session = Depends(get_session)):
-    mem = session.get(CharacterMemory, memory_id)
+def update_memory(memory_id: str, update_data: MemoryUpdate, session: Session = Depends(get_session), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo)):
+    mem = character_memory_repo.get(memory_id)
     if not mem:
         raise NotFoundError("CharacterMemory", memory_id)
 
@@ -92,8 +93,8 @@ def update_memory(memory_id: str, update_data: MemoryUpdate, session: Session = 
 
 
 @router.delete("/{memory_id}")
-def delete_memory(memory_id: str, session: Session = Depends(get_session)):
-    mem = session.get(CharacterMemory, memory_id)
+def delete_memory(memory_id: str, session: Session = Depends(get_session), character_memory_repo: CharacterMemoryRepository = Depends(get_character_memory_repo)):
+    mem = character_memory_repo.get(memory_id)
     if not mem:
         raise NotFoundError("CharacterMemory", memory_id)
     session.delete(mem)

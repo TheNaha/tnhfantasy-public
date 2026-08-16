@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_session
+from api.deps import get_session, get_scenario_repo
+from infrastructure.repositories.scenario_repo import ScenarioRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Scenario, Chat, Story
 from core.exceptions import NotFoundError, ValidationError
@@ -18,11 +19,11 @@ class ScenarioUpdate(BaseModel):
     prompt_template: str | None = None
 
 @router.get("", response_model=list[Scenario])
-def list_scenarios(session: Session = Depends(get_session)):
-    return session.exec(select(Scenario).order_by(Scenario.name)).all()
+def list_scenarios(session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    return scenario_repo.list()
 
 @router.post("", response_model=Scenario)
-def create_scenario(scenario: Scenario, session: Session = Depends(get_session)):
+def create_scenario(scenario: Scenario, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
     scenario.created_at = datetime.now(timezone.utc)
     scenario.updated_at = scenario.created_at
     session.add(scenario)
@@ -31,15 +32,15 @@ def create_scenario(scenario: Scenario, session: Session = Depends(get_session))
     return scenario
 
 @router.get("/{scenario_id}", response_model=Scenario)
-def get_scenario(scenario_id: str, session: Session = Depends(get_session)):
-    scenario = session.get(Scenario, scenario_id)
+def get_scenario(scenario_id: str, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    scenario = scenario_repo.get(scenario_id)
     if not scenario:
         raise NotFoundError("Scenario", scenario_id)
     return scenario
 
 @router.put("/{scenario_id}", response_model=Scenario)
-def update_scenario(scenario_id: str, update_data: ScenarioUpdate, session: Session = Depends(get_session)):
-    scenario = session.get(Scenario, scenario_id)
+def update_scenario(scenario_id: str, update_data: ScenarioUpdate, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    scenario = scenario_repo.get(scenario_id)
     if not scenario:
         raise NotFoundError("Scenario", scenario_id)
     
@@ -58,8 +59,8 @@ def update_scenario(scenario_id: str, update_data: ScenarioUpdate, session: Sess
     return scenario
 
 @router.delete("/{scenario_id}")
-def delete_scenario(scenario_id: str, session: Session = Depends(get_session)):
-    scenario = session.get(Scenario, scenario_id)
+def delete_scenario(scenario_id: str, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
+    scenario = scenario_repo.get(scenario_id)
     if not scenario:
         raise NotFoundError("Scenario", scenario_id)
     
@@ -75,9 +76,9 @@ class ApplyScenarioRequest(BaseModel):
 
 
 @router.post("/{scenario_id}/apply")
-def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session = Depends(get_session)):
+def apply_scenario(scenario_id: str, req: ApplyScenarioRequest, session: Session = Depends(get_session), scenario_repo: ScenarioRepository = Depends(get_scenario_repo)):
     """Apply a scenario's prompt_template and defaults to a chat or story."""
-    scenario = session.get(Scenario, scenario_id)
+    scenario = scenario_repo.get(scenario_id)
     if not scenario:
         raise NotFoundError("Scenario", scenario_id)
 

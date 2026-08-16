@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from api.deps import get_session
+from api.deps import get_session, get_campaign_repo, get_character_repo, get_story_repo, get_chat_repo, get_location_repo
+from infrastructure.repositories.campaign_repo import CampaignRepository
+from infrastructure.repositories.character_repo import CharacterRepository
+from infrastructure.repositories.story_repo import StoryRepository
+from infrastructure.repositories.chat_repo import ChatRepository
+from infrastructure.repositories.location_repo import LocationRepository
 from core.entities import Campaign, Location, Character, Story, Chat
 from core.exceptions import NotFoundError
 from sqlmodel import Session, select
@@ -30,12 +35,12 @@ class CampaignUpdate(BaseModel):
 
 
 @router.get("", response_model=list[Campaign])
-def list_campaigns(session: Session = Depends(get_session)):
-    return session.exec(select(Campaign).order_by(Campaign.name)).all()
+def list_campaigns(session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
+    return campaign_repo.list()
 
 
 @router.post("", response_model=Campaign)
-def create_campaign(campaign_in: CampaignCreate, session: Session = Depends(get_session)):
+def create_campaign(campaign_in: CampaignCreate, session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
     campaign = Campaign(
         name=campaign_in.name,
         description=campaign_in.description,
@@ -53,16 +58,16 @@ def create_campaign(campaign_in: CampaignCreate, session: Session = Depends(get_
 
 
 @router.get("/{campaign_id}", response_model=Campaign)
-def get_campaign(campaign_id: str, session: Session = Depends(get_session)):
-    campaign = session.get(Campaign, campaign_id)
+def get_campaign(campaign_id: str, session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
+    campaign = campaign_repo.get(campaign_id)
     if not campaign:
         raise NotFoundError("Campaign", campaign_id)
     return campaign
 
 
 @router.put("/{campaign_id}", response_model=Campaign)
-def update_campaign(campaign_id: str, update_data: CampaignUpdate, session: Session = Depends(get_session)):
-    campaign = session.get(Campaign, campaign_id)
+def update_campaign(campaign_id: str, update_data: CampaignUpdate, session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
+    campaign = campaign_repo.get(campaign_id)
     if not campaign:
         raise NotFoundError("Campaign", campaign_id)
 
@@ -78,8 +83,8 @@ def update_campaign(campaign_id: str, update_data: CampaignUpdate, session: Sess
 
 
 @router.delete("/{campaign_id}")
-def delete_campaign(campaign_id: str, session: Session = Depends(get_session)):
-    campaign = session.get(Campaign, campaign_id)
+def delete_campaign(campaign_id: str, session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
+    campaign = campaign_repo.get(campaign_id)
     if not campaign:
         raise NotFoundError("Campaign", campaign_id)
     session.delete(campaign)
@@ -88,8 +93,8 @@ def delete_campaign(campaign_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{campaign_id}/dashboard")
-def get_campaign_dashboard(campaign_id: str, session: Session = Depends(get_session)):
-    campaign = session.get(Campaign, campaign_id)
+def get_campaign_dashboard(campaign_id: str, session: Session = Depends(get_session), campaign_repo: CampaignRepository = Depends(get_campaign_repo)):
+    campaign = campaign_repo.get(campaign_id)
     if not campaign:
         raise NotFoundError("Campaign", campaign_id)
 

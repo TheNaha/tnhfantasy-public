@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
-from api.deps import get_session
+from api.deps import get_session, get_location_repo
+from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
 from core.exceptions import NotFoundError
@@ -29,12 +30,12 @@ class LocationUpdate(BaseModel):
 
 
 @router.get("", response_model=list[Location])
-def list_locations(session: Session = Depends(get_session)):
-    return session.exec(select(Location).order_by(Location.name)).all()
+def list_locations(session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    return location_repo.list()
 
 
 @router.post("", response_model=Location)
-def create_location(location_in: LocationCreate, session: Session = Depends(get_session)):
+def create_location(location_in: LocationCreate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
     location = Location(
         name=location_in.name,
         description=location_in.description,
@@ -51,7 +52,7 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
 
 
 @router.get("/search", response_model=list[Location])
-def search_locations(q: str, session: Session = Depends(get_session)):
+def search_locations(q: str, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
     pattern = f"%{q}%"
     return session.exec(
         select(Location).where(
@@ -62,16 +63,16 @@ def search_locations(q: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{location_id}", response_model=Location)
-def get_location(location_id: str, session: Session = Depends(get_session)):
-    location = session.get(Location, location_id)
+def get_location(location_id: str, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    location = location_repo.get(location_id)
     if not location:
         raise NotFoundError("Location", location_id)
     return location
 
 
 @router.put("/{location_id}", response_model=Location)
-def update_location(location_id: str, update_data: LocationUpdate, session: Session = Depends(get_session)):
-    location = session.get(Location, location_id)
+def update_location(location_id: str, update_data: LocationUpdate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    location = location_repo.get(location_id)
     if not location:
         raise NotFoundError("Location", location_id)
 
@@ -87,8 +88,8 @@ def update_location(location_id: str, update_data: LocationUpdate, session: Sess
 
 
 @router.patch("/{location_id}", response_model=Location)
-def patch_location(location_id: str, update_data: LocationUpdate, session: Session = Depends(get_session)):
-    location = session.get(Location, location_id)
+def patch_location(location_id: str, update_data: LocationUpdate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    location = location_repo.get(location_id)
     if not location:
         raise NotFoundError("Location", location_id)
 
@@ -104,8 +105,8 @@ def patch_location(location_id: str, update_data: LocationUpdate, session: Sessi
 
 
 @router.delete("/{location_id}")
-def delete_location(location_id: str, session: Session = Depends(get_session)):
-    location = session.get(Location, location_id)
+def delete_location(location_id: str, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    location = location_repo.get(location_id)
     if not location:
         raise NotFoundError("Location", location_id)
     scrub_entity_references(session, "location", location_id)

@@ -10,7 +10,13 @@ import pytest
 from PIL import Image, PngImagePlugin
 from sqlmodel import select
 
+import config as app_config
 from core.entities import Character, CharacterMemory, Collection
+
+
+@pytest.fixture(autouse=True)
+def _temp_avatar_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_config.settings, "character_avatar_dir", str(tmp_path / "characters"))
 
 
 def _card_png(card_data: dict) -> bytes:
@@ -72,7 +78,8 @@ class TestImportCharacterCard:
         assert char["name"] == "Cardified"
         assert char["personality"] == "brave"
         assert char["has_avatar"] is True
-        assert os.path.exists(f"/data/characters/{char['id']}/avatar.png")
+        avatar_dir = app_config.settings.character_avatar_dir
+        assert os.path.exists(os.path.join(avatar_dir, char['id'], "avatar.png"))
 
     def test_import_v2_data_wrapper(self, client, session):
         png = _card_png({"spec": "chara_card_v2", "data": {"name": "Wrapped", "first_mes": "Hi!"}})

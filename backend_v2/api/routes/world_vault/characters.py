@@ -13,10 +13,13 @@ from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_session
+from api.deps import get_session, get_character_repo, get_collection_repo
+from infrastructure.repositories.character_repo import CharacterRepository
+from infrastructure.repositories.collection_repo import CollectionRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Character
+from core.entities import Character, Collection
 from core.exceptions import NotFoundError, ValidationError
+import config as app_config
 
 router = APIRouter()
 
@@ -172,8 +175,8 @@ def parse_character_card(png_bytes: bytes) -> dict:
 
 
 @router.get("")
-def list_characters(session: Session = Depends(get_session)):
-    characters = session.exec(select(Character).order_by(Character.name)).all()
+def list_characters(session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    characters = character_repo.list()
     return [_character_to_dict(c) for c in characters]
 
 @router.post("")
@@ -227,8 +230,8 @@ def import_character_card(
     session.refresh(character)
 
     # Save avatar from card image
-    os.makedirs(f"/data/characters/{character.id}", exist_ok=True)
-    avatar_path = f"/data/characters/{character.id}/avatar.png"
+    os.makedirs(f"{app_config.settings.character_avatar_dir}/{character.id}", exist_ok=True)
+    avatar_path = f"{app_config.settings.character_avatar_dir}/{character.id}/avatar.png"
     with open(avatar_path, "wb") as f:
         f.write(avatar_bytes)
     character.avatar_path = avatar_path
@@ -253,16 +256,16 @@ def import_character_card(
     return _character_to_dict(character)
 
 @router.get("/{character_id}")
-def get_character(character_id: str, session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+def get_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
     return _character_to_dict(character)
 
 @router.put("/{character_id}")
-def update_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session)):
+def update_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     """Full update — replaces all provided fields (omitted fields are left unchanged)."""
-    character = session.get(Character, character_id)
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
 
@@ -278,9 +281,9 @@ def update_character(character_id: str, character_update: CharacterUpdateRequest
 
 
 @router.patch("/{character_id}")
-def patch_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session)):
+def patch_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     """Partial update — only updates fields explicitly provided (non-None values)."""
-    character = session.get(Character, character_id)
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
 
@@ -297,8 +300,8 @@ def patch_character(character_id: str, character_update: CharacterUpdateRequest,
     return _character_to_dict(character)
 
 @router.delete("/{character_id}")
-def delete_character(character_id: str, session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+def delete_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
     
@@ -308,13 +311,13 @@ def delete_character(character_id: str, session: Session = Depends(get_session))
     return {"message": "Character deleted"}
 
 @router.post("/{character_id}/avatar")
-async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
 
-    os.makedirs(f"/data/characters/{character_id}", exist_ok=True)
-    avatar_path = f"/data/characters/{character_id}/avatar.png"
+    os.makedirs(f"{app_config.settings.character_avatar_dir}/{character_id}", exist_ok=True)
+    avatar_path = f"{app_config.settings.character_avatar_dir}/{character_id}/avatar.png"
 
     with open(avatar_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -328,8 +331,8 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
     return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
 @router.get("/{character_id}/avatar")
-def get_avatar(character_id: str, session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+def get_avatar(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character or not character.avatar_path or not os.path.exists(character.avatar_path):
         raise NotFoundError("Avatar", character_id)
         
@@ -337,8 +340,8 @@ def get_avatar(character_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/{character_id}/clone", response_model=Character)
-def clone_character(character_id: str, session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+def clone_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
         
@@ -353,8 +356,8 @@ def clone_character(character_id: str, session: Session = Depends(get_session)):
     session.refresh(new_char)
     
     if character.avatar_path and os.path.exists(character.avatar_path):
-        os.makedirs(f"/data/characters/{new_char.id}", exist_ok=True)
-        new_avatar_path = f"/data/characters/{new_char.id}/avatar.png"
+        os.makedirs(f"{app_config.settings.character_avatar_dir}/{new_char.id}", exist_ok=True)
+        new_avatar_path = f"{app_config.settings.character_avatar_dir}/{new_char.id}/avatar.png"
         shutil.copy2(character.avatar_path, new_avatar_path)
         new_char.avatar_path = new_avatar_path
         session.add(new_char)
@@ -379,8 +382,8 @@ def clone_character(character_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{character_id}/export")
-def export_character(character_id: str, session: Session = Depends(get_session)):
-    character = session.get(Character, character_id)
+def export_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
         

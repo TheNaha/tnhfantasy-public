@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from api.deps import get_session_sync
+from infrastructure.deps import get_session_sync
 from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import provider_container_name
 
@@ -40,7 +40,7 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
         docker_available = False
         found = False
         try:
-            from api.deps import get_container_manager
+            from infrastructure.deps import get_container_manager
 
             container_manager = get_container_manager()
             if container_manager and getattr(container_manager, "client", None) is not None:

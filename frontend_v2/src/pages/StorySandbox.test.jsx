@@ -217,6 +217,7 @@ describe('StorySandbox page', () => {
     it('continues story when Continue button is clicked', async () => {
         const mockMutate = vi.fn().mockResolvedValue({ job_id: 'job-continue' });
         mockContinueChapter.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        mockStories.mockReturnValue({ data: [], isLoading: false });
         renderWithProviders(<StorySandbox />);
         await waitFor(() => {
             expect(screen.getByText('Continue')).toBeInTheDocument();

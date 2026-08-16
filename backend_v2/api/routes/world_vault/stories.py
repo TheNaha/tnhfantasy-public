@@ -7,7 +7,12 @@ from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session, get_queue_manager
+from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo, get_character_repo, get_lorebook_repo, get_location_repo
+from infrastructure.repositories.story_repo import StoryRepository
+from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
+from infrastructure.repositories.character_repo import CharacterRepository
+from infrastructure.repositories.lorebook_repo import LorebookRepository
+from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location
 from core.exceptions import ComfyError, NotFoundError
@@ -97,11 +102,11 @@ def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
 
 
 @router.get("", response_model=list[Story])
-def list_stories(session: Session = Depends(get_session)):
-    return session.exec(select(Story).where(Story.is_archived == False).order_by(Story.updated_at.desc())).all()
+def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    return story_repo.list_active()
 
 @router.post("", response_model=Story)
-def create_story(req: CreateStoryRequest, session: Session = Depends(get_session)):
+def create_story(req: CreateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     story = Story(
         title=req.title,
         description=req.description,
@@ -133,16 +138,16 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
     return story
 
 @router.get("/{story_id}", response_model=Story)
-def get_story(story_id: str, session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def get_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
     return story
 
 
 @router.get("/{story_id}/export")
-def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
     chapters = session.exec(
@@ -457,11 +462,11 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
 
 
 @router.post("/{story_id}/publish", response_model=dict)
-def publish_story(story_id: str, session: Session = Depends(get_session)):
+def publish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """Publish a story and generate a shareable token for public reading."""
     from secrets import token_urlsafe
 
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
 
@@ -489,9 +494,9 @@ def publish_story(story_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/{story_id}/unpublish", response_model=dict)
-def unpublish_story(story_id: str, session: Session = Depends(get_session)):
+def unpublish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """Unpublish a story (revoke its public token)."""
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
 
@@ -509,7 +514,7 @@ def unpublish_story(story_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/published/{token}")
-def read_published_story(token: str, session: Session = Depends(get_session)):
+def read_published_story(token: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """Read a published story by its token (public, read-only)."""
     story = session.exec(
         select(Story).where(Story.published_token == token, Story.is_published == True)
@@ -559,7 +564,7 @@ def read_published_story(token: str, session: Session = Depends(get_session)):
 
 
 @router.get("/published/{token}/export")
-def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session)):
+def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """Export a published story by its token (public, read-only)."""
     story = session.exec(
         select(Story).where(Story.published_token == token, Story.is_published == True)
@@ -569,12 +574,12 @@ def export_published_story(token: str, format: str = "json", session: Session = 
 
     # Build a minimal story dict and reuse the same export logic
     # by calling export_story with the resolved story_id
-    return export_story(story.id, format=format, session=session)
+    return export_story(story.id, format=format, session=session, story_repo=story_repo, story_chapter_repo=story_chapter_repo)
 
 
 @router.put("/{story_id}", response_model=Story)
-def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
     
@@ -596,8 +601,8 @@ class ChapterReorderRequest(BaseModel):
 
 
 @router.post("/{story_id}/chapters/reorder")
-def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
     chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id)).all()
@@ -612,8 +617,8 @@ def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session
 
 
 @router.delete("/{story_id}")
-def delete_story(story_id: str, session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def delete_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
     
@@ -626,17 +631,17 @@ def delete_story(story_id: str, session: Session = Depends(get_session)):
     return {"message": "Story deleted"}
 
 @router.get("/{story_id}/chapters", response_model=list[StoryChapter])
-def list_chapters(story_id: str, session: Session = Depends(get_session)):
-    chapters = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).all()
+def list_chapters(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    chapters = story_chapter_repo.list_by_story(story_id)
     return chapters
 
 @router.post("/{story_id}/chapters", response_model=StoryChapter)
-def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depends(get_session)):
-    story = session.get(Story, story_id)
+def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
         
-    max_chapter = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number.desc())).first()
+    max_chapter = story_chapter_repo.get_max_chapter_number(story_id)
     chapter.chapter_number = max_chapter.chapter_number + 1 if max_chapter else 1
     chapter.story_id = story_id
     chapter.created_at = datetime.now(timezone.utc)
@@ -648,16 +653,16 @@ def create_chapter(story_id: str, chapter: StoryChapter, session: Session = Depe
     return chapter
 
 @router.get("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)
-def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session)):
-    chapter = session.get(StoryChapter, chapter_id)
+def get_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
     _ensure_beat_ids(session, chapter)
     return chapter
 
 @router.put("/{story_id}/chapters/{chapter_id}", response_model=StoryChapter)
-def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter, session: Session = Depends(get_session)):
-    chapter = session.get(StoryChapter, chapter_id)
+def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
         
@@ -673,8 +678,8 @@ def update_chapter(story_id: str, chapter_id: str, chapter_update: StoryChapter,
     return chapter
 
 @router.delete("/{story_id}/chapters/{chapter_id}")
-def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session)):
-    chapter = session.get(StoryChapter, chapter_id)
+def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
         
@@ -683,15 +688,15 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
     return {"message": "Chapter deleted"}
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
-async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session)):
+async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     from services.context_builder import build_chat_context_async
     from services.llm_config import get_default_llm_model as _get_default_llm_model
 
-    chapter = session.get(StoryChapter, chapter_id)
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
         
     prompt = data.prompt
     if prompt:
@@ -746,8 +751,8 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
     return {"job_id": job.id}
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")
-def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session)):
-    chapter = session.get(StoryChapter, chapter_id)
+def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
         
@@ -773,14 +778,14 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     return chapter
 
 @router.post("/{story_id}/chapters/{chapter_id}/branch", response_model=StoryChapter)
-def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, session: Session = Depends(get_session)):
+def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """Fork the story at a specific beat into a new chapter.
 
     The new chapter keeps the shared history up to (and including) the
     branch point, then continues from there. Content is rebuilt from beats
     so the editor stays consistent with the beat list.
     """
-    chapter = session.get(StoryChapter, chapter_id)
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 
@@ -841,13 +846,15 @@ async def illustrate_chapter(
     chapter_id: str,
     data: StoryIllustrateRequest,
     session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
 ):
 
-    chapter = session.get(StoryChapter, chapter_id)
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
 
     # Resolve checkpoint: story characters > fallback to an installed model
     checkpoint = _resolve_default_checkpoint(session)
@@ -957,9 +964,9 @@ async def illustrate_chapter(
 
 
 @router.get("/{story_id}/images")
-def list_story_images(story_id: str, session: Session = Depends(get_session)):
+def list_story_images(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
     """List all images across the story's chapters (workspace gallery)."""
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
 
@@ -982,6 +989,8 @@ async def narrate_chapter(
     story_id: str,
     chapter_id: str,
     session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
     job_service: JobService = Depends(get_job_service),
     queue_manager: QueueManager = Depends(get_queue_manager),
 ):
@@ -989,10 +998,10 @@ async def narrate_chapter(
     from core.workflow_builder import build_tts_workflow
     from services.chat_utils import resolve_voice_for_character
 
-    story = session.get(Story, story_id)
+    story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
-    chapter = session.get(StoryChapter, chapter_id)
+    chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 

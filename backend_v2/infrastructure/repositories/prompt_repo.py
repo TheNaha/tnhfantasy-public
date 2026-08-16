@@ -40,3 +40,6 @@ class PromptRepository:
 
     def get_all_prompts(self) -> list[Prompt]:
         return self.session.exec(select(Prompt)).all()
+
+    def get(self, prompt_id: str) -> Prompt | None:
+        return self.session.get(Prompt, prompt_id)

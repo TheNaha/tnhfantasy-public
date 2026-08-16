@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -70,15 +70,15 @@ export default function StorySandbox() {
     const illustrateChapter = useIllustrateChapter();
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
-    const narrateChapter = useNarrateChapter();
 
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+
     const wordCount = useMemo(() => {
         const text = editorContent || '';
         const trimmed = text.trim();
         if (!trimmed) return 0;
         return trimmed.split(/\s+/).length;
-     
+      
     }, [editorContent]);
 
     const readingTimeMinutes = useMemo(() => {
@@ -412,15 +412,6 @@ export default function StorySandbox() {
      
     }, [activeStoryId, publishStory]);
 
-    const handleNarrateChapter = useCallback((chapterId) => {
-        if (!activeStoryId) return;
-        narrateChapter.mutate({ storyId: activeStoryId, chapterId }, {
-            onSuccess: () => toast.success('Narration job queued'),
-            onError: (e) => toast.error(`Narration failed: ${e.message}`),
-        });
-     
-    }, [activeStoryId, narrateChapter]);
-
     const handleDeleteChapter = async (chapterId) => {
         if (!activeStoryId) return;
         try {
@@ -629,8 +620,6 @@ export default function StorySandbox() {
                                             onExport={handleExportStory}
                                             onPublish={handlePublishStory}
                                             isPublished={activeStory?.is_published}
-                                            onNarrate={handleNarrateChapter}
-                                            activeChapterId={activeChapter?.id}
                                         />
                                     </div>
                                 )}

@@ -19,14 +19,9 @@ from fastapi import Depends, Request
 from sqlmodel import Session
 
 from core.events import EventBus, event_bus
+from infrastructure.deps import get_container_manager, get_session_context as _infra_get_session_context, get_session_sync as _infra_get_session_sync, set_global_container_manager
 from infrastructure.database import (
     get_session as db_get_session,
-)
-from infrastructure.database import (
-    get_session_context as db_get_session_context,
-)
-from infrastructure.database import (
-    get_session_sync as db_get_session_sync,
 )
 from infrastructure.logging import get_logger, api_logger, model_logger
 from infrastructure.request_dedup import deduplicated, make_key
@@ -46,13 +41,13 @@ def get_session() -> Generator[Session, None, None]:
 
 def get_session_sync() -> Session:
     """Get a synchronous session for non-request code paths."""
-    return db_get_session_sync()
+    return _infra_get_session_sync()
 
 
 @asynccontextmanager
 async def get_session_context() -> AsyncIterator[Session]:
     """Get an async context manager for internal async code paths."""
-    async with db_get_session_context() as session:
+    async with _infra_get_session_context() as session:
         yield session
 
 
@@ -90,19 +85,6 @@ def get_external_model_service():
     from services.external_model_service import ExternalModelService
     return ExternalModelService()
 
-
-_global_container_manager = None
-
-def set_global_container_manager(cm):
-    """Set the global fallback container manager instance for background tasks."""
-    global _global_container_manager
-    _global_container_manager = cm
-
-def get_container_manager(request: Request = None):
-    """Get container manager from app state if in request context, else fallback to global."""
-    if request is not None and hasattr(request, "app"):
-        return getattr(request.app.state, "container_manager", None)
-    return _global_container_manager
 
 def get_job_submission_service(session: Session = Depends(get_session)):
     from services.job_submission_service import JobSubmissionService
@@ -145,6 +127,67 @@ def get_collection_repo(session: Session = Depends(get_session)):
 def get_prompt_repo(session: Session = Depends(get_session)):
     from infrastructure.repositories.prompt_repo import PromptRepository
     return PromptRepository(session)
+
+
+def get_character_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.character_repo import CharacterRepository
+    return CharacterRepository(session)
+
+
+def get_chat_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.chat_repo import ChatRepository
+    return ChatRepository(session)
+
+
+def get_message_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.message_repo import MessageRepository
+    return MessageRepository(session)
+
+
+def get_story_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.story_repo import StoryRepository
+    return StoryRepository(session)
+
+
+def get_story_chapter_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
+    return StoryChapterRepository(session)
+
+
+def get_lorebook_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.lorebook_repo import LorebookRepository
+    return LorebookRepository(session)
+
+
+def get_lorebook_entry_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.lorebook_entry_repo import LorebookEntryRepository
+    return LorebookEntryRepository(session)
+
+
+def get_character_memory_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
+    return CharacterMemoryRepository(session)
+
+
+def get_location_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.location_repo import LocationRepository
+    return LocationRepository(session)
+
+
+def get_voice_model_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.voice_model_repo import VoiceModelRepository
+    return VoiceModelRepository(session)
+
+
+def get_campaign_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.campaign_repo import CampaignRepository
+    return CampaignRepository(session)
+
+
+def get_scenario_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.scenario_repo import ScenarioRepository
+    return ScenarioRepository(session)
+
 
 def get_embedding_service():
     from services.embedding_service import get_embedding_service as get_service

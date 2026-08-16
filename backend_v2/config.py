@@ -159,6 +159,7 @@ class Settings(BaseSettings):
     # Introduce /{user_id}/ root partitions for multi-tenancy (hardcoded default_user for now)
     output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/output"))
     input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/input"))
+    character_avatar_dir: str = "/data/characters"
 
     @model_validator(mode="before")
     @classmethod

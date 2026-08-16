@@ -148,7 +148,7 @@ async def prune_stale_providers() -> None:
     """Remove provider records that have not sent a discovery heartbeat in 24 hours."""
     from datetime import datetime, timedelta, timezone
 
-    from api.deps import get_session_sync
+    from infrastructure.deps import get_session_sync
     from infrastructure.repositories import ProviderRepository
 
     logger.info("prune_stale_providers_start")

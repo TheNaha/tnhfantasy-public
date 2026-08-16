@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_session
+from api.deps import get_session, get_voice_model_repo
+from infrastructure.repositories.voice_model_repo import VoiceModelRepository
 from core.entities import VoiceModel
 from services.reference_cleanup import scrub_entity_references
 from core.exceptions import NotFoundError, ValidationError
@@ -26,8 +27,7 @@ class VoiceModelUpdate(BaseModel):
 @router.get("")
 def list_voices(
     character_id: str | None = None,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo), ):
     query = select(VoiceModel).order_by(VoiceModel.name)
     if character_id is not None:
         query = query.where(VoiceModel.character_id == character_id)
@@ -35,7 +35,7 @@ def list_voices(
 
 
 @router.post("")
-def create_voice(voice: VoiceModel, session: Session = Depends(get_session)):
+def create_voice(voice: VoiceModel, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
     if voice.id is None:
         pass  # Let default_factory handle it
     voice.created_at = datetime.now(timezone.utc)
@@ -47,16 +47,16 @@ def create_voice(voice: VoiceModel, session: Session = Depends(get_session)):
 
 
 @router.get("/{voice_id}")
-def get_voice(voice_id: str, session: Session = Depends(get_session)):
-    voice = session.get(VoiceModel, voice_id)
+def get_voice(voice_id: str, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
     return voice
 
 
 @router.put("/{voice_id}")
-def update_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session = Depends(get_session)):
-    voice = session.get(VoiceModel, voice_id)
+def update_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
 
@@ -72,8 +72,8 @@ def update_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session 
 
 
 @router.patch("/{voice_id}")
-def patch_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session = Depends(get_session)):
-    voice = session.get(VoiceModel, voice_id)
+def patch_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
 
@@ -90,8 +90,8 @@ def patch_voice(voice_id: str, update_data: VoiceModelUpdate, session: Session =
 
 
 @router.delete("/{voice_id}")
-def delete_voice(voice_id: str, session: Session = Depends(get_session)):
-    voice = session.get(VoiceModel, voice_id)
+def delete_voice(voice_id: str, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
+    voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
     scrub_entity_references(session, "voice", voice_id)
@@ -101,9 +101,9 @@ def delete_voice(voice_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/{voice_id}/preview")
-def get_voice_preview(voice_id: str, session: Session = Depends(get_session)):
+def get_voice_preview(voice_id: str, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
     """Return the preview text for a voice model so the frontend can synthesize it."""
-    voice = session.get(VoiceModel, voice_id)
+    voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
     if not voice.preview_text:

@@ -6,7 +6,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, func
 from sqlalchemy import cast, String
 
-from api.deps import get_session
+from api.deps import get_session, get_character_repo, get_chat_repo, get_story_repo, get_lorebook_repo, get_scenario_repo, get_voice_model_repo, get_character_memory_repo, get_location_repo
+from infrastructure.repositories.character_repo import CharacterRepository
+from infrastructure.repositories.chat_repo import ChatRepository
+from infrastructure.repositories.story_repo import StoryRepository
+from infrastructure.repositories.lorebook_repo import LorebookRepository
+from infrastructure.repositories.scenario_repo import ScenarioRepository
+from infrastructure.repositories.voice_model_repo import VoiceModelRepository
+from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
+from infrastructure.repositories.location_repo import LocationRepository
 from core.entities import (
     Character, Chat, Lorebook, LorebookEntry, Message,
     Story, StoryChapter, Scenario, VoiceModel, CharacterMemory,

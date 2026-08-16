@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_job_service, get_session, get_queue_manager
+from api.deps import get_job_service, get_session, get_queue_manager, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
+from infrastructure.repositories.chat_repo import ChatRepository
+from infrastructure.repositories.message_repo import MessageRepository
+from infrastructure.repositories.character_repo import CharacterRepository
+from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Chat, Character, Job, JobStatus, Location, Message, MessageRole
 from core.exceptions import ComfyError, NotFoundError, ValidationError
@@ -79,12 +83,11 @@ class SendMessageRequest(BaseModel):
 
 @router.get("", response_model=list[Chat])
 def list_chats(
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo),  
     limit: int = 50,
     offset: int = 0,
     workspace: str | None = None,
-    q: str | None = None,
-):
+    q: str | None = None,):
     stmt = select(Chat).order_by(Chat.updated_at.desc()).offset(offset).limit(limit)
     if workspace:
         stmt = stmt.where(Chat.chat_type == workspace)
@@ -95,14 +98,14 @@ def list_chats(
 
 
 @router.get("/{chat_id}/export")
-def export_chat(chat_id: str, session: Session = Depends(get_session)):
-    chat = session.get(Chat, chat_id)
+def export_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     messages = session.exec(
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
     ).all()
-    character = session.get(Character, chat.character_id) if chat.character_id else None
+    character = character_repo.get(chat.character_id) if chat.character_id else None
 
     def _serialize_message(msg: Message) -> dict:
         return {
@@ -140,9 +143,9 @@ def export_chat(chat_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("", response_model=Chat)
-async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session)):
+async def create_chat(req: CreateChatRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     if req.character_id:
-        character = session.get(Character, req.character_id)
+        character = character_repo.get(req.character_id)
         if not character:
             raise NotFoundError("Character", req.character_id)
 
@@ -165,7 +168,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
 
     # If a character is assigned, inject their first_mes as the opening message
     if chat.character_id:
-        character = session.get(Character, chat.character_id)
+        character = character_repo.get(chat.character_id)
         if character and (req.override_greeting or character.first_mes):
             # Apply basic template variable substitution before persisting
             raw_mes = req.override_greeting or character.first_mes
@@ -211,17 +214,17 @@ def _chat_context_kwargs(chat, **overrides):
 
 
 @router.get("/{chat_id}", response_model=Chat)
-def get_chat(chat_id: str, session: Session = Depends(get_session)):
-    chat = session.get(Chat, chat_id)
+def get_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     return chat
 
 @router.delete("/{chat_id}")
-def delete_chat(chat_id: str, session: Session = Depends(get_session)):
+def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
     from sqlalchemy import delete as sql_delete
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -238,8 +241,8 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session)):
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, session: Session = Depends(get_session), limit: int = 100, offset: int = 0):
-    chat = session.get(Chat, chat_id)
+def list_messages(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo),   limit: int = 100, offset: int = 0):
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     return session.exec(
@@ -248,11 +251,11 @@ def list_messages(chat_id: str, session: Session = Depends(get_session), limit: 
 
 
 @router.get("/{chat_id}/system-prompt")
-async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session)):
+async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo)):
     """Return the assembled system prompt (with per-section breakdown) for this chat."""
     from services.context_builder import estimate_tokens
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -286,14 +289,14 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 
 
 @router.patch("/{chat_id}", response_model=Chat)
-def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depends(get_session)):
-    chat = session.get(Chat, chat_id)
+def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     update_fields = data.model_dump(exclude_unset=True)
     # Validate location_id if provided
     if "location_id" in update_fields and update_fields["location_id"] is not None:
-        location = session.get(Location, update_fields["location_id"])
+        location = location_repo.get(update_fields["location_id"])
         if not location:
             raise NotFoundError("Location", update_fields["location_id"])
     changed_state = {}
@@ -330,10 +333,10 @@ from services.chat_utils import resolve_context_tokens as _resolve_context_token
 
 
 @router.post("/{chat_id}/messages")
-async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session)) -> dict:
+async def add_message(chat_id: str, request: SendMessageRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), message_repo: MessageRepository = Depends(get_message_repo)) -> dict:
     from services.job_queue import queue_manager
     
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
@@ -353,7 +356,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     job_id = None
     
     if message.role == MessageRole.USER and not request.no_reply:
-        past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+        past_messages = message_repo.list_by_chat(chat_id)
         
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
             
@@ -435,7 +438,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
     return {"user_message_id": message.id, "job_id": job_id}
 
 @router.delete("/{chat_id}/messages/{message_id}")
-def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session)):
+def delete_message(chat_id: str, message_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
         raise NotFoundError("Message", message_id)
@@ -445,10 +448,10 @@ def delete_message(chat_id: str, message_id: str, session: Session = Depends(get
     return {"message": "Message deleted"}
 
 @router.get("/{chat_id}/jobs")
-def list_chat_jobs(chat_id: str, session: Session = Depends(get_session)):
+def list_chat_jobs(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
     """Recent jobs (LLM + image) assigned to this chat, newest first."""
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -501,11 +504,13 @@ async def narrate_message(
     chat_id: str,
     message_id: str,
     session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    character_repo: CharacterRepository = Depends(get_character_repo),
     job_service: JobService = Depends(get_job_service),
     queue_manager: QueueManager = Depends(get_queue_manager),
 ):
     """Trigger a TTS job to narrate a specific message."""
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
@@ -521,7 +526,7 @@ async def narrate_message(
     # Resolve voice profile: prefer voice_model_id → fallback to voice_profile string
     voice_profile = voice_model_id = language = None
     if chat.character_id:
-        char = session.get(Character, chat.character_id)
+        char = character_repo.get(chat.character_id)
         voice_profile, voice_model_id, language = resolve_voice_for_character(session, char)
 
     workflow, metadata = build_tts_workflow(
@@ -552,8 +557,7 @@ def swipe_message(
     chat_id: str,
     message_id: str,
     data: SwipeRequest,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo), ):
     """Navigate between alternate replies for a character message.
 
     Alternates are stored in message_metadata:
@@ -600,11 +604,12 @@ def swipe_message(
 async def generate_swipe(
     chat_id: str,
     message_id: str,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo)
 ) -> dict:
     from services.job_queue import queue_manager
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -683,8 +688,7 @@ def pin_message(
     chat_id: str,
     message_id: str,
     data: PinMessageRequest,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo), ):
     """Toggle the pinned state of a message. Pinned messages survive context pruning."""
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
@@ -707,8 +711,7 @@ def edit_message(
     chat_id: str,
     message_id: str,
     data: EditMessageRequest,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo), ):
     message = session.get(Message, message_id)
     if not message or message.chat_id != chat_id:
         raise NotFoundError("Message", message_id)
@@ -725,10 +728,9 @@ def edit_message(
 def rollback_chat(
     chat_id: str,
     req: RollbackRequest,
-    session: Session = Depends(get_session),
-):
+    session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo), ):
     """Delete the target message and everything after it (undo mistakes)."""
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -751,6 +753,7 @@ async def regenerate_reply(
     chat_id: str,
     req: RegenerateRequest,
     session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
 ) -> dict:
     """
     Re-run the last user message: delete every message after it, then dispatch
@@ -758,7 +761,7 @@ async def regenerate_reply(
     """
     from services.job_queue import queue_manager
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -853,7 +856,7 @@ class ImpersonateRequest(BaseModel):
 
 
 @router.post("/{chat_id}/impersonate")
-async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = Depends(get_session)) -> dict:
+async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)) -> dict:
     """Generate a user-voice message and insert it as a USER turn, then trigger the char reply.
 
     Unlike /suggest (which streams text into the input box), impersonation inserts
@@ -863,7 +866,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     from services.job_queue import queue_manager
     from config import get_system_prompt_blocks
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
@@ -871,7 +874,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
         select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
     ).all()
 
-    character = session.get(Character, chat.character_id) if chat.character_id else None
+    character = character_repo.get(chat.character_id) if chat.character_id else None
 
     user_name = chat.persona_name or "User"
     char_name = character.name if character else "the AI"
@@ -941,11 +944,11 @@ class SuggestReplyRequest(BaseModel):
     draft: str | None = None
 
 @router.post("/{chat_id}/suggest")
-async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session)) -> dict:
+async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)) -> dict:
 
     from services.job_queue import queue_manager
     
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
@@ -955,7 +958,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     
     character = None
     if chat.character_id:
-        character = session.get(Character, chat.character_id)
+        character = character_repo.get(chat.character_id)
 
     from config import get_system_prompt_blocks
 
@@ -1050,14 +1053,17 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
 async def generate_scene(
     chat_id: str, 
     session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+    message_repo: MessageRepository = Depends(get_message_repo),
 ):
     from services.job_queue import queue_manager
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
-    past_messages = session.exec(select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)).all()
+    past_messages = message_repo.list_by_chat(chat_id)
     if not past_messages:
         raise ValidationError("No messages in chat to base scene on")
         
@@ -1066,7 +1072,7 @@ async def generate_scene(
     # Resolve checkpoint: character > configured default > any installed model
     checkpoint = None
     if chat.character_id:
-        character = session.get(Character, chat.character_id)
+        character = character_repo.get(chat.character_id)
         if character and character.checkpoint:
             checkpoint = character.checkpoint
     if not checkpoint:
@@ -1134,6 +1140,8 @@ async def illustrate_chat(
     chat_id: str,
     request: ChatIllustrateRequest,
     session: Session = Depends(get_session),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
+    character_repo: CharacterRepository = Depends(get_character_repo),
 ):
     """Generate an image for the current chat moment without an LLM in the loop.
 
@@ -1145,7 +1153,7 @@ async def illustrate_chat(
     from services.job_queue import queue_manager
     from services.model_availability_service import ModelAvailabilityService
 
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     if not chat.allow_image_generation:
@@ -1167,7 +1175,7 @@ async def illustrate_chat(
     if not image_prompt:
         raise ValidationError("No prompt and no character reply to illustrate")
 
-    character = session.get(Character, chat.character_id) if chat.character_id else None
+    character = character_repo.get(chat.character_id) if chat.character_id else None
 
     checkpoint = (character.checkpoint if character and character.checkpoint else None)
     if not checkpoint:
@@ -1193,9 +1201,9 @@ async def illustrate_chat(
 
 
 @router.get("/{chat_id}/images")
-def list_chat_images(chat_id: str, session: Session = Depends(get_session)):
+def list_chat_images(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo), location_repo: LocationRepository = Depends(get_location_repo)):
     """List all images attached to messages in this chat (workspace gallery)."""
-    chat = session.get(Chat, chat_id)
+    chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
 

@@ -31,6 +31,7 @@ from api.deps import (
     get_session,
     get_session_sync,
 )
+from infrastructure.repositories.collection_repo import CollectionRepository
 from config import settings
 from core.entities import Asset
 from core.exceptions import ComfyError, NotFoundError, ValidationError

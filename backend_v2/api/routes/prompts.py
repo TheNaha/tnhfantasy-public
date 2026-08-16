@@ -19,7 +19,8 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, or_, select
 
-from api.deps import get_logger, get_session
+from api.deps import get_logger, get_session, get_prompt_repo
+from infrastructure.repositories.prompt_repo import PromptRepository
 from core.entities import Prompt
 from core.exceptions import ComfyError, NotFoundError
 
@@ -150,9 +151,9 @@ async def get_most_used(
 
 
 @router.get("/{prompt_id}")
-async def get_prompt(prompt_id: str, session: Session = Depends(get_session)):
+async def get_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Get a single prompt by ID."""
-    prompt = session.get(Prompt, prompt_id)
+    prompt = prompt_repo.get(prompt_id)
     if not prompt:
         raise NotFoundError("Resource", "Prompt not found")
     return prompt
@@ -178,9 +179,9 @@ async def create_prompt(data: PromptCreate, session: Session = Depends(get_sessi
 
 
 @router.put("/{prompt_id}")
-async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = Depends(get_session)):
+async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Update an existing prompt."""
-    prompt = session.get(Prompt, prompt_id)
+    prompt = prompt_repo.get(prompt_id)
     if not prompt:
         raise NotFoundError("Resource", "Prompt not found")
     
@@ -197,9 +198,9 @@ async def update_prompt(prompt_id: str, data: PromptUpdate, session: Session = D
 
 
 @router.delete("/{prompt_id}")
-async def delete_prompt(prompt_id: str, session: Session = Depends(get_session)):
+async def delete_prompt(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Delete a prompt."""
-    prompt = session.get(Prompt, prompt_id)
+    prompt = prompt_repo.get(prompt_id)
     if not prompt:
         raise NotFoundError("Resource", "Prompt not found")
     session.delete(prompt)
@@ -209,9 +210,9 @@ async def delete_prompt(prompt_id: str, session: Session = Depends(get_session))
 
 
 @router.post("/{prompt_id}/use")
-async def increment_usage(prompt_id: str, session: Session = Depends(get_session)):
+async def increment_usage(prompt_id: str, session: Session = Depends(get_session), prompt_repo: PromptRepository = Depends(get_prompt_repo)):
     """Increment usage count for a prompt (called when prompt is used)."""
-    prompt = session.get(Prompt, prompt_id)
+    prompt = prompt_repo.get(prompt_id)
     if not prompt:
         raise NotFoundError("Resource", "Prompt not found")
     

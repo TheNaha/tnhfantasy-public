@@ -305,7 +305,7 @@ class LoadBalancer:
         # 1. First try container_manager container status (if containerized)
         if provider.container_config:
             try:
-                from api.deps import get_container_manager
+                from infrastructure.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
                     container_name = provider_container_name(provider.id)
@@ -335,7 +335,7 @@ class LoadBalancer:
         except Exception:
             # Try localhost fallback via Docker host port mapping
             try:
-                from api.deps import get_container_manager
+                from infrastructure.deps import get_container_manager
                 cm = get_container_manager()
                 if cm and cm.client:
                     container_name = provider_container_name(provider.id)
@@ -492,7 +492,7 @@ class LoadBalancer:
             # Since the selected provider is cold, trigger container startup and poll/wait
             if selected_provider:
                 try:
-                    from api.deps import get_container_manager
+                    from infrastructure.deps import get_container_manager
                     from services.provider_lifecycle_service import (
                         ProviderLifecycleService,
                     )
@@ -525,7 +525,7 @@ class LoadBalancer:
                     except Exception:
                         try:
                             # Local fallback
-                            from api.deps import get_container_manager
+                            from infrastructure.deps import get_container_manager
                             cm = get_container_manager()
                             if cm and cm.client:
                                 container_name = provider_container_name(selected_provider.id)

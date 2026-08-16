@@ -563,7 +563,7 @@ class TestProviderServiceDeploy:
             containers_client=missing_attempt_client,
         )
 
-        with patch("api.deps.get_container_manager", return_value=container_manager):
+        with patch("infrastructure.deps.get_container_manager", return_value=container_manager):
             state = await service.get_provider_deploy_state("stuck-provider-state")
 
         assert state["status"] == "failed"

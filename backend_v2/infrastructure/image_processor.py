@@ -52,11 +52,6 @@ def get_output_path(base_dir: str = None, subdir: str = None, user_id: str = "de
     return date_path
 
 
-def read_png_metadata(path: str) -> dict:
-    """Deprecated: use read_image_metadata instead. This is a compatibility alias."""
-    return read_image_metadata(path)
-
-
 def get_thumb_output_path(base_dir: str = None, user_id: str = "default_user", workspace: str = "main") -> str:
     """Thumbnails mirror the partitioned layout under a `thumb` subdir."""
     return get_output_path(base_dir=base_dir, subdir="thumb", user_id=user_id, workspace=workspace)
