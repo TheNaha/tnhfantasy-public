@@ -74,14 +74,24 @@ class TestComfyStatusToTaskEvent:
     def test_progress_with_plain_value(self):
         te = comfy_status_to_task_event({"status": "progress", "value": 0.5}, job_id="job-6")
         assert te.event == "progress"
-        assert te.value == 0.5
+        assert te.value == 50
 
     def test_progress_with_nested_dict(self):
         te = comfy_status_to_task_event(
             {"status": "progress", "progress": {"value": 7, "max": 10}}, job_id="job-6"
         )
         assert te.event == "progress"
-        assert te.value == 0.7
+        assert te.value == 70
+
+    def test_progress_with_value_and_max(self):
+        te = comfy_status_to_task_event({"status": "progress", "value": 3, "max": 4}, job_id="job-6")
+        assert te.event == "progress"
+        assert te.value == 75
+
+    def test_progress_with_already_percent_value(self):
+        te = comfy_status_to_task_event({"status": "progress", "value": 42}, job_id="job-6")
+        assert te.event == "progress"
+        assert te.value == 42
 
     def test_non_dict_input_returns_none(self):
         assert comfy_status_to_task_event("garbage", job_id="j") is None

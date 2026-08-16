@@ -126,16 +126,16 @@ def comfy_status_to_task_event(update: Dict[str, Any], job_id: Optional[str] = N
     value = update.get("value")
     max_v = update.get("max") or 0
     if value is not None and max_v:
-        value = value / max_v
+        value = round(value / max_v * 100)
     elif value is None:
         progress = update.get("progress")
         if isinstance(progress, dict):
             p_max = progress.get("max") or 0
             p_cur = progress.get("value") or 0
-            value = (p_cur / p_max) if p_max else None
-    elif value is not None and value > 1:
-        # Defensive: legacy workers may emit 0-100 percent instead of a 0..1 fraction.
-        value = value / 100
+            value = round(p_cur / p_max * 100) if p_max else None
+    elif value is not None and value <= 1:
+        # Defensive: legacy workers may emit a 0..1 fraction; canonical is percent 0..100.
+        value = round(value * 100)
 
     return TaskEvent(event="progress", job_id=job_id, value=value)
 

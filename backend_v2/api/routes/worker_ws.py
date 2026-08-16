@@ -267,10 +267,10 @@ async def worker_websocket(
                 if job_id:
                     updates = {}
 
-                    # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": 0..1}
+                    # TaskEvent-shaped payloads (canonical): {"event": "progress", "value": percent 0..100}
                     if payload.get("event") == "progress" and payload.get("value") is not None:
                         val = payload["value"]
-                        percent = int(val * 100) if val <= 1 else int(val)
+                        percent = int(val * 100) if val <= 1 else int(val)  # defensive: legacy 0..1 fraction
                         updates["progress"] = percent
                         updates["overall_progress"] = percent
                     else:

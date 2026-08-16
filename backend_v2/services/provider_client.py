@@ -176,7 +176,9 @@ class _ImageReducer:
             await self.job_service.update_job(self.job_id, status=JobStatus.PRE_GENERATION, message="Queued in worker...")
         elif event == "progress":
             val = ev.get("value") or 0
-            percent = int(val * 100) if val and val <= 1 else int(val)
+            # Canonical worker events carry percent 0..100; legacy deployed
+            # containers still emit 0..1 fractions until they are redeployed.
+            percent = int(val * 100) if val <= 1 else int(val)
             overall = int((len(self.executed_nodes) / self.total_nodes) * 100) if self.total_nodes > 0 else percent
             await self.job_service.update_job(
                 self.job_id, status=JobStatus.GENERATING, progress=percent,

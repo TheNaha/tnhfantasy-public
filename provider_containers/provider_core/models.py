@@ -58,7 +58,7 @@ class TaskEvent(BaseModel):
     ]
     job_id: Optional[str] = None
     seq: Optional[int] = None
-    value: Optional[float] = None          # progress fraction 0..1
+    value: Optional[float] = None          # progress percent 0..100 (image workers); llm engines use text deltas
     text: Optional[str] = None             # llm token delta
     node: Optional[str] = None             # executing comfy node
     nodes: Optional[List[str]] = None      # cached comfy nodes
