@@ -11,6 +11,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 vi.mock('framer-motion', () => ({
+    AnimatePresence: ({ children }) => <>{children}</>,
     motion: {
         div: ({ children, ...props }) => {
             const safe = {};
@@ -35,6 +36,7 @@ function renderPage() {
 describe('FantasyHub page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        localStorage.setItem('tnhcomfy_setup_complete', 'true');
     });
 
     it('renders the main heading and tagline', () => {
@@ -70,6 +72,19 @@ describe('FantasyHub page', () => {
         fireEvent.click(screen.getByText('Voice Models'));
         expect(mockNavigate).toHaveBeenCalledWith('/voices');
         fireEvent.click(screen.getByText('Scenarios'));
+        expect(mockNavigate).toHaveBeenCalledWith('/scenarios');
+    });
+
+    it('renders quick-action tiles and navigates from them', () => {
+        renderPage();
+        expect(screen.getByText('New Chat')).toBeInTheDocument();
+        expect(screen.getByText('Write a Story')).toBeInTheDocument();
+        expect(screen.getByText('Pick a Scenario')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('New Chat'));
+        expect(mockNavigate).toHaveBeenCalledWith('/chat?new=1');
+        fireEvent.click(screen.getByText('Write a Story'));
+        expect(mockNavigate).toHaveBeenCalledWith('/story');
+        fireEvent.click(screen.getByText('Pick a Scenario'));
         expect(mockNavigate).toHaveBeenCalledWith('/scenarios');
     });
 });

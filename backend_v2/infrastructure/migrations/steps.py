@@ -1,6 +1,7 @@
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 
@@ -1536,7 +1537,118 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add location_ids JSONB column to stories table for Location ↔ Story integration",
             apply_fn=_migration_048_add_story_location_ids,
         ),
+        MigrationStep(
+            version="049_seed_starter_pack",
+            description="Seed starter content: demo character, scenario, and llm-local provider",
+            apply_fn=_migration_049_seed_starter_pack,
+        ),
     ]
+
+
+def _migration_049_seed_starter_pack(conn) -> bool:
+    """Seed starter content (demo character, scenario, llm-local provider) for out-of-box usability."""
+    inspector = inspect(conn)
+    tables = set(inspector.get_table_names())
+    seeded = False
+
+    if "characters" in tables:
+        exists = conn.execute(
+            text("SELECT COUNT(*) FROM characters WHERE name = :name"),
+            {"name": "Lyra Vale"},
+        ).scalar()
+        if not exists:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                text("""
+                    INSERT INTO characters (
+                        id, name, description, personality, scenario, first_mes,
+                        system_prompt, visual_tags, created_at, updated_at
+                    ) VALUES (
+                        :id, :name, :description, :personality, :scenario, :first_mes,
+                        :system_prompt, :visual_tags, :created_at, :updated_at
+                    )
+                """),
+                {
+                    "id": "demo-lyra",
+                    "name": "Lyra Vale",
+                    "description": "A wandering bard with a silver tongue, a stolen lute, and a map to places that should not exist.",
+                    "personality": "Warm, witty, and disarmingly honest about everything except her own past. She deflects serious questions with songs and terrible puns.",
+                    "scenario": "You meet Lyra in a roadside tavern during a storm. She is already three songs in and has decided you are interesting.",
+                    "first_mes": "The tavern door slams shut behind you, and a voice rings out over the crackling fire: \"Ah, a fresh face! Don't tell me—you're here to hear the tale of the Sunken Bell.\" Lyra grins and pats the stool beside her. \"Sit. The storm isn't going anywhere, and neither am I.\"",
+                    "system_prompt": "Lyra Vale is a storyteller first and a fighter a distant second. She speaks in vivid, musical prose, loves wordplay, and knows a suspicious amount about the Old Royalties. She will happily chat, flirt, bicker, or spin tall tales — but she never quite answers who taught her that one song.",
+                    "visual_tags": '["bard","fantasy","silver hair","lute"]',
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            seeded = True
+
+    if "scenarios" in tables:
+        exists = conn.execute(
+            text("SELECT COUNT(*) FROM scenarios WHERE name = :name"),
+            {"name": "Sword & Sorcery"},
+        ).scalar()
+        if not exists:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                text("""
+                    INSERT INTO scenarios (id, name, description, prompt_template, created_at, updated_at)
+                    VALUES (:id, :name, :description, :prompt_template, :created_at, :updated_at)
+                """),
+                {
+                    "id": "demo-sword-sorcery",
+                    "name": "Sword & Sorcery",
+                    "description": "A classic frontier-fantasy opening: ancient ruins, living legends, and a world where the gods left early.",
+                    "prompt_template": (
+                        "The frontier town of Thornfall straddles the edge of the known world. "
+                        "Behind it lie the Old Kingdoms, their crowns rusted to nothing; ahead, "
+                        "the Greywood swallows roads, armies, and the occasional ambitious hero. "
+                        "Everyone here is running from something or looking for something — "
+                        "some nights the two look exactly alike."
+                    ),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            seeded = True
+
+    if "providers" in tables:
+        exists = conn.execute(
+            text("SELECT COUNT(*) FROM providers WHERE id = :id"),
+            {"id": "llm-local"},
+        ).scalar()
+        if not exists:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                text("""
+                    INSERT INTO providers (
+                        id, type, worker_type, enabled, priority,
+                        credentials, config, container_config, created_at, updated_at
+                    ) VALUES (
+                        :id, :type, :worker_type, :enabled, :priority,
+                        :credentials, :config, :container_config, :created_at, :updated_at
+                    )
+                """),
+                {
+                    "id": "llm-local",
+                    "type": "openai_compat",
+                    "worker_type": "llm",
+                    "enabled": False,
+                    "priority": 1,
+                    "credentials": json.dumps({}),
+                    "config": json.dumps({"seeded": True, "discovered": True}),
+                    "container_config": json.dumps({"container_name": "tnhcomfy-llm-local"}),
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            seeded = True
+
+    if seeded:
+        logger.info("migration_049_seed_starter_pack_done")
+    return seeded
+
+
 def _migration_040_create_voice_models(conn) -> bool:
     """Create voice_models table for managing TTS voice profiles."""
     inspector = inspect(conn)

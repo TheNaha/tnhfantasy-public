@@ -69,6 +69,13 @@ export const providersApi = {
     /** Clean orphaned provider state and stale downloading entries. */
     cleanupState: () => api.post('/api/providers/state/cleanup'),
 
+    /**
+     * Scan running containers (tnhcomfy-* naming) and register any that are
+     * missing as providers. Also reports containers already known to the
+     * backend. Safe to call any time; heartbeats self-register compose workers.
+     */
+    detect: () => api.post('/api/providers/detect'),
+
     // -------------------------------------------------------------------------
     // Modal-specific operations
     // -------------------------------------------------------------------------

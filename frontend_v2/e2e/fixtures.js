@@ -363,6 +363,18 @@ async function waitForStreamingToFinish(page) {
   await page.waitForTimeout(2000);
 }
 
+// Mark onboarding as complete for the next navigation (the first-visit wizard
+// overlays the Fantasy Hub and would intercept clicks on its tiles).
+async function dismissOnboarding(page) {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('tnhcomfy_setup_complete', JSON.stringify(true));
+    } catch {
+      // Ignore storage errors; the wizard is dismissible anyway.
+    }
+  });
+}
+
 async function closeModal(page) {
   const modal = page.locator('[role="dialog"], [class*="modal"]').first();
   if (await modal.isVisible({ timeout: 1000 }).catch(() => false)) {
@@ -418,6 +430,7 @@ export {
   seedModel,
   cleanupEntities,
   waitForStreamingToFinish,
+  dismissOnboarding,
   closeModal,
   drawMaskOnCanvas,
 };

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import (
+    get_container_manager,
     get_provider_service,
     get_provider_status_service,
     get_provider_worker_url,
@@ -27,6 +28,7 @@ from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime
+from services.provider_service import ProviderService
 from services.provider_status_service import invalidate_provider_status_caches
 
 logger = api_logger()
@@ -177,6 +179,89 @@ async def wake_providers(session: Session = Depends(get_session)):
     start_background_task(ping_containers(), task_name="wake_provider_containers")
     
     return {"status": "success", "message": f"Wake signal sent to {len(active_providers)} providers"}
+
+
+def _infer_discovery_type(provider_id: str) -> tuple[str, str]:
+    """Map a container-derived provider id to (provider_type, worker_type).
+
+    Mirrors what the provider containers themselves heartbeat (see
+    image_worker/worker.py and llm_worker/worker.py) so a detected row
+    matches what discovery would eventually create.
+    """
+    if provider_id == "llm-local" or "llm" in provider_id:
+        return "openai_compat", "llm"
+    if provider_id.startswith("modal-"):
+        return "modal", "image"
+    if provider_id == "direct-url":
+        return "direct_url", "image"
+    return "direct_url", "image"
+
+
+@router.post("/detect")
+async def detect_provider_containers(
+    container_manager = Depends(get_container_manager),
+    service: ProviderService = Depends(get_provider_service),
+):
+    """Register running provider containers that are not yet providers.
+
+    Scans deployment-managed containers (label comfy-provider=true) and
+    compose-managed `tnhcomfy-*` containers when a container runtime socket
+    is available, upserting the missing ones via the same path discovery
+    heartbeats use. When no socket is available (typical compose setup),
+    container workers self-register through their heartbeat — this endpoint
+    then reports what is already known.
+    """
+    container_runtime_available = container_manager is not None
+    existing = {p.id for p in service.repo.get_all()}
+    candidates: dict[str, str] = {}
+
+    if container_manager:
+        for entry in container_manager.list_containers():
+            name = entry.get("name") or ""
+            provider_id = entry.get("provider_id") or (
+                name[len("tnhcomfy-"):] if name.startswith("tnhcomfy-") else None
+            )
+            if provider_id:
+                candidates[provider_id] = name
+
+        try:
+            raw = container_manager.client.containers.list(all=False)
+        except Exception as exc:
+            logger.warning("detect_container_scan_failed", error=str(exc))
+            raw = []
+            container_runtime_available = False
+
+        skip_prefixes = ("tnhcomfy-backend", "tnhcomfy-frontend", "tnhcomfy-db", "tnhcomfy-deploy-")
+        for container in raw:
+            name = container.name
+            if not name.startswith("tnhcomfy-"):
+                continue
+            if name.startswith(skip_prefixes):
+                continue
+            provider_id = (container.labels or {}).get("provider-id") or name[len("tnhcomfy-"):]
+            candidates[provider_id] = name
+
+    created: list[str] = []
+    for provider_id, container_name in sorted(candidates.items()):
+        if provider_id in existing:
+            continue
+        provider_type, worker_type = _infer_discovery_type(provider_id)
+        await service.upsert_provider_from_discovery(
+            provider_id=provider_id,
+            provider_type=provider_type,
+            worker_type=worker_type,
+            internal_url=f"http://{container_name}:8000",
+        )
+        created.append(provider_id)
+
+    already = sorted(existing)
+    logger.info("providers_detected", created=created, already=already,
+                container_runtime_available=container_runtime_available)
+    return {
+        "created": created,
+        "already": already,
+        "container_runtime_available": container_runtime_available,
+    }
 
 
 @router.post("/{provider_id}/ping")

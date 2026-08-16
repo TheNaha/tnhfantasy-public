@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { apiGet, apiPost, apiPut, expectToast, uniqueName } from './fixtures.js';
+import { apiGet, apiPost, apiPut, expectToast, uniqueName, dismissOnboarding } from './fixtures.js';
 
 // LocalStorage key used by the Zustand persist middleware.
 const LS_KEY = 'comfyui-settings-storage';
@@ -132,6 +132,7 @@ test.describe('Settings & Configuration (Module F)', () => {
         const saved = await apiGet(page, '/settings/branding');
         expect(saved.appName).toBe(brand);
 
+        await dismissOnboarding(page);
         await page.goto('/');
         await expect(page.getByText(brand).filter({ visible: true }).first()).toBeVisible();
 

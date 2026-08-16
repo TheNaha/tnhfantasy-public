@@ -12,6 +12,7 @@ import ControlNetSection from './ControlNetSection';
 import IPAdapterSection from './IPAdapterSection';
 import EnhancementsSection from './EnhancementsSection';
 import GeneratorReadinessPanel from './GeneratorReadinessPanel';
+import NoCheckpointCTA from './NoCheckpointCTA';
 import SamplingSettings from './SamplingSettings';
 import ModelMetadataModal from '../ModelMetadataModal';
 
@@ -60,7 +61,7 @@ export default function UnifiedGeneratorLayout({
         }
     } = useGeneratorCore();
 
-    const { modelsByKey } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
+    const { modelsByKey, loading: modelsLoading } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
     const checkpoints = modelsByKey.checkpoints || [];
     const controlNetModels = modelsByKey.controlNetModels || [];
     const upscalerModels = modelsByKey.upscalerModels || [];
@@ -76,20 +77,24 @@ export default function UnifiedGeneratorLayout({
     // Advanced mode uses entirely its own inner structure in GeneratorShell
     if (mode === 'advanced') {
         return (
-            <GeneratorShell
-                accentClass={accentClass}
-                activeJobCount={activeJobCount}
-                isMissingModelsOpen={isMissingModelsOpen}
-                setIsMissingModelsOpen={setIsMissingModelsOpen}
-                validationResult={validationResult}
-                leftColumn={leftColumnTop}
-                rightColumn={rightColumnBottom}
-            />
+            <>
+                <NoCheckpointCTA loading={modelsLoading} show={checkpoints.length === 0} />
+                <GeneratorShell
+                    accentClass={accentClass}
+                    activeJobCount={activeJobCount}
+                    isMissingModelsOpen={isMissingModelsOpen}
+                    setIsMissingModelsOpen={setIsMissingModelsOpen}
+                    validationResult={validationResult}
+                    leftColumn={leftColumnTop}
+                    rightColumn={rightColumnBottom}
+                />
+            </>
         );
     }
 
     return (
         <>
+            <NoCheckpointCTA loading={modelsLoading} show={checkpoints.length === 0} />
             <GeneratorShell
                 accentClass={accentClass}
                 activeJobCount={activeJobCount}

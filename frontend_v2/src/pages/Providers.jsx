@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Download, Plus, RefreshCw, Search, Wrench } from 'lucide-react';
+import { Download, Plus, RefreshCw, ScanSearch, Search, Wrench } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import ProviderListItem from '../components/providers/ProviderListItem';
@@ -27,6 +27,7 @@ export default function Providers() {
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState('all');
     const [selectedProviderId, setSelectedProviderId] = useState(null);
+    const [isDetecting, setIsDetecting] = useState(false);
     const { confirm } = useConfirmation();
 
     const {
@@ -55,6 +56,27 @@ export default function Providers() {
             await refreshProviderData();
         } finally {
             setIsRefreshing(false);
+        }
+    }, [refreshProviderData]);
+
+    const handleDetect = useCallback(async () => {
+        setIsDetecting(true);
+        try {
+            const result = await providersApi.detect();
+            const created = result?.created ?? [];
+            const already = result?.already ?? [];
+            if (created.length) {
+                toast.success(`Detected ${created.length} new container${created.length > 1 ? 's' : ''}: ${created.join(', ')}`);
+            } else if (already.length) {
+                toast(`${already.length} provider${already.length > 1 ? 's' : ''} already registered (heartbeat auto-discovery).`, { icon: '📡' });
+            } else {
+                toast('No provider containers detected. Add one manually, or check the container is running.');
+            }
+            await refreshProviderData();
+        } catch (e) {
+            toast.error(`Detection failed: ${e.message}`);
+        } finally {
+            setIsDetecting(false);
         }
     }, [refreshProviderData]);
 
@@ -305,13 +327,23 @@ export default function Providers() {
                                 : 'Adjust your search or filter.'}
                         </p>
                         {providers.length === 0 && (
-                            <button
-                                onClick={() => setShowAddModal(true)}
-                                className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-6 py-3 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10"
-                            >
-                                <Plus size={18} strokeWidth={2.5} />
-                                Add Provider
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={handleDetect}
+                                    disabled={isDetecting}
+                                    className="bg-white/5 hover:bg-white/10 border border-white/15 text-gray-200 px-6 py-3 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 transform active:scale-95 disabled:opacity-50"
+                                >
+                                    <ScanSearch size={18} strokeWidth={2.5} className={isDetecting ? 'animate-spin' : ''} />
+                                    {isDetecting ? 'Scanning...' : 'Detect Containers'}
+                                </button>
+                                <button
+                                    onClick={() => setShowAddModal(true)}
+                                    className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-6 py-3 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10"
+                                >
+                                    <Plus size={18} strokeWidth={2.5} />
+                                    Add Provider
+                                </button>
+                            </div>
                         )}
                     </div>
                 </div>

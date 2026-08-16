@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import clsx from 'clsx';
+import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, Activity, Settings, ImageIcon, X, GitBranch } from 'lucide-react';
 import SceneGallery from '../components/SceneGallery';
 import BottomTabBar from '../components/BottomTabBar';
@@ -25,6 +26,7 @@ export default function ChatWorkspace() {
 
 function ChatWorkspaceLayout() {
     const context = useChatWorkspace();
+    const [searchParams, setSearchParams] = useSearchParams();
     const {
         mobileTab, setMobileTab,
         activeChatId, messages,
@@ -37,6 +39,13 @@ function ChatWorkspaceLayout() {
         avatarModalSrc, setAvatarModalSrc, contextCollapsed,
         timelineVisible, activeBranch, setActiveBranch
     } = context;
+
+    useEffect(() => {
+        if (searchParams.get('new') === '1' && !activeChatId) {
+            setShowNewChatModal(true);
+            setSearchParams({}, { replace: true });
+        }
+    }, [searchParams, activeChatId, setShowNewChatModal, setSearchParams]);
 
     return (
         <motion.div 

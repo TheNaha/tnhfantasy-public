@@ -1,7 +1,40 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2, Tag, Volume2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+    Wand2, MessageSquare, BookOpen, Image as ImageIcon, Sparkles, Gamepad2, Tag, Volume2,
+    PenLine, Feather, Zap,
+} from 'lucide-react';
 import clsx from 'clsx';
+import OnboardingWizard from '../components/onboarding/OnboardingWizard';
+import { isSetupComplete } from '../utils/setupComplete';
+
+const QUICK_ACTIONS = [
+    {
+        to: '/chat?new=1',
+        icon: PenLine,
+        title: 'New Chat',
+        description: 'Start a roleplay with a character',
+        gradient: 'from-purple-500/10 to-pink-500/10',
+        iconColor: 'text-purple-400',
+    },
+    {
+        to: '/story',
+        icon: Feather,
+        title: 'Write a Story',
+        description: 'Open the story sandbox and draft a chapter',
+        gradient: 'from-amber-500/10 to-orange-500/10',
+        iconColor: 'text-amber-400',
+    },
+    {
+        to: '/scenarios',
+        icon: Zap,
+        title: 'Pick a Scenario',
+        description: 'Apply a prompt template to any chat or story',
+        gradient: 'from-violet-500/10 to-purple-500/10',
+        iconColor: 'text-violet-400',
+    },
+];
 
 const CARDS = [
     {
@@ -75,6 +108,7 @@ const item = {
 
 export default function FantasyHub() {
     const navigate = useNavigate();
+    const [showOnboarding, setShowOnboarding] = useState(() => !isSetupComplete());
 
     return (
         <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12">
@@ -94,6 +128,32 @@ export default function FantasyHub() {
                 <p className="text-gray-400 text-lg max-w-2xl mx-auto">
                     Your comprehensive AI fantasy engine. Choose a workspace to begin creating.
                 </p>
+            </motion.div>
+
+            <motion.div
+                className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-5xl mb-8"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5 }}
+            >
+                {QUICK_ACTIONS.map(({ to, icon: Icon, title, description, gradient, iconColor }) => (
+                    <button
+                        key={to}
+                        onClick={() => navigate(to)}
+                        className={clsx(
+                            "group flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-br p-4 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl focus-visible:ring-2 focus-visible:ring-blue-500 outline-none",
+                            gradient
+                        )}
+                    >
+                        <div className={clsx("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-white/5 border border-white/10", iconColor)}>
+                            <Icon size={20} />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-sm font-bold text-white group-hover:text-blue-300 transition-colors">{title}</p>
+                            <p className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors truncate">{description}</p>
+                        </div>
+                    </button>
+                ))}
             </motion.div>
 
             <motion.div
@@ -165,6 +225,12 @@ export default function FantasyHub() {
                     <span>Agentic AI workflows</span>
                 </div>
             </motion.div>
+
+            <AnimatePresence>
+                {showOnboarding && (
+                    <OnboardingWizard onClose={() => setShowOnboarding(false)} />
+                )}
+            </AnimatePresence>
         </div>
     );
 }

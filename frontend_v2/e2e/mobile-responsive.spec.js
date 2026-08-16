@@ -5,6 +5,7 @@ import {
   seedStory,
   seedStoryChapter,
   cleanupEntities,
+  dismissOnboarding,
 } from './fixtures.js';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,7 @@ async function expectSidebarClosed(page) {
 
 test.describe.serial('mobile chrome', () => {
   test('hamburger menu opens, navigates, closes', async ({ page }) => {
+    await dismissOnboarding(page);
     await page.goto('/');
     const hamburger = page.getByRole('button', { name: 'Toggle mobile menu' });
     await expect(hamburger).toBeVisible();
@@ -70,6 +72,7 @@ test.describe.serial('mobile chrome', () => {
   });
 
   test('question-mark opens the keyboard shortcuts modal; Escape closes it', async ({ page }) => {
+    await dismissOnboarding(page);
     await page.goto('/');
     // Wait for React to mount the shortcut handler (renders the mobile header).
     await expect(page.getByRole('button', { name: 'Toggle mobile menu' })).toBeVisible();
