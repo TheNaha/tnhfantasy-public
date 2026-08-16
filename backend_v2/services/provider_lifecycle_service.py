@@ -128,8 +128,9 @@ class ProviderLifecycleService:
                         client = get_http_client()
                         response = await client.get(f"http://localhost:{host_port}/health", timeout=2.0)
                         healthy = response.status_code == 200
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger("provider_lifecycle").debug("provider_health_refresh_failed", provider_id=provider_id, error=str(exc))
 
         if container.status == "running":
             container_manager.running_containers[provider_id] = container

@@ -170,8 +170,8 @@ async def prune_stale_providers() -> None:
                             logger.info("pruning_stale_provider", provider_id=p.id, last_seen=last_seen)
                             repo.delete(p.id)
                             pruned += 1
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as exc:
+                        logger.debug("stale_provider_timestamp_parse_failed", provider_id=p.id, last_seen=last_seen, error=str(exc))
             if pruned:
                 logger.info("stale_providers_pruned", count=pruned)
             else:

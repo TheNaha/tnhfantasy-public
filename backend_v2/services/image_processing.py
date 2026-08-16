@@ -175,7 +175,7 @@ def _serialize_datetime(value: Any) -> str | None:
     if callable(isoformat):
         try:
             return isoformat()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("datetime_isoformat_failed", error=str(exc))
     return str(value)
 

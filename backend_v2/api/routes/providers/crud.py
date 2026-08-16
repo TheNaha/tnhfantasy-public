@@ -166,8 +166,8 @@ async def wake_providers(session: Session = Depends(get_session)):
                     f"{get_provider_worker_url(provider_id)}/health",
                     timeout=5.0,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("worker_ping_failed", provider_id=provider_id, error=str(exc))
 
         await asyncio.gather(
             *(ping_worker(provider.id) for provider in active_providers),

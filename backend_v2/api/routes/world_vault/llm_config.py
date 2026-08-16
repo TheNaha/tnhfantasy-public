@@ -6,9 +6,11 @@ from api.deps import get_session
 from core.entities import Provider
 from core.exceptions import NotFoundError
 from infrastructure.http_client import get_http_client
+from infrastructure.logging import get_logger
 from services.llm_config import resolve_default_provider, set_default_provider
 from services.provider_runtime import resolve_provider_runtime
 
+logger = get_logger("llm_config_route")
 router = APIRouter()
 
 class DefaultProviderResponse(BaseModel):
@@ -75,8 +77,8 @@ async def get_available_models(session: Session = Depends(get_session)):
                             models.append({"id": model_id, "name": m.get("name") or model_id})
                 if models:
                     return models
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("provider_model_fetch_failed", provider_id=provider.id, error=str(exc))
 
     # Fallback: return provider record itself as a selectable "model"
     return [{"id": "default", "name": f"{provider.id} (default)"}]
@@ -151,7 +153,7 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
                     ]
                     if not models:
                         models = [m for m in files if isinstance(m, str)]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("llm_list_models_fetch_failed", url=base_url, error=str(exc))
 
     return {"healthy": healthy, "models": models, "error": error, "worker_url": base_url}

@@ -108,8 +108,8 @@ async def stream_task_events(
                         p = json.loads(error_text.decode())
                         if isinstance(p, dict) and "retryable" in p:
                             is_retryable = bool(p["retryable"])
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("error_body_parse_failed", error=str(exc))
                     raise ProviderCallError(
                         format_worker_http_error(response.status_code, error_text.decode()),
                         provider_id=provider_id,

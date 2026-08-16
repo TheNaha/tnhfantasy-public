@@ -346,6 +346,6 @@ class ModelAvailabilityService:
             cfg_default = (get_config() or {}).get("generator", {}).get("default_checkpoint")
             if cfg_default:
                 return cfg_default
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("model_availability_resolve_failed", error=str(exc))
         return "sd_xl_base_1.0.safetensors"

@@ -40,8 +40,9 @@ def get_default_llm_model() -> str:
         configured = getattr(settings, "default_llm_model", None)
         if configured:
             return configured
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger("llm_config").debug("config_default_llm_read_failed", error=str(exc))
     return _DEFAULT_MODEL_FALLBACK
 
 

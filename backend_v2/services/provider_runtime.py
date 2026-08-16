@@ -56,8 +56,8 @@ def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
                     found = True
                     try:
                         container.reload()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("container_reload_failed", error=str(exc))
                     status = getattr(container, "status", "unknown") or "unknown"
                     health_status = getattr(container, "attrs", {}).get("State", {}).get("Health", {}).get("Status")
                     healthy = health_status == "healthy" if health_status else None

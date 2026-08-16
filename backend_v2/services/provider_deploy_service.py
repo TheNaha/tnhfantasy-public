@@ -129,12 +129,12 @@ class ProviderDeployService:
             container = containers_client.get(expected_name)
             try:
                 container.reload()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("deploy_container_reload_failed", error=str(exc))
             status = getattr(container, "status", None)
             return status not in {"exited", "dead", "removing"}
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("deploy_container_get_failed", error=str(exc))
 
         try:
             matches = containers_client.list(
@@ -159,8 +159,8 @@ class ProviderDeployService:
         for container in matches or []:
             try:
                 container.reload()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("deploy_container_reload_failed", error=str(exc))
             status = getattr(container, "status", None)
             if status not in {"exited", "dead", "removing"}:
                 return True
@@ -206,15 +206,16 @@ class ProviderDeployService:
                         remote_state = response.json()
                         await self._persist_deploy_state(provider, remote_state)
                         return remote_state
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("deploy_status_remote_probe_failed", error=str(exc))
             else:
                 container_manager = None
                 try:
                     from infrastructure.deps import get_container_manager
                     container_manager = get_container_manager()
-                except Exception:
+                except Exception as exc:
                     container_manager = None
+                    logger.debug("container_manager_fetch_failed", error=str(exc))
     
                 if container_manager and not self._has_active_deploy_attempt_container(
                     container_manager,

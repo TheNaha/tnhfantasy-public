@@ -315,9 +315,9 @@ class LoadBalancer:
                             _provider_health_cache[cache_key] = False
                             return False
                     except Exception:
-                        pass
-            except Exception:
-                pass
+                        logger.debug("health_container_probe_failed", provider_id=provider.id)
+            except Exception as exc:
+                logger.debug("health_docker_check_failed", provider_id=provider.id, error=str(exc))
 
         # 2. Probe /health endpoint via HTTP
         try:
@@ -350,7 +350,7 @@ class LoadBalancer:
                             if response.status_code == 200:
                                 is_healthy = True
             except Exception:
-                pass
+                logger.debug("health_localhost_probe_failed", provider_id=provider.id, cache_key=cache_key)
 
         _provider_health_cache[cache_key] = is_healthy
         return is_healthy
@@ -540,7 +540,7 @@ class LoadBalancer:
                                         if res.status_code == 200:
                                             is_now_healthy = True
                         except Exception:
-                            pass
+                            logger.debug("health_poll_probe_failed", provider_id=provider.id)
                     
                     if is_now_healthy:
                         poll_success = True

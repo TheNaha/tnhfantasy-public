@@ -74,8 +74,8 @@ def _delete_thumbnails(local_path: str) -> None:
         try:
             if os.path.exists(candidate):
                 os.remove(candidate)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("thumbnail_remove_failed", path=candidate, error=str(exc))
 
     # Catch any stragglers elsewhere in the thumb tree (same basename).
     thumb_root = os.path.join(OUTPUT_DIR, "thumb")
@@ -83,8 +83,8 @@ def _delete_thumbnails(local_path: str) -> None:
         for match in glob.glob(os.path.join(thumb_root, pattern), recursive=True):
             try:
                 os.remove(match)
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("thumbnail_remove_failed", path=match, error=str(exc))
 
 
 
@@ -470,8 +470,8 @@ async def list_assets(
                 try:
                     cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
                     q = q.where(order_col > cur_dt)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("invalid_cursor", sort=sort, error=str(exc))
             q = q.order_by(order_col.asc(), Asset.id.asc()).limit(limit + 1)
         elif sort.startswith("random"):
             from sqlalchemy import cast, String
@@ -487,8 +487,8 @@ async def list_assets(
                 try:
                     cur_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
                     q = q.where(order_col < cur_dt)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("invalid_cursor", sort=sort, error=str(exc))
             q = q.order_by(order_col.desc(), Asset.id.desc()).limit(limit + 1)
         rows = session.exec(q).all()
         has_more = len(rows) > limit

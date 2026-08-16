@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
 from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo
+from infrastructure.logging import get_logger
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from services.reference_cleanup import scrub_entity_references
@@ -19,6 +20,7 @@ from services.job_service import JobService
 from services.job_queue import QueueManager, queue_manager
 from services.model_availability_service import ModelAvailabilityService
 
+logger = get_logger("stories_route")
 router = APIRouter()
 
 
@@ -318,8 +320,8 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
                         img.thumbnail((panel_w - margin * 2, panel_h // 2))
                         page.paste(img, (margin, y))
                         y += img.height + 10
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("comic_image_embed_failed", error=str(exc))
                 if y > panel_h - margin:
                     break
             comic_pages.append(page)

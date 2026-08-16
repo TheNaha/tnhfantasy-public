@@ -125,8 +125,8 @@ class ProviderDeployOrchestrator:
 
         try:
             container.stop(timeout=2)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("deploy_container_stop_failed", error=str(exc))
 
         try:
             container.remove(force=True)

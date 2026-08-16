@@ -398,8 +398,8 @@ async def get_provider_deploy_status(
             response = await http_client.get(f"{runtime.worker_url}/deploy-status", timeout=5.0)
             if response.status_code == 200:
                 return response.json()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("deploy_status_probe_failed", provider_id=provider_id, error=str(exc))
             
     return await service.get_provider_deploy_state(provider_id)
 

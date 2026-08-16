@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from api.deps import get_embedding_service, get_session, get_lorebook_repo, get_lorebook_entry_repo
+from infrastructure.logging import get_logger
 from infrastructure.repositories.lorebook_repo import LorebookRepository
 from infrastructure.repositories.lorebook_entry_repo import LorebookEntryRepository
 from services.reference_cleanup import scrub_entity_references
@@ -12,6 +13,7 @@ from core.entities import Lorebook, LorebookEntry
 from core.exceptions import NotFoundError
 from services.embedding_service import EmbeddingService
 
+logger = get_logger("lorebooks_route")
 router = APIRouter()
 
 
@@ -192,8 +194,8 @@ def update_entry(
         text_to_embed = f"{' '.join(keys_list)} {entry.content or ''}".strip()
         try:
             entry.embedding = embedding_service.generate_embedding(text_to_embed)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("entry_embedding_failed", entry_id=entry.id, error=str(exc))
             
     session.add(entry)
     session.commit()

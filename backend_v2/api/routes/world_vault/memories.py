@@ -5,11 +5,13 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 from api.deps import get_session, get_character_memory_repo, get_character_repo
+from infrastructure.logging import get_logger
 from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from core.entities import Character, CharacterMemory
 from core.exceptions import NotFoundError, ValidationError
 
+logger = get_logger("memories_route")
 router = APIRouter()
 
 
@@ -78,8 +80,8 @@ def create_memory(memory_in: MemoryCreate, session: Session = Depends(get_sessio
         emb_svc = get_embedding_service()
         embedding = emb_svc.generate_embedding(memory_in.content)
         mem.embedding = embedding
-    except Exception:
-        pass  # Embedding is optional; semantic search will skip it
+    except Exception as exc:
+        logger.debug("memory_embedding_failed", memory_id=mem.id, error=str(exc))  # Embedding is optional; semantic search will skip it
 
     session.add(mem)
     session.commit()

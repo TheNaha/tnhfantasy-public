@@ -56,8 +56,8 @@ class HttpFileProxy:
             response = await client.request("DELETE", url, json={"path": path})
             if response.status_code == 200:
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("remove_file_request_failed", path=path, error=str(exc))
         response = await client.post(url, json={"path": path})
         return response.status_code == 200
 

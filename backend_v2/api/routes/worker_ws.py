@@ -278,8 +278,8 @@ async def worker_websocket(
                         if "status" in payload:
                             try:
                                 updates["status"] = JobStatus(payload["status"])
-                            except ValueError:
-                                pass
+                            except ValueError as exc:
+                                logger.debug("unknown_job_status", status=payload.get("status"), error=str(exc))
                         if "progress" in payload:
                             updates["progress"] = payload["progress"]
                         if "overall_progress" in payload:

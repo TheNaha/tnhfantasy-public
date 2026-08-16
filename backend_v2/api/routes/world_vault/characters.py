@@ -14,12 +14,14 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import get_session, get_character_repo
+from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Character, Collection
 from core.exceptions import NotFoundError, ValidationError
 import config as app_config
 
+logger = get_logger("characters_route")
 router = APIRouter()
 
 
@@ -100,8 +102,8 @@ def _decode_chara_payload(raw: bytes) -> dict | None:
             candidates.append(zlib.decompress(decoded).decode("utf-8", errors="replace"))
         except zlib.error:
             candidates.append(decoded.decode("utf-8", errors="replace"))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("chara_chunk_decode_failed", error=str(exc))
 
     for candidate in candidates:
         try:

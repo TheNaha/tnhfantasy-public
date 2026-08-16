@@ -137,14 +137,14 @@ def _parse_generated_at(png_meta: dict, full_path: str) -> datetime | None:
         if isinstance(completed, (int, float)) and completed > 0:
             try:
                 return datetime.fromtimestamp(completed, tz=timezone.utc)
-            except (ValueError, OSError, OverflowError):
-                pass
+            except (ValueError, OSError, OverflowError) as exc:
+                logger.debug("png_completed_at_parse_failed", error=str(exc))
     try:
         mtime = os.path.getmtime(full_path)
         if mtime > 0:
             return datetime.fromtimestamp(mtime, tz=timezone.utc)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("mtime_read_failed", path=full_path, error=str(exc))
     return None
 
 
@@ -282,8 +282,8 @@ def reconcile_asset(
 
             with Image.open(full_path) as im:
                 width, height = im.size
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("image_dimensions_read_failed", path=full_path, error=str(exc))
 
         thumbnail_relative_path = None
         try:
@@ -293,8 +293,8 @@ def reconcile_asset(
             try:
                 thumb_dir = get_output_path(output_dir, subdir="thumb", user_id=user_id, workspace=ws)
                 expected_thumb = os.path.join(thumb_dir, f"{os.path.splitext(filename)[0]}.webp")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("thumb_path_build_failed", error=str(exc))
             if expected_thumb and os.path.exists(expected_thumb):
                 thumbs = {"medium": expected_thumb}
             else:
@@ -310,8 +310,8 @@ def reconcile_asset(
         blurhash = None
         try:
             blurhash = encode_blurhash(full_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("blurhash_failed", path=full_path, error=str(exc))
 
         relative_path = os.path.relpath(full_path, output_dir).replace("\\", "/") if output_dir else full_path
 
@@ -491,8 +491,8 @@ def _asset_as_file_data(asset: Asset, output_dir: str) -> dict[str, Any]:
     try:
         size = os.path.getsize(full_path)
         mtime = os.path.getmtime(full_path)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("asset_stat_failed", path=full_path, error=str(exc))
     order_ts = asset.generated_at or asset.created_at
     ts = order_ts.timestamp() if order_ts else mtime
     rel = asset.relative_path.replace("\\", "/")

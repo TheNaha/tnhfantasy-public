@@ -3,8 +3,11 @@ from typing import Any
 from sqlmodel import Session
 
 from core.entities import ModelFile, ModelVersion
+from infrastructure.logging import get_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_downloader import ModelDownloader
+
+logger = get_logger("model_civitai_sync")
 
 
 class ModelCivitaiSyncService:
@@ -90,15 +93,15 @@ class ModelCivitaiSyncService:
             external = ExternalModelService()
             try:
                 civitai_data = await external.get_civitai_model(target_civitai_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("civitai_fetch_failed", civitai_id=target_civitai_id, error=str(exc))
 
         if not civitai_data and model.civitai_model_id:
             external = ExternalModelService()
             try:
                 civitai_data = await external.get_civitai_model(model.civitai_model_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("civitai_fetch_failed", civitai_id=model.civitai_model_id, error=str(exc))
 
         if not civitai_data:
             scored = await self._search_civitai_scored(model)
@@ -355,8 +358,8 @@ class ModelCivitaiSyncService:
                             seen_ids.add(model_data.get("id"))
                             exact_match_id = model_data.get("id")
                             break # Found exact hash match, stop hashing!
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("civitai_hash_lookup_failed", error=str(exc))
 
         # Stage 1: Direct ID lookup from filenames (fastest path)
         # Note: Users often name files with CivitAI Version IDs, not Model IDs
@@ -372,8 +375,8 @@ class ModelCivitaiSyncService:
                         all_items.append(model_data)
                         seen_ids.add(model_data.get("id"))
                         exact_match_id = model_data.get("id")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("civitai_version_lookup_failed", extracted_id=extracted_id, error=str(exc))
             
             # Fallback: Try as a model ID if version lookup failed
             if not exact_match_id:
@@ -383,8 +386,8 @@ class ModelCivitaiSyncService:
                         all_items.append(model_data)
                         seen_ids.add(model_data.get("id"))
                         exact_match_id = model_data.get("id")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("civitai_model_id_lookup_failed", extracted_id=extracted_id, error=str(exc))
 
         import asyncio
 
@@ -407,8 +410,8 @@ class ModelCivitaiSyncService:
                 if item.get("id") not in seen_ids:
                     all_items.append(item)
                     seen_ids.add(item.get("id"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("civitai_search_failed", query=search_query, error=str(exc))
 
         # Stop early if we have enough candidates (5+)
         if len(all_items) < 5:
@@ -420,8 +423,8 @@ class ModelCivitaiSyncService:
                     if item.get("id") not in seen_ids:
                         all_items.append(item)
                         seen_ids.add(item.get("id"))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("civitai_search_failed", query=search_query, error=str(exc))
 
         if len(all_items) < 5:
             await asyncio.sleep(0.5)
@@ -435,8 +438,8 @@ class ModelCivitaiSyncService:
                         if item.get("id") not in seen_ids:
                             all_items.append(item)
                             seen_ids.add(item.get("id"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("civitai_search_failed", query=progressive_query, error=str(exc))
 
         if len(all_items) < 5:
             await asyncio.sleep(0.5)
@@ -450,8 +453,8 @@ class ModelCivitaiSyncService:
                         if item.get("id") not in seen_ids:
                             all_items.append(item)
                             seen_ids.add(item.get("id"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("civitai_search_failed", query=progressive_query, error=str(exc))
 
         if not all_items:
             return []

@@ -767,8 +767,8 @@ async def _tool_store_memory(
             emb_svc = get_embedding_service()
             try:
                 mem.embedding = emb_svc.generate_embedding(content)
-            except Exception:
-                pass  # Embedding is optional
+            except Exception as e:
+                logger.debug("embedding_generation_failed", error=str(e))  # Embedding is optional
 
             session.add(mem)
             session.commit()

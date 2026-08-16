@@ -43,8 +43,8 @@ def resolve_context_tokens(chat) -> int:
         val = ai_cfg.get("maxContextTokens") or ai_cfg.get("max_context_tokens")
         if val and int(val) > 0:
             return int(val)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("max_context_tokens_config_parse_failed", error=str(exc))
     return _DEFAULT_CONTEXT_TOKENS
 
 
