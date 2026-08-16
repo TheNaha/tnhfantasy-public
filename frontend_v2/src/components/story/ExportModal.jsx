@@ -1,16 +1,19 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate } from 'lucide-react';
-import { useExportStoryFormatted, useExportPublishedStory, usePublishStory } from '../../hooks/useWorldVault';
+import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe } from 'lucide-react';
+import { useExportStoryFormatted, useExportPublishedStory, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 
 /**
  * ExportModal — Modal for exporting/publishing a story in multiple formats.
+ * `token` mode (public StoryReader) hides publish controls; `story` mode shows
+ * Publish + Unpublish.
  */
 export default function ExportModal({ story, storyId, token, isOpen, onClose }) {
     const exportMutation = useExportStoryFormatted();
     const exportPublishedMutation = useExportPublishedStory();
     const publishMutation = usePublishStory();
+    const unpublishMutation = useUnpublishStory();
 
     const handleExport = (format) => {
         const onSuccess = () => {
@@ -29,7 +32,7 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
     const handlePublish = () => {
         publishMutation.mutate({ storyId }, {
             onSuccess: (data) => {
-                toast.success('Story published!');
+                toast.success('Story published — link copied!');
                 navigator.clipboard.writeText(data.read_url || '');
                 onClose();
             },
@@ -37,8 +40,19 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
         });
     };
 
+    const handleUnpublish = () => {
+        unpublishMutation.mutate({ storyId }, {
+            onSuccess: () => {
+                toast.success('Story unpublished');
+                onClose();
+            },
+            onError: (e) => toast.error(`Unpublish failed: ${e.message}`),
+        });
+    };
+
     const isExporting = exportMutation.isPending || exportPublishedMutation.isPending;
-    const isPublishing = publishMutation.isPending;
+    const isPublishing = publishMutation.isPending || unpublishMutation.isPending;
+    const published = !!story?.is_published;
 
     return (
         <AnimatePresence>
@@ -131,21 +145,37 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
                                 </div>
                             </button>
 
-                            <div className="border-t border-gray-700 my-4" />
+                            {!token && (
+                                <>
+                                    <div className="border-t border-gray-700 my-4" />
 
-                            <button
-                                onClick={handlePublish}
-                                disabled={isPublishing || story?.is_published}
-                                className="w-full flex items-center gap-3 p-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-left transition-colors"
-                            >
-                                <BookOpen size={20} className="text-white" />
-                                <div>
-                                    <span className="font-medium text-white">
-                                        {story?.is_published ? 'Already Published' : 'Publish to Web'}
-                                    </span>
-                                    <p className="text-xs text-purple-200">Generate a shareable link</p>
-                                </div>
-                            </button>
+                                    {published ? (
+                                        <button
+                                            onClick={handleUnpublish}
+                                            disabled={isPublishing}
+                                            className="w-full flex items-center gap-3 p-3 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 disabled:opacity-50 rounded-lg text-left transition-colors"
+                                        >
+                                            <Globe size={20} className="text-amber-400" />
+                                            <div>
+                                                <span className="font-medium text-white">Unpublish Story</span>
+                                                <p className="text-xs text-amber-200">Hide the public read link</p>
+                                            </div>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handlePublish}
+                                            disabled={isPublishing}
+                                            className="w-full flex items-center gap-3 p-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-left transition-colors"
+                                        >
+                                            <BookOpen size={20} className="text-white" />
+                                            <div>
+                                                <span className="font-medium text-white">Publish to Web</span>
+                                                <p className="text-xs text-purple-200">Generate a shareable link</p>
+                                            </div>
+                                        </button>
+                                    )}
+                                </>
+                            )}
                         </div>
                     </motion.div>
                 </motion.div>
