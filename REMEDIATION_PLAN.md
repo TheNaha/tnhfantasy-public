@@ -81,13 +81,22 @@ Status: **Batch 0–3 complete and verified.** Backend: 1443 passed / 2 skipped.
 
 ## Verification results (2026-08-16, final)
 
-- Backend: `docker exec tnhcomfy-backend python -m pytest -q` → **1461 passed, 2 skipped** (warnings pre-existing/harmless).
-- Frontend: `npx vitest run` → **68 files / 528 passed**; `npm run lint` → **0 errors, 0 warnings**.
+- Backend: `docker exec tnhcomfy-backend python -m pytest -q` → **1466 passed, 2 skipped** (warnings pre-existing/harmless).
+- Frontend: `npx vitest run` → **69 files / 532 passed**; `npm run lint` → **0 errors, 0 warnings**.
 - Provider containers: 24 passed / 6 env-only failures (missing `modal` pkg in throwaway env; CI installs it). Progress-event tests all pass.
 - E2E: chat specs 22/22; world-vault 8/8 (both after fixes). Full suite with `webServer` block now auto-starts the dev server locally.
 - API module smoke: 46 modules, 0 import failures.
 - Live stack: `POST /api/providers/detect` → 4 providers already registered via heartbeat; migration 049 seeded `demo-lyra` + `demo-sword-sorcery` (verified via API).
 - Containers: `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V` (note: `-V` wipes volumes — **remove when not desired**).
+
+## Batch 5 — Vision-aligned polish ✅ DONE (1 follow-up)
+
+- StoryReader publish/export wired (export modal, publish token flow, unpublish) — commit 305cdea.
+- Chat: global Cmd/Ctrl+K command palette, ⌘⇧Enter send, branch switching in timeline (`GET /messages?branch_id=`, trunk defaults), extended slash commands — commit 40a7adb. (Swipe remains stub UX; `MessageItem` actions already wired.)
+- Batch Generation Studio: papered with per-item options compile (workflow | options | prompt), 4s live job polling, results grid with `/api/view/output` thumbnails — commit 188ce54.
+- Route guards: named 404 page (`*` route), Chat/Story query guards (toast + redirect, drop-in via `ChatRouteGuard`/`StoryRouteGuard`), resettable ErrorBoundary per page (`key={routeKey}`) — commit 5c93e45.
+- Agentic idle simulation cron: `Chat.idle_sim_enabled` (migration 050, `BOOLEAN DEFAULT FALSE NOT NULL` — Postgres rejects `DEFAULT 0`), `services/agent_simulation.py` tick (dormant >30min, no in-flight LLM job → context build → `chat_reply` job `source=idle_simulation`), env-gated `COMFY_IDLE_SIM_ENABLED` + `COMFY_IDLE_SIM_INTERVAL_SECONDS` (default 600s, no immediate start) in `api/lifecycle.py`; ChatContextPanel Idle simulation toggle (commit pending).
+- ⏳ Follow-up: Story Sandbox scene-chain authoring (illustrate → batch variations) remains, per VISION.
 
 ## Open decisions (awaiting user)
 

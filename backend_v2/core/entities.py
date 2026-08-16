@@ -832,6 +832,7 @@ class Chat(SQLModel, table=True):
     llm_model: str | None = Field(default=None) # Per-chat LLM model override (falls back to global default)
     allow_image_generation: bool = Field(default=True) # Gates the agentic generate_image tool
     allow_narration: bool = Field(default=True) # Gates the agentic narrate_scene tool
+    idle_sim_enabled: bool = Field(default=False) # Opt-in idle simulation: background cron keeps the scene alive
     # Tiered system-prompt customisation:
     #   system_prompt_override — replaces EVERYTHING (character prompt + all blocks).
     #   append_system_prompt   — appended after the character block, before global roleplay_default.

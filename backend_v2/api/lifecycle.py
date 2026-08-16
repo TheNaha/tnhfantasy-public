@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from sqlmodel import select
 
@@ -253,6 +254,17 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="data_cleanup")
     schedule_cleanup(run_data_cleanup, interval_seconds=3600)
+
+    if os.getenv("COMFY_IDLE_SIM_ENABLED", "0").lower() in ("1", "true", "yes"):
+        from services.agent_simulation import run_idle_simulation_tick
+        interval = int(os.getenv("COMFY_IDLE_SIM_INTERVAL_SECONDS", "600"))
+        add_interval_job(
+            run_idle_simulation_tick,
+            interval_seconds=interval,
+            job_id="idle_simulation",
+            start_immediately=False,
+        )
+        logger.info("idle_simulation_enabled", interval_seconds=interval)
 
     logger.info("startup_init", phase="civitai_resync")
     from api.routes.models.maintenance import run_background_resync

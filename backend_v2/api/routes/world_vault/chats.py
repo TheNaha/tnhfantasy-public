@@ -54,6 +54,7 @@ class UpdateChatRequest(BaseModel):
     append_system_prompt: str | None = None
     max_context_tokens: int | None = None
     max_agentic_depth: int | None = None
+    idle_sim_enabled: bool | None = None
 
 
 class CreateChatRequest(BaseModel):
@@ -67,6 +68,7 @@ class CreateChatRequest(BaseModel):
     location_id: str | None = None
     active_lorebook_ids: list[str] = []
     max_agentic_depth: int | None = None
+    idle_sim_enabled: bool = False
 
 
 class SendMessageRequest(BaseModel):
@@ -160,6 +162,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         location_id=req.location_id,
         active_lorebook_ids=req.active_lorebook_ids or [],
         max_agentic_depth=req.max_agentic_depth,
+        idle_sim_enabled=req.idle_sim_enabled,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -249,8 +252,6 @@ def list_messages(chat_id: str, branch_id: str | None = None, session: Session =
     query = select(Message).where(Message.chat_id == chat_id)
     if branch_id:
         query = query.where(Message.branch_id == branch_id)
-    elif chat.branch_id:
-        query = query.where(or_((Message.branch_id == chat.branch_id), (Message.branch_id.is_(None))))
     return session.exec(query.order_by(Message.created_at).offset(offset).limit(limit)).all()
 
 

@@ -1542,6 +1542,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Seed starter content: demo character, scenario, and llm-local provider",
             apply_fn=_migration_049_seed_starter_pack,
         ),
+        MigrationStep(
+            version="050_add_chat_idle_sim_enabled",
+            description="Add idle_sim_enabled column to chats for background idle simulation",
+            apply_fn=_migration_add_chat_idle_sim_enabled,
+        ),
     ]
 
 
@@ -1965,5 +1970,20 @@ def _migration_048_add_story_location_ids(conn) -> bool:
         conn.execute(text("ALTER TABLE stories ADD COLUMN location_ids TEXT DEFAULT '[]'"))
 
     logger.info("migration_048_story_location_ids_added")
+    return True
+
+
+def _migration_add_chat_idle_sim_enabled(conn) -> bool:
+    """Add idle_sim_enabled column to chats for background idle simulation."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "idle_sim_enabled" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN idle_sim_enabled BOOLEAN DEFAULT FALSE NOT NULL"))
+        logger.info("migration_column_added", table="chats", column="idle_sim_enabled")
+
+    _verify_required_columns(conn, "chats", {"idle_sim_enabled"})
     return True
 

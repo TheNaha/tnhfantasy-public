@@ -367,6 +367,28 @@ function ChatContextPanel() {
                         )} />
                     </button>
                 </div>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <p className="text-xs text-gray-300 font-medium">Idle simulation</p>
+                        <p className="text-[10px] text-gray-600 mt-0.5">
+                            Character keeps the scene alive with proactive in-character messages while you're away.
+                        </p>
+                    </div>
+                    <button
+                        role="switch"
+                        aria-checked={activeChat?.idle_sim_enabled === true}
+                        onClick={() => onChatUpdate({ idle_sim_enabled: !activeChat?.idle_sim_enabled })}
+                        className={clsx(
+                            "relative w-10 h-5 rounded-full transition-colors shrink-0",
+                            activeChat?.idle_sim_enabled === true ? "bg-purple-500" : "bg-gray-700"
+                        )}
+                    >
+                        <span className={clsx(
+                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
+                            activeChat?.idle_sim_enabled === true ? "left-5.5" : "left-0.5"
+                        )} />
+                    </button>
+                </div>
             </div>
 
             {/* System prompt */}
