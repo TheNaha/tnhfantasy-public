@@ -364,9 +364,9 @@ function BrandingSettings() {
                     <Info className="text-blue-400" size={20} />
                 </div>
                 <div>
-                    <p className="font-bold tracking-wide text-blue-400 mb-1 text-sm uppercase">Note</p>
+                    <p className="font-bold tracking-wide text-blue-400 mb-1 text-sm uppercase">Live Preview</p>
                     <p className="text-sm text-gray-300 font-medium leading-relaxed">
-                        After saving your changes, you must <strong className="text-white">refresh the page</strong> (F5 or Cmd/Ctrl+R) to see the updated branding applied to the app interface.
+                        Branding changes are applied automatically across the app within a few seconds.
                     </p>
                 </div>
             </div>

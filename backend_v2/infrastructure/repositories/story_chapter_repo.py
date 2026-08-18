@@ -11,10 +11,6 @@ class StoryChapterRepository:
         stmt = select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)
         return self.session.exec(stmt).all()
 
-    def list_by_story_created(self, story_id: str) -> list[StoryChapter]:
-        stmt = select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.created_at)
-        return self.session.exec(stmt).all()
-
     def get_max_chapter_number(self, story_id: str) -> StoryChapter | None:
         stmt = select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number.desc())
         return self.session.exec(stmt).first()

@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 
 from sqlmodel import Session
 
-from core.entities import Chat, Character, Message, MessageRole, Job
+from core.entities import Chat, Character, Message, MessageRole, Job, JobStatus
 
 
 def _seed_chat(session: Session, char: Character | None = None) -> Chat:
@@ -326,3 +326,108 @@ class TestImpersonate:
     def test_impersonate_chat_404(self, client, session):
         resp = client.post("/api/v2/chats/nonexistent/impersonate", json={"hint": "x"})
         assert resp.status_code == 404
+
+
+# ── POST chat/messages/{id}/narrate ──────────────────────────────────────────
+
+class TestNarrateMessage:
+    def _seed(self, session):
+        char = Character(name="Aria")
+        session.add(char)
+        session.commit()
+        session.refresh(char)
+        chat = _seed_chat(session, char)
+        msg = _add_message(session, chat, MessageRole.CHAR, "Hello, adventurer.")
+        return chat, msg
+
+    def test_narrate_with_voice_override(self, client, session, monkeypatch):
+        from core.entities import VoiceModel
+        voice = VoiceModel(name="Midnight", voice_profile="midnight_xtts", language="en")
+        session.add(voice)
+        session.commit()
+        session.refresh(voice)
+        chat, msg = self._seed(session)
+
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        resp = client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={"voice_id": voice.id},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["job_id"]
+
+        enqueue.assert_awaited_once_with(body["job_id"], task_type="image")
+        job = session.get(Job, body["job_id"])
+        assert job.task_type == "image"
+        assert job.metadata_["type"] == "tts"
+        assert job.metadata_["source"] == "chat_tts"
+        assert job.workflow["prompt"]["3"]["inputs"]["text"] == "Hello, adventurer."
+
+    def test_narrate_voice_override_404(self, client, session, monkeypatch):
+        chat, msg = self._seed(session)
+        resp = client.post(
+            f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate",
+            json={"voice_id": "missing-voice"},
+        )
+        assert resp.status_code == 404
+
+    def test_narrate_chat_override_fallback(self, client, session, monkeypatch):
+        from core.entities import VoiceModel
+        voice = VoiceModel(name="Echo", voice_profile="echo_xtts", language="en")
+        session.add(voice)
+        session.commit()
+        session.refresh(voice)
+        chat, msg = self._seed(session)
+        chat.tts_voice_id = voice.id
+        session.add(chat)
+        session.commit()
+
+        enqueue = AsyncMock(return_value=True)
+        monkeypatch.setattr("services.job_queue.queue_manager.enqueue", enqueue)
+
+        resp = client.post(f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate", json={})
+        assert resp.status_code == 200, resp.text
+        job = session.get(Job, resp.json()["job_id"])
+        assert job.metadata_["voice_profile"] == "echo_xtts"
+        assert job.workflow["prompt"]["3"]["inputs"]["voice"] == "echo_xtts"
+
+
+# ── list_chat_jobs ───────────────────────────────────────────────────────────
+
+class TestListChatJobs:
+    def test_lists_jobs_for_chat(self, client, session):
+        chat = _seed_chat(session)
+        job = Job(
+            task_type="llm",
+            status=JobStatus.COMPLETED,
+            provider_id="p1",
+            metadata_={"chat_id": chat.id, "type": "chat_reply"},
+            workflow={"type": "chat_reply"},
+        )
+        session.add(job)
+        session.commit()
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/jobs")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["id"] == job.id
+
+    def test_ignores_jobs_for_other_chats(self, client, session):
+        chat = _seed_chat(session)
+        other = _seed_chat(session)
+        job = Job(
+            task_type="llm",
+            status=JobStatus.COMPLETED,
+            provider_id="p1",
+            metadata_={"chat_id": other.id},
+        )
+        session.add(job)
+        session.commit()
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/jobs")
+        assert resp.status_code == 200
+        assert resp.json() == []

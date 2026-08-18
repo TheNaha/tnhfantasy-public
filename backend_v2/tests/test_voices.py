@@ -106,9 +106,21 @@ def test_voice_preview(client, session, voice_model):
     response = client.post(f"/api/v2/voices/{voice_model.id}/preview")
     assert response.status_code == 200
     data = response.json()
-    assert data["preview_text"] == "Hello, this is a test."
-    assert data["voice_profile"] == "test_speaker"
-    assert data["language"] == "en"
+    assert data["voice_id"] == voice_model.id
+    assert data["job_id"]
+
+    from core.entities import Job
+    job = session.get(Job, data["job_id"])
+    assert job is not None
+    assert job.task_type == "image"
+    metadata = job.metadata_ or {}
+    assert metadata.get("type") == "voice_preview"
+    assert metadata.get("voice_id") == voice_model.id
+
+
+def test_voice_preview_missing_voice(client):
+    response = client.post("/api/v2/voices/nonexistent-id/preview")
+    assert response.status_code == 404
 
 
 def test_voice_preview_no_preview_text(client, session):

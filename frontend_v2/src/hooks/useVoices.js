@@ -45,11 +45,11 @@ export const useDeleteVoice = () => {
     });
 };
 
-export const useVoicePreview = (voiceId) => {
+export const useVoicePreview = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: () => api.post(`/api/v2/voices/${voiceId}/preview`),
-        onSuccess: () => {
+        mutationFn: (voiceId) => api.post(`/api/v2/voices/${voiceId}/preview`),
+        onSuccess: (_, voiceId) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'voices', voiceId] });
         }
     });

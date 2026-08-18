@@ -197,13 +197,18 @@ def prune_context(
     # Actually preserve original relative order for pinned messages
     result = []
     result.extend(system_msgs)
-    # Merge back preserving original order
-    pinned_set = {id(m) for m in pinned_msgs}
-    unpinned_set = {id(m) for m in unpinned_msgs}
+    # Merge back preserving original order using content-based keys so fresh
+    # DB-reconstructed objects still match their filtered counterparts.
+    def _msg_key(m: dict) -> tuple:
+        return (m.get("role"), m.get("content", "")[:200])
+
+    pinned_keys = {_msg_key(m) for m in pinned_msgs}
+    unpinned_keys = {_msg_key(m) for m in unpinned_msgs}
     for m in messages:
         if _is_exempt_system(m):
             continue
-        if id(m) in unpinned_set or id(m) in pinned_set:
+        key = _msg_key(m)
+        if key in unpinned_keys or key in pinned_keys:
             result.append(m)
     return result
 
@@ -279,6 +284,10 @@ def build_system_prompt_sections(
         })
 
     for char in chars_to_process:
+        if system_prompt_override and system_prompt_override.strip():
+            # Override replaces the character card + append blocks entirely
+            # (see priority note in the docstring above).
+            break
         char_prompt = char.system_prompt or build_character_system_prompt(char)
         if char_prompt:
             sections.append({
@@ -359,90 +368,24 @@ def build_system_prompt_sections(
             if story_location:
                 _query_text += f"{story_location} "
 
-        entries: list[dict] = []
         try:
-            from services.embedding_service import EmbeddingService
+            from services.rag_pipeline import search_lorebook_entries
 
-            _svc = EmbeddingService()
-            _TOP_K = 5  # max entries per lorebook when using semantic search
-
-            all_lorebook_entries = []
-            if lorebook_ids:
-                all_lorebook_entries = session.exec(
-                    select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(lorebook_ids))
-                ).all()
-
-            entries_by_lorebook: dict[str, list[LorebookEntry]] = {}
-            for entry in all_lorebook_entries:
-                entries_by_lorebook.setdefault(entry.lorebook_id, []).append(entry)
-
-            for lb_id in lorebook_ids:
-                lb_entries = entries_by_lorebook.get(lb_id, [])
-
-                if not lb_entries:
-                    continue
-
-                # Separate entries that have embeddings from those that don't
-                embedded = [e for e in lb_entries if e.embedding is not None]
-                keyword_only = [e for e in lb_entries if e.embedding is None]
-
-                if embedded and _query_text.strip():
-                    # Semantic: embed the query and sort by cosine distance
-                    try:
-                        q_vec = _svc.generate_embedding(_query_text.strip())
-                        # pgvector cosine distance via raw SQL for reliability
-
-                        results = session.exec(
-                            select(LorebookEntry)
-                            .where(
-                                LorebookEntry.lorebook_id == lb_id,
-                                LorebookEntry.embedding.is_not(None),
-                            )
-                            .order_by(
-                                LorebookEntry.embedding.cosine_distance(q_vec)
-                            )
-                            .limit(_TOP_K)
-                        ).all()
-                        entries.extend([{"content": e.content, "keys": e.keys} for e in results])
-                    except Exception as _sem_err:
-                        logger.warning(
-                            "lorebook_semantic_fallback",
-                            lorebook_id=lb_id,
-                            error=str(_sem_err),
-                        )
-                        # Fall through to keyword matching
-                        embedded = []
-                        keyword_only = lb_entries
-
-                if not embedded or not _query_text.strip():
-                    # Keyword matching: scan ALL non-embedded entries (cap the
-                    # scan for very large lorebooks, but never truncate to 5 so
-                    # entries beyond the first handful can still be matched).
-                    keyword_only_scanned = keyword_only[: max(_TOP_K, 50)]
-                    for e in keyword_only_scanned:
-                        if not e.keys:
-                            entries.append({"content": e.content, "keys": e.keys})
-                            continue
-                        query_lower = _query_text.lower() if _query_text else ""
-                        if any(k.lower() in query_lower for k in e.keys):
-                            entries.append({"content": e.content, "keys": e.keys})
-                    # If nothing matched keywords, include first N entries as fallback
-                    if not entries:
-                        entries.extend(
-                            [{"content": e.content, "keys": e.keys} for e in keyword_only[:_TOP_K]]
-                        )
-
+            entries = search_lorebook_entries(
+                session, lorebook_ids, _query_text, limit=5
+            )
         except Exception as _lb_err:
-            logger.warning("lorebook_injection_failed", error=str(_lb_err))
+            logger.warning("lorebook_injection_failed: %s", str(_lb_err))
             # Absolute fallback: load all entries from all lorebooks (old behaviour)
+            entries = []
             for lb_id in lorebook_ids:
                 lb_entries = session.exec(
                     select(LorebookEntry).where(LorebookEntry.lorebook_id == lb_id)
                 ).all()
-                entries.extend([{"content": e.content, "keys": e.keys} for e in lb_entries])
+                entries.extend(lb_entries)
 
         if entries:
-            lore_block = "\n".join(f"- {e['content']}" for e in entries)
+            lore_block = "\n".join(f"- {e.content}" for e in entries)
             sections.append({
                 "key": "lorebook",
                 "label": f"World information ({len(entries)} entries)",
@@ -556,36 +499,14 @@ def build_system_prompt_sections(
     # Character long-term memories (semantic retrieval)
     if character_id:
         try:
-            from services.embedding_service import EmbeddingService, get_embedding_service
-            from core.entities import CharacterMemory
-            from sqlalchemy import func
+            from services.rag_pipeline import search_memories
 
             _mem_query = _memory_query or _lorebook_query or ""
-            _mem_svc = get_embedding_service()
             _mem_top_k = 10
 
-            # Try semantic search via pgvector on PostgreSQL
-            _mem_stmt = (
-                select(CharacterMemory)
-                .where(CharacterMemory.character_id == character_id)
+            _memories = search_memories(
+                session, character_id, _mem_query, limit=_mem_top_k
             )
-            if session.bind and session.bind.dialect.name == "postgresql":
-                _q_vec = _mem_svc.generate_embedding(_mem_query.strip()) if _mem_query.strip() else None
-                if _q_vec:
-                    _mem_stmt = _mem_stmt.where(CharacterMemory.embedding.is_not(None)).order_by(
-                        CharacterMemory.embedding.cosine_distance(_q_vec)
-                    ).limit(_mem_top_k)
-                else:
-                    _mem_stmt = _mem_stmt.limit(_mem_top_k)
-            else:
-                # SQLite fallback: keyword matching
-                if _mem_query.strip():
-                    _mem_stmt = _mem_stmt.where(
-                        func.lower(CharacterMemory.content).like(f"%{_mem_query.strip().lower()}%")
-                    )
-                _mem_stmt = _mem_stmt.limit(_mem_top_k)
-
-            _memories = session.exec(_mem_stmt).all()
             if _memories:
                 mem_block = "\n".join(f"- {m.content}" for m in _memories)
                 sections.append({
@@ -595,7 +516,7 @@ def build_system_prompt_sections(
                     "source": "character_memories",
                 })
         except Exception as _mem_err:
-            logger.warning("character_memory_injection_failed", character_id=character_id, error=str(_mem_err))
+            logger.warning("character_memory_injection_failed: %s", str(_mem_err))
 
     return sections
 
@@ -701,6 +622,8 @@ def build_chat_context(
             role = msg.get("role")
             content = msg.get("content", "")
             meta = msg.get("message_metadata", {})
+            if meta.get("source") == "world_state":
+                continue
         else:
             meta = getattr(msg, "message_metadata", None) or {}
             if meta.get("source") == "world_state":

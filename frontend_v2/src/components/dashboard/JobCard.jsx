@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from 'react';
-import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings } from 'lucide-react';
+import { Loader2, Server, ChevronDown, ChevronUp, Cpu, Layers, Box, Clock, X, Send, Wifi, Zap, Image, Settings, RefreshCw } from 'lucide-react';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
 import { useJobStatus } from '../../hooks/useJobStatus';
@@ -7,6 +7,7 @@ import useGlobalClock from '../../hooks/useGlobalClock';
 
 const PHASE_CONFIG = {
     'pending': { icon: Clock, label: 'Queued', color: 'text-gray-400', bar: 'bg-gray-600' },
+    'retrying': { icon: RefreshCw, label: 'Retrying', color: 'text-orange-400', bar: 'bg-orange-500' },
     'validating': { icon: Settings, label: 'Validating', color: 'text-blue-300', bar: 'bg-blue-500' },
     'sent-to-provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
     'sent_to_provider': { icon: Send, label: 'Sending', color: 'text-blue-400', bar: 'bg-blue-500' },
@@ -23,7 +24,7 @@ const PHASE_CONFIG = {
     'generating_thumbnails': { icon: Image, label: 'Thumbnails', color: 'text-emerald-400', bar: 'bg-emerald-500' },
 };
 
-const PHASE_ORDER = ['pending', 'validating', 'sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'];
+const PHASE_ORDER = ['pending', 'validating', 'retrying', 'sent-to-provider', 'connecting', 'connected', 'pre-generation', 'generating', 'post-processing', 'generating-blurhash', 'generating-thumbnails'];
 
 function getJobPhase(job) {
     const status = job.status || 'pending';
@@ -50,7 +51,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const isSuccess = job.status === 'completed';
     const isError = job.status === 'failed' || job.status === 'error';
     const isCancelled = job.status === 'cancelled';
-    const isProcessing = ['sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 'pre-generation', 'pre_generation', 'generating', 'post-processing', 'post_processing', 'generating-blurhash', 'generating_blurhash', 'generating-thumbnails', 'generating_thumbnails'].includes(job.status);
+    const isProcessing = ['retrying', 'sent-to-provider', 'sent_to_provider', 'connecting', 'connected', 'pre-generation', 'pre_generation', 'generating', 'post-processing', 'post_processing', 'generating-blurhash', 'generating_blurhash', 'generating-thumbnails', 'generating_thumbnails'].includes(job.status);
     const isPending = ['pending'].includes(job.status);
 
     // Extract metadata

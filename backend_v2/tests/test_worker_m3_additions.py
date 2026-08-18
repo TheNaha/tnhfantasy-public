@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -118,21 +119,35 @@ async def test_load_balancer_health_checks(session: Session, monkeypatch):
     # Mock ContainerManager and ProviderLifecycleService.start_container
     mock_cm = MagicMock()
     mock_cm.client = MagicMock()
-    
+
     # Mock httpx get call during health check polling
     mock_httpx_response = MagicMock()
     mock_httpx_response.status_code = 200
-    
+
     # Mock lifecycle start_container
     mock_start_container = AsyncMock(return_value={"status": "success"})
-    
-    with patch("api.deps.get_container_manager", return_value=mock_cm), \
+
+    with patch("infrastructure.deps.get_container_manager", return_value=mock_cm), \
          patch("services.provider_lifecycle_service.ProviderLifecycleService.start_container", mock_start_container), \
          patch("httpx.AsyncClient.get", AsyncMock(return_value=mock_httpx_response)):
-         
-        # Polling sleep is mocked to speed up tests
-        with patch("asyncio.sleep", AsyncMock()):
-            selected = await lb.get_next_provider()
-            assert selected is not None
-            assert selected.id == "cold-provider"
-            mock_start_container.assert_awaited_once_with("cold-provider")
+        selected = await lb.get_next_provider()
+        assert selected is not None
+        assert selected.id == "cold-provider"
+
+        # Cold-start warmup now runs fire-and-forget in a background task:
+        # selection returns immediately, so pump the loop (real sleeps so the
+        # event loop processes the pending background task) until the task
+        # triggers container startup.
+        for _ in range(50):
+            if mock_start_container.await_count >= 1:
+                break
+            await asyncio.sleep(0.01)
+        mock_start_container.assert_awaited_once_with("cold-provider")
+
+        # Health polling (httpx 200) fills the cache keyed by id:url
+        from services import load_balancer as lb_module
+        for _ in range(50):
+            if any(k.startswith("cold-provider:") for k in lb_module._provider_health_cache):
+                break
+            await asyncio.sleep(0.01)
+        assert any(k.startswith("cold-provider:") for k in lb_module._provider_health_cache)

@@ -155,7 +155,7 @@ describe('useChatStreaming', () => {
         expect(qc.getQueryData(['streaming', 'active', 'chat-1'])).toEqual([]);
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'messages', 'chat-1'] });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1'] });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chat', 'images', 'chat-1'] });
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: ['world_vault', 'chats', 'chat-1', 'images'] });
         expect(toast.success).toHaveBeenCalledWith('Image generated!', { icon: '🖼️' });
     });
 

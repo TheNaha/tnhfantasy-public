@@ -32,6 +32,20 @@ export const generateApi = {
         });
     },
 
+    /**
+     * Submit multiple workflows in a single batch request.
+     *
+     * @param {Array<object>} workflows - Array of workflow entries (compiled graph,
+     *   {workflow, options, metadata}, or bare generator options).
+     * @param {object} [options]
+     * @param {string} [options.idempotencyKey] - Re-uses the same batch response during the dedup window.
+     * @returns {Promise<{jobs: object[], count: number}>} Created job records.
+     */
+    batch: (workflows, options = {}) =>
+        api.post('/api/generate/batch', { workflows }, {
+            idempotencyKey: options.idempotencyKey || createIdempotencyKey('generate-batch'),
+        }),
+
 };
 
 export default generateApi;

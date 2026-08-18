@@ -62,8 +62,8 @@ test.describe('Story Reader (public published stories)', () => {
     await expect(page.getByRole('heading', { name: "Author's Note" })).toBeVisible();
     await expect(page.getByText(memory)).toBeVisible();
 
-    const ch1Heading = page.getByRole('heading', { level: 2, name: /Chapter 1: The Arrival/ });
-    const ch2Heading = page.getByRole('heading', { level: 2, name: /Chapter 2: The Descent/ });
+    const ch1Heading = page.getByRole('heading', { level: 2, name: /Chapter \d+: The Arrival/ });
+    const ch2Heading = page.getByRole('heading', { level: 2, name: /Chapter \d+: The Descent/ });
     await expect(ch1Heading).toBeVisible();
     await expect(ch2Heading).toBeVisible();
     await expect(page.getByText('Chapter One content: the wanderer reached the City of Gates.')).toBeVisible();

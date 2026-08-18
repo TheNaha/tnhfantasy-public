@@ -338,6 +338,8 @@ class ProviderService:
             updates: dict[str, Any] = {}
             if existing.worker_type != worker_type:
                 updates["worker_type"] = worker_type
+            if existing.type != provider_type:
+                updates["type"] = provider_type
             config = dict(existing.config or {})
             config["last_seen_at"] = now
             config["discovery_url"] = internal_url

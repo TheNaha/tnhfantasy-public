@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from api.deps import get_embedding_service, get_session, get_lorebook_repo, get_lorebook_entry_repo
 from infrastructure.logging import get_logger
@@ -90,46 +90,32 @@ def search_entries(
     limit: int = 5,
     session: Session = Depends(get_session),
     lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
-    embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
     """Semantic search for lorebook entries based on a query string."""
     lorebook = lorebook_repo.get(lorebook_id)
     if not lorebook:
         raise NotFoundError("Lorebook", lorebook_id)
-        
-    if not q or not q.strip():
-        return []
-        
-    try:
-        # Generate embedding for the search query
-        query_embedding = embedding_service.generate_embedding(q)
-        
-        # In SQLModel/SQLAlchemy with pgvector, cosine distance is `<=>` operator.
-        # We can use .cosine_distance() method on the Vector column.
-        results = session.exec(
-            select(LorebookEntry)
-            .where(LorebookEntry.lorebook_id == lorebook_id)
-            .where(LorebookEntry.embedding.is_not(None))
-            .order_by(LorebookEntry.embedding.cosine_distance(query_embedding))
-            .limit(limit)
-        ).all()
-        
-        return results
-    except Exception:
-        # Fallback to simple ILIKE if pgvector/embeddings fail (e.g. SQLite fallback for testing)
-        search_query = f"%{q.strip()}%"
-        from sqlalchemy import or_
-        results = session.exec(
-            select(LorebookEntry)
-            .where(LorebookEntry.lorebook_id == lorebook_id)
-            .where(
-                or_(
-                    LorebookEntry.content.ilike(search_query)
-                )
-            )
-            .limit(limit)
-        ).all()
-        return results
+
+    from services.rag_pipeline import search_lorebook_entries
+
+    return search_lorebook_entries(session, [lorebook_id], q, limit=limit)
+
+
+@router.post("/{lorebook_id}/reindex")
+def reindex_lorebook(
+    lorebook_id: str,
+    session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
+):
+    """Backfill missing embeddings for a lorebook's entries (semantic-search index)."""
+    lorebook = lorebook_repo.get(lorebook_id)
+    if not lorebook:
+        raise NotFoundError("Lorebook", lorebook_id)
+
+    from services.rag_pipeline import backfill_lorebook_embeddings
+
+    reindexed = backfill_lorebook_embeddings(session, lorebook_id)
+    return {"reindexed": reindexed}
 
 # ============================================================================
 # ENTRIES CRUD
@@ -157,9 +143,8 @@ def create_entry(
     text_to_embed = f"{' '.join(keys_list)} {entry.content or ''}".strip()
     try:
         entry.embedding = embedding_service.generate_embedding(text_to_embed)
-    except Exception:
-        # Non-fatal if embedding generation fails, though in production we'd want to know
-        pass
+    except Exception as exc:
+        logger.warning("lorebook_entry_embedding_failed", entry_id=entry.id or "new", error=str(exc))
         
     session.add(entry)
     session.commit()

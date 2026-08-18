@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from core.entities import VoiceModel
@@ -20,9 +17,3 @@ class VoiceModelRepository:
 
     def get(self, voice_id: str) -> VoiceModel | None:
         return self.session.get(VoiceModel, voice_id)
-
-    def search(self, query: str, limit: int = 10) -> list[VoiceModel]:
-        stmt = select(VoiceModel).where(
-            text("lower(name) LIKE :q")
-        ).order_by(VoiceModel.name).limit(limit)
-        return self.session.exec(stmt, {"q": f"%{query.lower()}%"}).all()

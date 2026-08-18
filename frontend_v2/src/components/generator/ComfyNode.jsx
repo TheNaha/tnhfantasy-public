@@ -17,8 +17,7 @@ function ComfyNode({ id, data, selected }) {
   const outputs = registry.getOutputs(nodeType);
 
   // ComfyUI distinguishes between widget inputs (like strings/ints) and node inputs (links).
-  // For simplicity in this v1, we treat everything that isn't a widget as a Handle.
-  // In a full implementation, we'd render inputs for primitives.
+  // Primitives (INT, FLOAT, STRING, BOOLEAN) are rendered as editable inputs below.
   const inputKeys = [...Object.keys(required), ...Object.keys(optional)];
   
   return (

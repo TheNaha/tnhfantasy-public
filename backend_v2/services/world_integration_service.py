@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -542,6 +543,32 @@ async def _handle_story_parse(job_data: dict[str, Any]):
             logger.warning("story_parse_failed", job_id=job_data.get("id"), error=str(e))
 
 
+async def _handle_voice_preview(job_data: dict[str, Any]):
+    """Store the synthesized preview audio path on the voice model row."""
+    from core.entities import VoiceModel
+
+    outputs = job_data.get("outputs", [])
+    voice_id = job_data.get("metadata", {}).get("voice_id")
+    audio_path = (
+        outputs[0].get("relative_path") if outputs and isinstance(outputs[0], dict) else None
+    ) or job_data.get("image_path")
+
+    if not voice_id or not audio_path:
+        return
+
+    async with get_session_context() as session:
+        try:
+            voice = session.get(VoiceModel, voice_id)
+            if voice:
+                voice.preview_path = audio_path
+                voice.updated_at = datetime.now(timezone.utc)
+                session.add(voice)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.warning("voice_preview_failed", job_id=job_data.get("id"), error=str(e))
+
+
 async def start_world_integration_service():
     """Start listening to EventBus for world vault events."""
     logger.info("starting_world_integration_service")
@@ -579,6 +606,8 @@ async def start_world_integration_service():
                 await _handle_chat_image(job_data)
             elif event_type == "chat_tts":
                 await _handle_chat_tts(job_data)
+            elif event_type == "voice_preview":
+                await _handle_voice_preview(job_data)
             elif event_type == "story_tts":
                 await _handle_story_tts(job_data)
             elif event_type == "story_image":

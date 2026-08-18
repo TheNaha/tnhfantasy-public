@@ -18,6 +18,7 @@ JSONColumn = JSON().with_variant(JSONB(), "postgresql")
 class JobStatus(str, Enum):
     """Job lifecycle states."""
     PENDING = "pending"
+    RETRYING = "retrying"  # In backoff before re-attempting the same provider
     SENT_TO_PROVIDER = "sent-to-provider"
     CONNECTED = "connected"
     PRE_GENERATION = "pre-generation"
@@ -92,7 +93,7 @@ class Job(SQLModel, table=True):
     source: str | None = Field(default=None, index=True)
 
     # Queue position (calculated, not stored)
-    queue_position: int | None = Field(default=None, exclude=True)
+    queue_position: int | None = Field(default=None)
 
 
 class Provider(SQLModel, table=True):
@@ -754,6 +755,7 @@ class VoiceModel(SQLModel, table=True):
     model_path: str | None = Field(default=None)  # Path to model files
     language: str | None = Field(default=None)  # e.g. "en", "ja"
     preview_text: str | None = Field(default=None, sa_column=Column(Text))
+    preview_path: str | None = Field(default=None)  # Audio file produced by a preview TTS job
     character_id: str | None = Field(foreign_key="characters.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -843,6 +845,8 @@ class Chat(SQLModel, table=True):
     max_context_tokens: int | None = Field(default=None)
     # Per-chat agentic loop depth limit (None → use global MAX_AGENTIC_DEPTH)
     max_agentic_depth: int | None = Field(default=None)
+    # Per-chat TTS voice override (None → character voice → server default)
+    tts_voice_id: str | None = Field(default=None, foreign_key="voice_models.id", index=True)
     # Per-chat user persona description injected into the system prompt
     persona_description: str | None = Field(default=None, sa_column=Column(Text))
     
@@ -960,6 +964,8 @@ class LorebookEntry(SQLModel, table=True):
     
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
     embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     lorebook: Optional["Lorebook"] = Relationship(back_populates="entries")
 

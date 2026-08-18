@@ -192,6 +192,8 @@ def _infer_discovery_type(provider_id: str) -> tuple[str, str]:
         return "openai_compat", "llm"
     if provider_id.startswith("modal-"):
         return "modal", "image"
+    if provider_id.startswith("beam-"):
+        return "beam", "image"
     if provider_id == "direct-url":
         return "direct_url", "image"
     return "direct_url", "image"

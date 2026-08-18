@@ -59,7 +59,7 @@ export function useStoryStreaming({
                 if (job.task_type === 'image' || meta.workspace === 'image') {
                     setIsIllustrating(false);
                     queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'story', 'images', activeStoryId] });
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'images'] });
                     toast.success('Illustration complete');
                 } else if (meta.type === 'story_continue') {
                     const finalStreamedText = streamingRef.current;

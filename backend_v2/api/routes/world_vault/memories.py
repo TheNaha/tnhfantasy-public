@@ -2,14 +2,14 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select
 
 from api.deps import get_session, get_character_memory_repo, get_character_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_memory_repo import CharacterMemoryRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from core.entities import Character, CharacterMemory
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import NotFoundError
 
 logger = get_logger("memories_route")
 router = APIRouter()
@@ -142,40 +142,14 @@ def search_memories(
     limit: int = Query(default=10, le=50),
     session: Session = Depends(get_session),
 ):
-    """Semantic search over a character's memories using pgvector."""
+    """Semantic search over a character's memories (pgvector + keyword fallback)."""
     character = session.get(Character, character_id)
     if not character:
         raise NotFoundError("Character", character_id)
 
-    # SQLite fallback: keyword matching on content (no embedding needed)
-    if not (session.bind and session.bind.dialect.name == "postgresql"):
-        stmt = (
-            select(CharacterMemory)
-            .where(CharacterMemory.character_id == character_id)
-            .where(func.lower(CharacterMemory.content).like(f"%{query.lower()}%"))
-            .limit(limit)
-        )
-        results = session.exec(stmt).all()
-        return results
+    from services.rag_pipeline import search_memories as rag_search_memories
 
-    # PostgreSQL: use pgvector cosine distance for semantic search
-    from services.embedding_service import get_embedding_service
-    try:
-        emb_svc = get_embedding_service()
-        q_vec = emb_svc.generate_embedding(query)
-    except Exception:
-        raise ValidationError("Could not generate embedding for search query")
-
-    stmt = (
-        select(CharacterMemory)
-        .where(CharacterMemory.character_id == character_id)
-        .where(CharacterMemory.embedding.is_not(None))
-        .order_by(CharacterMemory.embedding.cosine_distance(q_vec))
-        .limit(limit)
-    )
-
-    results = session.exec(stmt).all()
-    return results
+    return rag_search_memories(session, character_id, query, limit=limit)
 
 
 @router.get("/character/{character_id}")

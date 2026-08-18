@@ -77,7 +77,7 @@ def get_relationships(session: Session = Depends(get_session)):
     # Exact membership matching in Python — substring `contains` on serialized
     # JSON is both N+1-query-expensive and false-positive-prone (any partial
     # id match would create a phantom link).
-    stories = session.exec(select(Story).limit(500)).all()
+    stories = session.exec(select(Story).limit(100)).all()
     char_ids = {
         char_id
         for story in stories

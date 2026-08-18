@@ -30,12 +30,15 @@ describe('BatchGenerate page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         globalThis.fetch = fetchMock;
+        const jsonHeaders = new Headers({ 'content-type': 'application/json' });
         fetchMock.mockImplementation((url, init = {}) => {
             if ((init.method || 'GET') !== 'POST') {
-                return Promise.resolve({ ok: true, json: async () => ({ files: [], total: 0 }) });
+                return Promise.resolve({ ok: true, status: 200, headers: jsonHeaders, json: async () => ({ files: [], total: 0 }) });
             }
             return Promise.resolve({
                 ok: true,
+                status: 200,
+                headers: jsonHeaders,
                 json: async () => ({ count: 4, jobs: createdJobs }),
             });
         });
@@ -150,9 +153,14 @@ describe('BatchGenerate page', () => {
     });
 
     it('shows an error toast when batch generation fails', async () => {
-        fetchMock.mockResolvedValue({ ok: false, status: 500 });
+        fetchMock.mockResolvedValue({
+            ok: false,
+            status: 500,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: async () => ({ detail: 'Batch generation failed' }),
+        });
         renderPage();
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
-        await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Failed: Batch generation failed'));
+        await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Batch generation failed'));
     });
 });

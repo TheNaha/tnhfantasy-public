@@ -76,6 +76,10 @@ class JobService:
             self.session.refresh(job)
         except Exception as e:
             logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
+            try:
+                self.session.get(Job, job_id)
+            except Exception:
+                raise NotFoundError("Job", job_id)
         return job
     
     async def list_jobs(
@@ -203,7 +207,7 @@ class JobService:
     
     def get_running_jobs(self) -> list[Job]:
         """Get all running/processing jobs."""
-        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
+        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING]
         return self.repo.get_by_statuses(active_states)
 
     def get_pending_queue_items(self) -> list[JobQueueItem]:
@@ -212,7 +216,7 @@ class JobService:
 
     def get_running_queue_items(self) -> list[JobQueueItem]:
         """Get running/processing queue items (lightweight)."""
-        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
+        active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING]
         return self.repo.get_queue_items(active_states)
     
     def get_average_duration(self, task_type: str | None = None, sample_size: int = 10) -> float:

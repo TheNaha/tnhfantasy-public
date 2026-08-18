@@ -12,6 +12,7 @@ from cachetools import TTLCache
 from sqlmodel import Session, select
 
 from core.entities import LoadBalancerState, Provider, Job, JobStatus
+from infrastructure.background_tasks import start_background_task
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import get_logger
 from infrastructure.providers.runtime import provider_container_name, resolve_provider_health_url
@@ -289,11 +290,18 @@ class LoadBalancer:
         LoadBalancer.load_state_from_db(session, self.runtime_state, state_id=self.state_id)
     
     async def _check_provider_health(self, provider: Provider) -> bool:
-        """Probe the container's status or health endpoint, caching the result for 15 seconds."""
-        cache_key = provider.id
+        """Probe the container's status or health endpoint, caching the result for 15 seconds.
+
+        The cache key includes the health URL (and container port) so config
+        changes invalidate stale health results.
+        """
+        port = 8000
+        if provider.container_config and "port" in provider.container_config:
+            port = provider.container_config["port"]
+        cache_key = f"{provider.id}:{resolve_provider_health_url(provider, port)}"
         
         # Circuit-breaker: skip providers with a long failure streak.
-        if self.runtime_state.provider_failures.get(cache_key, 0) >= _FAILURE_STREAK_THRESHOLD:
+        if self.runtime_state.provider_failures.get(provider.id, 0) >= _FAILURE_STREAK_THRESHOLD:
             return False
         
         # Check cache
@@ -321,11 +329,6 @@ class LoadBalancer:
 
         # 2. Probe /health endpoint via HTTP
         try:
-            port = 8000
-            if provider.container_config and "port" in provider.container_config:
-                port = provider.container_config["port"]
-            
-            # Prefer configured worker_url (serverless) → Docker network DNS fallback
             url = resolve_provider_health_url(provider, port)
             
             client = get_http_client()
@@ -489,78 +492,73 @@ class LoadBalancer:
             else:
                 selected_provider = await self._select_by_strategy(cold_candidates)
             
-            # Since the selected provider is cold, trigger container startup and poll/wait
+            # Since the selected provider is cold, trigger container startup in the
+            # background and return immediately. Job selection never blocks here:
+            # dispatch failures during the boot window fall through retry backoff,
+            # and the warm-up task fills the health cache when ready.
             if selected_provider:
-                try:
-                    from infrastructure.deps import get_container_manager
-                    from services.provider_lifecycle_service import (
-                        ProviderLifecycleService,
-                    )
-                    
-                    lifecycle_service = ProviderLifecycleService(
-                        self.session,
-                        container_manager=get_container_manager(),
-                        invalidate_caches=self.invalidate_model_availability_cache,
-                    )
-                    # Trigger startup
-                    await lifecycle_service.start_container(selected_provider.id)
-                except Exception as start_err:
-                    logger.warning("lb_cold_start_trigger_failed", provider_id=selected_provider.id, error=str(start_err))
-                
-                # Poll health up to 30 seconds
-                start_time = time.monotonic()
-                poll_success = False
-                while time.monotonic() - start_time < 30.0:
-                    is_now_healthy = False
-                    try:
-                        port = 8000
-                        if selected_provider.container_config and "port" in selected_provider.container_config:
-                            port = selected_provider.container_config["port"]
-                        
-                        url = resolve_provider_health_url(selected_provider, port)
-                        client = get_http_client()
-                        res = await client.get(url, timeout=1.0)
-                        if res.status_code == 200:
-                            is_now_healthy = True
-                    except Exception:
-                        try:
-                            # Local fallback
-                            from infrastructure.deps import get_container_manager
-                            cm = get_container_manager()
-                            if cm and cm.client:
-                                container_name = provider_container_name(selected_provider.id)
-                                container = cm.client.containers.get(container_name)
-                                ports = container.ports
-                                tcp_port_info = ports.get(f"{port}/tcp") or ports.get("8000/tcp")
-                                if tcp_port_info:
-                                    host_port = tcp_port_info[0].get("HostPort")
-                                    if host_port:
-                                        client = get_http_client()
-                                        res = await client.get(f"http://localhost:{host_port}/health", timeout=1.0)
-                                        if res.status_code == 200:
-                                            is_now_healthy = True
-                        except Exception:
-                            logger.debug("health_poll_probe_failed", provider_id=provider.id)
-                    
-                    if is_now_healthy:
-                        poll_success = True
-                        # Cache the success
-                        _provider_health_cache[selected_provider.id] = True
-                        break
-                    
-                    await asyncio.sleep(1.0)
-                
-                logger.info(
-                    "lb_cold_start_polled",
-                    provider_id=selected_provider.id,
-                    success=poll_success,
-                    duration=time.monotonic() - start_time,
+                start_background_task(
+                    self._warm_provider_in_background(selected_provider),
+                    task_name=f"lb_warm:{selected_provider.id}",
+                    timeout=None,
                 )
 
         if selected_provider:
             await self._track_job(selected_provider.id)
             return selected_provider
         return None
+
+    async def _warm_provider_in_background(self, provider: Provider) -> None:
+        """Fire-and-forget container startup + health poll for a cold provider.
+
+        Replaces the old synchronous up-to-30s poll that blocked the worker loop.
+        """
+        from infrastructure.deps import get_container_manager
+
+        try:
+            from services.provider_lifecycle_service import ProviderLifecycleService
+            lifecycle_service = ProviderLifecycleService(
+                self.session,
+                container_manager=get_container_manager(),
+                invalidate_caches=self.invalidate_model_availability_cache,
+            )
+            await lifecycle_service.start_container(provider.id)
+        except Exception as start_err:
+            logger.warning("lb_cold_start_trigger_failed", provider_id=provider.id, error=str(start_err))
+
+        port = 8000
+        if provider.container_config and "port" in provider.container_config:
+            port = provider.container_config["port"]
+        url = resolve_provider_health_url(provider, port)
+        cache_key = f"{provider.id}:{url}"
+        client = get_http_client()
+
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < 30.0:
+            try:
+                res = await client.get(url, timeout=1.0)
+                if res.status_code == 200:
+                    _provider_health_cache[cache_key] = True
+                    logger.info("lb_cold_start_polled", provider_id=provider.id, success=True, duration=time.monotonic() - start_time)
+                    return
+            except Exception:
+                try:
+                    # Localhost fallback via Docker host port mapping
+                    cm = get_container_manager()
+                    if cm and cm.client:
+                        container = cm.client.containers.get(provider_container_name(provider.id))
+                        tcp_port_info = (container.ports or {}).get(f"{port}/tcp") or (container.ports or {}).get("8000/tcp")
+                        if tcp_port_info and tcp_port_info[0].get("HostPort"):
+                            res = await client.get(f"http://localhost:{tcp_port_info[0]['HostPort']}/health", timeout=1.0)
+                            if res.status_code == 200:
+                                _provider_health_cache[cache_key] = True
+                                logger.info("lb_cold_start_polled", provider_id=provider.id, success=True, duration=time.monotonic() - start_time)
+                                return
+                except Exception:
+                    logger.debug("health_poll_probe_failed", provider_id=provider.id)
+            await asyncio.sleep(1.0)
+
+        logger.info("lb_cold_start_polled", provider_id=provider.id, success=False, duration=time.monotonic() - start_time)
 
     
     async def _track_job(self, provider_id: str):

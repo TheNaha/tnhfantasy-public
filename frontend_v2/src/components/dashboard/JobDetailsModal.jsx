@@ -15,7 +15,7 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     const meta = job.metadata || job.metadata_ || {};
     const checkpoint = typeof meta.checkpoint === 'object' ? meta.checkpoint?.name : meta.checkpoint;
-    const isProcessing = ['sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
+    const isProcessing = ['retrying', 'sent-to-provider', 'connected', 'pre-generation', 'generating', 'processing', 'executing', 'progress', 'running', 'post-processing'].includes(job.status);
     const isPending = ['pending', 'queued'].includes(job.status);
     const isCompleted = job.status === 'completed';
     const isFailed = job.status === 'failed' || job.status === 'error';

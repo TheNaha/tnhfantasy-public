@@ -56,6 +56,7 @@ const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
 const WorldTimeline = lazy(() => import('./pages/WorldTimeline'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
+const Prompts = lazy(() => import('./pages/Prompts'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Keyed by routeKey so a crashed page resets when the user navigates away
@@ -113,6 +114,7 @@ function AnimatedRoutes() {
                 <Route path="/world-timeline" element={<Boundary routeKey={routeKey}><WorldTimeline /></Boundary>} />
                 <Route path="/campaigns" element={<Boundary routeKey={routeKey}><Campaigns /></Boundary>} />
                 <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
+                <Route path="/prompts" element={<Boundary routeKey={routeKey}><Prompts /></Boundary>} />
                 <Route path="/read/story/:token" element={<Boundary routeKey={routeKey}><StoryReader /></Boundary>} />
                 <Route path="/models/discover" element={<Boundary routeKey={routeKey}><DiscoverModels /></Boundary>} />
                 <Route path="/models/installed" element={<Boundary routeKey={routeKey}><InstalledModels /></Boundary>} />

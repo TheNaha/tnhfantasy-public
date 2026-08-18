@@ -102,6 +102,7 @@ export default function StorySandbox() {
     });
 
     const [illustratePrompt, setIllustratePrompt] = useState('');
+    const [lastIllustrationPrompt, setLastIllustrationPrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
     const [showGallery, setShowGallery] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
@@ -456,6 +457,32 @@ export default function StorySandbox() {
      
     }, [activeStoryId, activeChapterId, editorContent, isStreaming, updateChapter]);
 
+    useEffect(() => {
+        const onKeyDown = (e) => {
+            const target = e.target;
+            const typing =
+                target instanceof HTMLElement &&
+                (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+            if (typing) return;
+
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                handleSaveChapter();
+            } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                if (editorContent) {
+                    navigator.clipboard.writeText(editorContent).then(() => {
+                        toast.success('Chapter content copied to clipboard');
+                    }).catch(() => {
+                        toast.error('Failed to copy content');
+                    });
+                }
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [handleSaveChapter, editorContent]);
+
     const handleIllustrate = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isIllustrating) return;
         setShowIllustrateModal(true);
@@ -472,6 +499,7 @@ export default function StorySandbox() {
                 chapterId: activeChapterId,
                 image_prompt: illustratePrompt.trim()
             });
+            setLastIllustrationPrompt(illustratePrompt.trim());
             setIllustratePrompt('');
             toast('Generating illustration...', { icon: '🎨' });
         } catch {
@@ -480,6 +508,12 @@ export default function StorySandbox() {
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, illustratePrompt, illustrateChapter]);
+
+    const handleBatchVariations = useCallback(() => {
+        if (!lastIllustrationPrompt) return;
+        sessionStorage.setItem('tnhcomfy_batch_prompt', lastIllustrationPrompt);
+        navigate('/batch-generate');
+    }, [lastIllustrationPrompt, navigate]);
 
     const handleStoryTitleUpdate = async (e) => {
         const newTitle = e.target.value;
@@ -632,6 +666,8 @@ export default function StorySandbox() {
                                             isPublished={activeStory?.is_published}
                                             onNarrate={handleNarrateChapter}
                                             activeChapterId={activeChapter?.id}
+                                            onBatchVariations={handleBatchVariations}
+                                            hasIllustration={!!lastIllustrationPrompt}
                                         />
                                     </div>
                                 )}

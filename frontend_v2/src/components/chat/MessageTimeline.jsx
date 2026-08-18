@@ -4,6 +4,7 @@ import { Loader2, Wand2, ImageIcon, MessageSquare } from 'lucide-react';
 import MessageItem from './MessageItem';
 import TavernMessage from './TavernMessage';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
+import { useVoices } from '../../hooks/useVoices';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
 export default function MessageTimeline() {
@@ -15,6 +16,8 @@ export default function MessageTimeline() {
         handleGenerateTTS, handleMessageIllustrate, hasMoreMessages, loadOlderMessages,
         messagesEndRef
     } = context;
+
+    const { data: voices = [] } = useVoices();
 
     const renderRow = (item) => {
         if (item.item) {
@@ -34,9 +37,12 @@ export default function MessageTimeline() {
                     onSwipe={handleSwipe}
                     onGenerateSwipe={handleGenerateSwipe}
                     onAvatarClick={handleAvatarClick}
-                    onGenerateTTS={handleGenerateTTS}
+                     onGenerateTTS={handleGenerateTTS}
                     onIllustrate={handleMessageIllustrate}
                     ttsEnabled={settings.ai?.ttsEnabled}
+                    voices={voices}
+                    chatTtsVoiceId={activeChat?.tts_voice_id}
+                    characterVoiceId={linkedCharacter?.voice_model_id}
                 />
             );
         }

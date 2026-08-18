@@ -482,7 +482,8 @@ async def _tool_narrate_scene(
     )
     from config import get_job_timeout
 
-    _lb_release = False
+    _lb_released = False
+    provider = None
     async with get_session_context() as _session:
         _job_service = JobService(_session)
         load_balancer = create_load_balancer(_session, task_type="llm")
@@ -496,57 +497,71 @@ async def _tool_narrate_scene(
                 await _job_service.update_job(job.id, status=JobStatus.FAILED, error="No available LLM providers")
                 return {"status": "error", "error": "No available LLM providers for narration"}
 
-            runtime = resolve_provider_runtime(provider)
-            if runtime.mode not in ("container_http", "discovery"):
-                await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
-                await load_balancer.report_failure(provider.id)
+            try:
+                runtime = resolve_provider_runtime(provider)
+                if runtime.mode not in ("container_http", "discovery"):
+                    await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
+                    await load_balancer.report_failure(provider.id)
+                    _lb_released = True
+                    await load_balancer.release_job(provider.id)
+                    return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
+
+                timeout = get_job_timeout("llm")
+                final_result = await call_llm_provider(
+                    worker_url=runtime.worker_url,
+                    workflow=workflow,
+                    job_id=job.id,
+                    job_service=_job_service,
+                    timeout=timeout,
+                    provider_id=provider.id,
+                    provider_type=provider.type,
+                )
+
+                await load_balancer.report_success(provider.id)
+                _lb_released = True
                 await load_balancer.release_job(provider.id)
-                return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}
 
-            timeout = get_job_timeout("llm")
-            final_result = await call_llm_provider(
-                worker_url=runtime.worker_url,
-                workflow=workflow,
-                job_id=job.id,
-                job_service=_job_service,
-                timeout=timeout,
-                provider_id=provider.id,
-                provider_type=provider.type,
-            )
-
-            await load_balancer.report_success(provider.id)
-            _lb_release = True
-            await load_balancer.release_job(provider.id)
-
-            content = ""
-            outputs = final_result.get("outputs") or []
-            if outputs and isinstance(outputs[0], dict):
-                content = outputs[0].get("content", "")
-            if not content:
-                content = final_result.get("text", "")
-            return {"status": "success", "narration": content, "job_id": job.id}
-        except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
-            logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
-            try:
-                await _job_service.update_job(
-                    job.id,
-                    status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
-                    error=str(exc),
-                )
-            except Exception as update_exc:
-                logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
-            return {"status": "error", "error": f"Narration failed: {exc}"}
-        except Exception as exc:
-            logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
-            try:
-                await _job_service.update_job(
-                    job.id,
-                    status=JobStatus.FAILED,
-                    error=f"Narration failed: {exc}",
-                )
-            except Exception as update_exc:
-                logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
-            return {"status": "error", "error": f"Narration failed: {exc}"}
+                content = ""
+                outputs = final_result.get("outputs") or []
+                if outputs and isinstance(outputs[0], dict):
+                    content = outputs[0].get("content", "")
+                if not content:
+                    content = final_result.get("text", "")
+                return {"status": "success", "narration": content, "job_id": job.id}
+            except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
+                logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
+                try:
+                    await _job_service.update_job(
+                        job.id,
+                        status=JobStatus.CANCELLED if isinstance(exc, JobCancelledError) else JobStatus.FAILED,
+                        error=str(exc),
+                    )
+                except Exception as update_exc:
+                    logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
+                await load_balancer.report_failure(provider.id)
+                _lb_released = True
+                await load_balancer.release_job(provider.id)
+                return {"status": "error", "error": f"Narration failed: {exc}"}
+            except Exception as exc:
+                logger.error("tool_narrate_scene_inline_fatal", job_id=job.id, error=str(exc))
+                try:
+                    await _job_service.update_job(
+                        job.id,
+                        status=JobStatus.FAILED,
+                        error=f"Narration failed: {exc}",
+                    )
+                except Exception as update_exc:
+                    logger.warning("tool_narrate_scene_status_update_failed", error=str(update_exc))
+                await load_balancer.report_failure(provider.id)
+                _lb_released = True
+                await load_balancer.release_job(provider.id)
+                return {"status": "error", "error": f"Narration failed: {exc}"}
+        finally:
+            if not _lb_released and provider is not None:
+                try:
+                    await load_balancer.release_job(provider.id)
+                except Exception:
+                    pass
 
 
 async def _tool_generate_image(
@@ -671,9 +686,6 @@ async def _tool_recall_memory(
 ) -> dict[str, Any]:
     """Search the character's memories for relevant information."""
     from infrastructure.database import get_session_context
-    from core.entities import CharacterMemory
-    from services.embedding_service import get_embedding_service
-    from sqlmodel import select, func
 
     query = args.get("query", "")
     limit = min(args.get("limit", 5), 20)
@@ -685,34 +697,15 @@ async def _tool_recall_memory(
 
     async with get_session_context() as session:
         try:
-            # Generate embedding for the query
-            emb_svc = get_embedding_service()
-            q_vec = emb_svc.generate_embedding(query)
+            from services.rag_pipeline import search_memories
 
-            # Try semantic search (pgvector); fallback to keyword if embedding unavailable
-            if session.bind and session.bind.dialect.name == "postgresql":
-                stmt = (
-                    select(CharacterMemory)
-                    .where(CharacterMemory.character_id == character_id)
-                    .where(CharacterMemory.embedding.is_not(None))
-                    .order_by(CharacterMemory.embedding.cosine_distance(q_vec))
-                    .limit(limit)
-                )
-            else:
-                stmt = (
-                    select(CharacterMemory)
-                    .where(CharacterMemory.character_id == character_id)
-                    .where(func.lower(CharacterMemory.content).like(f"%{query.lower()}%"))
-                    .limit(limit)
-                )
-
-            memories = session.exec(stmt).all()
-
-            # Update last_accessed_at for retrieved memories
-            for mem in memories:
-                mem.last_accessed_at = datetime.now(timezone.utc)
-            session.add_all(memories)
-            session.commit()
+            memories = search_memories(
+                session,
+                character_id,
+                query,
+                limit=limit,
+                touch_last_accessed=True,
+            )
 
             results = [
                 {
@@ -745,7 +738,7 @@ async def _tool_store_memory(
 
     content = args.get("content", "")
     tags = args.get("tags") or []
-    importance = min(max(args.get("importance", 5), 1), 10)
+    importance = int(min(max(args.get("importance", 5), 1), 10))
 
     if not character_id:
         return {"status": "error", "error": "No character_id available for storing memory"}

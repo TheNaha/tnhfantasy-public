@@ -250,6 +250,7 @@ async def finalize_persisted_job_outputs(
     start_background_task(
         complete_when_ready(),
         task_name=f"job_finalize:{job_id}",
+        timeout=None,  # finalization must never be wedged by the default 300s cap
     )
 
 
@@ -530,7 +531,13 @@ async def _finalize_image_job(
     if image_path:
         chat_id = metadata.get("chat_id")
         is_audio = str(image_path).endswith(('.wav', '.mp3', '.ogg', '.flac'))
-        if chat_id:
+        if metadata.get("type") == "voice_preview" and metadata.get("voice_id"):
+            event_extra = {
+                "type": "voice_preview",
+                "voice_id": metadata.get("voice_id"),
+                "image_path": image_path,
+            }
+        elif chat_id:
             event_extra = {
                 "type": "chat_tts" if (metadata.get("type") == "chat_tts" or is_audio) else "chat_image",
                 "chat_id": chat_id,

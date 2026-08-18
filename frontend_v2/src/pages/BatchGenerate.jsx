@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Play, Settings2, Wand2, Shuffle, Image as ImageIcon, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { jobsApi } from '../api';
+import { jobsApi, generateApi, ApiError } from '../api';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 
 const PRESETS = {
@@ -48,9 +48,24 @@ const SIZE_OPTIONS = [
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
 
+import { useQueryClient } from '@tanstack/react-query';
+import useSettingsStore from '../store/settingsStore';
+
 export default function BatchGenerate() {
+    const queryClient = useQueryClient();
+    const batchPresets = useSettingsStore(state => state.settings.generator?.batchPresets || {});
+    const saveBatchPreset = useSettingsStore(state => state.updateSetting);
     const [preset, setPreset] = useState('character_sheet');
-    const [basePrompt, setBasePrompt] = useState('');
+    const [basePrompt, setBasePrompt] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const stored = sessionStorage.getItem('tnhcomfy_batch_prompt');
+            if (stored) {
+                sessionStorage.removeItem('tnhcomfy_batch_prompt');
+            }
+            return stored || '';
+        }
+        return '';
+    });
     const [charName, setCharName] = useState('');
     const [sceneName, setSceneName] = useState('');
     const [seedMode, setSeedMode] = useState('random'); // 'random' | 'fixed' | 'increment'
@@ -62,6 +77,7 @@ export default function BatchGenerate() {
     const [negativePrompt, setNegativePrompt] = useState('');
     const [sizeKey, setSizeKey] = useState(1); // 512 × 768 default
     const [steps, setSteps] = useState(28);
+    const [presetName, setPresetName] = useState('');
 
     const { modelsByKey } = useModelDirectories([{ key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' }]);
     const checkpoints = modelsByKey.checkpoints || [];
@@ -125,28 +141,57 @@ export default function BatchGenerate() {
                 };
             });
 
-            const response = await fetch('/api/generate/batch', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ workflows }),
-            });
-
-            if (!response.ok) {
-                throw new Error('Batch generation failed');
-            }
-
-            const data = await response.json();
+            const data = await generateApi.batch(workflows);
             setJobs(data.jobs || []);
             setIsPolling(true);
             toast.success(`Created ${data.count} generation jobs`);
         } catch (e) {
-            toast.error(`Failed: ${e.message}`);
+            if (e instanceof ApiError) {
+                toast.error(e.message || 'Batch generation failed');
+            } else {
+                toast.error(`Failed: ${e.message}`);
+            }
         } finally {
             setIsGenerating(false);
         }
     };
+
+    const handleSavePreset = useCallback(() => {
+        const name = presetName.trim();
+        if (!name) {
+            toast.error('Enter a preset name');
+            return;
+        }
+        const presetData = {
+            preset,
+            basePrompt,
+            charName,
+            sceneName,
+            seedMode,
+            negativePrompt,
+            sizeKey,
+            steps,
+        };
+        const updated = { ...batchPresets, [name]: presetData };
+        saveBatchPreset('generator', 'batchPresets', updated);
+        setPresetName('');
+        toast.success(`Preset "${name}" saved`);
+        queryClient.invalidateQueries({ queryKey: ['settings'] });
+    }, [preset, basePrompt, charName, sceneName, seedMode, negativePrompt, sizeKey, steps, presetName, batchPresets, saveBatchPreset, queryClient]);
+
+    const handleLoadPreset = useCallback((name) => {
+        const p = batchPresets[name];
+        if (!p) return;
+        setPreset(p.preset);
+        setBasePrompt(p.basePrompt || '');
+        setCharName(p.charName || '');
+        setSceneName(p.sceneName || '');
+        setSeedMode(p.seedMode || 'random');
+        setNegativePrompt(p.negativePrompt || '');
+        setSizeKey(p.sizeKey ?? 1);
+        setSteps(p.steps || 28);
+        toast.success(`Loaded preset "${name}"`);
+    }, [batchPresets]);
 
     useEffect(() => {
         if (!isPolling || jobs.length === 0) {
@@ -202,6 +247,43 @@ export default function BatchGenerate() {
                                     <div className="text-xs text-gray-400 mt-0.5">{preset.description}</div>
                                 </button>
                             ))}
+                        </div>
+                        {Object.keys(batchPresets).length > 0 && (
+                            <div className="mt-4 pt-4 border-t border-white/10">
+                                <h3 className="text-xs font-semibold text-gray-400 mb-2">Saved Presets</h3>
+                                <div className="space-y-1">
+                                    {Object.keys(batchPresets).map((name) => (
+                                        <div key={name} className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => handleLoadPreset(name)}
+                                                className="flex-1 text-left px-2 py-1.5 text-xs rounded border border-white/10 text-gray-300 hover:text-white hover:border-white/20 transition-colors truncate"
+                                                title={name}
+                                            >
+                                                {name}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        <div className="mt-4 pt-4 border-t border-white/10">
+                            <h3 className="text-xs font-semibold text-gray-400 mb-2">Save Current as Preset</h3>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={presetName}
+                                    onChange={(e) => setPresetName(e.target.value)}
+                                    placeholder="Preset name"
+                                    className="flex-1 px-2 py-1.5 text-xs bg-gray-900 border border-gray-700 rounded text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                                />
+                                <button
+                                    onClick={handleSavePreset}
+                                    disabled={!presetName.trim()}
+                                    className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 disabled:opacity-50 transition-colors"
+                                >
+                                    Save
+                                </button>
+                            </div>
                         </div>
                     </div>
 

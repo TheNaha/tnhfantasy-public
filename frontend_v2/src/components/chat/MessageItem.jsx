@@ -1,16 +1,28 @@
-import { memo, useState } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
 import {
-    Activity, Check, ChevronLeft, ChevronRight, Clock, MapPin,
+    Activity, Check, ChevronLeft, ChevronRight, ChevronDown, Clock, MapPin,
     MessageSquare, Pencil, Pin, PinOff, RotateCcw, Undo2, Sparkles, Volume2, Trash2, ImageIcon
 } from 'lucide-react';
 import { thumbUrl, assetUrl } from '../../utils/assetUrl';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import TavernMessage from './TavernMessage';
+import { useConfirmation } from '../../store/confirmationStore';
 
-const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate, ttsEnabled = false }) {
+const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat, canRegenerate, onEdit, onDelete, onRegenerate, onRollback, onPin, onSwipe, onGenerateSwipe, onAvatarClick, onGenerateTTS, onIllustrate, ttsEnabled = false, voices = [], chatTtsVoiceId, characterVoiceId }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(msg.content);
+    const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
+    const voiceBtnRef = useRef(null);
+    const { confirm } = useConfirmation();
+
+    useEffect(() => {
+        const close = (e) => voiceMenuOpen && !voiceBtnRef.current?.contains(e.target) && setVoiceMenuOpen(false);
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+    }, [voiceMenuOpen]);
+
+    const hasVoices = Array.isArray(voices) && voices.length > 0;
 
     const meta = msg.message_metadata || {};
     const isNarrator = msg.kind === 'narrator' || meta.source === 'narrator';
@@ -239,15 +251,19 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     >
                                         <Pencil size={11} />
                                     </button>
-                                    <button
-                                        onClick={() => {
-                                            if (window.confirm('Delete this message?')) {
-                                                onDelete?.(msg.id);
-                                            }
-                                        }}
-                                        className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
-                                        title="Delete message"
-                                    >
+                                     <button
+                                         onClick={async () => {
+                                             const ok = await confirm({
+                                                 title: 'Delete Message',
+                                                 message: 'Delete this message?',
+                                                 confirmText: 'Delete',
+                                                 isDangerous: true,
+                                             });
+                                             if (ok) onDelete?.(msg.id);
+                                         }}
+                                         className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-white/5 transition-colors"
+                                         title="Delete message"
+                                     >
                                         <Trash2 size={11} />
                                     </button>
                                 </>
@@ -271,13 +287,53 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                 </button>
                             )}
                             {ttsEnabled && (
-                                <button
-                                    onClick={() => onGenerateTTS?.(msg.id)}
-                                    className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
-                                    title="Generate TTS"
-                                >
-                                    <Volume2 size={11} />
-                                </button>
+                                <div className="relative">
+                                    <button
+                                        onClick={() => onGenerateTTS?.(msg.id)}
+                                        className="p-1 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                        title="Generate TTS"
+                                    >
+                                        <Volume2 size={11} />
+                                    </button>
+                                    {hasVoices && (
+                                        <button
+                                            ref={voiceBtnRef}
+                                            onClick={(e) => { e.stopPropagation(); setVoiceMenuOpen(!voiceMenuOpen); }}
+                                            className="p-0.5 -mr-0.5 rounded-md text-gray-500 hover:text-blue-400 hover:bg-white/5 transition-colors"
+                                            title="Choose TTS voice (per-message override)"
+                                        >
+                                            <ChevronDown size={10} />
+                                        </button>
+                                    )}
+                                    {voiceMenuOpen && hasVoices && (
+                                        <div className="absolute z-50 mt-1 w-48 right-0 rounded-md border border-gray-700/60 bg-gray-900 shadow-lg overflow-hidden text-xs">
+                                            {voices.map((v) => {
+                                                const selected = v.id === chatTtsVoiceId;
+                                                const isCharDefault = characterVoiceId && v.id === characterVoiceId;
+                                                return (
+                                                    <button
+                                                        key={v.id}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onGenerateTTS?.(msg.id, v.id);
+                                                            setVoiceMenuOpen(false);
+                                                        }}
+                                                        className={clsx(
+                                                            "flex items-center justify-between w-full px-2 py-1.5 text-left hover:bg-white/5",
+                                                            selected ? "text-blue-300" : "text-gray-400"
+                                                        )}
+                                                    >
+                                                        <span>{v.name}</span>
+                                                        <span className="flex items-center gap-0.5">
+                                                            {isCharDefault && <span title="Character default">★</span>}
+                                                            {selected && <Check size={10} />}
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
                             )}
                             <button
                                 onClick={() => onIllustrate?.(msg.id)}

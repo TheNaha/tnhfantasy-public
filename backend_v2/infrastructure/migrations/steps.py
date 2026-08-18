@@ -1544,8 +1544,28 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
         ),
         MigrationStep(
             version="050_add_chat_idle_sim_enabled",
-            description="Add idle_sim_enabled column to chats for background idle simulation",
+            description="Add idle_sim_enabled column to chats",
             apply_fn=_migration_add_chat_idle_sim_enabled,
+        ),
+        MigrationStep(
+            version="051_world_vault_fixes",
+            description="Add voice_models.preview_path and backfill llm-local api_base",
+            apply_fn=_migration_051_world_vault_fixes,
+        ),
+        MigrationStep(
+            version="052_add_lorebook_entry_timestamps",
+            description="Add created_at/updated_at to lorebook_entries",
+            apply_fn=_migration_052_add_lorebook_entry_timestamps,
+        ),
+        MigrationStep(
+            version="053_add_chat_tts_voice_override",
+            description="Add chats.tts_voice_id for per-chat TTS voice override",
+            apply_fn=_migration_053_add_chat_tts_voice_override,
+        ),
+        MigrationStep(
+            version="054_add_jobstatus_retrying",
+            description="Add RETRYING label to the Postgres jobstatus enum",
+            apply_fn=_migration_054_add_jobstatus_retrying,
         ),
     ]
 
@@ -1641,7 +1661,7 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                     "enabled": False,
                     "priority": 1,
                     "credentials": json.dumps({}),
-                    "config": json.dumps({"seeded": True, "discovered": True}),
+                    "config": json.dumps({"seeded": True, "discovered": True, "api_base": "http://localhost:11434/v1"}),
                     "container_config": json.dumps({"container_name": "tnhcomfy-llm-local"}),
                     "created_at": now,
                     "updated_at": now,
@@ -1973,6 +1993,81 @@ def _migration_048_add_story_location_ids(conn) -> bool:
     return True
 
 
+def _migration_051_world_vault_fixes(conn) -> bool:
+    """Backfill fixes for world-vault features (voice previews, llm-local api_base)."""
+    touched = False
+    inspector = inspect(conn)
+
+    # --- voice_models.preview_path for TTS preview playback ---
+    if "voice_models" in set(inspector.get_table_names()):
+        columns = {col["name"] for col in inspector.get_columns("voice_models")}
+        if "preview_path" not in columns:
+            conn.execute(text("ALTER TABLE voice_models ADD COLUMN preview_path VARCHAR"))
+            logger.info("migration_column_added", table="voice_models", column="preview_path")
+            touched = True
+
+    # --- llm-local provider api_base backfill (seed in 049 predates it) ---
+    if "providers" in set(inspector.get_table_names()):
+        row = conn.execute(
+            text("SELECT config FROM providers WHERE id = :id"),
+            {"id": "llm-local"},
+        ).first()
+        if row and row[0]:
+            raw = row[0]
+            if isinstance(raw, str):
+                try:
+                    cfg = json.loads(raw)
+                except (ValueError, TypeError):
+                    cfg = {}
+            elif isinstance(raw, dict):
+                cfg = dict(raw)
+            else:
+                cfg = {}
+            if not cfg.get("api_base"):
+                cfg["api_base"] = "http://localhost:11434/v1"
+                conn.execute(
+                    text("UPDATE providers SET config = :cfg WHERE id = :id"),
+                    {"cfg": json.dumps(cfg), "id": "llm-local"},
+                )
+                logger.info("migration_llm_local_api_base_backfilled")
+                touched = True
+
+    return touched
+
+
+def _migration_052_add_lorebook_entry_timestamps(conn) -> bool:
+    """Add created_at to lorebook_entries (was missing from the original entity)."""
+    inspector = inspect(conn)
+    if "lorebook_entries" not in set(inspector.get_table_names()):
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("lorebook_entries")}
+    touched = False
+    for col_name, col_type in (
+        ("created_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    ):
+        if col_name not in columns:
+            conn.execute(text(f"ALTER TABLE lorebook_entries ADD COLUMN {col_name} {col_type}"))
+            logger.info("migration_column_added", table="lorebook_entries", column=col_name)
+            touched = True
+    return touched
+
+
+def _migration_053_add_chat_tts_voice_override(conn) -> bool:
+    """Add chats.tts_voice_id column for per-chat TTS voice overrides."""
+    inspector = inspect(conn)
+    if "chats" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("chats")}
+    if "tts_voice_id" not in columns:
+        conn.execute(text("ALTER TABLE chats ADD COLUMN tts_voice_id VARCHAR"))
+        logger.info("migration_column_added", table="chats", column="tts_voice_id")
+        return True
+    return False
+
+
 def _migration_add_chat_idle_sim_enabled(conn) -> bool:
     """Add idle_sim_enabled column to chats for background idle simulation."""
     inspector = inspect(conn)
@@ -1985,5 +2080,35 @@ def _migration_add_chat_idle_sim_enabled(conn) -> bool:
         logger.info("migration_column_added", table="chats", column="idle_sim_enabled")
 
     _verify_required_columns(conn, "chats", {"idle_sim_enabled"})
+    return True
+
+def _migration_054_add_jobstatus_retrying(conn) -> bool:
+    """Add the 'RETRYING' label to the Postgres jobstatus enum.
+
+    B6 introduced JobStatus.RETRYING for same-provider backoff, rendered by
+    SQLAlchemy's values_callable as the uppercase enum NAME 'RETRYING'. Existing
+    Postgres databases created before that change lack the label, so any query
+    (e.g. GET /api/jobs/active) that references RETRYING raises
+    `invalid input value for enum jobstatus: "RETRYING"`. SQLite has no enum
+    column (status is plain TEXT), so this is a Postgres-only backfill.
+
+    ALTER TYPE ... ADD VALUE is idempotent-safe here: PostgreSQL 12+ permits it
+    inside the per-step transaction, and we guard with an explicit pg_enum check
+    so re-application is a no-op.
+    """
+    if conn.dialect.name != "postgresql":
+        return False
+
+    existing = conn.execute(
+        text(
+            "SELECT 1 FROM pg_enum e JOIN pg_type t ON e.enumtypid = t.oid "
+            "WHERE t.typname = 'jobstatus' AND e.enumlabel = 'RETRYING'"
+        )
+    ).first()
+    if existing:
+        return False
+
+    conn.execute(text("ALTER TYPE jobstatus ADD VALUE 'RETRYING'"))
+    logger.info("migration_added_enum_value", type="jobstatus", value="RETRYING")
     return True
 

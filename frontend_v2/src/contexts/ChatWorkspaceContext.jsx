@@ -15,6 +15,7 @@ import {
     useIllustrateChat, useGenerateScene, useNarrateMessage, useDeleteMessage,
     useSearchChats
 } from '../hooks/useWorldVault';
+import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { useCollections } from '../hooks/useCollections';
 import { filesApi } from '../api/files';
@@ -209,6 +210,7 @@ export function ChatWorkspaceProvider({ children }) {
     const swipeMessageMutation = useSwipeMessage();
     const generateSwipeMutation = useGenerateSwipe();
     const narrateMutation = useNarrateMessage();
+    const { data: voices = [] } = useVoices();
     const illustrateMutation = useIllustrateChat();
     const generateSceneMutation = useGenerateScene();
     const { data: chatJobs = [] } = useChatJobs(activeChatId);
@@ -681,14 +683,15 @@ export function ChatWorkspaceProvider({ children }) {
         } catch { toast.error('Failed to generate swipe'); }
     }, [activeChatId, generateSwipeMutation, queryClient]);
 
-    const handleGenerateTTS = useCallback(async (msgId) => {
+    const handleGenerateTTS = useCallback(async (msgId, voiceId) => {
+        const voiceName = voiceId ? voices.find(v => v.id === voiceId)?.name : null;
         try {
-            await narrateMutation.mutateAsync({ chatId: activeChatId, msgId });
-            toast.success('TTS generation started');
+            await narrateMutation.mutateAsync({ chatId: activeChatId, msgId, voiceId });
+            toast.success(voiceName ? `TTS started with ${voiceName}` : 'TTS generation started');
         } catch {
             toast.error('Failed to generate TTS');
         }
-    }, [activeChatId, narrateMutation]);
+    }, [activeChatId, narrateMutation, voices]);
 
     const handleMessageIllustrate = useCallback(async (msgId) => {
         try {
@@ -771,6 +774,7 @@ export function ChatWorkspaceProvider({ children }) {
         activeChat,
         activeChatId,
         activeChatList,
+        activeChatTtsVoiceId: activeChat?.tts_voice_id,
         activeCommand,
         activeStreamEntries,
         activeStreams,
@@ -843,8 +847,8 @@ export function ChatWorkspaceProvider({ children }) {
         message,
         messagePageCount,
         messages,
-        messagesData,
         messagesEndRef,
+        messagesData,
         mobileTab,
         narrateMode,
         narrateMutation,
@@ -914,7 +918,8 @@ export function ChatWorkspaceProvider({ children }) {
         titlePollCancelledRef,
         triggerAutoTitle,
         updateChatMutation,
-        urlChatId
+        urlChatId,
+        voices
     };
 
     return (

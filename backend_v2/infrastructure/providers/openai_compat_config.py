@@ -3,11 +3,12 @@
 from typing import Any
 
 from .base import ServerlessProvider
+from .llm_client_stubs import LLMClientGracefulStubMixin
 from .provider_registry import ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url, provider_container_name
 
 
-class OpenAICompatProvider(ServerlessProvider):
+class OpenAICompatProvider(LLMClientGracefulStubMixin, ServerlessProvider):
     """
     OpenAI-compatible LLM provider implementation.
     Routes text requests to the LLM worker container.
@@ -69,3 +70,40 @@ OPENAI_COMPAT_PROVIDER_CONFIG = ProviderTypeConfig(
 )
 
 ProviderRegistry.register(OPENAI_COMPAT_PROVIDER_CONFIG)
+
+# Aliases: 'openai' and 'ollama' are legacy/UI-facing type names that map onto
+# the same OpenAI-compatible protocol and worker container.
+OPENAI_ALIAS_CONFIG = ProviderTypeConfig(
+    type_name="openai",
+
+    required_credentials=[],
+    optional_credentials=["api_key"],
+
+    required_config=["api_base"],
+    optional_config=[],
+
+    env_builder=build_openai_compat_env_vars,
+
+    worker_image="comfy-provider-llm-worker",
+    default_port=8000,
+    client_class=OpenAICompatProvider
+)
+
+OLLAMA_ALIAS_CONFIG = ProviderTypeConfig(
+    type_name="ollama",
+
+    required_credentials=[],
+    optional_credentials=["api_key"],
+
+    required_config=["api_base"],
+    optional_config=[],
+
+    env_builder=build_openai_compat_env_vars,
+
+    worker_image="comfy-provider-llm-worker",
+    default_port=8000,
+    client_class=OpenAICompatProvider
+)
+
+ProviderRegistry.register(OPENAI_ALIAS_CONFIG)
+ProviderRegistry.register(OLLAMA_ALIAS_CONFIG)

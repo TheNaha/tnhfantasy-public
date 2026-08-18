@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedCharacter, cleanupEntities, uniqueName } from './fixtures.js';
+import { seedCharacter, seedChat, cleanupEntities, uniqueName } from './fixtures.js';
 
 test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
   let created = [];
@@ -8,9 +8,11 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
     await cleanupEntities(page, created.splice(0));
   });
 
-  test('Relationship Graph renders nodes and filters', async ({ page }) => {
+   test('Relationship Graph renders nodes and filters', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('graph-char') });
     created.push({ kind: 'character', id: char.id });
+    const chat = await seedChat(page, { character_id: char.id });
+    created.push({ kind: 'chat', id: chat.id });
 
     await page.goto('/world-graph');
 
@@ -58,9 +60,11 @@ test.describe('New Pages (Relationship Graph & Avatar Gallery)', () => {
     expect(await legendArea.getByText('Locations').isVisible()).toBeTruthy();
   });
 
-  test('Relationship Graph refresh button triggers refetch', async ({ page }) => {
+   test('Relationship Graph refresh button triggers refetch', async ({ page }) => {
     const char = await seedCharacter(page, { name: uniqueName('graph-refresh-char') });
     created.push({ kind: 'character', id: char.id });
+    const chat = await seedChat(page, { character_id: char.id });
+    created.push({ kind: 'chat', id: chat.id });
 
     await page.goto('/world-graph');
 

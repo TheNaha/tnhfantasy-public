@@ -3,11 +3,12 @@
 from typing import Any
 
 from .base import ServerlessProvider
+from .llm_client_stubs import LLMClientGracefulStubMixin
 from .provider_registry import ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url, provider_container_name
 
 
-class GoogleProvider(ServerlessProvider):
+class GoogleProvider(LLMClientGracefulStubMixin, ServerlessProvider):
     """
     Google Gemini LLM provider implementation.
     Routes text requests to the LLM worker container.
@@ -65,3 +66,22 @@ GOOGLE_PROVIDER_CONFIG = ProviderTypeConfig(
 )
 
 ProviderRegistry.register(GOOGLE_PROVIDER_CONFIG)
+
+# 'gemini' is a legacy/UI-facing alias for the Google provider.
+GEMINI_ALIAS_CONFIG = ProviderTypeConfig(
+    type_name="gemini",
+
+    required_credentials=[],
+    optional_credentials=["api_key"],
+
+    required_config=[],
+    optional_config=[],
+
+    env_builder=build_google_env_vars,
+
+    worker_image="comfy-provider-llm-worker",
+    default_port=8000,
+    client_class=GoogleProvider
+)
+
+ProviderRegistry.register(GEMINI_ALIAS_CONFIG)

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Edit3, Trash2, Play, Volume2, FileText, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     useVoices,
     useCreateVoice,
@@ -9,6 +10,8 @@ import {
     useDeleteVoice,
     useVoicePreview,
 } from '../hooks/useWorldVault';
+import { useJobStatus } from '../hooks/useJobStatus';
+import { assetUrl } from '../utils/assetUrl';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 
@@ -47,13 +50,28 @@ export default function Voices() {
     const [showCreate, setShowCreate] = useState(false);
     const [formData, setFormData] = useState({});
     const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewJobId, setPreviewJobId] = useState(null);
+    const queryClient = useQueryClient();
 
     const { data: voices = [], isLoading } = useVoices();
     const { mutate: createVoice } = useCreateVoice();
     const { mutate: updateVoice } = useUpdateVoice();
     const { mutate: deleteVoice } = useDeleteVoice();
-    const { mutate: previewVoice } = useVoicePreview();
+    const { mutateAsync: previewVoice } = useVoicePreview();
     const { confirm } = useConfirmation();
+
+    const { data: previewJob } = useJobStatus(previewJobId, { enabled: !!previewJobId });
+
+    useEffect(() => {
+        if (!previewJob) return;
+        if (previewJob.status === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'voices'] });
+            setPreviewJobId(null);
+        } else if (['failed', 'error', 'cancelled'].includes(previewJob.status)) {
+            toast.error('Voice preview generation failed');
+            setPreviewJobId(null);
+        }
+    }, [previewJob, queryClient]);
 
     const handleCreate = () => {
         if (!formData.name) {
@@ -95,18 +113,17 @@ export default function Voices() {
         });
     };
 
-    const handlePreview = (voiceId) => {
+    const handlePreview = async (voiceId) => {
         setPreviewLoading(true);
-        previewVoice(voiceId, {
-            onSuccess: () => {
-                toast.success('Preview job queued');
-                setPreviewLoading(false);
-            },
-            onError: (e) => {
-                toast.error(`Preview failed: ${e.message}`);
-                setPreviewLoading(false);
-            },
-        });
+        try {
+            const res = await previewVoice(voiceId);
+            setPreviewJobId(res?.job_id || null);
+            toast.success('Preview job queued');
+        } catch (e) {
+            toast.error(`Preview failed: ${e.message}`);
+        } finally {
+            setPreviewLoading(false);
+        }
     };
 
     const edit = (voice) => {
@@ -246,6 +263,13 @@ export default function Voices() {
                                     <p className="text-xs text-gray-500 mt-1 line-clamp-1">
                                         Preview: "{voice.preview_text}"
                                     </p>
+                                )}
+                                {voice.preview_path && (
+                                    <audio
+                                        src={assetUrl(voice.preview_path)}
+                                        controls
+                                        className="mt-2 h-8 rounded w-full max-w-xs"
+                                    />
                                 )}
                             </div>
                             <div className="flex items-center gap-2">

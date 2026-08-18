@@ -4,8 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StoryReader from './StoryReader';
 
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockParams = vi.hoisted(() => vi.fn(() => ({ token: 'tok123' })));
 const mockApiGet = vi.hoisted(() => vi.fn());
@@ -55,6 +53,7 @@ const storyData = {
 };
 
 function renderPage() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
         <QueryClientProvider client={queryClient}>
             <MemoryRouter initialEntries={['/read/tok123']}>

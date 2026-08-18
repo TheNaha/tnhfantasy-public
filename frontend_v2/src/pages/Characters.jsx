@@ -4,6 +4,7 @@ import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, 
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
+import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -51,6 +52,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                 visual_tags: character.visual_tags || [],
                 lora_triggers: character.lora_triggers || [],
                 voice_profile: character.voice_profile || '',
+                voice_model_id: character.voice_model_id || null,
             };
         }
         return { ...DEFAULT_FORM };
@@ -58,6 +60,8 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
     const [visualTagInput, setVisualTagInput] = useState('');
     const [loraTagInput, setLoraTagInput] = useState('');
     const [saving, setSaving] = useState(false);
+
+    const { data: voices = [] } = useVoices();
 
     const isEditing = !!character;
     
@@ -526,13 +530,32 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
 
                         {/* Voice Profile */}
                         <div>
-                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Voice Profile</label>
+                            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Voice Model</label>
+                            <select
+                                value={form.voice_model_id || ''}
+                                onChange={e => {
+                                    const v = voices.find(x => String(x.id) === String(e.target.value));
+                                    setForm(f => ({
+                                        ...f,
+                                        voice_model_id: v?.id || null,
+                                        voice_profile: v?.voice_profile || v?.name || form.voice_profile,
+                                    }));
+                                }}
+                                className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-blue-500/50 transition-all"
+                            >
+                                <option value="" disabled>Choose a voice (optional)</option>
+                                {voices.map(v => (
+                                    <option key={v.id} value={v.id}>
+                                        {v.name}{v.voice_profile ? ` — ${v.voice_profile}` : ''}
+                                    </option>
+                                ))}
+                            </select>
                             <input
                                 type="text"
                                 value={form.voice_profile}
                                 onChange={e => setForm(f => ({ ...f, voice_profile: e.target.value }))}
-                                className="mt-1 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-2 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all"
-                                placeholder="TTS voice profile name (future)"
+                                className="mt-2 w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-xs text-gray-400 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                                placeholder="Voice profile name override (used by name-based resolution)"
                             />
                         </div>
                     </div>

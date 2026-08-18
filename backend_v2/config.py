@@ -46,7 +46,10 @@ DEFAULT_CONFIG = {
         "default_limit": 20,
         "max_in_memory": 100,
         "max_concurrent": 5,
-        "timeout": 300,
+        # Client-side stream timeout for image jobs. Aligned with the image
+        # worker's INFERENCE_TIMEOUT_SECONDS (3600) so the backend never gives
+        # up on a workflow the worker is still legally running.
+        "timeout": 3600,
         "max_retries": 3,
         "retry_base_delay": 1.0,
         "retry_max_delay": 60.0,

@@ -16,6 +16,9 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }) => {
             { keys: ['S'], description: 'Toggle selection mode' },
             { keys: ['R'], description: 'Refresh gallery' },
             { keys: ['⌘', '⇧', 'Enter'], description: 'Send message' },
+            { keys: ['Ctrl', 'N'], description: 'New chat' },
+            { keys: ['Ctrl', 'S'], description: 'Save chapter' },
+            { keys: ['Ctrl', '⇧', 'C'], description: 'Copy chapter content' },
         ],
         'Gallery': [
             { keys: ['←', '→'], description: 'Navigate images' },

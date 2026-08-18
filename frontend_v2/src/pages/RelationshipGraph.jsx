@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useWorldVaultRelationships } from '../hooks/useWorldVault';
 
 const NODE_COLORS = {
@@ -159,9 +160,25 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
 }
 
 export default function RelationshipGraph() {
+    const navigate = useNavigate();
     const [filter, setFilter] = useState('all');
-
     const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
+
+    const nodeRouteMap = useMemo(() => ({
+        character: '/characters',
+        story: '/story',
+        chat: '/chat',
+        lorebook: '/world-vault',
+        voice: '/voices',
+        location: '/locations',
+    }), []);
+
+    const handleNodeClick = useMemo(() => (node) => {
+        const route = nodeRouteMap[node.type];
+        if (route && navigate) {
+            navigate(route);
+        }
+    }, [navigate, nodeRouteMap]);
 
     const { nodes, edges } = useMemo(() => {
         if (!data) return { nodes: [], edges: [] };
@@ -324,8 +341,10 @@ export default function RelationshipGraph() {
                             const pos = positions.get(node.id);
                             if (!pos) return null;
                             const label = node.label;
+                            const typeRoute = nodeRouteMap[node.type];
                             return (
-                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`} style={{ cursor: typeRoute ? 'pointer' : 'default' }}>
+                                    <title>{label}</title>
                                     <circle r="22" fill={color} opacity="0.15" />
                                     <circle r="14" fill={color} />
                                     <foreignObject x="-8" y="-8" width="16" height="16">
@@ -343,6 +362,19 @@ export default function RelationshipGraph() {
                                     >
                                         {label}
                                     </text>
+                                    {typeRoute && (
+                                        <circle
+                                            r="22"
+                                            fill="transparent"
+                                            stroke="transparent"
+                                            strokeWidth="1"
+                                            onClick={() => handleNodeClick(node)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') handleNodeClick(node); }}
+                                            tabIndex={0}
+                                            role="link"
+                                            aria-label={`Open ${label}`}
+                                        />
+                                    )}
                                 </g>
                             );
                         })}

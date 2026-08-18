@@ -136,8 +136,11 @@ export const useGenerateSwipe = () => {
 export const useNarrateMessage = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ chatId, msgId }) =>
-            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/narrate`),
+        mutationFn: ({ chatId, msgId, voiceId, language }) =>
+            api.post(`/api/v2/chats/${chatId}/messages/${msgId}/narrate`, {
+                ...(voiceId ? { voice_id: voiceId } : {}),
+                ...(language ? { language } : {})
+            }),
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', variables.chatId] });
         },

@@ -4,11 +4,18 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from api.deps import get_session, get_voice_model_repo
+from api.deps import (
+    get_job_service,
+    get_queue_manager,
+    get_session,
+    get_voice_model_repo,
+)
 from infrastructure.repositories.voice_model_repo import VoiceModelRepository
 from core.entities import VoiceModel
-from services.reference_cleanup import scrub_entity_references
 from core.exceptions import NotFoundError, ValidationError
+from services.job_service import JobService
+from services.job_queue import QueueManager
+from services.reference_cleanup import scrub_entity_references
 
 router = APIRouter()
 
@@ -36,8 +43,6 @@ def list_voices(
 
 @router.post("")
 def create_voice(voice: VoiceModel, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
-    if voice.id is None:
-        pass  # Let default_factory handle it
     voice.created_at = datetime.now(timezone.utc)
     voice.updated_at = voice.created_at
     session.add(voice)
@@ -101,11 +106,40 @@ def delete_voice(voice_id: str, session: Session = Depends(get_session), voice_m
 
 
 @router.post("/{voice_id}/preview")
-def get_voice_preview(voice_id: str, session: Session = Depends(get_session), voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo)):
-    """Return the preview text for a voice model so the frontend can synthesize it."""
+async def get_voice_preview(
+    voice_id: str,
+    session: Session = Depends(get_session),
+    voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo),
+    job_service: JobService = Depends(get_job_service),
+    queue_manager: QueueManager = Depends(get_queue_manager),
+):
+    """Queue a real TTS job that synthesizes the voice model's preview text."""
+    from core.workflow_builder import build_tts_workflow
+
     voice = voice_model_repo.get(voice_id)
     if not voice:
         raise NotFoundError("VoiceModel", voice_id)
     if not voice.preview_text:
         raise ValidationError(f"Voice model '{voice.name}' has no preview text")
-    return {"preview_text": voice.preview_text, "voice_profile": voice.voice_profile, "language": voice.language}
+
+    workflow, metadata = build_tts_workflow(
+        text=voice.preview_text,
+        voice_profile=voice.voice_profile,
+        voice_model_id=None,
+        language=voice.language,
+        chat_id=None,
+        character_id=voice.character_id,
+        extra_metadata={
+            "type": "voice_preview",
+            "voice_id": voice_id,
+        },
+    )
+
+    job = await job_service.create_job(
+        task_type="image",  # TTS runs on the image_worker adapter
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+
+    return {"voice_id": voice.id, "job_id": job.id}

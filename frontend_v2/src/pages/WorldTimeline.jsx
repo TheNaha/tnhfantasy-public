@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Filter, MessageSquare, BookOpen, Brain, Image as ImageIcon, Calendar } from 'lucide-react';
 import { useTimeline } from '../hooks/useTimeline';
 import EmptyState from '../components/EmptyState';
+import { useSearchParams } from 'react-router-dom';
 
 const EVENT_ICONS = {
     message: MessageSquare,
@@ -26,13 +27,25 @@ const EVENT_LABELS = {
 };
 
 export default function WorldTimeline() {
-    const [filters, setFilters] = useState({
-        character_id: '',
-        story_id: '',
-        chat_id: '',
-        location: '',
-    });
+    const [searchParams, setSearchParams] = useSearchParams();
     const [showFilters, setShowFilters] = useState(false);
+
+    const initialFilters = {
+        character_id: searchParams.get('character_id') || '',
+        story_id: searchParams.get('story_id') || '',
+        chat_id: searchParams.get('chat_id') || '',
+        location: searchParams.get('location') || '',
+    };
+    const [filters, setFilters] = useState(initialFilters);
+
+    useEffect(() => {
+        const next = {};
+        if (filters.character_id) next.character_id = filters.character_id;
+        if (filters.story_id) next.story_id = filters.story_id;
+        if (filters.chat_id) next.chat_id = filters.chat_id;
+        if (filters.location) next.location = filters.location;
+        setSearchParams(next, { replace: true });
+    }, [filters, setSearchParams]);
 
     const { data, isLoading } = useTimeline(filters);
 

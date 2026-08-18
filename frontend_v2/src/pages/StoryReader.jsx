@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, Share2, BookOpen, Play, Pause, FileDown } from 'lucide-react';
 import { api } from '../api';
 import toast from 'react-hot-toast';
@@ -9,24 +10,21 @@ import ExportModal from '../components/story/ExportModal';
 export default function StoryReader() {
     const { token } = useParams();
     const navigate = useNavigate();
-    const [story, setStory] = useState(null);
-    const [loading, setLoading] = useState(true);
     const [showExport, setShowExport] = useState(false);
 
+    const { data: story, isLoading: loading, isError } = useQuery({
+        queryKey: ['published_story', token],
+        queryFn: () => api.get(`/api/v2/stories/published/${token}`),
+        enabled: !!token,
+        retry: false,
+    });
+
     useEffect(() => {
-        const load = async () => {
-            try {
-                const data = await api.get(`/api/v2/stories/published/${token}`);
-                setStory(data);
-            } catch {
-                toast.error('Story not found or no longer available');
-                navigate('/');
-            } finally {
-                setLoading(false);
-            }
-        };
-        load();
-    }, [token, navigate]);
+        if (isError) {
+            toast.error('Story not found or no longer available');
+            navigate('/');
+        }
+    }, [isError, navigate]);
 
     const handleShare = async () => {
         try {

@@ -79,7 +79,7 @@ async def test_maybe_retry_current_provider_updates_job_and_returns_true(monkeyp
         (
             "job-2",
             {
-                "status": JobStatus.PENDING,
+                "status": JobStatus.RETRYING,
                 "message": "Retrying after error (attempt 1)...",
             },
         )

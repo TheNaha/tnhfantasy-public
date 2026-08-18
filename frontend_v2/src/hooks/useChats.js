@@ -12,14 +12,14 @@ export const useChats = ({ limit = 50, offset = 0, workspace } = {}) => {
     if (limit) params.limit = limit;
     if (offset) params.offset = offset;
     return useQuery({
-        queryKey: ['world_vault', 'chats', workspace, limit, offset],
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, workspace, limit, offset),
         queryFn: () => api.get('/api/v2/chats', { params })
     });
 };
 
 export const useChat = (chatId) => {
     return useQuery({
-        queryKey: ['world_vault', 'chats', chatId],
+        queryKey: CHAT_DETAIL_KEY(chatId),
         queryFn: () => {
             if (!chatId) return null;
             return api.get(`/api/v2/chats/${chatId}`);
@@ -30,7 +30,7 @@ export const useChat = (chatId) => {
 
 export const useChatSystemPrompt = (chatId) => {
     return useQuery({
-        queryKey: ['world_vault', 'chats', chatId, 'system-prompt'],
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'system-prompt'),
         queryFn: () => {
             if (!chatId) return null;
             return api.get(`/api/v2/chats/${chatId}/system-prompt`);
@@ -40,9 +40,9 @@ export const useChatSystemPrompt = (chatId) => {
 };
 
 export const useChatJobs = (chatId) => {
-    const ACTIVE_STATUSES = ['pending', 'sent_to_provider', 'connected', 'pre_generation', 'generating', 'post_processing'];
+    const ACTIVE_STATUSES = ['pending', 'retrying', 'sent_to_provider', 'connected', 'pre_generation', 'generating', 'post_processing'];
     return useQuery({
-        queryKey: ['world_vault', 'chats', chatId, 'jobs'],
+        queryKey: buildQueryKey(QUERY_KEYS.CHATS, chatId, 'jobs'),
         queryFn: () => {
             if (!chatId) return [];
             return api.get(`/api/v2/chats/${chatId}/jobs`);
@@ -182,7 +182,7 @@ export const useIllustrateChat = () => {
 
 export const useChatImages = (chatId) => {
     return useQuery({
-        queryKey: ['world_vault', 'chat', 'images', chatId],
+        queryKey: ['world_vault', 'chats', chatId, 'images'],
         queryFn: () => api.get(`/api/v2/chats/${chatId}/images`),
         enabled: !!chatId
     });

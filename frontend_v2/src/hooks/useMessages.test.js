@@ -171,6 +171,6 @@ describe('useMessages', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useNarrateMessage(), { wrapper });
         await act(async () => result.current.mutateAsync({ chatId: 'c1', msgId: 'm1' }));
-        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/messages/m1/narrate');
+        expect(apiMock.post).toHaveBeenCalledWith('/api/v2/chats/c1/messages/m1/narrate', {});
     });
 });

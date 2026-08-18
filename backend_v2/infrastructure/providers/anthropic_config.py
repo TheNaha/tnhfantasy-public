@@ -3,11 +3,12 @@
 from typing import Any
 
 from .base import ServerlessProvider
+from .llm_client_stubs import LLMClientGracefulStubMixin
 from .provider_registry import ProviderRegistry, ProviderTypeConfig
 from .runtime import get_provider_worker_base_url, provider_container_name
 
 
-class AnthropicProvider(ServerlessProvider):
+class AnthropicProvider(LLMClientGracefulStubMixin, ServerlessProvider):
     """
     Anthropic (Claude) LLM provider implementation.
     Routes text requests to the LLM worker container.

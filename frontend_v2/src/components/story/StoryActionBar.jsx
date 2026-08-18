@@ -1,5 +1,5 @@
 import React from 'react';
-import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen } from 'lucide-react';
+import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2 } from 'lucide-react';
 import clsx from 'clsx';
 
 export default React.memo(function StoryActionBar({
@@ -19,6 +19,8 @@ export default React.memo(function StoryActionBar({
     isPublished,
     onNarrate,
     activeChapterId,
+    onBatchVariations,
+    hasIllustration,
 }) {
     return (
         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-2 sm:gap-3">
@@ -69,6 +71,19 @@ export default React.memo(function StoryActionBar({
                         <><ImageIcon size={14} /> Illustrate</>
                     )}
                 </button>
+                {hasIllustration && onBatchVariations && (
+                    <button
+                        onClick={onBatchVariations}
+                        className={clsx(
+                            "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm",
+                            "bg-purple-600 text-white hover:bg-purple-500"
+                        )}
+                        title="Generate batch variations of the last illustration"
+                    >
+                        <Wand2 size={14} />
+                        <span className="hidden sm:inline">Variations</span>
+                    </button>
+                )}
             </div>
 
             <div className="flex-1 flex gap-2 w-full">

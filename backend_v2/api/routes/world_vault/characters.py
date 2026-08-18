@@ -256,6 +256,16 @@ def import_character_card(
 
     return _character_to_dict(character)
 
+@router.get("/{character_id}/expressions")
+def get_character_expressions(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+    return {
+        "expressions": character.expressions or {},
+        "expressions_lora": character.expressions_lora or [],
+    }
+
 @router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     character = character_repo.get(character_id)

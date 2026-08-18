@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { useConfirmation } from "../../store/confirmationStore";
 
 import { api, ApiError, createIdempotencyKey, generateApi } from "../../api";
 import useSettingsStore from "../../store/settingsStore";
@@ -50,6 +51,7 @@ const FeedCard = memo(function FeedCard({
 
   // Lazy-load full metadata using React Query when user expands details, reuses, or remixes
   const queryClient = useQueryClient();
+  const { confirm } = useConfirmation();
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   // If we already have it in the react-query cache, we can use it immediately.
@@ -257,7 +259,12 @@ const FeedCard = memo(function FeedCard({
   const handleMoveAsset = useCallback(async () => {
     const assetId = item.id || item.name;
     const workspace = prompt("Move to workspace (leave empty to keep current):") || undefined;
-    if (window.confirm(`Move asset ${item.name} to workspace: ${workspace || 'current'}?`)) {
+    const ok = await confirm({
+        title: 'Move Asset',
+        message: `Move asset ${item.name} to workspace: ${workspace || 'current'}?`,
+        confirmText: 'Move',
+    });
+    if (ok) {
       try {
         await api.post(`/api/v2/assets/${assetId}/move`, {
           workspace: workspace || item.workspace || 'main',
@@ -269,12 +276,17 @@ const FeedCard = memo(function FeedCard({
         toast.error("Failed to move asset");
       }
     }
-  }, [item, queryClient]);
+  }, [item, queryClient, confirm]);
 
   const handleCopyAsset = useCallback(async () => {
     const assetId = item.id || item.name;
     const workspace = prompt("Copy to workspace (leave empty for current):") || undefined;
-    if (window.confirm(`Copy asset ${item.name} to workspace: ${workspace || 'current'}?`)) {
+    const ok = await confirm({
+        title: 'Copy Asset',
+        message: `Copy asset ${item.name} to workspace: ${workspace || 'current'}?`,
+        confirmText: 'Copy',
+    });
+    if (ok) {
       try {
         await api.post(`/api/v2/assets/${assetId}/move`, {
           workspace: workspace || item.workspace || 'main',
@@ -286,7 +298,7 @@ const FeedCard = memo(function FeedCard({
         toast.error("Failed to copy asset");
       }
     }
-  }, [item, queryClient]);
+  }, [item, queryClient, confirm]);
 
   const checkpointDisplayName = getCheckpointDisplayName(metadata) || getCheckpointDisplayName(item) || "Unknown Model";
 

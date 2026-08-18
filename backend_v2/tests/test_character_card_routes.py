@@ -169,3 +169,29 @@ class TestDeleteCharacterCascadesMemories:
         assert session.get(Character, char["id"]) is None
         remaining = session.exec(select(CharacterMemory).where(CharacterMemory.character_id == char["id"])).all()
         assert remaining == []
+
+
+class TestCharacterExpressions:
+    def test_get_expressions_empty_defaults(self, client):
+        char = _seed_char(client, name="Plain")
+        resp = client.get(f"/api/v2/characters/{char['id']}/expressions")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"expressions": {}, "expressions_lora": []}
+
+    def test_get_expressions_round_trips_patch(self, client):
+        char = _seed_char(client, name="Expressive")
+        patch = {
+            "expressions": {"happy": "happy expression", "sad": "sad expression"},
+            "expressions_lora": ["lora-a.safetensors"],
+        }
+        resp = client.patch(f"/api/v2/characters/{char['id']}", json=patch)
+        assert resp.status_code == 200, resp.text
+
+        resp = client.get(f"/api/v2/characters/{char['id']}/expressions")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["expressions"] == patch["expressions"]
+        assert body["expressions_lora"] == patch["expressions_lora"]
+
+    def test_get_expressions_missing_404(self, client):
+        assert client.get("/api/v2/characters/nope/expressions").status_code == 404

@@ -1,5 +1,9 @@
 # Provider Registry Unit Tests
 
+import asyncio
+
+import pytest
+
 from infrastructure.providers.provider_registry import (
     ProviderRegistry,
     ProviderTypeConfig,
@@ -271,3 +275,50 @@ class TestProviderRegistry:
         port = ProviderRegistry.get_default_port("beam")
         
         assert port == 8000
+
+
+class TestLLMProviderAliasesAndStubs:
+    """LLM provider types are API-backed: aliases resolve to real client
+    classes and file-oriented abstract methods degrade gracefully."""
+
+    @pytest.mark.parametrize("type_name,expected_client", [
+        ("openai", "OpenAICompatProvider"),
+        ("ollama", "OpenAICompatProvider"),
+        ("gemini", "GoogleProvider"),
+        ("google", "GoogleProvider"),
+        ("anthropic", "AnthropicProvider"),
+        ("openai_compat", "OpenAICompatProvider"),
+    ])
+    def test_llm_types_are_registered_and_instantiable(self, type_name, expected_client):
+        from infrastructure.providers import create_provider_client
+        client = create_provider_client("p-test", {"type": type_name, "api_base": "http://x/v1"})
+        assert type(client).__name__ == expected_client
+
+    @pytest.mark.parametrize("type_name", ["openai", "ollama", "gemini", "google", "anthropic", "openai_compat"])
+    def test_llm_file_ops_raise_informative_error(self, type_name):
+        from core.exceptions import ProviderError
+        from infrastructure.providers import create_provider_client
+        client = create_provider_client("p-test", {"type": type_name, "api_base": "http://x/v1"})
+        with pytest.raises(ProviderError, match="LLM API provider"):
+            client.get_file_proxy()
+        with pytest.raises(ProviderError, match="LLM API provider"):
+            asyncio.run(client.list_models("models"))
+        with pytest.raises(ProviderError, match="LLM API provider"):
+            asyncio.run(client.delete_model("models/x.safetensors"))
+        with pytest.raises(ProviderError, match="LLM API provider"):
+            asyncio.run(client.download_model("http://x", "models/x.safetensors"))
+
+    def test_openai_alias_env_builder(self):
+        from infrastructure.providers.provider_registry import ProviderRegistry
+        config = ProviderRegistry.get("openai")
+        env = config.build_env_vars({"api_key": "sk-test"}, {"id": "p1", "api_base": "https://api.openai.com/v1"})
+        assert env["ENGINE"] == "openai_compat"
+        assert env["OPENAI_API_BASE"] == "https://api.openai.com/v1"
+        assert env["OPENAI_API_KEY"] == "sk-test"
+
+    def test_gemini_alias_env_builder(self):
+        from infrastructure.providers.provider_registry import ProviderRegistry
+        config = ProviderRegistry.get("gemini")
+        env = config.build_env_vars({"api_key": "g-123"}, {"id": "p1"})
+        assert env["ENGINE"] == "google"
+        assert env["GOOGLE_API_KEY"] == "g-123"

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from core.entities import Location
@@ -17,12 +14,6 @@ class LocationRepository:
 
     def get(self, location_id: str) -> Location | None:
         return self.session.get(Location, location_id)
-
-    def search(self, query: str) -> list[Location]:
-        stmt = select(Location).where(
-            text("lower(name) LIKE :q OR lower(description) LIKE :q")
-        ).order_by(Location.name)
-        return self.session.exec(stmt, {"q": f"%{query.lower()}%"}).all()
 
     def get_by_ids(self, ids: list[str]) -> list[Location]:
         if not ids:

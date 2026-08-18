@@ -30,7 +30,7 @@ export const useStoryChapters = (storyId) => {
 
 export const useStoryImages = (storyId) => {
     return useQuery({
-        queryKey: ['world_vault', 'story', 'images', storyId],
+        queryKey: ['world_vault', 'stories', storyId, 'images'],
         queryFn: () => api.get(`/api/v2/stories/${storyId}/images`),
         enabled: !!storyId
     });

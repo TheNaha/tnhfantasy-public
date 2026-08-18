@@ -20,7 +20,7 @@ def memory_1(session, character):
         character_id=character.id,
         content="The castle was built in the 14th century.",
         tags=["history", "castle"],
-        importance=0.8,
+        importance=8,
     )
     session.add(mem)
     session.commit()
@@ -34,7 +34,7 @@ def memory_2(session, character):
         character_id=character.id,
         content="The secret passage is behind the tapestry.",
         tags=["secret", "hidden"],
-        importance=0.9,
+        importance=9,
     )
     session.add(mem)
     session.commit()

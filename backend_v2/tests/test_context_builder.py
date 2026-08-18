@@ -153,6 +153,24 @@ def test_prune_context_true_system_kind_exempt():
     assert "roleplay instruction" in contents
 
 
+def test_prune_context_matches_by_content_not_identity():
+    msgs = [
+        _msg("system", "SYS"),
+        _msg("user", "hello", _pinned=True),
+        _msg("user", "world"),
+    ]
+    # Rebuild the list with fresh dict objects (simulates DB-reconstructed messages)
+    rebuilt = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "hello", "_pinned": True},
+        {"role": "user", "content": "world"},
+    ]
+    pruned = prune_context(rebuilt, "SYS", [], max_tokens=estimate_tokens("SYS") + 3)
+    contents = [m["content"] for m in pruned]
+    assert "hello" in contents
+    assert "world" in contents
+
+
 # ── build_system_prompt_sections (DB) ───────────────────────────────────────
 
 def _seed_character(session: Session) -> Character:
@@ -190,9 +208,9 @@ def test_sections_override_replaces_character(session):
     assert "chat_prompt" in by_key
     assert by_key["chat_prompt"]["source"] == "override"
     assert by_key["chat_prompt"]["content"] == "Custom prompt entirely"
-    # NOTE: current code appends the character block *alongside* the override
-    # (docstring says override should REPLACE the character card — latent
-    # mismatch, left as-is to avoid changing live-chat behavior).
+    # Override replaces the character card + char append blocks.
+    assert f"character_{char.id}" not in by_key
+    assert f"char_append_{char.id}" not in by_key
 
 
 def test_sections_persona_and_append(session):
@@ -290,6 +308,18 @@ def test_build_chat_context_skips_world_state_source(session):
     ]
     session.add_all(messages)
     session.commit()
+
+    _, all_msgs = build_chat_context(session, messages)
+    contents = [m["content"] for m in all_msgs]
+    assert "The world darkens." not in contents
+    assert "Continue" in contents
+
+
+def test_build_chat_context_skips_world_state_source_for_dicts(session):
+    messages = [
+        {"role": "system", "content": "The world darkens.", "message_metadata": {"source": "world_state"}},
+        {"role": "user", "content": "Continue"},
+    ]
 
     _, all_msgs = build_chat_context(session, messages)
     contents = [m["content"] for m in all_msgs]

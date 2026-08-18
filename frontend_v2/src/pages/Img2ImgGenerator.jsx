@@ -27,8 +27,6 @@ import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayo
 import GenerateActionBar from '../components/generator/GenerateActionBar';
 import ResolutionSettings from '../components/generator/ResolutionSettings';
 
-const EMPTY_MODELS = [];
-
 export default function Img2ImgGenerator() {
     const location = useLocation();
     const {

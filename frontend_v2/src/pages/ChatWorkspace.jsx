@@ -47,6 +47,22 @@ function ChatWorkspaceLayout() {
         }
     }, [searchParams, activeChatId, setShowNewChatModal, setSearchParams]);
 
+    useEffect(() => {
+        const onKeyDown = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+                const target = e.target;
+                const typing =
+                    target instanceof HTMLElement &&
+                    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+                if (typing) return;
+                e.preventDefault();
+                setShowNewChatModal(true);
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [setShowNewChatModal]);
+
     return (
         <motion.div 
             className="h-full flex flex-col bg-[#0B0E14] overflow-hidden font-sans"

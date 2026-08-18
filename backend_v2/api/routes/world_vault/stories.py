@@ -101,11 +101,11 @@ def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
 
 
 @router.get("", response_model=list[Story])
-def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     return story_repo.list_active()
 
 @router.post("", response_model=Story)
-def create_story(req: CreateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def create_story(req: CreateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = Story(
         title=req.title,
         description=req.description,
@@ -137,7 +137,7 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
     return story
 
 @router.get("/{story_id}", response_model=Story)
-def get_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def get_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -145,7 +145,7 @@ def get_story(story_id: str, session: Session = Depends(get_session), story_repo
 
 
 @router.get("/{story_id}/export")
-def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def export_story(story_id: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -461,7 +461,7 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
 
 
 @router.post("/{story_id}/publish", response_model=dict)
-def publish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def publish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     """Publish a story and generate a shareable token for public reading."""
     from secrets import token_urlsafe
 
@@ -493,7 +493,7 @@ def publish_story(story_id: str, session: Session = Depends(get_session), story_
 
 
 @router.post("/{story_id}/unpublish", response_model=dict)
-def unpublish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def unpublish_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     """Unpublish a story (revoke its public token)."""
     story = story_repo.get(story_id)
     if not story:
@@ -513,7 +513,7 @@ def unpublish_story(story_id: str, session: Session = Depends(get_session), stor
 
 
 @router.get("/published/{token}")
-def read_published_story(token: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def read_published_story(token: str, session: Session = Depends(get_session)):
     """Read a published story by its token (public, read-only)."""
     story = session.exec(
         select(Story).where(Story.published_token == token, Story.is_published == True)
@@ -563,7 +563,7 @@ def read_published_story(token: str, session: Session = Depends(get_session), st
 
 
 @router.get("/published/{token}/export")
-def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def export_published_story(token: str, format: str = "json", session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     """Export a published story by its token (public, read-only)."""
     story = session.exec(
         select(Story).where(Story.published_token == token, Story.is_published == True)
@@ -573,11 +573,11 @@ def export_published_story(token: str, format: str = "json", session: Session = 
 
     # Build a minimal story dict and reuse the same export logic
     # by calling export_story with the resolved story_id
-    return export_story(story.id, format=format, session=session, story_repo=story_repo, story_chapter_repo=story_chapter_repo)
+    return export_story(story.id, format=format, session=session, story_repo=story_repo)
 
 
 @router.put("/{story_id}", response_model=Story)
-def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -600,7 +600,7 @@ class ChapterReorderRequest(BaseModel):
 
 
 @router.post("/{story_id}/chapters/reorder")
-def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)
@@ -616,7 +616,7 @@ def reorder_chapters(story_id: str, req: ChapterReorderRequest, session: Session
 
 
 @router.delete("/{story_id}")
-def delete_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def delete_story(story_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
     story = story_repo.get(story_id)
     if not story:
         raise NotFoundError("Story", story_id)

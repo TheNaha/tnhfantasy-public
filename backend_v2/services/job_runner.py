@@ -104,7 +104,7 @@ async def maybe_retry_current_provider(
     )
     await job_service.update_job(
         job_id,
-        status=JobStatus.PENDING,
+        status=JobStatus.RETRYING,
         message=retry_message.format(attempt=next_retry_count),
     )
     await asyncio.sleep(delay)

@@ -87,7 +87,7 @@ export function useChatStreaming({
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'messages', eventChatId] });
                 queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId] });
                 if (job.task_type === 'image') {
-                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chat', 'images', eventChatId] });
+                    queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats', eventChatId, 'images'] });
                 }
             }
 

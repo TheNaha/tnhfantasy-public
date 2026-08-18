@@ -15,6 +15,10 @@ const mockDeleteCharacter = vi.hoisted(() => vi.fn());
 const mockImportCharacterCard = vi.hoisted(() => vi.fn());
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
 
+vi.mock('../hooks/useVoices', () => ({
+    useVoices: () => ({ data: [] }),
+}));
+
 vi.mock('../hooks/useWorldVault', () => ({
     useCharacters: (...args) => mockUseCharacters(...args),
     useCreateCharacter: () => mockCreateCharacter(),

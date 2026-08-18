@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Save } from 'lucide-react';
+import { X, Save, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCreateLorebook, useUpdateLorebook } from '../../hooks/useLorebooks';
+import { useCreateLorebook, useUpdateLorebook, useDeleteLorebook } from '../../hooks/useLorebooks';
+import { useConfirmation } from '../../store/confirmationStore';
 
 export function LorebookModal({ isOpen, onClose, lorebook }) {
     const [form, setForm] = useState({ name: '', description: '' });
     const [saving, setSaving] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const queryClient = useQueryClient();
+    const { confirm } = useConfirmation();
     const createLorebook = useCreateLorebook();
     const updateLorebook = useUpdateLorebook();
+    const deleteLorebook = useDeleteLorebook();
 
     useEffect(() => {
         if (isOpen) {
@@ -44,6 +48,28 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
             toast.error('Failed to save lorebook');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!lorebook) return;
+        const ok = await confirm({
+            title: 'Delete Lorebook',
+            message: `Are you sure you want to delete "${lorebook.name}"? All entries will be removed and it will be detached from any chats or stories.`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
+        setDeleting(true);
+        try {
+            await deleteLorebook.mutateAsync(lorebook.id);
+            toast.success('Lorebook deleted');
+            onClose();
+        } catch (e) {
+            console.error(e);
+            toast.error('Failed to delete lorebook');
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -99,21 +125,33 @@ export function LorebookModal({ isOpen, onClose, lorebook }) {
                     </div>
 
                     {/* Footer */}
-                    <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/50">
-                        <button
-                            onClick={onClose}
-                            className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
-                        >
-                            <Save size={16} />
-                            {saving ? 'Saving...' : lorebook ? 'Save Changes' : 'Create Lorebook'}
-                        </button>
+                    <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-800 bg-gray-900/50">
+                        {lorebook ? (
+                            <button
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <Trash2 size={16} />
+                                {deleting ? 'Deleting...' : 'Delete'}
+                            </button>
+                        ) : <div />}
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={onClose}
+                                className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                disabled={saving}
+                                className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors shadow-lg shadow-indigo-500/20"
+                            >
+                                <Save size={16} />
+                                {saving ? 'Saving...' : lorebook ? 'Save Changes' : 'Create Lorebook'}
+                            </button>
+                        </div>
                     </div>
                 </motion.div>
             </div>
