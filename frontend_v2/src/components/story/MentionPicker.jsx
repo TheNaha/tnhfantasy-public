@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import getCaretCoordinates from 'textarea-caret';
 import { Users, BookOpen } from 'lucide-react';
 import { useCharacters, useLorebooks } from '../../hooks/useWorldVault';
@@ -36,7 +36,7 @@ export default function MentionPicker({ textareaRef, editorContent, onSelect }) 
         const textarea = textareaRef.current;
         if (!textarea) return;
 
-        const handleInput = (e) => {
+        const handleInput = () => {
             const cursor = textarea.selectionStart;
             const textBefore = editorContent.slice(0, cursor);
             

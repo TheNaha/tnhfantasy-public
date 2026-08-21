@@ -505,7 +505,7 @@ export default function StorySandbox() {
         
         setShowIllustrateModal(true);
      
-    }, [activeStoryId, activeChapterId, isIllustrating]);
+    }, [activeStoryId, activeChapterId, isIllustrating, lastIllustrationPrompt]);
 
     const handleConfirmIllustrate = useCallback(async () => {
         if (!activeStoryId || !activeChapterId) return;
