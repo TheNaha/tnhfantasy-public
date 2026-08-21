@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWorldVaultRelationships } from '../hooks/useWorldVault';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 const NODE_COLORS = {
     character: '#8b5cf6',
@@ -310,75 +311,93 @@ export default function RelationshipGraph() {
                 </div>
             ) : (
                 <div className="bg-gray-800/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
-                    <svg width={SVG_WIDTH} height={SVG_HEIGHT} className="mx-auto">
-                        <defs>
-                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
-                                <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
-                            </marker>
-                        </defs>
-                        {/* Edges */}
-                        {filteredEdges.map((edge, idx) => {
-                            const sourcePos = positions.get(edge.source);
-                            const targetPos = positions.get(edge.target);
-                            if (!sourcePos || !targetPos) return null;
-                            return (
-                                <line
-                                    key={idx}
-                                    x1={sourcePos.x}
-                                    y1={sourcePos.y}
-                                    x2={targetPos.x}
-                                    y2={targetPos.y}
-                                    stroke="#4b5563"
-                                    strokeWidth="1.5"
-                                    markerEnd="url(#arrowhead)"
-                                />
-                            );
-                        })}
-                        {/* Nodes */}
-                        {filteredNodes.map((node) => {
-                            const Icon = NODE_ICONS[node.type] || Globe;
-                            const color = NODE_COLORS[node.type] || '#6b7280';
-                            const pos = positions.get(node.id);
-                            if (!pos) return null;
-                            const label = node.label;
-                            const typeRoute = nodeRouteMap[node.type];
-                            return (
-                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`} style={{ cursor: typeRoute ? 'pointer' : 'default' }}>
-                                    <title>{label}</title>
-                                    <circle r="22" fill={color} opacity="0.15" />
-                                    <circle r="14" fill={color} />
-                                    <foreignObject x="-8" y="-8" width="16" height="16">
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
-                                            <Icon size={12} color="white" />
-                                        </div>
-                                    </foreignObject>
-                                    <text
-                                        x="0"
-                                        y="30"
-                                        textAnchor="middle"
-                                        fill="#9ca3af"
-                                        fontSize="10"
-                                        fontFamily="sans-serif"
-                                    >
-                                        {label}
-                                    </text>
-                                    {typeRoute && (
-                                        <circle
-                                            r="22"
-                                            fill="transparent"
-                                            stroke="transparent"
-                                            strokeWidth="1"
-                                            onClick={() => handleNodeClick(node)}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') handleNodeClick(node); }}
-                                            tabIndex={0}
-                                            role="link"
-                                            aria-label={`Open ${label}`}
-                                        />
-                                    )}
-                                </g>
-                            );
-                        })}
-                    </svg>
+                    <TransformWrapper
+                        initialScale={1}
+                        minScale={0.1}
+                        maxScale={4}
+                        centerOnInit={true}
+                    >
+                        {({ zoomIn, zoomOut, resetTransform }) => (
+                            <>
+                                <div className="absolute top-2 right-2 flex flex-col gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => zoomIn()}>+</button>
+                                    <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => zoomOut()}>-</button>
+                                    <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => resetTransform()}>⟲</button>
+                                </div>
+                                <TransformComponent wrapperClass="w-full h-[600px] !block" contentClass="w-full h-full cursor-grab active:cursor-grabbing">
+                                    <svg width={SVG_WIDTH} height={SVG_HEIGHT} className="mx-auto" style={{ overflow: 'visible' }}>
+                                        <defs>
+                                            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
+                                                <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
+                                            </marker>
+                                        </defs>
+                                        {/* Edges */}
+                                        {filteredEdges.map((edge, idx) => {
+                                            const sourcePos = positions.get(edge.source);
+                                            const targetPos = positions.get(edge.target);
+                                            if (!sourcePos || !targetPos) return null;
+                                            return (
+                                                <line
+                                                    key={idx}
+                                                    x1={sourcePos.x}
+                                                    y1={sourcePos.y}
+                                                    x2={targetPos.x}
+                                                    y2={targetPos.y}
+                                                    stroke="#4b5563"
+                                                    strokeWidth="1.5"
+                                                    markerEnd="url(#arrowhead)"
+                                                />
+                                            );
+                                        })}
+                                        {/* Nodes */}
+                                        {filteredNodes.map((node) => {
+                                            const Icon = NODE_ICONS[node.type] || Globe;
+                                            const color = NODE_COLORS[node.type] || '#6b7280';
+                                            const pos = positions.get(node.id);
+                                            if (!pos) return null;
+                                            const label = node.label;
+                                            const typeRoute = nodeRouteMap[node.type];
+                                            return (
+                                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`} style={{ cursor: typeRoute ? 'pointer' : 'default' }}>
+                                                    <title>{label}</title>
+                                                    <circle r="22" fill={color} opacity="0.15" />
+                                                    <circle r="14" fill={color} />
+                                                    <foreignObject x="-8" y="-8" width="16" height="16">
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
+                                                            <Icon size={12} color="white" />
+                                                        </div>
+                                                    </foreignObject>
+                                                    <text
+                                                        x="0"
+                                                        y="30"
+                                                        textAnchor="middle"
+                                                        fill="#9ca3af"
+                                                        fontSize="10"
+                                                        fontFamily="sans-serif"
+                                                    >
+                                                        {label}
+                                                    </text>
+                                                    {typeRoute && (
+                                                        <circle
+                                                            r="22"
+                                                            fill="transparent"
+                                                            stroke="transparent"
+                                                            strokeWidth="1"
+                                                            onClick={() => handleNodeClick(node)}
+                                                            onKeyDown={(e) => { if (e.key === 'Enter') handleNodeClick(node); }}
+                                                            tabIndex={0}
+                                                            role="link"
+                                                            aria-label={`Open ${label}`}
+                                                        />
+                                                    )}
+                                                </g>
+                                            );
+                                        })}
+                                    </svg>
+                                </TransformComponent>
+                            </>
+                        )}
+                    </TransformWrapper>
                 </div>
             )}
         </div>

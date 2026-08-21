@@ -51,8 +51,21 @@ const FormInput = ({ label, value, onChange, type = 'text', placeholder, require
     </div>
 );
 
+import { useSearchParams } from 'react-router-dom';
+
 export default function Locations() {
-    const [searchQuery, setSearchQuery] = useState('');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const searchQuery = searchParams.get('q') || '';
+    
+    const setSearchQuery = (query) => {
+        if (query) {
+            setSearchParams({ q: query }, { replace: true });
+        } else {
+            searchParams.delete('q');
+            setSearchParams(searchParams, { replace: true });
+        }
+    };
+
     const [showForm, setShowForm] = useState(false);
     const [editingLocation, setEditingLocation] = useState(null);
     const [form, setForm] = useState(DEFAULT_FORM);
