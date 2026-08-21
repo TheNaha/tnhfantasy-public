@@ -116,7 +116,7 @@ export default function Voices() {
     const handlePreview = async (voiceId) => {
         setPreviewLoading(true);
         try {
-            const res = await previewVoice(voiceId);
+            const res = await previewVoice({ voiceId });
             setPreviewJobId(res?.job_id || null);
             toast.success('Preview job queued');
         } catch (e) {

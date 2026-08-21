@@ -69,15 +69,13 @@ def get_relationships(session: Session = Depends(get_session)):
         tuple(row) for row in session.exec(
             select(Character.id, Character.name, Chat.id, Chat.name)
             .join(Chat, Chat.character_id == Character.id)
-            .limit(100)
         ).all()
     ]
 
     # Character → Stories (via character_ids JSON).
-    # Exact membership matching in Python — substring `contains` on serialized
-    # JSON is both N+1-query-expensive and false-positive-prone (any partial
-    # id match would create a phantom link).
-    stories = session.exec(select(Story).limit(100)).all()
+    stories = session.exec(
+        select(Story.id, Story.title, Story.character_ids, Story.lorebook_ids, Story.location_ids)
+    ).all()
     char_ids = {
         char_id
         for story in stories
@@ -132,7 +130,6 @@ def get_relationships(session: Session = Depends(get_session)):
         tuple(row) for row in session.exec(
             select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
             .join(Character, Character.id == VoiceModel.character_id)
-            .limit(50)
         ).all()
     ]
 

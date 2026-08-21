@@ -268,6 +268,27 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     </button>
                                 </>
                             )}
+                            {msg.role === 'char' && altCount > 1 && (
+                                <div className="flex items-center text-xs text-gray-500 font-mono px-1">
+                                    <button
+                                        onClick={() => onSwipe?.(msg.id, 'prev')}
+                                        disabled={activeIndex <= 0}
+                                        className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+                                    >
+                                        {'<'}
+                                    </button>
+                                    <span className="w-6 text-center select-none">
+                                        {activeIndex + 1}/{altCount}
+                                    </span>
+                                    <button
+                                        onClick={() => onSwipe?.(msg.id, 'next')}
+                                        disabled={activeIndex >= altCount - 1}
+                                        className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+                                    >
+                                        {'>'}
+                                    </button>
+                                </div>
+                            )}
                             {msg.role === 'char' && (
                                 <button
                                     onClick={() => onGenerateSwipe?.(msg.id)}

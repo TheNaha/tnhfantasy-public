@@ -480,6 +480,7 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session), chat_r
                            JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING,
                            JobStatus.COMPLETED, JobStatus.FAILED]),
         )
+        .where(Job.metadata_["chat_id"].as_string() == chat_id)
         .order_by(Job.created_at.desc())
         .limit(100)
     ).all()
@@ -487,8 +488,7 @@ def list_chat_jobs(chat_id: str, session: Session = Depends(get_session), chat_r
     chat_jobs = []
     for job in jobs:
         meta = job.metadata_ or {}
-        if meta.get("chat_id") != chat_id:
-            continue
+        workflow = job.workflow or {}
         job_type = meta.get("type") or workflow.get("type") or meta.get("source") or job.task_type
         chat_jobs.append({
             "id": job.id,
@@ -821,12 +821,16 @@ async def regenerate_reply(
     prev_agentic = False
     prev_checkpoint = None
     recent_jobs = session.exec(
-        select(Job).where(Job.task_type == "llm").order_by(Job.created_at.desc()).limit(20)
+        select(Job)
+        .where(Job.task_type == "llm")
+        .where(Job.metadata_["chat_id"].as_string() == chat_id)
+        .order_by(Job.created_at.desc())
+        .limit(20)
     ).all()
     for job in recent_jobs:
         meta = job.metadata_ or {}
         wf = job.workflow or {}
-        if meta.get("chat_id") == chat_id and (wf.get("type") or meta.get("type")) == "chat_reply":
+        if (wf.get("type") or meta.get("type")) == "chat_reply":
             prev_agentic = bool(meta.get("agentic"))
             prev_checkpoint = meta.get("generator_checkpoint")
             break
