@@ -54,3 +54,7 @@ pytest-asyncio>=0.21.0
 pytest-cov>=4.1.0
 
 h2>=4.1.0
+
+# Export pipelines
+img2pdf>=0.5.0
+fpdf2>=2.7.0

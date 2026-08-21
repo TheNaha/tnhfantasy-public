@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
@@ -66,6 +66,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
     const isEditing = !!character;
     
     const uploadAvatarMutation = useUploadAvatar();
+    const animateAvatarMutation = useAnimateCharacterAvatar();
     const avatarInputRef = React.useRef(null);
     const [previewUrl, setPreviewUrl] = useState(null);
     const previewUrlRef = useRef(null);
@@ -422,13 +423,33 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                                         placeholder="Character name"
                                     />
                                 </div>
-                                <div>
+                                <div className="flex items-center gap-2">
                                     <button 
                                         onClick={openGalleryPicker}
-                                        className="w-full text-xs font-semibold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 py-2 rounded-lg border border-blue-500/20 flex items-center justify-center gap-2 transition-colors"
+                                        className="flex-1 text-xs font-semibold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 py-2 rounded-lg border border-blue-500/20 flex items-center justify-center gap-2 transition-colors"
                                     >
                                         <Images size={14} /> Import from Gallery
                                     </button>
+                                    {isEditing && character.has_avatar && (
+                                        <button 
+                                            onClick={() => {
+                                                toast.promise(
+                                                    animateAvatarMutation.mutateAsync({
+                                                        characterId: character.id,
+                                                        prompt: `portrait of ${character.name}, ${character.description}, dynamic, motion, highly detailed`
+                                                    }),
+                                                    {
+                                                        loading: 'Enqueueing animation job...',
+                                                        success: 'Avatar animation job queued! Check Active Jobs.',
+                                                        error: 'Failed to queue animation'
+                                                    }
+                                                );
+                                            }}
+                                            className="flex-1 text-xs font-semibold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 py-2 rounded-lg border border-amber-500/20 flex items-center justify-center gap-2 transition-colors"
+                                        >
+                                            <Sparkles size={14} /> Animate Avatar
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -689,10 +710,12 @@ export default function Characters() {
     const { confirm } = useConfirmation();
 
     const { data: characters = [], isLoading } = useCharacters();
-    const createCharacter = useCreateCharacter();
-    const updateCharacter = useUpdateCharacter();
-    const deleteCharacter = useDeleteCharacter();
-    const importCharacterCard = useImportCharacterCard();
+    const createMutation = useCreateCharacter();
+    const updateMutation = useUpdateCharacter();
+    const uploadAvatarMutation = useUploadAvatar();
+    const deleteMutation = useDeleteCharacter();
+    const importMutation = useImportCharacterCard();
+    const animateAvatarMutation = useAnimateCharacterAvatar();
 
     // Handle URL hash deep-link: /characters#char-{id}
     const deepLinkCharRef = useRef(null);

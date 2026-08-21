@@ -341,6 +341,54 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
 
     return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
+from pydantic import BaseModel
+from typing import Optional
+
+class AnimateAvatarRequest(BaseModel):
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    checkpoint: Optional[str] = None
+
+@router.post("/{character_id}/avatar/animate")
+async def generate_animated_avatar(
+    character_id: str,
+    request: AnimateAvatarRequest,
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo)
+):
+    """Enqueue a ComfyUI AnimateDiff video generation job for this character's avatar."""
+    from services.job_queue import queue_manager
+    from services.job_service import JobService
+    from core.workflow_builder import build_video_job_workflow
+
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+
+    prompt = request.prompt
+    if not prompt:
+        prompt = f"portrait of {character.name}, {character.description}, {character.personality}, highly detailed, cinematic lighting"
+
+    workflow, metadata = build_video_job_workflow(
+        prompt=prompt,
+        negative=request.negative_prompt or "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra limbs, text, watermark",
+        checkpoint=request.checkpoint or "sd_xl_base_1.0.safetensors",
+        width=512,
+        height=512,
+        frames=16,
+        source="character_avatar_animate",
+        character_id=character.id,
+    )
+
+    job = await JobService(session).create_job(
+        task_type="image",
+        workflow=workflow,
+        metadata=metadata,
+    )
+    await queue_manager.enqueue(job.id, task_type="image")
+    
+    return {"message": "Animation job enqueued", "job_id": job.id}
+
 @router.get("/{character_id}/avatar")
 def get_avatar(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     character = character_repo.get(character_id)

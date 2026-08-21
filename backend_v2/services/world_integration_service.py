@@ -614,5 +614,46 @@ async def start_world_integration_service():
                 await _handle_story_image(job_data)
             elif event_type == "story_parse":
                 await _handle_story_parse(job_data)
+            elif event_type == "character_avatar_animate":
+                await _handle_avatar_animate(job_data)
         except Exception as exc:
             logger.error("world_integration_event_processing_failed", error=str(exc))
+
+async def _handle_avatar_animate(job_data: dict[str, Any]):
+    """Update a character's avatar path with the generated AnimateDiff video."""
+    import shutil
+    import os
+    from api.deps import get_session_context
+    from config import app_config
+    from core.entities import Character
+    
+    metadata = job_data.get("metadata", {})
+    character_id = metadata.get("character_id")
+    if not character_id:
+        return
+        
+    result_paths = job_data.get("result_paths")
+    if not result_paths:
+        return
+        
+    video_path = result_paths[0]
+    if not os.path.exists(video_path):
+        return
+        
+    async with get_session_context() as session:
+        character = session.get(Character, character_id)
+        if not character:
+            return
+            
+        avatar_dir = f"{app_config.settings.character_avatar_dir}/{character_id}"
+        os.makedirs(avatar_dir, exist_ok=True)
+        # Using .webp because our VHS_VideoCombine format is video/webp which works natively in <img> tags
+        new_avatar_path = f"{avatar_dir}/avatar.webp"
+        
+        shutil.copy2(video_path, new_avatar_path)
+        character.avatar_path = new_avatar_path
+        session.add(character)
+        session.commit()
+        
+        from core.events import broadcast_event
+        await broadcast_event("character_avatar_updated", {"character_id": character_id, "path": new_avatar_path})

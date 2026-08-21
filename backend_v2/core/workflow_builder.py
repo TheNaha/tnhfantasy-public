@@ -589,6 +589,89 @@ def build_image_job_workflow(
     return workflow, metadata
 
 
+def build_video_job_workflow(
+    prompt: str,
+    negative: str = DEFAULT_NEGATIVE_PROMPT,
+    checkpoint: str = "sd_xl_base_1.0.safetensors",
+    motion_model: str = "mm_sdxl_v10_beta.ckpt",
+    filename_prefix: str = DEFAULT_FILENAME_PREFIX,
+    width: int = 512,
+    height: int = 512,
+    frames: int = 16,
+    fps: int = 8,
+    steps: int = 20,
+    cfg: float = 7.0,
+    seed: int = 0,
+    sampler_name: str = "euler",
+    scheduler: str = "normal",
+    format: str = "video/webp",
+    source: Optional[str] = None,
+    workspace: str = "main",
+    chat_id: Optional[str] = None,
+    character_id: Optional[str] = None,
+    story_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    parent_job_id: Optional[str] = None,
+    extra_metadata: Optional[dict[str, Any]] = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from .animatediff_builder import build_animatediff_workflow
+    nodes = build_animatediff_workflow(
+        prompt=prompt,
+        negative=negative,
+        checkpoint=checkpoint,
+        motion_model=motion_model,
+        filename_prefix=filename_prefix,
+        width=width,
+        height=height,
+        frames=frames,
+        fps=fps,
+        steps=steps,
+        cfg=cfg,
+        seed=seed,
+        sampler_name=sampler_name,
+        scheduler=scheduler,
+        format=format,
+    )
+    
+    workflow = {
+        "prompt": nodes,
+        "type": "video"
+    }
+
+    metadata: dict[str, Any] = {
+        "source": source,
+        "workspace": workspace,
+        "prompt": prompt,
+        "negativePrompt": negative,
+        "checkpoint": checkpoint,
+        "motion_model": motion_model,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler": sampler_name,
+        "scheduler": scheduler,
+        "width": width,
+        "height": height,
+        "seed": seed,
+        "frames": frames,
+        "fps": fps,
+        "type": "video"
+    }
+    
+    if chat_id is not None:
+        metadata["chat_id"] = chat_id
+    if character_id is not None:
+        metadata["character_id"] = character_id
+    if story_id is not None:
+        metadata["story_id"] = story_id
+    if chapter_id is not None:
+        metadata["chapter_id"] = chapter_id
+    if parent_job_id is not None:
+        metadata["parent_job_id"] = parent_job_id
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return workflow, metadata
+
 def build_tts_workflow(
     text: str,
     voice_profile: str | None = None,

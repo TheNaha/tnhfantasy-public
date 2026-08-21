@@ -89,3 +89,20 @@ export const useCharacterCollection = (characterId) => {
         enabled: !!characterId
     });
 };
+
+export const useAnimateCharacterAvatar = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ characterId, prompt, checkpoint }) => {
+            const response = await api.post(`/api/v2/characters/${characterId}/avatar/animate`, {
+                prompt,
+                checkpoint
+            });
+            return response.data;
+        },
+        onSuccess: (data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters', variables.characterId] });
+        }
+    });
+};
