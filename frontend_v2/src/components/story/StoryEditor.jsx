@@ -1,8 +1,26 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
 import MDEditor from '@uiw/react-md-editor';
+import MentionPicker from './MentionPicker';
 
 export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId, wordCount, readingTimeMinutes }) {
+    const handleSelectEntity = useCallback((item, startIndex, endIndex) => {
+        const textBefore = editorContent.slice(0, startIndex);
+        const textAfter = editorContent.slice(endIndex);
+        
+        // Link format: [@Name](/world-vault?entity=item.id)
+        const link = `[@${item.name}](/world-vault?${item._type}=${item.id})`;
+        onEditorChange(textBefore + link + textAfter);
+        
+        // Restore focus
+        if (textareaRef.current) {
+            setTimeout(() => {
+                textareaRef.current.focus();
+                textareaRef.current.selectionStart = textareaRef.current.selectionEnd = startIndex + link.length;
+            }, 0);
+        }
+    }, [editorContent, onEditorChange, textareaRef]);
+
     return (
         <div className="flex-1 overflow-y-auto custom-scrollbar flex justify-center p-6 lg:p-12" data-color-mode="dark">
             {!activeChapterId ? (
@@ -11,7 +29,14 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                 </div>
             ) : (
                 <div className="w-full max-w-4xl relative h-full flex flex-col">
-                    <div className="flex-1 w-full bg-gray-900/40 rounded-xl overflow-hidden border border-white/10 shadow-xl">
+                    {!isPreviewMode && (
+                        <MentionPicker 
+                            textareaRef={textareaRef} 
+                            editorContent={editorContent} 
+                            onSelect={handleSelectEntity} 
+                        />
+                    )}
+                    <div className="flex-1 w-full bg-gray-900/40 rounded-xl overflow-hidden border border-white/10 shadow-xl relative">
                         <MDEditor
                             value={editorContent}
                             onChange={(val) => { onEditorChange(val || ''); }}

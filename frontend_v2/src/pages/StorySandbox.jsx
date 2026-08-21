@@ -485,6 +485,24 @@ export default function StorySandbox() {
 
     const handleIllustrate = useCallback(async () => {
         if (!activeStoryId || !activeChapterId || isIllustrating) return;
+        
+        let selectedText = '';
+        if (textareaRef.current) {
+            const start = textareaRef.current.selectionStart;
+            const end = textareaRef.current.selectionEnd;
+            if (start !== end) {
+                selectedText = textareaRef.current.value.substring(start, end);
+            }
+        } else {
+            selectedText = window.getSelection().toString();
+        }
+        
+        if (selectedText) {
+            setIllustratePrompt(selectedText);
+        } else {
+            setIllustratePrompt(lastIllustrationPrompt);
+        }
+        
         setShowIllustrateModal(true);
      
     }, [activeStoryId, activeChapterId, isIllustrating]);
