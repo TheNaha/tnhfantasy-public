@@ -710,12 +710,10 @@ export default function Characters() {
     const { confirm } = useConfirmation();
 
     const { data: characters = [], isLoading } = useCharacters();
-    const createMutation = useCreateCharacter();
-    const updateMutation = useUpdateCharacter();
-    const uploadAvatarMutation = useUploadAvatar();
-    const deleteMutation = useDeleteCharacter();
-    const importMutation = useImportCharacterCard();
-    const animateAvatarMutation = useAnimateCharacterAvatar();
+    const createCharacter = useCreateCharacter();
+    const updateCharacter = useUpdateCharacter();
+    const deleteCharacter = useDeleteCharacter();
+    const importCharacterCard = useImportCharacterCard();
 
     // Handle URL hash deep-link: /characters#char-{id}
     const deepLinkCharRef = useRef(null);
