@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
     TrendingUp, Image, Clock, Sparkles, BarChart3,
     PieChart as PieChartIcon, Activity, Zap, Hash, MessageSquare, Loader2,
-    Layers, Server, Calendar, Cpu, Leaf
+    Layers, Server, Calendar, Cpu, Leaf, Users
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, PieChart, Pie,
@@ -151,6 +151,7 @@ const itemVariants = {
 
 const Statistics = () => {
     const [timeRange, setTimeRange] = useState('all');
+    const [workspace, setWorkspace] = useState('all');
 
     const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['statistics', 'detailed', timeRange],
@@ -307,7 +308,24 @@ const Statistics = () => {
                         </p>
                     </div>
                     
-                    <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
+                    <div className="flex flex-col sm:flex-row gap-3">
+                        <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
+                            {[
+                                { value: 'all', label: 'ALL' },
+                                { value: 'image', label: 'IMAGE' },
+                                { value: 'chat', label: 'CHAT' },
+                                { value: 'story', label: 'STORY' }
+                            ].map((w) => (
+                                <button
+                                    key={w.value}
+                                    onClick={() => setWorkspace(w.value)}
+                                    className={`px-4 py-2 rounded-xl text-[11px] font-bold tracking-widest uppercase transition-all duration-300 ${workspace === w.value ? 'bg-white/10 text-white border border-white/20' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'}`}
+                                >
+                                    {w.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex bg-[#0B0E14]/80 backdrop-blur-md border border-white/10 p-1.5 rounded-2xl w-fit shadow-inner">
                         {ranges.map((r) => (
                             <button
                                 key={r.value}
@@ -318,8 +336,10 @@ const Statistics = () => {
                             </button>
                         ))}
                     </div>
+                </div>
                 </motion.div>
 
+                {(workspace === 'all' || workspace === 'image') && (<>
                 <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <motion.div whileHover={{ scale: 1.02 }} className="group glass-panel p-4 md:p-6 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center gap-5 transition-all duration-500 hover:border-blue-500/40 hover:shadow-[0_0_30px_rgba(59,130,246,0.15)] relative overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -596,6 +616,38 @@ const Statistics = () => {
                         })}
                     </div>
                 </motion.div>
+                </>)}
+
+                {(workspace === 'all' || workspace === 'chat' || workspace === 'story') && (
+                <motion.div variants={itemVariants} className="glass-panel p-8 rounded-3xl border border-white/5 shadow-2xl">
+                    <h3 className="text-lg font-black tracking-wide mb-6 flex items-center gap-3 text-white">
+                        <div className="p-2 bg-violet-500/10 rounded-xl">
+                            <Users className="text-violet-400" size={20} />
+                        </div>
+                        World Vault
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        {[
+                            { label: 'Characters', value: data.pillars?.characters, color: 'text-violet-400' },
+                            ...(workspace === 'chat' || workspace === 'all' ? [
+                                { label: 'Chats', value: data.pillars?.chats, color: 'text-blue-400' },
+                                { label: 'Messages', value: data.pillars?.messages, color: 'text-cyan-400' },
+                                { label: 'LLM Jobs', value: data.pillars?.llm_jobs, color: 'text-teal-400' }
+                            ] : []),
+                            ...(workspace === 'story' || workspace === 'all' ? [
+                                { label: 'Stories', value: data.pillars?.stories, color: 'text-emerald-400' },
+                                { label: 'Chapters', value: data.pillars?.story_chapters, color: 'text-lime-400' },
+                                { label: 'Lorebooks', value: data.pillars?.lorebooks, color: 'text-amber-400' }
+                            ] : [])
+                        ].map((p) => (
+                            <div key={p.label} className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                                <div className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mb-1">{p.label}</div>
+                                <div className={`text-2xl font-black tracking-tight ${p.color}`}>{p.value ?? 0}</div>
+                            </div>
+                        ))}
+                    </div>
+                </motion.div>
+                )}
 
             </motion.div>
         </div>

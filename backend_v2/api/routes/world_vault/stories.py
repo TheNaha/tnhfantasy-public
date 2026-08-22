@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from io import BytesIO
 from uuid import uuid4
@@ -7,12 +8,13 @@ from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
+import config as app_config
 from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario
+from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
@@ -98,6 +100,70 @@ def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
         session.add(chapter)
         session.commit()
         session.refresh(chapter)
+
+
+def _resolve_story_image_path(value: str | None) -> str | None:
+    """Resolve a possibly-relative image path to an existing file on disk.
+
+    Story image references (``chapter.image_paths`` and ``Asset.relative_path``)
+    are stored relative to ``OUTPUT_DIR``; opening them directly fails. This
+    resolves them against the configured output directory and returns the
+    absolute path only when the file actually exists.
+    """
+    if not value:
+        return None
+    if os.path.isabs(value) and os.path.exists(value):
+        return value
+    output_dir = app_config.settings.output_dir
+    candidate = os.path.join(output_dir, value)
+    if os.path.exists(candidate):
+        return candidate
+    if os.path.exists(value):
+        return value
+    return None
+
+
+def _collect_story_illustration_assets(session: Session, story_id: str) -> list[str]:
+    """Return absolute, on-disk image paths for a story's illustration assets.
+
+    Illustration images generated via the story workspace are indexed in the
+    ``assets`` table with ``story_id`` set. We only return paths that exist on
+    disk so the comic export never silently falls back to a gray placeholder
+    for a missing file.
+    """
+    rows = session.exec(
+        select(Asset)
+        .where(
+            Asset.story_id == story_id,
+            Asset.kind == AssetKind.IMAGE,
+            Asset.deleted_at == None,  # noqa: E711
+        )
+        .order_by(Asset.created_at)
+    ).all()
+    paths = []
+    for asset in rows:
+        resolved = _resolve_story_image_path(asset.relative_path)
+        if resolved:
+            paths.append(resolved)
+    return paths
+
+
+def _chapter_panel_images(ch: StoryChapter, story_asset_paths: list[str], asset_cursor: list[int]) -> list[str]:
+    """Resolve real, on-disk image paths for a chapter's comic/webtoon panel.
+
+    Prefers the chapter's own ``image_paths`` (resolved against ``OUTPUT_DIR``).
+    When a chapter has none, borrows the next available story illustration asset
+    so panels are populated with real art instead of blank gray placeholders.
+    Returns a list of absolute image paths (empty when no image is available).
+    """
+    resolved = [p for p in (_resolve_story_image_path(v) for v in (ch.image_paths or [])) if p]
+    if resolved:
+        return resolved
+    if story_asset_paths:
+        img = story_asset_paths[asset_cursor[0] % len(story_asset_paths)]
+        asset_cursor[0] += 1
+        return [img]
+    return []
 
 
 @router.get("", response_model=list[Story])
@@ -286,10 +352,17 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
         comic_pages = []
         panel_w, panel_h = 800, 1200
         margin = 40
+        title = story.title or "Untitled Story"
+
+        # Gather real story illustration images (verified on disk) once; chapters
+        # without their own images borrow from this pool so panels show art.
+        story_asset_paths = _collect_story_illustration_assets(session, story_id)
+        asset_cursor = [0]
+
         for ch in chapters:
             text = ch.content.strip() or ""
             paragraphs = text.split("\n\n") if text else []
-            images = ch.image_paths or []
+            images = _chapter_panel_images(ch, story_asset_paths, asset_cursor)
             combined = []
             for p in paragraphs:
                 combined.append(("text", p))
@@ -344,16 +417,20 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
     if format == "webtoon":
         webtoon_w = 800
         margin = 40
+        title = story.title or "Untitled Story"
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
         except Exception:
             font = ImageFont.load_default()
 
+        story_asset_paths = _collect_story_illustration_assets(session, story_id)
+        asset_cursor = [0]
+
         segments = []
         for ch in chapters:
             text = ch.content.strip() or ""
             paragraphs = text.split("\n\n") if text else []
-            images = ch.image_paths or []
+            images = _chapter_panel_images(ch, story_asset_paths, asset_cursor)
             for p in paragraphs:
                 segments.append(("text", p))
             for img_path in images:

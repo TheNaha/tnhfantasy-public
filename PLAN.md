@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `ROADMAP.md` (2026-08-22 audit). Many line items here are stale/false-positive — read `ROADMAP.md` Appendix A before acting on this file.
+
 # TNHComfy Master Plan — Remediation + 8 Major Features
 
 ## Executive Summary

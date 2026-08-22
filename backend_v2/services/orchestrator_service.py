@@ -8,6 +8,7 @@ Works as a post-completion processor inside job_processing.py:
   3. Repeat until plain text response (max depth enforced)
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +22,12 @@ from services.model_availability_service import ModelAvailabilityService
 logger = get_logger("orchestrator")
 
 MAX_AGENTIC_DEPTH = 5
+
+# Top-level guard so a single misbehaving tool whose internal call does not
+# enforce its own timeout cannot hang the agentic loop indefinitely. Inner
+# per-call timeouts (call_llm_provider, wait_for_job_completion) are still
+# kept; this is a safety net above them.
+TOOL_TIMEOUT = 120
 
 NARRATOR_SYSTEM_PROMPT = (
     "You are the Narrator of an interactive story — a separate role from the characters. "
@@ -262,7 +269,12 @@ async def execute_tool(
 ) -> dict[str, Any]:
     """
     Execute a single tool call and return the result dict.
-    Currently supports: generate_image
+
+    A top-level ``asyncio.wait_for`` guard bounds the whole tool execution so a
+    misbehaving tool whose internal call does not enforce its own timeout cannot
+    hang the agentic loop indefinitely. Inner per-call timeouts are still kept;
+    this is purely a safety net. On timeout a graceful error result is returned
+    rather than crashing the loop.
     """
     function = tool_call.get("function", {})
     name = function.get("name", "")
@@ -271,50 +283,66 @@ async def execute_tool(
     except (json.JSONDecodeError, TypeError):
         args = {}
 
-    if name == "generate_image":
-        return await _tool_generate_image(
-            args,
+    async def _run():
+        if name == "generate_image":
+            return await _tool_generate_image(
+                args,
+                chat_id=chat_id,
+                character_id=character_id,
+                source_job_id=source_job_id,
+            )
+
+        if name == "narrate_scene":
+            return await _tool_narrate_scene(
+                args,
+                chat_id=chat_id,
+                character_id=character_id,
+                source_job_id=source_job_id,
+            )
+
+        if name == "update_world_state":
+            return await _tool_update_world_state(
+                args,
+                chat_id=chat_id,
+                source_job_id=source_job_id,
+            )
+
+        if name == "recall_memory":
+            return await _tool_recall_memory(
+                args,
+                character_id=character_id,
+            )
+
+        if name == "store_memory":
+            return await _tool_store_memory(
+                args,
+                character_id=character_id,
+            )
+
+        if name == "set_expression":
+            return await _tool_set_expression(
+                args,
+                character_id=character_id,
+                chat_id=chat_id,
+                source_job_id=source_job_id,
+            )
+
+        return {"status": "error", "error": f"Unknown tool: {name}"}
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=TOOL_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.error(
+            "execute_tool_timed_out",
+            tool=name,
             chat_id=chat_id,
-            character_id=character_id,
             source_job_id=source_job_id,
+            timeout=TOOL_TIMEOUT,
         )
-
-    if name == "narrate_scene":
-        return await _tool_narrate_scene(
-            args,
-            chat_id=chat_id,
-            character_id=character_id,
-            source_job_id=source_job_id,
-        )
-
-    if name == "update_world_state":
-        return await _tool_update_world_state(
-            args,
-            chat_id=chat_id,
-            source_job_id=source_job_id,
-        )
-
-    if name == "recall_memory":
-        return await _tool_recall_memory(
-            args,
-            character_id=character_id,
-        )
-
-    if name == "store_memory":
-        return await _tool_store_memory(
-            args,
-            character_id=character_id,
-        )
-
-    if name == "set_expression":
-        return await _tool_set_expression(
-            args,
-            character_id=character_id,
-            chat_id=chat_id,
-            source_job_id=source_job_id,
-        )
-
-    return {"status": "error", "error": f"Unknown tool: {name}"}
+        return {
+            "status": "error",
+            "error": f"Tool '{name}' timed out after {TOOL_TIMEOUT}s",
+        }
 
 
 async def _tool_update_world_state(
@@ -500,8 +528,11 @@ async def _tool_narrate_scene(
             try:
                 runtime = resolve_provider_runtime(provider)
                 if runtime.mode not in ("container_http", "discovery"):
+                    # Configuration issue, not a runtime failure: do NOT
+                    # penalize the provider's failure counter. The provider is
+                    # simply not usable in this mode. Only genuine runtime
+                    # failures during execution should call report_failure.
                     await _job_service.update_job(job.id, status=JobStatus.FAILED, error="Provider runtime unavailable")
-                    await load_balancer.report_failure(provider.id)
                     _lb_released = True
                     await load_balancer.release_job(provider.id)
                     return {"status": "error", "error": f"Provider {provider.id} runtime unavailable"}

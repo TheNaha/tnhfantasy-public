@@ -2,8 +2,14 @@
 from uuid import uuid4
 
 import pytest
+from PIL import Image as PILImage
 
-from core.entities import Story, StoryChapter, Character
+import config as app_config
+from api.routes.world_vault.stories import (
+    _collect_story_illustration_assets,
+    _resolve_story_image_path,
+)
+from core.entities import Story, StoryChapter, Character, Asset, AssetKind
 
 @pytest.fixture
 def story_with_character(session):
@@ -155,3 +161,97 @@ def test_story_branch_chapter(client, session, story_with_character):
     assert response.status_code == 200
     data = response.json()
     assert data["id"]
+
+
+def test_resolve_story_image_path(tmp_path):
+    existing = tmp_path / "real.png"
+    PILImage.new("RGB", (10, 10), (1, 2, 3)).save(existing)
+    missing_relative = "does_not_exist.png"
+
+    # absolute existing path resolves as-is
+    assert _resolve_story_image_path(str(existing)) == str(existing)
+    # relative path resolves against configured output_dir when present
+    monkeypatch_dir = tmp_path / "out"
+    monkeypatch_dir.mkdir()
+    rel = monkeypatch_dir / "rel.png"
+    PILImage.new("RGB", (10, 10), (1, 2, 3)).save(rel)
+    app_config.settings.output_dir = str(monkeypatch_dir)
+    assert _resolve_story_image_path("rel.png") == str(rel)
+    # missing file returns None
+    assert _resolve_story_image_path(missing_relative) is None
+    assert _resolve_story_image_path(None) is None
+
+
+def test_collect_story_illustration_assets(tmp_path, session):
+    story = Story(title="Asset Tale")
+    session.add(story)
+    session.commit()
+    session.refresh(story)
+
+    # existing image asset -> included and resolved
+    good_dir = tmp_path / "out"
+    good_dir.mkdir()
+    good = good_dir / "good.png"
+    PILImage.new("RGB", (10, 10), (1, 2, 3)).save(good)
+    session.add(Asset(
+        filename="good.png",
+        relative_path="good.png",
+        kind=AssetKind.IMAGE,
+        story_id=story.id,
+    ))
+    # asset pointing at a missing file -> excluded (no gray fallthrough)
+    session.add(Asset(
+        filename="missing.png",
+        relative_path="missing.png",
+        kind=AssetKind.IMAGE,
+        story_id=story.id,
+    ))
+    # asset for a different story -> excluded
+    other = Story(title="Other")
+    session.add(other)
+    session.commit()
+    session.refresh(other)
+    session.add(Asset(
+        filename="other.png",
+        relative_path="other.png",
+        kind=AssetKind.IMAGE,
+        story_id=other.id,
+    ))
+    # non-image asset -> excluded
+    session.add(Asset(
+        filename="note.txt",
+        relative_path="note.txt",
+        kind=AssetKind.TEXT,
+        story_id=story.id,
+    ))
+    session.commit()
+
+    app_config.settings.output_dir = str(good_dir)
+    result = _collect_story_illustration_assets(session, story.id)
+    assert result == [str(good)]
+
+
+def test_export_story_comic_embeds_real_asset(client, session, story_with_character, tmp_path, monkeypatch):
+    story, chapter = story_with_character
+    # A real illustration image on disk, indexed as a story asset
+    img_dir = tmp_path / "story_imgs"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    img_path = img_dir / "illus.png"
+    PILImage.new("RGB", (200, 300), (10, 200, 50)).save(img_path)
+    session.add(Asset(
+        filename="illus.png",
+        relative_path="story_imgs/illus.png",
+        kind=AssetKind.IMAGE,
+        story_id=story.id,
+    ))
+    session.commit()
+
+    monkeypatch.setattr(app_config.settings, "output_dir", str(tmp_path))
+
+    response = client.get(f"/api/v2/stories/{story.id}/export?format=comic")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content[:4] == b"%PDF"
+    # Non-empty PDF produced from a real embedded image (far larger than a
+    # single blank gray page would compress to).
+    assert len(response.content) > 500

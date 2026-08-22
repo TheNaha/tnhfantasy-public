@@ -783,6 +783,7 @@ function AISettings({ settings, onUpdate, onReset }) {
                     maxContextTokens: Number(settings.maxContextTokens),
                     temperature: Number(settings.temperature),
                     ttsEnabled: settings.ttsEnabled,
+                    ragEnabled: settings.ragEnabled !== false,
                 }
             });
             toast.success('AI settings saved to backend');
@@ -951,6 +952,29 @@ function AISettings({ settings, onUpdate, onReset }) {
                         {settings.ttsEnabled
                             ? 'TTS narration is enabled. Messages will show a Play button to generate speech.'
                             : 'TTS narration is disabled. Enable to unlock voice generation for character messages.'}
+                    </p>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="Autobiographical Memory (RAG)"
+                    description="Semantic retrieval of character memories and lorebook entries in chat context"
+                    action={
+                        <button
+                            onClick={() => onUpdate('ragEnabled', settings.ragEnabled === false)}
+                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                                settings.ragEnabled !== false
+                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
+                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
+                            }`}
+                        >
+                            {settings.ragEnabled !== false ? 'On' : 'Off'}
+                        </button>
+                    }
+                >
+                    <p className="text-xs text-gray-500">
+                        {settings.ragEnabled !== false
+                            ? 'RAG is enabled. Distant memories and lore entries are retrieved semantically into context.'
+                            : 'RAG is disabled. Context falls back to recent/recency-based retrieval only.'}
                     </p>
                 </SettingGroup>
 

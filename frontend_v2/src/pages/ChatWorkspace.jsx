@@ -1,8 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import clsx from 'clsx';
 import { useSearchParams } from 'react-router-dom';
-import { MessageSquare, Activity, Settings, ImageIcon, X, GitBranch } from 'lucide-react';
+import { MessageSquare, Activity, Settings, ImageIcon, X, GitBranch, Volume2 } from 'lucide-react';
+import { api } from '../api';
+import { useUpdateSettings } from '../store/settingsStore';
 import SceneGallery from '../components/SceneGallery';
 import BottomTabBar from '../components/BottomTabBar';
 import NewChatModal from '../components/chat/NewChatModal';
@@ -27,6 +30,21 @@ export default function ChatWorkspace() {
 function ChatWorkspaceLayout() {
     const context = useChatWorkspace();
     const [searchParams, setSearchParams] = useSearchParams();
+    const { updateSetting } = useUpdateSettings();
+    const ttsEnabled = context.settings?.ai?.ttsEnabled;
+    const [ttsBannerDismissed, setTtsBannerDismissed] = useState(false);
+
+    const enableTtsMutation = useMutation({
+        mutationFn: () => api.put('/api/settings', { ai: { ttsEnabled: true } }),
+        onError: () => {
+            // Store update still stands; backend sync failure is non-fatal.
+        }
+    });
+
+    const handleEnableTts = () => {
+        updateSetting('ai', 'ttsEnabled', true);
+        enableTtsMutation.mutate();
+    };
     const {
         mobileTab, setMobileTab,
         activeChatId, messages,
@@ -75,7 +93,38 @@ function ChatWorkspaceLayout() {
                 
                 <div className={clsx("flex-col min-w-0 bg-[#0B0E14] relative flex-1 lg:flex-auto", mobileTab === 'chat' ? "flex" : "hidden lg:flex")}>
                     <ChatWorkspaceHeader {...context} />
-                    
+
+                    <AnimatePresence>
+                        {!ttsEnabled && !ttsBannerDismissed && (
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="px-3 sm:px-4 lg:px-6 pt-3"
+                            >
+                                <div className="flex items-center gap-3 rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-2.5">
+                                    <Volume2 size={16} className="text-purple-300 shrink-0" />
+                                    <span className="flex-1 text-sm text-purple-100">
+                                        Enable voice narration to hear character replies read aloud.
+                                    </span>
+                                    <button
+                                        onClick={handleEnableTts}
+                                        className="px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-500/30 text-purple-100 hover:bg-purple-500/40 transition-colors"
+                                    >
+                                        Enable voice
+                                    </button>
+                                    <button
+                                        onClick={() => setTtsBannerDismissed(true)}
+                                        aria-label="Dismiss voice narration banner"
+                                        className="p-1.5 text-purple-200/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
                     <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 custom-scrollbar" ref={listContainerRef}>
                         {!activeChatId && messages.length === 0 ? (
                             <div className="h-full flex flex-col items-center justify-center text-center px-4">

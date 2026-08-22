@@ -65,3 +65,33 @@ def test_world_vault_search_with_types(client, session, setup_entities):
     data = response.json()
     assert len(data["results"]) >= 1
     assert all(r["type"] == "story" for r in data["results"])
+
+
+def test_world_vault_relationships_dangling(client, session, setup_entities):
+    """Dangling links (referencing deleted entities) are kept, not dropped."""
+    char, chat, lorebook, story = setup_entities
+
+    # Point the story at a character and lorebook that don't exist.
+    story.character_ids = ["ghost-char"]
+    story.lorebook_ids = ["ghost-lore"]
+    story.location_ids = ["ghost-loc"]
+    session.add(story)
+    session.commit()
+
+    response = client.get("/api/v2/world-vault/relationships")
+    assert response.status_code == 200
+    data = response.json()
+
+    char_links = [l for l in data["character_stories"] if l["character_id"] == "ghost-char"]
+    assert len(char_links) == 1
+    assert char_links[0]["dangling"] is True
+    assert char_links[0]["character_name"] is None
+
+    lb_links = [l for l in data["story_lorebooks"] if l["lorebook_id"] == "ghost-lore"]
+    assert len(lb_links) == 1
+    assert lb_links[0]["dangling"] is True
+
+    loc_links = [l for l in data["story_locations"] if l["location_id"] == "ghost-loc"]
+    assert len(loc_links) == 1
+    assert loc_links[0]["dangling"] is True
+

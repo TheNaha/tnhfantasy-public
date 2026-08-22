@@ -73,8 +73,12 @@ def get_relationships(session: Session = Depends(get_session)):
     ]
 
     # Character → Stories (via character_ids JSON).
+    # Cap the number of stories loaded into memory to keep this endpoint
+    # bounded as the vault grows.
     stories = session.exec(
         select(Story.id, Story.title, Story.character_ids, Story.lorebook_ids, Story.location_ids)
+        .order_by(Story.created_at.desc())
+        .limit(200)
     ).all()
     char_ids = {
         char_id
@@ -98,6 +102,17 @@ def get_relationships(session: Session = Depends(get_session)):
                     "character_name": char_name,
                     "story_id": story.id,
                     "story_title": story.title,
+                })
+            else:
+                # Dangling link: the referenced character no longer exists.
+                # Keep it (rather than silently dropping it) so the graph is
+                # complete; mark it dangling so the UI can surface the issue.
+                char_story_links.append({
+                    "character_id": char_id,
+                    "character_name": None,
+                    "story_id": story.id,
+                    "story_title": story.title,
+                    "dangling": True,
                 })
 
     # Story → Lorebooks (via lorebook_ids JSON)
@@ -123,6 +138,14 @@ def get_relationships(session: Session = Depends(get_session)):
                     "story_title": story.title,
                     "lorebook_id": lb.id,
                     "lorebook_name": lb.name,
+                })
+            else:
+                story_lorebook_links.append({
+                    "story_id": story.id,
+                    "story_title": story.title,
+                    "lorebook_id": lb_id,
+                    "lorebook_name": None,
+                    "dangling": True,
                 })
 
     # Character → VoiceModels
@@ -156,6 +179,14 @@ def get_relationships(session: Session = Depends(get_session)):
                     "story_title": story.title,
                     "location_id": loc.id,
                     "location_name": loc.name,
+                })
+            else:
+                story_location_links.append({
+                    "story_id": story.id,
+                    "story_title": story.title,
+                    "location_id": loc_id,
+                    "location_name": None,
+                    "dangling": True,
                 })
 
     # Chat → Locations (via location_id FK)

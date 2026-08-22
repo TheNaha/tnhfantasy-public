@@ -63,6 +63,70 @@ export function useChatStreaming({
             throttleProgress(getJob(event));
         });
 
+        const unsubCreated = subscribe(EventTypes.JOB_CREATED, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata ?? job.metadata_ ?? {};
+            const eventId = job.id ?? null;
+            if (!eventId) return;
+
+            // No-op if we are already tracking this job.
+            const existing = getStreamingJob(queryClient, eventId);
+            if (existing) return;
+
+            const eventChatId = meta.chat_id || null;
+            setStreamingJob(queryClient, eventId, {
+                status: 'queued',
+                chatId: eventChatId,
+                type: meta.workspace,
+                taskType: job.task_type ?? null,
+                progress: job.overall_progress ?? job.progress ?? null
+            });
+        });
+
+        const unsubUpdated = subscribe(EventTypes.JOB_UPDATED, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata ?? job.metadata_ ?? {};
+            const eventId = job.id ?? null;
+            if (!eventId) return;
+
+            const existing = getStreamingJob(queryClient, eventId);
+            if (!existing) return;
+
+            // Merge status/metadata updates without clobbering progress.
+            setStreamingJob(queryClient, eventId, {
+                status: job.status ?? existing.status,
+                chatId: meta.chat_id || existing.chatId,
+                type: existing.type ?? meta.workspace,
+                taskType: job.task_type ?? existing.taskType,
+                progress: existing.progress ?? job.overall_progress ?? job.progress ?? null
+            });
+        });
+
+        const unsubPostProcessing = subscribe(EventTypes.JOB_POST_PROCESSING, (event) => {
+            const job = getJob(event);
+            const meta = job.metadata ?? job.metadata_ ?? {};
+            const eventId = job.id ?? null;
+            if (!eventId) return;
+
+            const existing = getStreamingJob(queryClient, eventId);
+            const eventChatId = meta.chat_id || existing?.chatId;
+
+            // Reflect the post-process phase instead of hanging on "Preparing generation…".
+            const phase = job.phase ?? meta.phase ?? null;
+            const statusText = phase === 'upload' ? 'Uploading…' : 'Saving…';
+
+            // Do not reset progress on this event.
+            const progress = job.overall_progress ?? job.progress ?? existing?.progress ?? null;
+
+            setStreamingJob(queryClient, eventId, {
+                status: statusText,
+                chatId: eventChatId,
+                type: existing?.type ?? meta.workspace,
+                taskType: job.task_type ?? existing?.taskType ?? null,
+                progress
+            });
+        });
+
         const unsubCompleted = subscribe(EventTypes.JOB_COMPLETED, (event) => {
             const job = getJob(event);
             const meta = job.metadata_ ?? job.metadata ?? {};
@@ -149,6 +213,7 @@ export function useChatStreaming({
             if (flushTimer) clearTimeout(flushTimer);
             pendingStream.clear();
             unsubProgress(); unsubCompleted(); unsubError(); unsubCancelled();
+            unsubCreated(); unsubUpdated(); unsubPostProcessing();
         };
     }, [subscribe, activeChatId, queryClient, setMessage, setSuggestJobId, setSceneJobId, setIsGeneratingScene, suggestJobIdRef, sceneJobIdRef]);
 }

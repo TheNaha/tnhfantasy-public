@@ -185,3 +185,45 @@ class TestLorebookReindexRoute:
     def test_reindex_missing_lorebook_404(self, client):
         resp = client.post("/api/v2/lorebooks/nope/reindex")
         assert resp.status_code == 404
+
+class TestRagEnabledGate:
+    def test_enabled_by_default(self, session, monkeypatch):
+        import services.rag_pipeline as rag
+        import config as app_config
+
+        monkeypatch.setattr(
+            app_config, "get_config", lambda: {"ai": {}}, raising=False
+        )
+        assert rag.rag_enabled() is True
+
+    def test_disabled_returns_empty(self, session, monkeypatch):
+        import services.rag_pipeline as rag
+        import config as app_config
+
+        char = _seed_character(session, "RAGGate")
+        session.add(CharacterMemory(character_id=char.id, content="secret memory"))
+        session.commit()
+
+        lb = _seed_lorebook(session)
+        _add_entry(session, lb.id, ["gate"], "gated entry")
+
+        monkeypatch.setattr(
+            app_config, "get_config", lambda: {"ai": {"ragEnabled": False}}, raising=False
+        )
+        assert rag.search_memories(session, char.id) == []
+        assert rag.search_lorebook_entries(session, [lb.id], "gate") == []
+
+    def test_explicit_true_still_searches(self, session, monkeypatch):
+        import services.rag_pipeline as rag
+        import config as app_config
+
+        char = _seed_character(session, "RAGOn")
+        session.add(CharacterMemory(character_id=char.id, content="visible memory"))
+        session.commit()
+
+        monkeypatch.setattr(
+            app_config, "get_config", lambda: {"ai": {"ragEnabled": True}}, raising=False
+        )
+        results = rag.search_memories(session, char.id)
+        assert len(results) == 1
+        assert results[0].content == "visible memory"

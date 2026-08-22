@@ -34,6 +34,17 @@ def _try_embedding(text: str) -> list[float] | None:
         return None
 
 
+def rag_enabled() -> bool:
+    """Whether semantic retrieval is enabled (config `ai.ragEnabled`, default true)."""
+    import config as app_config
+
+    try:
+        ai_block = app_config.get_config().get("ai") or {}
+    except Exception:  # pragma: no cover - config read failures default to enabled
+        return True
+    return bool(ai_block.get("ragEnabled", True))
+
+
 def search_memories(
     session: Session,
     character_id: str,
@@ -49,6 +60,8 @@ def search_memories(
     - Otherwise (SQLite, or embedding model unavailable): ILIKE content match.
     - touch_last_accessed: stamps retrieved memories (used by the recall_memory agent tool).
     """
+    if not rag_enabled():
+        return []
     query = (query or "").strip()
     q_vec = _try_embedding(query) if query and _is_postgres(session) else None
 
@@ -103,6 +116,8 @@ def search_lorebook_entries(
 
     Returns a flat, deduplicated list ordered by lorebook order then rank.
     """
+    if not rag_enabled():
+        return []
     query = (query or "").strip()
     if not lorebook_ids:
         return []

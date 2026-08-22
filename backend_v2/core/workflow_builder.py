@@ -633,10 +633,7 @@ def build_video_job_workflow(
         format=format,
     )
     
-    workflow = {
-        "prompt": nodes,
-        "type": "video"
-    }
+    workflow = nodes
 
     metadata: dict[str, Any] = {
         "source": source,

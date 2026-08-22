@@ -8,7 +8,6 @@ export const useVoices = (characterId = null) => {
             const url = characterId ? `/api/v2/voices?character_id=${characterId}` : '/api/v2/voices';
             return api.get(url);
         },
-        enabled: characterId === null || !!characterId,
     });
 };
 

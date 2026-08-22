@@ -33,6 +33,58 @@ def _all_gallery_files() -> list[dict[str, Any]]:
     return all_assets_as_file_data(OUTPUT_DIR, get_session_sync)
 
 
+def _calculate_pillar_counts() -> dict[str, int]:
+    """Cross-pillar entity counts for the World Vault (Image / Chat / Story / LLM)."""
+    counts: dict[str, int] = {
+        "images": 0,
+        "characters": 0,
+        "chats": 0,
+        "messages": 0,
+        "stories": 0,
+        "story_chapters": 0,
+        "lorebooks": 0,
+        "image_jobs": 0,
+        "llm_jobs": 0,
+    }
+    try:
+        from sqlmodel import func, select
+
+        from core.entities import (
+            Chat,
+            Character,
+            Job,
+            Lorebook,
+            Message,
+            Story,
+            StoryChapter,
+        )
+
+        with get_session_sync() as session:
+            def _count(model, *filters):
+                stmt = select(func.count()).select_from(model)
+                if filters:
+                    stmt = stmt.where(*filters)
+                return session.exec(stmt).one()
+
+            counts["characters"] = _count(Character)
+            counts["chats"] = _count(Chat)
+            counts["messages"] = _count(Message)
+            counts["stories"] = _count(Story)
+            counts["story_chapters"] = _count(StoryChapter)
+            counts["lorebooks"] = _count(Lorebook)
+            counts["image_jobs"] = _count(Job, Job.task_type == "image")
+            counts["llm_jobs"] = _count(Job, Job.task_type == "llm")
+    except Exception as exc:
+        logger.warning("pillar_counts_failed", error=str(exc))
+
+    try:
+        counts["images"] = 0  # filled in by caller from the single gallery snapshot
+    except Exception as exc:
+        logger.warning("pillar_image_count_failed", error=str(exc))
+
+    return counts
+
+
 def _calculate_statistics() -> dict[str, Any]:
     """
     Synchronous worker function to calculate basic statistics.
@@ -233,7 +285,10 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
         # Metadata
         "total_images": 0,
         "enriched_count": 0,
-        "legacy_count": 0
+        "legacy_count": 0,
+
+        # Cross-pillar counts (Image / Chat / Story / LLM)
+        "pillars": _calculate_pillar_counts(),
     }
     
     # For tracking lora weights
@@ -254,6 +309,7 @@ def _calculate_detailed_statistics(time_range: str = "all") -> dict[str, Any]:
     # Pull all gallery files from the DB-backed assets index
     try:
         all_files = _all_gallery_files()
+        detailed_stats["pillars"]["images"] = len(all_files)
         
         now_ts = datetime.now().timestamp()
         cutoff_ts = 0
