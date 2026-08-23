@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createRng, seededSort, seededShuffle, seededRandomComparator, stableRandomKey } from './seededRandom';
+import {
+    createRng,
+    createStableSorter,
+    seededSort,
+    seededShuffle,
+    stableRandomKey,
+} from './seededRandom';
 
 describe('seededRandom', () => {
     it('createRng produces deterministic sequence for same seed', () => {
@@ -63,32 +69,12 @@ describe('seededRandom', () => {
         expect(sameCount).toBeLessThan(10);
     });
 
-    it('seededRandomComparator sorts stably with same seed', () => {
-        const arr = [{ name: 'z' }, { name: 'a' }, { name: 'm' }];
-        const cmp = seededRandomComparator('stable-seed');
-        const sorted1 = [...arr].sort(cmp);
-        const cmp2 = seededRandomComparator('stable-seed');
-        const sorted2 = [...arr].sort(cmp2);
-        expect(sorted1.map(x => x.name)).toEqual(sorted2.map(x => x.name));
-    });
+    // ── seededSort ───────────────────────────────────────────────
 
-    it('seededRandomComparator does not cluster similar items', () => {
-        const items = [
-            { name: 'aaa-1' },
-            { name: 'aaa-2' },
-            { name: 'aaa-3' },
-            { name: 'bbb-1' },
-            { name: 'bbb-2' },
-            { name: 'bbb-3' },
-        ];
-        const sorted = [...items].sort(seededRandomComparator('mixed-seed'));
-        const names = sorted.map(x => x.name);
-        const aaaIndices = names.map((n, i) => n.startsWith('aaa') ? i : null).filter(i => i !== null);
-        const bbbIndices = names.map((n, i) => n.startsWith('bbb') ? i : null).filter(i => i !== null);
-        expect(aaaIndices.length).toBe(3);
-        expect(bbbIndices.length).toBe(3);
-        const aaaRange = Math.max(...aaaIndices) - Math.min(...aaaIndices);
-        expect(aaaRange).toBeGreaterThanOrEqual(2);
+    it('seededSort produces different order than identity sort', () => {
+        const items = Array.from({ length: 20 }, (_, i) => ({ id: i, name: `item-${i}` }));
+        const sorted = seededSort(items, 'seed').map(x => x.id);
+        expect(sorted).not.toEqual(items.map(x => x.id));
     });
 
     it('seededSort produces stable ordering when new items are added', () => {
@@ -103,6 +89,40 @@ describe('seededRandom', () => {
         expect(existingInB).toEqual(sortedA);
     });
 
+    it('seededSort produces consistent ordering for same seed', () => {
+        const items = Array.from({ length: 50 }, (_, i) => ({ id: `m-${i}`, name: `model-${i}` }));
+        const sorted1 = seededSort(items, 'gallery-seed').map(x => x.id);
+        const sorted2 = seededSort([...items], 'gallery-seed').map(x => x.id);
+        expect(sorted1).toEqual(sorted2);
+    });
+
+    it('seededSort does not cluster similar items', () => {
+        const items = [
+            { id: 'aaa-1', name: 'aaa-1' },
+            { id: 'aaa-2', name: 'aaa-2' },
+            { id: 'aaa-3', name: 'aaa-3' },
+            { id: 'bbb-1', name: 'bbb-1' },
+            { id: 'bbb-2', name: 'bbb-2' },
+            { id: 'bbb-3', name: 'bbb-3' },
+        ];
+        const sorted = seededSort(items, 'mixed-seed').map(x => x.id);
+        const aaaIndices = sorted.map((n, i) => n.startsWith('aaa') ? i : null).filter(i => i !== null);
+        const bbbIndices = sorted.map((n, i) => n.startsWith('bbb') ? i : null).filter(i => i !== null);
+        expect(aaaIndices.length).toBe(3);
+        expect(bbbIndices.length).toBe(3);
+        const aaaRange = Math.max(...aaaIndices) - Math.min(...aaaIndices);
+        expect(aaaRange).toBeGreaterThanOrEqual(2);
+    });
+
+    it('seededSort tiebreaker preserves order on identity collision', () => {
+        const item = { id: 'same', name: 'x' };
+        const items = [item, item];
+        const sorted = seededSort(items, 'seed');
+        expect(sorted.length).toBe(2);
+    });
+
+    // ── stableRandomKey ──────────────────────────────────────────
+
     it('stableRandomKey produces consistent keys for same identity+seed', () => {
         const item = { id: 'x', name: 'checkpoint' };
         expect(stableRandomKey(item, 'seed1')).toBe(stableRandomKey(item, 'seed1'));
@@ -114,14 +134,7 @@ describe('seededRandom', () => {
         expect(stableRandomKey(a, 'seed')).not.toBe(stableRandomKey(b, 'seed'));
     });
 
-    it('seededSort with same identity+seed gives consistent ordering', () => {
-        const items = Array.from({ length: 50 }, (_, i) => ({ id: `m-${i}`, name: `model-${i}` }));
-        const sorted1 = seededSort(items, 'gallery-seed').map(x => x.id);
-        const sorted2 = seededSort([...items], 'gallery-seed').map(x => x.id);
-        expect(sorted1).toEqual(sorted2);
-    });
-
-    it('FNV-1a avalanche: similar names produce uncorrelated keys', () => {
+    it('stableRandomKey avalanche: similar names produce uncorrelated keys', () => {
         const keys = [];
         for (let i = 0; i < 10; i++) {
             keys.push(stableRandomKey({ name: `model-${i}` }, 'seed'));
@@ -130,7 +143,7 @@ describe('seededRandom', () => {
         const min = Math.min(...keys);
         const max = Math.max(...keys);
         const range = max - min;
-        expect(range).toBeGreaterThan(0.8); // keys should span most of [0, 1)
+        expect(range).toBeGreaterThan(0.8);
 
         // Check pairwise differences — similar names should diverge
         let hasClosePairs = false;
@@ -147,18 +160,18 @@ describe('seededRandom', () => {
         expect(typeof keys[0]).toBe('number');
     });
 
-    it('seededSort tiebreaker preserves order on key collision', () => {
-        // Force a collision: same object used twice (same identity)
-        const item = { id: 'same', name: 'x' };
-        const items = [item, item];
-        const sorted = seededSort(items, 'seed');
-        expect(sorted.length).toBe(2);
+    it('stableRandomKey supports custom identityFn', () => {
+        const item = { slug: 'my-model', name: 'different' };
+        const key1 = stableRandomKey(item, 'seed', (i) => i.slug);
+        const key2 = stableRandomKey(item, 'seed', (i) => i.name);
+        expect(key1).not.toBe(key2);
     });
 
-    it('no collisions in 15K items (birthday bound ~0.001%)', () => {
+    // ── Large-scale collision & distribution tests ───────────────
+
+    it('no collisions in 15K items (birthday bound ~1.2e-8)', () => {
         const items = Array.from({ length: 15000 }, (_, i) => ({ id: `img-${i}`, name: `image_${i}.png` }));
         const keys = new Set(items.map(item => stableRandomKey(item, 'gallery-seed')));
-        // All 15K keys should be unique
         expect(keys.size).toBe(15000);
     });
 
@@ -172,5 +185,40 @@ describe('seededRandom', () => {
             expect(count).toBeGreaterThan(2400);
             expect(count).toBeLessThan(3600);
         });
+    });
+
+    // ── createStableSorter ─────────────────────────────────────────
+
+    it('createStableSorter caches keys across calls', () => {
+        const sorter = createStableSorter('cache-seed');
+        const items = Array.from({ length: 10 }, (_, i) => ({ id: `x-${i}`, name: `n-${i}` }));
+
+        const sorted1 = sorter(items);
+        const sorted2 = sorter(items);
+        expect(sorted1.map(x => x.id)).toEqual(sorted2.map(x => x.id));
+    });
+
+    it('createStableSorter with custom identityFn', () => {
+        const sorter = createStableSorter('fn-seed');
+        const items = [
+            { slug: 'b', name: 'Beta' },
+            { slug: 'a', name: 'Alpha' },
+            { slug: 'c', name: 'Gamma' },
+        ];
+        const sorted = sorter(items, (i) => i.slug).map(x => x.slug);
+        expect(sorted.length).toBe(3);
+        expect(sorted).toEqual(expect.arrayContaining(['a', 'b', 'c']));
+    });
+
+    it('createStableSorter preserves new-item stability', () => {
+        const sorter = createStableSorter('inc-seed');
+        const itemsA = Array.from({ length: 10 }, (_, i) => ({ id: `a${i}`, name: `n-${i}` }));
+        const itemsB = [...itemsA, { id: 'new', name: 'n-new' }];
+
+        const sortedA = sorter(itemsA).map(x => x.id);
+        const sortedB = sorter(itemsB).map(x => x.id);
+
+        const existingInB = sortedB.filter(id => id !== 'new');
+        expect(existingInB).toEqual(sortedA);
     });
 });
