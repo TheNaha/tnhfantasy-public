@@ -1,4 +1,5 @@
 import { getLatestDate, getItemTimelineDate } from './dateTime';
+import { seededSort } from './seededRandom';
 
 function getPersistedJobTimelineAnchor(image) {
     return image?.metadata?.job_timeline_anchor || image?.metadata?.job_created_at || null;
@@ -72,13 +73,18 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
     const usedJobIds = new Set();
 
     if (options.sort?.startsWith('random')) {
-        // For random sort, we just want to show active jobs at the top and then the files in their exact randomized order.
+        // For random sort, show active jobs first, then files sorted by a
+        // stable per-item random key. New items get their own key without
+        // disturbing the relative order of existing items.
+        const seed = options.sort.split(':')[1] || 'default_random';
+        const shuffledFiles = seededSort(historicalFiles, seed);
+
         Array.from(mergedJobs.values()).forEach((job) => {
             if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
                 combined.push(job);
             }
         });
-        historicalFiles.forEach((image) => {
+        shuffledFiles.forEach((image) => {
             combined.push({
                 ...image,
                 type: 'image',

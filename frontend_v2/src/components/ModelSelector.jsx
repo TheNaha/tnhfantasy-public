@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
+import { stableRandomKey } from "../utils/seededRandom";
 import TriggerBox from "./selector/TriggerBox";
 import ModelFilterBar from "./selector/ModelFilterBar";
 import ModelGridCard from "./selector/ModelGridCard";
@@ -181,12 +182,7 @@ const ModelSelector = memo(function ModelSelector({
       const getVal = (v) => v || 0;
       if (sortBy?.startsWith("random")) {
         const seed = sortBy.split(":")[1] || "stable_random_seed";
-        const hash = (str) => {
-          let h = 0;
-          for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
-          return h;
-        };
-        return hash((a.name || "") + seed) - hash((b.name || "") + seed);
+        return stableRandomKey(a, seed) - stableRandomKey(b, seed);
       }
       switch (sortBy) {
         case "name": return (a.name || "").localeCompare(b.name || "");
