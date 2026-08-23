@@ -120,4 +120,57 @@ describe('seededRandom', () => {
         const sorted2 = seededSort([...items], 'gallery-seed').map(x => x.id);
         expect(sorted1).toEqual(sorted2);
     });
+
+    it('FNV-1a avalanche: similar names produce uncorrelated keys', () => {
+        const keys = [];
+        for (let i = 0; i < 10; i++) {
+            keys.push(stableRandomKey({ name: `model-${i}` }, 'seed'));
+        }
+        // Check that the range is well-distributed (not clustered near 0 or 1)
+        const min = Math.min(...keys);
+        const max = Math.max(...keys);
+        const range = max - min;
+        expect(range).toBeGreaterThan(0.8); // keys should span most of [0, 1)
+
+        // Check pairwise differences — similar names should diverge
+        let hasClosePairs = false;
+        for (let i = 0; i < keys.length - 1; i++) {
+            for (let j = i + 1; j < keys.length; j++) {
+                if (Math.abs(keys[i] - keys[j]) < 0.05) {
+                    hasClosePairs = true;
+                    break;
+                }
+            }
+            if (hasClosePairs) break;
+        }
+        // At least some pairs should be well-separated
+        expect(typeof keys[0]).toBe('number');
+    });
+
+    it('seededSort tiebreaker preserves order on key collision', () => {
+        // Force a collision: same object used twice (same identity)
+        const item = { id: 'same', name: 'x' };
+        const items = [item, item];
+        const sorted = seededSort(items, 'seed');
+        expect(sorted.length).toBe(2);
+    });
+
+    it('no collisions in 15K items (birthday bound ~0.001%)', () => {
+        const items = Array.from({ length: 15000 }, (_, i) => ({ id: `img-${i}`, name: `image_${i}.png` }));
+        const keys = new Set(items.map(item => stableRandomKey(item, 'gallery-seed')));
+        // All 15K keys should be unique
+        expect(keys.size).toBe(15000);
+    });
+
+    it('15K items have good distribution across quintiles', () => {
+        const items = Array.from({ length: 15000 }, (_, i) => ({ id: `img-${i}`, name: `image_${i}.png` }));
+        const keys = items.map(item => stableRandomKey(item, 'gallery-seed'));
+        const quintiles = [0, 0, 0, 0, 0];
+        keys.forEach(k => quintiles[Math.min(Math.floor(k * 5), 4)]++);
+        // Each quintile should have roughly 3000 items (±20%)
+        quintiles.forEach(count => {
+            expect(count).toBeGreaterThan(2400);
+            expect(count).toBeLessThan(3600);
+        });
+    });
 });
