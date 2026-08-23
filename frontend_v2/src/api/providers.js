@@ -6,7 +6,7 @@
  * load balancer routes jobs between them.
  */
 
-import api from './client';
+import api, { API_V2_BASE } from './client';
 
 export const providersApi = {
     /** Fetch all configured providers. */
@@ -64,7 +64,7 @@ export const providersApi = {
     quickSync: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true&quick_sync=true`),
 
     /** Clear persisted provider model sync status to force a clean reconciliation pass. */
-    resetModelStatus: (providerId) => api.delete(`/api/v2/models/providers/${providerId}/reset-status`),
+    resetModelStatus: (providerId) => api.delete(`${API_V2_BASE}/models/providers/${providerId}/reset-status`),
 
     /** Clean orphaned provider state and stale downloading entries. */
     cleanupState: () => api.post('/api/providers/state/cleanup'),

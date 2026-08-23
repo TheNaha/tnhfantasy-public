@@ -3,7 +3,7 @@
  * Gallery/file-related API calls.
  */
 
-import api from './client';
+import api, { API_V2_BASE } from './client';
 export const filesApi = {
     list: (params = {}, options = {}) => api.get('/api/files', {
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
@@ -77,12 +77,12 @@ export const filesApi = {
  * DB-backed gallery listing with keyset pagination.
  */
 export const assetsApi = {
-    list: (params = {}, options = {}) => api.get('/api/v2/assets', {
+    list: (params = {}, options = {}) => api.get(`${API_V2_BASE}/assets`, {
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
         ...options,
     }),
 
-    move: (assetId, body) => api.post(`/api/v2/assets/${assetId}/move`, body),
+    move: (assetId, body) => api.post(`${API_V2_BASE}/assets/${assetId}/move`, body),
 };
 
 export const moveAsset = (assetId, body) => assetsApi.move(assetId, body);

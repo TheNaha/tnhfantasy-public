@@ -14,7 +14,7 @@ from services.reference_cleanup import scrub_entity_references
 from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole, VoiceModel
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
-from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, prune_context
+from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
 from services.llm_workflow import build_chat_llm_workflow
@@ -202,28 +202,6 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
     return chat
 
 
-def _chat_context_kwargs(chat, **overrides):
-    """Build common kwargs for build_system_prompt_sections_async and build_chat_context_async."""
-    kwargs = {
-        "characters": overrides.get("characters"),
-        "lorebook_ids": overrides.get("lorebook_ids", chat.active_lorebook_ids or None),
-        "persona_name": chat.persona_name,
-        "persona_description": getattr(chat, "persona_description", None),
-        "story_time": chat.story_time,
-        "story_location": chat.story_location,
-        "location_id": getattr(chat, "location_id", None),
-        "system_prompt_override": chat.system_prompt_override,
-        "append_system_prompt": chat.append_system_prompt,
-    }
-    if "max_context_tokens" in overrides:
-        kwargs["max_context_tokens"] = overrides["max_context_tokens"]
-    if "include_roleplay_default" in overrides:
-        kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
-    if overrides.get("active_character_id"):
-        kwargs["active_character_id"] = overrides["active_character_id"]
-    return kwargs
-
-
 @router.get("/{chat_id}", response_model=Chat)
 def get_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo)):
     chat = chat_repo.get(chat_id)
@@ -277,7 +255,7 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = _chat_context_kwargs(chat, characters=characters)
+    ctx_kwargs = chat_context_kwargs(chat, characters=characters)
 
     sections = await build_system_prompt_sections_async(
         **ctx_kwargs,
@@ -378,7 +356,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
         
         characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
             
-        ctx_kwargs = _chat_context_kwargs(
+        ctx_kwargs = chat_context_kwargs(
             chat,
             characters=characters,
             lorebook_ids=request.lorebook_ids,
@@ -660,7 +638,7 @@ async def generate_swipe(
     
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = _chat_context_kwargs(
+    ctx_kwargs = chat_context_kwargs(
         chat,
         characters=characters,
         max_context_tokens=_resolve_context_tokens(chat),
@@ -838,7 +816,7 @@ async def regenerate_reply(
     remaining = [m for m in all_messages[: anchor_index + 1]]
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = _chat_context_kwargs(
+    ctx_kwargs = chat_context_kwargs(
         chat,
         characters=characters,
         max_context_tokens=_resolve_context_tokens(chat),
@@ -914,7 +892,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     # Build world-state context without character identity (same approach as suggest)
     world_sections = await build_system_prompt_sections_async(
-        **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
+        **chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
@@ -996,7 +974,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     from config import get_system_prompt_blocks
 
     world_sections = await build_system_prompt_sections_async(
-        **_chat_context_kwargs(chat, character=None, include_roleplay_default=False),
+        **chat_context_kwargs(chat, character=None, include_roleplay_default=False),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 

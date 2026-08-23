@@ -1,18 +1,25 @@
 # Tests for services/context_builder.py (system prompt assembly + pruning)
 
-import pytest
-from sqlmodel import Session, select
-
-from core.entities import Character, Lorebook, LorebookEntry, Message, MessageKind, MessageRole
+from core.entities import (
+    Character,
+    Chat,
+    Lorebook,
+    LorebookEntry,
+    Message,
+    MessageKind,
+    MessageRole,
+)
 from services.context_builder import (
-    build_chat_context,
     build_character_system_prompt,
+    build_chat_context,
     build_system_prompt_sections,
+    chat_context_kwargs,
     estimate_tokens,
     inject_lorebooks_into_system_prompt,
     parse_mes_example,
     prune_context,
 )
+from sqlmodel import Session
 
 
 def _msg(role: str, content: str, **extra) -> dict:
@@ -154,11 +161,6 @@ def test_prune_context_true_system_kind_exempt():
 
 
 def test_prune_context_matches_by_content_not_identity():
-    msgs = [
-        _msg("system", "SYS"),
-        _msg("user", "hello", _pinned=True),
-        _msg("user", "world"),
-    ]
     # Rebuild the list with fresh dict objects (simulates DB-reconstructed messages)
     rebuilt = [
         {"role": "system", "content": "SYS"},
@@ -359,3 +361,83 @@ def test_build_chat_context_strips_internal_keys(session):
     for m in all_msgs:
         assert "_pinned" not in m
         assert "_kind" not in m
+
+
+def test_prune_context_uses_message_id_not_content_prefix():
+    """Two messages with identical role + identical first 200 chars but
+    different _id values must both survive — they are distinct messages."""
+    shared_prefix = "The dragon soars overhead, its wings casting shadows across the valley."
+    msg_a = {"role": "user", "content": shared_prefix + " Message A", "_id": "uuid-a1"}
+    msg_b = {"role": "user", "content": shared_prefix + " Message B", "_id": "uuid-b2"}
+
+    pruned = prune_context([msg_a, msg_b], "", [], max_tokens=100000)
+    contents = [m["content"] for m in pruned]
+    assert any("Message A" in c for c in contents)
+    assert any("Message B" in c for c in contents)
+    assert len(pruned) == 2
+
+
+def test_prune_context_id_based_keys_prevent_resurrection():
+    """When pruning removes a message, it must not be 'resurrected' by
+    another message sharing the same content-prefix key. With _id, each
+    message has a distinct key so the set-based membership check is precise."""
+    shared = "x" * 200
+    msg_a = {"role": "user", "content": f"{shared}A", "_id": "uuid-a"}
+    msg_b = {"role": "user", "content": f"{shared}B", "_id": "uuid-b"}
+    msg_c = {"role": "user", "content": f"{shared}C", "_id": "uuid-c"}
+
+    # Tight budget: prune_context keeps at least 2 (len > 2 guard).
+    # Without _id, all three share the same key and the set membership
+    # would resurrect the pruned one. With _id, only the 2 that remain
+    # in unpinned_msgs are kept.
+    pruned = prune_context([msg_a, msg_b, msg_c], "", [], max_tokens=5)
+    assert len(pruned) == 2
+
+
+def test_build_chat_context_propagates_id_for_prune_dedup(session):
+    """SQLModel Message ids become _id in the context dict so prune_context
+    can distinguish messages with identical content prefixes."""
+    msg_a = Message(chat_id="chat-x", role=MessageRole.USER, content="The castle gate rumbles open and")
+    msg_b = Message(chat_id="chat-x", role=MessageRole.USER, content="The castle gate rumbles open and I step through")
+    session.add_all([msg_a, msg_b])
+    session.commit()
+
+    _, all_msgs = build_chat_context(session, [msg_a, msg_b], max_context_tokens=100000)
+    # Both user messages survive even though first ~35 chars match (same role).
+    user_msgs = [m for m in all_msgs if m["role"] == "user"]
+    assert len(user_msgs) == 2
+
+
+# ── chat_context_kwargs ───────────────────────────────────────────────────────
+
+
+def test_chat_context_kwargs_maps_chat_fields(session):
+    """chat_context_kwargs should map Chat entity fields to context_builder kwargs."""
+    chat = Chat(
+        persona_name="Kai",
+        story_location="The Shire",
+        story_time="dusk",
+        active_lorebook_ids=["lore-1", "lore-2"],
+    )
+    session.add(chat)
+    session.commit()
+
+    kwargs = chat_context_kwargs(chat)
+    assert kwargs["persona_name"] == "Kai"
+    assert kwargs["story_location"] == "The Shire"
+    assert kwargs["story_time"] == "dusk"
+    assert kwargs["lorebook_ids"] == ["lore-1", "lore-2"]
+    assert "characters" in kwargs
+    assert "active_character_id" not in kwargs
+
+
+def test_chat_context_kwargs_with_overrides(session):
+    """Overrides should take precedence over chat defaults."""
+    chat = Chat(active_lorebook_ids=["default-lb"])
+    session.add(chat)
+    session.commit()
+
+    kwargs = chat_context_kwargs(chat, lorebook_ids=["override-lb"], characters=[], max_context_tokens=1024)
+    assert kwargs["lorebook_ids"] == ["override-lb"]
+    assert kwargs["max_context_tokens"] == 1024
+    assert kwargs["characters"] == []

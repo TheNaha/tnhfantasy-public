@@ -4,9 +4,9 @@ import { createPortal } from "react-dom";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { filesApi } from "../api";
-import TriggerBox from "./model-selector/TriggerBox";
-import ModelFilterBar from "./model-selector/ModelFilterBar";
-import ModelGridCard from "./model-selector/ModelGridCard";
+import TriggerBox from "./selector/TriggerBox";
+import ModelFilterBar from "./selector/ModelFilterBar";
+import ModelGridCard from "./selector/ModelGridCard";
 
 const ModelSelector = memo(function ModelSelector({
   label,

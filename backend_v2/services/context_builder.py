@@ -5,11 +5,13 @@ handling lorebook injection, character system prompts, and context pruning.
 """
 import logging
 import re
+from functools import lru_cache
 from typing import Any
 
-from sqlmodel import Session, select
-
+import tiktoken
+from cachetools import TTLCache
 from core.entities import Character, Location, LorebookEntry, MessageRole
+from sqlmodel import Session, select
 
 logger = logging.getLogger("context_builder")
 
@@ -21,8 +23,7 @@ DEFAULT_MAX_TOKENS = 4096
 CHARS_PER_TOKEN = 3.5
 
 
-import tiktoken
-from functools import lru_cache
+_TOKEN_CACHE = TTLCache(maxsize=2048, ttl=300)
 
 
 @lru_cache(maxsize=4)
@@ -55,6 +56,21 @@ def estimate_tokens(text: str) -> int:
 @lru_cache(maxsize=2048)
 def _cached_estimate_tokens(text: str) -> int:
     return estimate_tokens(text)
+
+
+def _estimate_cached(text: str) -> int:
+    """Token estimate with a 5-minute TTL cache (cachetools TTLCache).
+
+    The plain lru_cache on full message text can grow unbounded across long
+    campaigns, pinning large strings in memory. The TTL cache evicts entries
+    after 5 minutes, bounding memory usage in long-running chats/stories.
+    """
+    cached = _TOKEN_CACHE.get(text)
+    if cached is not None:
+        return cached
+    result = estimate_tokens(text)
+    _TOKEN_CACHE[text] = result
+    return result
 
 
 def build_character_system_prompt(character) -> str:
@@ -173,7 +189,7 @@ def prune_context(
     system_msgs = [m for m in messages if _is_exempt_system(m)]
     non_system_msgs = [m for m in messages if not _is_exempt_system(m)]
 
-    system_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in system_msgs)
+    system_tokens = sum(_estimate_cached(m.get("content", "")) for m in system_msgs)
     remaining_budget = max_tokens - system_tokens
 
     if remaining_budget <= 0:
@@ -184,22 +200,26 @@ def prune_context(
     pinned_msgs = [m for m in non_system_msgs if m.get("_pinned")]
     unpinned_msgs = [m for m in non_system_msgs if not m.get("_pinned")]
 
-    pinned_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in pinned_msgs)
+    pinned_tokens = sum(_estimate_cached(m.get("content", "")) for m in pinned_msgs)
     remaining_budget -= pinned_tokens
 
-    total_tokens = sum(_cached_estimate_tokens(m.get("content", "")) for m in unpinned_msgs)
+    total_tokens = sum(_estimate_cached(m.get("content", "")) for m in unpinned_msgs)
 
     while total_tokens > remaining_budget and len(unpinned_msgs) > 2:
         removed = unpinned_msgs.pop(0)
-        total_tokens -= _cached_estimate_tokens(removed.get("content", ""))
+        total_tokens -= _estimate_cached(removed.get("content", ""))
 
     # Reconstruct in original order: system → unpinned (oldest first) → pinned at end
     # Actually preserve original relative order for pinned messages
     result = []
     result.extend(system_msgs)
-    # Merge back preserving original order using content-based keys so fresh
-    # DB-reconstructed objects still match their filtered counterparts.
+    # Merge back preserving original order using a stable, collision-resistant key.
+    # Prefer the message's `_id` (a UUID propagated from the DB or dict) so that
+    # two messages with identical role+content-prefix never silently merge.
     def _msg_key(m: dict) -> tuple:
+        mid = m.get("_id")
+        if mid is not None:
+            return ("_id", mid)
         return (m.get("role"), m.get("content", "")[:200])
 
     pinned_keys = {_msg_key(m) for m in pinned_msgs}
@@ -647,6 +667,7 @@ def build_chat_context(
                 "content": content,
                 "_pinned": is_pinned,
                 "_kind": kind.value if kind else None,
+                "_id": getattr(msg, "id", None),
             })
             continue
 
@@ -654,7 +675,7 @@ def build_chat_context(
             continue
         if role == "user" or role == "assistant" or role == "system":
             is_pinned = bool(meta.get("pinned"))
-            msg_list.append({"role": role, "content": content, "_pinned": is_pinned})
+            msg_list.append({"role": role, "content": content, "_pinned": is_pinned, "_id": msg.get("id")})
 
     if system_prompt:
         all_msgs = [{"role": "system", "content": system_prompt}] + example_messages + msg_list
@@ -663,11 +684,12 @@ def build_chat_context(
 
     all_msgs = prune_context(all_msgs, system_prompt, [], max_context_tokens)
 
-    # Strip the internal _pinned/_kind helper keys before returning so
+    # Strip the internal _pinned/_kind/_id helper keys before returning so
     # unknown fields never leak into provider-bound LLM payloads.
     for m in all_msgs:
         m.pop("_pinned", None)
         m.pop("_kind", None)
+        m.pop("_id", None)
 
     return system_prompt, all_msgs
 
@@ -708,3 +730,31 @@ async def build_system_prompt_sections_async(
             return build_system_prompt_sections(ctx_session, **kwargs)
 
     return await asyncio.to_thread(_run)
+
+
+def chat_context_kwargs(chat, *, characters=None, **overrides) -> dict[str, Any]:
+    """Build common kwargs for build_chat_context_async / build_system_prompt_sections_async
+    from a Chat entity.
+
+    Centralising this mapping here means route handlers (chats.py, stories.py)
+    and services (agent_simulation.py, orchestrator_service.py) all use the
+    same field-to-kwarg mapping — no per-caller copies to drift.
+    """
+    kwargs: dict[str, Any] = {
+        "characters": characters,
+        "lorebook_ids": overrides.get("lorebook_ids", getattr(chat, "active_lorebook_ids", None) or None),
+        "persona_name": getattr(chat, "persona_name", None),
+        "persona_description": getattr(chat, "persona_description", None),
+        "story_time": getattr(chat, "story_time", None),
+        "story_location": getattr(chat, "story_location", None),
+        "location_id": getattr(chat, "location_id", None),
+        "system_prompt_override": getattr(chat, "system_prompt_override", None),
+        "append_system_prompt": getattr(chat, "append_system_prompt", None),
+    }
+    if "max_context_tokens" in overrides:
+        kwargs["max_context_tokens"] = overrides["max_context_tokens"]
+    if "include_roleplay_default" in overrides:
+        kwargs["include_roleplay_default"] = overrides["include_roleplay_default"]
+    if overrides.get("active_character_id"):
+        kwargs["active_character_id"] = overrides["active_character_id"]
+    return kwargs

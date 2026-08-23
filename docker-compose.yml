@@ -142,6 +142,41 @@ services:
       retries: 5
       start_period: 30s
 
+  provider-modal-hp196:
+    build:
+      context: ./provider_containers
+      dockerfile: image_worker/Dockerfile
+    container_name: tnhcomfy-modal-hp196
+    depends_on:
+      backend_v2:
+        condition: service_healthy
+    profiles:
+      - providers
+    env_file:
+      - .env.modal-hp196
+    environment:
+      - PROVIDER_ID=modal-hp196
+      - PORT=8000
+      - BACKEND_URL=http://backend_v2:8002
+    user: "1000:1000"
+    # Mount /data so provider workers can access models, input, output
+    volumes:
+      - ./data:/data
+    networks:
+      - tnhcomfy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "4"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   provider-modal-stepmania:
     build:
       context: ./provider_containers

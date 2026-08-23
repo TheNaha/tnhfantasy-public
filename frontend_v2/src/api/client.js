@@ -157,6 +157,13 @@ async function request(endpoint, options = {}) {
 }
 
 // HTTP method helpers
+
+/**
+ * Base path prefix for all V2 (World Vault, providers, models) endpoints.
+ * Centralizing this here lets us change the version prefix in one place.
+ */
+export const API_V2_BASE = '/api/v2';
+
 export const api = {
     get: (endpoint, options) => request(endpoint, { method: 'GET', ...options }),
 

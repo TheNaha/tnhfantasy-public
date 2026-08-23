@@ -349,6 +349,21 @@ export default function StorySandbox() {
      
     }, [activeStoryId, activeChapterId, isStreaming, branchChapter, confirm, queryClient, navigate]);
 
+    const handleReorderBeats = useCallback(async (newBeats) => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        try {
+            await updateChapter.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                beats: newBeats,
+            });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            toast.success('Beats reordered');
+        } catch {
+            toast.error('Failed to reorder beats');
+        }
+    }, [activeStoryId, activeChapterId, isStreaming, updateChapter, queryClient]);
+
     const handleCreateStory = async (data) => {
         return createStory.mutateAsync(data);
     };
@@ -664,6 +679,7 @@ export default function StorySandbox() {
                                                 branchingBeatId={branchingBeatId}
                                                 branchPending={branchChapter.isPending}
                                                 onBranch={handleBranchFromBeat}
+                                                onReorder={handleReorderBeats}
                                                 onClose={() => setShowBeatsPanel(false)}
                                             />
                                         )}
