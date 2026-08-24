@@ -30,7 +30,7 @@ import { useSettings } from './store/settingsStore';
 import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
-import { api } from './api';
+import { providersApi } from './api/providers';
 // Lazy-loaded pages to minimise initial JS bundle
 const FantasyHub = lazy(() => import('./pages/FantasyHub'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -49,6 +49,7 @@ const StorySandbox = lazy(() => import('./pages/StorySandbox'));
 const StoryReader = lazy(() => import('./pages/StoryReader'));
 const Scenarios = lazy(() => import('./pages/Scenarios'));
 const Voices = lazy(() => import('./pages/Voices'));
+const Lorebooks = lazy(() => import('./pages/Lorebooks'));
 const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
 const Locations = lazy(() => import('./pages/Locations'));
 const AvatarGallery = lazy(() => import('./pages/AvatarGallery'));
@@ -107,6 +108,7 @@ function AnimatedRoutes() {
                 <Route path="/characters" element={<Boundary routeKey={routeKey}><Characters /></Boundary>} />
                 <Route path="/scenarios" element={<Boundary routeKey={routeKey}><Scenarios /></Boundary>} />
                 <Route path="/voices" element={<Boundary routeKey={routeKey}><Voices /></Boundary>} />
+                <Route path="/lorebooks" element={<Boundary routeKey={routeKey}><Lorebooks /></Boundary>} />
                 <Route path="/world-vault" element={<Boundary routeKey={routeKey}><WorldVaultHub /></Boundary>} />
                 <Route path="/locations" element={<Boundary routeKey={routeKey}><Locations /></Boundary>} />
                 <Route path="/avatar-gallery" element={<Boundary routeKey={routeKey}><AvatarGallery /></Boundary>} />
@@ -154,7 +156,7 @@ function GlobalHooks() {
         }
         hasRequestedProviderWake.current = true;
 
-        api.post('/api/providers/wake').catch((error) => {
+        providersApi.wake().catch((error) => {
             console.warn('Failed to warm providers:', error);
         });
     }, []);

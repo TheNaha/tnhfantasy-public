@@ -1,10 +1,25 @@
+function coerceWidget(value) {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed !== '' && !isNaN(Number(trimmed))) {
+            return Number(trimmed);
+        }
+    }
+    return value;
+}
+
 export function compileReactFlowToComfy(nodes, edges) {
     const workflow = {};
 
     // First pass: create all node stubs
     for (const node of nodes) {
+        const widgets = node.data.widgets ?? {};
+        const coerced = {};
+        for (const [k, v] of Object.entries(widgets)) {
+            coerced[k] = coerceWidget(v);
+        }
         workflow[node.id] = {
-            inputs: { ...node.data.widgets }, // Put all non-link inputs here
+            inputs: coerced,
             class_type: node.data.nodeType,
             _meta: {
                 title: node.data.nodeType

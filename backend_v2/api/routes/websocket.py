@@ -225,7 +225,7 @@ async def cancel_job(sid, data):
                             logger.warning(f"[WebSocket] Could not reach worker to cancel: {cancel_err}")
                     elif runtime.mode == "external_worker":
                         try:
-                            from api.routes.worker_ws import request_worker_job_cancel
+                            from infrastructure.worker_registry import request_worker_job_cancel
 
                             await request_worker_job_cancel(provider.id, job_id)
                         except Exception as cancel_err:

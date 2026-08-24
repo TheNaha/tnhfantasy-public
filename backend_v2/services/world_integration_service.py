@@ -18,7 +18,7 @@ from core.entities import (
     Location,
 )
 from core.events import event_bus, EventType
-from infrastructure.database import get_session_context
+from infrastructure.deps import get_session_context
 from infrastructure.logging import get_logger
 from sqlmodel import select
 from services.context_builder import build_chat_context_async
@@ -623,7 +623,7 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
     """Update a character's avatar path with the generated AnimateDiff video."""
     import shutil
     import os
-    from api.deps import get_session_context
+    from infrastructure.deps import get_session_context
     from config import app_config
     from core.entities import Character
     
@@ -632,11 +632,14 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
     if not character_id:
         return
         
-    result_paths = job_data.get("result_paths")
-    if not result_paths:
+    video_path = (
+        job_data.get("result_paths", [None])[0]
+        or (job_data.get("outputs") or [{}])[0].get("relative_path")
+        or (job_data.get("outputs") or [{}])[0].get("filename")
+        or job_data.get("image_path")
+    )
+    if not video_path:
         return
-        
-    video_path = result_paths[0]
     if not os.path.exists(video_path):
         return
         

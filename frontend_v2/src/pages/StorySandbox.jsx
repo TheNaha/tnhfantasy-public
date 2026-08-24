@@ -188,6 +188,49 @@ export default function StorySandbox() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeChapterId, activeChapter]);
 
+    const resolveMentionsTimerRef = useRef(null);
+
+    useEffect(() => {
+        if (!activeStoryId || !editorContent || !activeStory) return;
+
+        if (resolveMentionsTimerRef.current) clearTimeout(resolveMentionsTimerRef.current);
+
+        resolveMentionsTimerRef.current = setTimeout(() => {
+            const regex = /\[([^\]]+)\]\(\/world-vault\?(character|lorebook|location)=([a-f0-9-]+)\)/g;
+            const mentions = [];
+            let match;
+            while ((match = regex.exec(editorContent)) !== null) {
+                mentions.push({ type: match[1], id: match[2] });
+            }
+
+            const currentCharIds = activeStory.character_ids || [];
+            const currentLoreIds = activeStory.lorebook_ids || [];
+            const currentLocIds = activeStory.location_ids || [];
+
+            const newCharIds = [...new Set([...currentCharIds, ...mentions.filter(m => m.type === 'character').map(m => m.id)])];
+            const newLoreIds = [...new Set([...currentLoreIds, ...mentions.filter(m => m.type === 'lorebook').map(m => m.id)])];
+            const newLocIds = [...new Set([...currentLocIds, ...mentions.filter(m => m.type === 'location').map(m => m.id)])];
+
+            const hasChanges =
+                newCharIds.length !== currentCharIds.length ||
+                newLoreIds.length !== currentLoreIds.length ||
+                newLocIds.length !== currentLocIds.length;
+
+            if (hasChanges) {
+                updateStory.mutate({
+                    id: activeStoryId,
+                    character_ids: newCharIds,
+                    lorebook_ids: newLoreIds,
+                    location_ids: newLocIds,
+                });
+            }
+        }, 800);
+
+        return () => {
+            if (resolveMentionsTimerRef.current) clearTimeout(resolveMentionsTimerRef.current);
+        };
+    }, [editorContent, activeStoryId, activeStory, updateStory]);
+
     const handleParseStoryComplete = async (text) => {
         setShowParseModal(false);
         try {
@@ -209,7 +252,6 @@ export default function StorySandbox() {
             
             toast.success("Story imported. AI is parsing Characters & Lore in the background!");
         } catch (err) {
-            console.error(err);
             toast.error("Failed to import story.");
         }
     };

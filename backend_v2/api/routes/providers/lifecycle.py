@@ -1,15 +1,15 @@
 # Provider routes - Complete implementation with feature parity to backend_v1
 #
 # KEY ENDPOINTS:
-#   GET    /api/providers              – List all configured providers
-#   POST   /api/providers              – Register a new provider
-#   GET    /api/providers/{id}         – Get provider details
-#   PATCH  /api/providers/{id}         – Update provider config/credentials
-#   DELETE /api/providers/{id}         – Remove provider + cascade status records
-#   GET    /api/providers/load-balancing – Current LB strategy
-#   PUT    /api/providers/load-balancing – Update LB strategy
-#   POST   /api/providers/{id}/reconcile – Trigger model sync
-#   GET/POST /api/providers/{id}/container/* – Container lifecycle management
+#   GET    /api/v2/providers              – List all configured providers
+#   POST   /api/v2/providers              – Register a new provider
+#   GET    /api/v2/providers/{id}         – Get provider details
+#   PATCH  /api/v2/providers/{id}         – Update provider config/credentials
+#   DELETE /api/v2/providers/{id}         – Remove provider + cascade status records
+#   GET    /api/v2/providers/load-balancing – Current LB strategy
+#   PUT    /api/v2/providers/load-balancing – Update LB strategy
+#   POST   /api/v2/providers/{id}/reconcile – Trigger model sync
+#   GET/POST /api/v2/providers/{id}/container/* – Container lifecycle management
 from datetime import datetime, timedelta, timezone
 from typing import Any
 

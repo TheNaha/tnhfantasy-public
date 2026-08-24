@@ -153,6 +153,7 @@ def get_relationships(session: Session = Depends(get_session)):
         tuple(row) for row in session.exec(
             select(VoiceModel.id, VoiceModel.name, Character.id, Character.name)
             .join(Character, Character.id == VoiceModel.character_id)
+            .limit(500)
         ).all()
     ]
 
@@ -253,6 +254,11 @@ def search_entities(
     # Lorebooks (name)
     _add("lorebook", session.exec(
         select(Lorebook).where(func.lower(Lorebook.name).like(func.lower(pattern))).limit(10)
+    ).all(), lambda l: l.name, lambda l: l.description[:100] if l.description else "")
+
+    # Locations (name)
+    _add("location", session.exec(
+        select(Location).where(func.lower(Location.name).like(func.lower(pattern))).limit(10)
     ).all(), lambda l: l.name, lambda l: l.description[:100] if l.description else "")
 
     # Scenarios (name + prompt_template)

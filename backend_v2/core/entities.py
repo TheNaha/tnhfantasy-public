@@ -799,6 +799,7 @@ class Character(SQLModel, table=True):
     default_location: str | None = Field(default=None)
     
     avatar_path: str | None = Field(default=None)
+    sort_order: int = Field(default=0, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

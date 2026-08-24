@@ -12,6 +12,22 @@ vi.mock('../hooks/useTimeline', () => ({
     useTimeline: (...args) => mockTimeline(...args),
 }));
 
+vi.mock('../hooks/useCharacters', () => ({
+    useCharacters: () => ({ data: [{ id: 'c-1', name: 'Aria' }] }),
+}));
+
+vi.mock('../hooks/useStories', () => ({
+    useStories: () => ({ data: [{ id: 's-1', title: 'Test Story' }] }),
+}));
+
+vi.mock('../hooks/useChats', () => ({
+    useChats: () => ({ data: [{ id: 'ch-1', name: 'Test Chat' }] }),
+}));
+
+vi.mock('../hooks/useLocations', () => ({
+    useLocations: () => ({ data: [{ id: 'l-1', name: 'Test Location' }] }),
+}));
+
 vi.mock('framer-motion', () => ({
     motion: {
         div: ({ children, ...props }) => {
@@ -107,22 +123,22 @@ describe('WorldTimeline page', () => {
         renderWithProviders(<WorldTimeline />);
         const filtersButton = screen.getByRole('button', { name: /filters/i });
         fireEvent.click(filtersButton);
-        expect(screen.getByPlaceholderText('Filter by character...')).toBeInTheDocument();
-        expect(screen.getByPlaceholderText('Filter by story...')).toBeInTheDocument();
-        expect(screen.getByPlaceholderText('Filter by chat...')).toBeInTheDocument();
-        expect(screen.getByPlaceholderText('Filter by location...')).toBeInTheDocument();
+        expect(screen.getByLabelText('Character')).toBeInTheDocument();
+        expect(screen.getByLabelText('Story')).toBeInTheDocument();
+        expect(screen.getByLabelText('Chat')).toBeInTheDocument();
+        expect(screen.getByLabelText('Location')).toBeInTheDocument();
         fireEvent.click(filtersButton);
-        expect(screen.queryByPlaceholderText('Filter by character...')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('Character')).not.toBeInTheDocument();
     });
 
-    it('passes updated filters to the timeline hook when a filter is typed', () => {
+    it('passes updated filters to the timeline hook when a filter is selected', () => {
         renderWithProviders(<WorldTimeline />);
         fireEvent.click(screen.getByRole('button', { name: /filters/i }));
-        fireEvent.change(screen.getByPlaceholderText('Filter by character...'), {
-            target: { value: 'c-42' },
+        fireEvent.change(screen.getByLabelText('Character'), {
+            target: { value: 'c-1' },
         });
         expect(mockTimeline).toHaveBeenLastCalledWith(
-            expect.objectContaining({ character_id: 'c-42' })
+            expect.objectContaining({ character_id: 'c-1' })
         );
     });
 });

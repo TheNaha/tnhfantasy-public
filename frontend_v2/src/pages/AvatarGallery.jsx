@@ -169,12 +169,6 @@ function CharacterCard({ character, onChat, onNavigateToCharacter }) {
                 <div className="mt-4">
                     <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-gray-400 font-medium">Scenes ({imageCount})</span>
-                        <button
-                            onClick={() => {}}
-                            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
-                        >
-                            <Images size={12} /> View all
-                        </button>
                     </div>
                     <div className="max-h-32 overflow-hidden rounded-lg">
                         <SceneGallery images={collection?.images?.slice(0, 8) || []} compact />

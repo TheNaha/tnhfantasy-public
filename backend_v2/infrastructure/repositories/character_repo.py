@@ -11,7 +11,7 @@ class CharacterRepository:
         self.session = session
 
     def list(self) -> list[Character]:
-        return self.session.exec(select(Character).order_by(Character.name)).all()
+        return self.session.exec(select(Character).order_by(Character.sort_order, Character.name)).all()
 
     def get(self, character_id: str) -> Character | None:
         return self.session.get(Character, character_id)

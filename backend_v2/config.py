@@ -107,6 +107,8 @@ DEFAULT_CONFIG = {
     "ai": {
         "maxContextTokens": 4096,
         "temperature": 0.8,
+        "idleSimEnabled": False,
+        "idleSimIntervalSeconds": 600,
     },
     "system_prompts": {
         "roleplay_default": "You are a highly descriptive AI roleplay character. Write engaging, detailed, and immersive responses in character. Stay true to the character's personality, background, and speech patterns. Do not act as an AI assistant.\n\nFormatting rules:\n- Put the character's spoken dialogue in double quotation marks, one line per dialogue.\n- Put actions, narration, sounds, and emphasis in asterisks: *she frowns*.\n- Write actions on their own line, separated from dialogue.\n- Never wrap narration or prose in quotation marks.\n- Never leave stray asterisks or quotes; every * and \" must be paired.\n- Keep dialogue on a single line; do not insert line breaks inside quotes.",

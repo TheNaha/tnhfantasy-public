@@ -60,6 +60,16 @@ export const useUploadAvatar = () => {
     });
 };
 
+export const useReorderCharacters = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (characterIds) => api.post('/api/v2/characters/reorder', { character_ids: characterIds }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+        }
+    });
+};
+
 export const useDeleteCharacter = () => {
     const queryClient = useQueryClient();
     return useMutation({
@@ -85,7 +95,7 @@ export const useImportCharacterCard = () => {
 export const useCharacterCollection = (characterId) => {
     return useQuery({
         queryKey: ['world_vault', 'characters', characterId, 'collection'],
-        queryFn: () => api.get(`/api/collections/by-character/${characterId}`),
+        queryFn: () => api.get(`/api/v2/collections/by-character/${characterId}`),
         enabled: !!characterId
     });
 };

@@ -8,35 +8,37 @@
 
 import api, { API_V2_BASE } from './client';
 
+const P = `${API_V2_BASE}/providers`;
+
 export const providersApi = {
     /** Fetch all configured providers. */
-    list: () => api.get('/api/providers'),
+    list: () => api.get(P),
 
     /**
      * Get a single provider by its unique ID.
      * @param {string} providerId - e.g. "modal-primary"
      */
-    get: (providerId) => api.get(`/api/providers/${providerId}`),
+    get: (providerId) => api.get(`${P}/${providerId}`),
 
     /**
      * Register a new provider.
      * @param {object} config - Provider configuration including `id`, `type`,
      *   `credentials`, and `config` fields.
      */
-    create: (config) => api.post('/api/providers', config),
+    create: (config) => api.post(P, config),
 
     /**
      * Partially update a provider's configuration.
      * @param {string} providerId - Provider to update.
      * @param {object} updates    - Fields to change (only supplied fields are modified).
      */
-    update: (providerId, updates) => api.patch(`/api/providers/${providerId}`, updates),
+    update: (providerId, updates) => api.patch(`${P}/${providerId}`, updates),
 
     /**
      * Delete a provider and cascade-remove all its model status records.
      * @param {string} providerId - Provider to remove.
      */
-    delete: (providerId) => api.delete(`/api/providers/${providerId}`),
+    delete: (providerId) => api.delete(`${P}/${providerId}`),
 
     // -------------------------------------------------------------------------
     // Load Balancing
@@ -44,15 +46,15 @@ export const providersApi = {
 
     /**
      * Get the current load balancing strategy configuration.
-     * Canonical endpoint: /api/providers/config/load-balancing
+     * Canonical endpoint: /api/v2/providers/config/load-balancing
      */
-    getLoadBalancing: () => api.get('/api/providers/config/load-balancing'),
+    getLoadBalancing: () => api.get(`${P}/config/load-balancing`),
 
     /**
      * Update the load balancing strategy.
      * @param {object} config - e.g. { strategy: 'least-connections' }
      */
-    updateLoadBalancing: (config) => api.put('/api/providers/config/load-balancing', config),
+    updateLoadBalancing: (config) => api.put(`${P}/config/load-balancing`, config),
 
     /**
      * Trigger a full model reconciliation for a single provider.
@@ -60,43 +62,46 @@ export const providersApi = {
      * database and downloads/deletes as needed.
      * @param {string} providerId
      */
-    reconcile: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true`),
-    quickSync: (providerId) => api.post(`/api/providers/${providerId}/reconcile?force=true&quick_sync=true`),
+    reconcile: (providerId) => api.post(`${P}/${providerId}/reconcile?force=true`),
+    quickSync: (providerId) => api.post(`${P}/${providerId}/reconcile?force=true&quick_sync=true`),
 
     /** Clear persisted provider model sync status to force a clean reconciliation pass. */
     resetModelStatus: (providerId) => api.delete(`${API_V2_BASE}/models/providers/${providerId}/reset-status`),
 
     /** Clean orphaned provider state and stale downloading entries. */
-    cleanupState: () => api.post('/api/providers/state/cleanup'),
+    cleanupState: () => api.post(`${P}/state/cleanup`),
 
     /**
      * Scan running containers (tnhcomfy-* naming) and register any that are
      * missing as providers. Also reports containers already known to the
      * backend. Safe to call any time; heartbeats self-register compose workers.
      */
-    detect: () => api.post('/api/providers/detect'),
+    detect: () => api.post(`${P}/detect`),
+
+    /** Ping enabled provider containers to wake them from cold start. */
+    wake: () => api.post(`${P}/wake`),
 
     // -------------------------------------------------------------------------
     // Modal-specific operations
     // -------------------------------------------------------------------------
 
     /** Fetch live metrics directly from the remote provider container. */
-    getLiveMetrics: (providerId) => api.get(`/api/providers/${providerId}/live-metrics`),
+    getLiveMetrics: (providerId) => api.get(`${P}/${providerId}/live-metrics`),
 
     /** Fetch container logs for the provider. */
-    getLogs: (providerId) => api.get(`/api/providers/${providerId}/logs`),
+    getLogs: (providerId) => api.get(`${P}/${providerId}/logs`),
 
     /**
      * Deploy the latest provider app from the backend orchestrator.
      * Beam runs three deploy steps: comfy_gpu, comfy_storage, and comfy_download.
      */
-    deploy: (providerId) => api.post(`/api/providers/${providerId}/deploy`),
+    deploy: (providerId) => api.post(`${P}/${providerId}/deploy`),
 
     /**
      * Run initial Modal setup (create volumes, upload base files, etc.).
      * Only needed once when a Modal provider is first configured.
      */
-    setup: (providerId) => api.post(`/api/providers/${providerId}/setup`),
+    setup: (providerId) => api.post(`${P}/${providerId}/setup`),
 };
 
 export default providersApi;

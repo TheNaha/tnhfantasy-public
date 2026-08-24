@@ -144,7 +144,7 @@ async def _signal_provider_cancellation(*, runtime, provider_id: str, job_id: st
             return False
 
         if runtime.mode == "external_worker":
-            from api.routes.worker_ws import request_worker_job_cancel
+            from infrastructure.worker_registry import request_worker_job_cancel
 
             cancelled = await request_worker_job_cancel(provider_id, job_id)
             if cancelled:
@@ -333,7 +333,7 @@ async def execute_job(
                                 provider_id=current_provider.id,
                             )
                     elif runtime.mode == "external_worker":
-                        from api.routes.worker_ws import dispatch_job_to_worker
+                        from infrastructure.worker_registry import dispatch_job_to_worker
 
                         final_result = await dispatch_job_to_worker(
                             current_provider.id,
@@ -392,8 +392,7 @@ async def execute_job(
 
                 except JobTimeoutError:
                     logger.warning("job_timeout", job_id=job_id, provider=current_provider.id)
-                    if await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout"):
-                        return
+                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout")
                     should_retry, retry_count = await maybe_retry_current_provider(
                         job_service=job_service,
                         job_id=job_id,
@@ -428,8 +427,7 @@ async def execute_job(
                         provider_error_id=error.provider_id,
                         error=str(error),
                     )
-                    if await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "provider_error"):
-                        return
+                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "provider_error")
                     should_retry = False
                     if error.is_retryable:
                         should_retry, retry_count = await maybe_retry_current_provider(
@@ -469,8 +467,7 @@ async def execute_job(
 
                 except asyncio.TimeoutError:
                     logger.error("job_timeout_exceeded", job_id=job_id, timeout=timeout)
-                    if await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout_exceeded"):
-                        return
+                    await _handle_provider_failure(runtime, current_provider.id, job_id, job_service, load_balancer, "timeout_exceeded")
                     await mark_provider_exhausted(
                         load_balancer=load_balancer,
                         exhausted_providers=exhausted_providers,

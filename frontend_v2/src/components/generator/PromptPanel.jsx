@@ -26,7 +26,6 @@ export default function PromptPanel() {
                 toast.success('Prompt enriched!', { icon: '✨' });
             }
         } catch (error) {
-            console.error('Magic prompt error:', error);
             toast.error('Failed to enrich prompt');
         } finally {
             setIsMagicLoading(false);

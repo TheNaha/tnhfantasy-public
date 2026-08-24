@@ -48,6 +48,7 @@ class CharacterUpdateRequest(BaseModel):
     lora: str | None = None
     default_time: str | None = None
     default_location: str | None = None
+    sort_order: int | None = None
 
 
 def _character_to_dict(character: Character) -> dict:
@@ -320,6 +321,35 @@ def delete_character(character_id: str, session: Session = Depends(get_session),
     session.delete(character)
     session.commit()
     return {"message": "Character deleted"}
+
+class CharacterReorderRequest(BaseModel):
+    """Reorder characters by specifying their IDs in the desired order."""
+
+    character_ids: list[str]
+
+@router.post("/reorder")
+def reorder_characters(
+    request: CharacterReorderRequest,
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """Persist a new sort order from a drag-and-drop reorder in the UI."""
+
+    ids = list(dict.fromkeys(request.character_ids))
+    existing = {c.id: c for c in session.exec(select(Character).where(Character.id.in_(ids))).all()}
+    missing = [cid for cid in ids if cid not in existing]
+    if missing:
+        raise NotFoundError("Character", missing[0])
+
+    now = datetime.now(timezone.utc)
+    for index, cid in enumerate(ids):
+        character = existing[cid]
+        character.sort_order = index
+        character.updated_at = now
+        session.add(character)
+
+    session.commit()
+    return {"updated": len(ids)}
 
 @router.post("/{character_id}/avatar")
 async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):

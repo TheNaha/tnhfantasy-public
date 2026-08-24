@@ -6,6 +6,7 @@ client translates its native WebSocket payloads correctly and that the
 standardized failure/retryable semantics are preserved.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -20,6 +21,16 @@ class FakeWebSocket:
         self._messages = list(messages)
         self._block_after = block_after
         self.sent = []
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._messages:
+            return self._messages.pop(0)
+        if self._block_after:
+            await asyncio.sleep(300)
+        raise StopAsyncIteration
 
     async def send(self, payload):
         self.sent.append(json.loads(payload))

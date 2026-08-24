@@ -3,7 +3,7 @@
 
 def test_list_providers_empty(client):
     """Test listing providers when empty."""
-    response = client.get("/api/providers")
+    response = client.get("/api/v2/providers")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, dict)
@@ -12,7 +12,7 @@ def test_list_providers_empty(client):
 
 def test_create_provider(client, sample_provider_data):
     """Test creating a provider."""
-    response = client.post("/api/providers", json=sample_provider_data)
+    response = client.post("/api/v2/providers", json=sample_provider_data)
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == "test-provider"
@@ -25,10 +25,10 @@ def test_create_provider(client, sample_provider_data):
 def test_get_provider(client, sample_provider_data):
     """Test getting a provider."""
     # Create first
-    client.post("/api/providers", json=sample_provider_data)
+    client.post("/api/v2/providers", json=sample_provider_data)
     
     # Get it
-    response = client.get("/api/providers/test-provider")
+    response = client.get("/api/v2/providers/test-provider")
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == "test-provider"
@@ -36,17 +36,17 @@ def test_get_provider(client, sample_provider_data):
 
 def test_get_provider_not_found(client):
     """Test getting non-existent provider."""
-    response = client.get("/api/providers/nonexistent")
+    response = client.get("/api/v2/providers/nonexistent")
     assert response.status_code == 404
 
 
 def test_update_provider(client, sample_provider_data):
     """Test updating a provider."""
     # Create first
-    client.post("/api/providers", json=sample_provider_data)
+    client.post("/api/v2/providers", json=sample_provider_data)
     
     # Update
-    response = client.put("/api/providers/test-provider", json={"enabled": False})
+    response = client.put("/api/v2/providers/test-provider", json={"enabled": False})
     assert response.status_code == 200
     data = response.json()
     assert data["enabled"] == False
@@ -55,21 +55,21 @@ def test_update_provider(client, sample_provider_data):
 def test_delete_provider(client, sample_provider_data):
     """Test deleting a provider."""
     # Create first
-    client.post("/api/providers", json=sample_provider_data)
+    client.post("/api/v2/providers", json=sample_provider_data)
     
     # Delete
-    response = client.delete("/api/providers/test-provider")
+    response = client.delete("/api/v2/providers/test-provider")
     assert response.status_code == 200
     
     # Verify gone
-    get_response = client.get("/api/providers/test-provider")
+    get_response = client.get("/api/v2/providers/test-provider")
     assert get_response.status_code == 404
 
 
 def test_load_balancing_config(client):
     """Test load balancing config endpoints."""
     # Get default config
-    response = client.get("/api/providers/config/load-balancing")
+    response = client.get("/api/v2/providers/config/load-balancing")
     assert response.status_code == 200
     data = response.json()
     assert "config" in data
@@ -77,7 +77,7 @@ def test_load_balancing_config(client):
     
     # Update config
     update_response = client.put(
-        "/api/providers/config/load-balancing",
+        "/api/v2/providers/config/load-balancing",
         json={"strategy": "random"}
     )
     assert update_response.status_code == 200

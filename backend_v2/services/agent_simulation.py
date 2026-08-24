@@ -31,14 +31,19 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
     """Scan chats with idle simulation enabled and spawn an LLM reply job for
     those that have been dormant long enough and have no work in flight.
 
-    Runs off the event loop where needed (context build is CPU-bound) and
-    opens its own session, so it is safe to call from the scheduler.
+    Always registered in the scheduler; checks config at runtime so the
+    toggle takes effect without a backend restart.
 
     Returns the number of jobs spawned.
     """
     import asyncio
 
-    from api.deps import get_session_context
+    from config import get_config
+    idle_sim_enabled = bool(get_config().get("ai", {}).get("idleSimEnabled", False))
+    if not idle_sim_enabled:
+        return 0
+
+    from infrastructure.deps import get_session_context
     from services.context_builder import build_chat_context_async
     from services.job_queue import queue_manager
     from services.job_service import JobService

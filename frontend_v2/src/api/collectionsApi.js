@@ -2,7 +2,7 @@
 
 import api from './client';
 
-const API_BASE = '/api/collections';
+const API_BASE = '/api/v2/collections';
 
 /**
  * List all collections with image counts

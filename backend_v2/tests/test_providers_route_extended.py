@@ -18,145 +18,145 @@ def sample_provider_payload():
 
 class TestProvidersRouteCreate:
     def test_create_provider(self, client, sample_provider_payload):
-        response = client.post("/api/providers", json=sample_provider_payload)
+        response = client.post("/api/v2/providers", json=sample_provider_payload)
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == sample_provider_payload["id"]
 
     def test_list_providers_empty(self, client):
-        response = client.get("/api/providers")
+        response = client.get("/api/v2/providers")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, dict)
         assert data["providers"] == []
 
     def test_list_providers_after_create(self, client, sample_provider_payload):
-        client.post("/api/providers", json=sample_provider_payload)
-        response = client.get("/api/providers")
+        client.post("/api/v2/providers", json=sample_provider_payload)
+        response = client.get("/api/v2/providers")
         assert response.status_code == 200
         payload = response.json()
         assert len(payload["providers"]) >= 1
 
     def test_get_provider_by_id(self, client, sample_provider_payload):
-        client.post("/api/providers", json=sample_provider_payload)
-        response = client.get(f"/api/providers/{sample_provider_payload['id']}")
+        client.post("/api/v2/providers", json=sample_provider_payload)
+        response = client.get(f"/api/v2/providers/{sample_provider_payload['id']}")
         assert response.status_code == 200
         assert response.json()["id"] == sample_provider_payload["id"]
 
     def test_get_nonexistent_provider(self, client):
-        response = client.get("/api/providers/nonexistent-provider")
+        response = client.get("/api/v2/providers/nonexistent-provider")
         assert response.status_code == 404
 
 
 class TestProvidersRouteUpdate:
     def test_update_provider(self, client, sample_provider_payload):
-        client.post("/api/providers", json=sample_provider_payload)
+        client.post("/api/v2/providers", json=sample_provider_payload)
         response = client.put(
-            f"/api/providers/{sample_provider_payload['id']}",
+            f"/api/v2/providers/{sample_provider_payload['id']}",
             json={"enabled": False}
         )
         assert response.status_code == 200
 
     def test_patch_provider(self, client, sample_provider_payload):
-        client.post("/api/providers", json=sample_provider_payload)
+        client.post("/api/v2/providers", json=sample_provider_payload)
         response = client.patch(
-            f"/api/providers/{sample_provider_payload['id']}",
+            f"/api/v2/providers/{sample_provider_payload['id']}",
             json={"priority": 5}
         )
         assert response.status_code in (200, 405)
 
     def test_delete_provider(self, client, sample_provider_payload):
-        client.post("/api/providers", json=sample_provider_payload)
-        response = client.delete(f"/api/providers/{sample_provider_payload['id']}")
+        client.post("/api/v2/providers", json=sample_provider_payload)
+        response = client.delete(f"/api/v2/providers/{sample_provider_payload['id']}")
         assert response.status_code == 200
 
 
 class TestProvidersRouteModelCache:
     def test_get_model_cache_empty(self, client):
-        response = client.get("/api/providers/model-cache")
+        response = client.get("/api/v2/providers/model-cache")
         assert response.status_code == 200
 
     def test_get_model_cache_by_directory(self, client):
-        response = client.get("/api/providers/model-cache/checkpoints")
+        response = client.get("/api/v2/providers/model-cache/checkpoints")
         assert response.status_code == 200
 
 
 class TestProvidersRouteLoadBalancing:
     def test_get_load_balancing_config(self, client):
-        response = client.get("/api/providers/config/load-balancing")
+        response = client.get("/api/v2/providers/config/load-balancing")
         assert response.status_code == 200
 
     def test_update_load_balancing_config(self, client):
         response = client.put(
-            "/api/providers/config/load-balancing",
+            "/api/v2/providers/config/load-balancing",
             json={"strategy": "round-robin"}
         )
         assert response.status_code in (200, 422)
 
     def test_get_load_balancing_legacy(self, client):
-        response = client.get("/api/providers/load-balancing")
+        response = client.get("/api/v2/providers/load-balancing")
         assert response.status_code == 200
 
     def test_put_load_balancing_legacy(self, client):
         response = client.put(
-            "/api/providers/load-balancing",
+            "/api/v2/providers/load-balancing",
             json={"strategy": "least-loaded"}
         )
         assert response.status_code in (200, 422)
 
     def test_get_load_balancer_stats(self, client):
-        response = client.get("/api/providers/load-balancer/stats")
+        response = client.get("/api/v2/providers/load-balancer/stats")
         assert response.status_code == 200
 
 
 class TestProvidersRouteContainers:
     def test_list_containers_no_manager(self, client):
-        response = client.get("/api/providers/containers/list")
+        response = client.get("/api/v2/providers/containers/list")
         assert response.status_code in (200, 500)
 
     def test_container_status_no_manager(self, client):
-        response = client.get("/api/providers/containers/status")
+        response = client.get("/api/v2/providers/containers/status")
         assert response.status_code in (200, 500)
 
 
 class TestProvidersRouteWake:
     def test_wake_no_providers(self, client):
-        response = client.post("/api/providers/wake")
+        response = client.post("/api/v2/providers/wake")
         assert response.status_code in (200, 422)
 
 
 class TestProvidersRouteCleanup:
     def test_cleanup_orphaned_statuses(self, client):
-        response = client.post("/api/providers/cleanup-orphaned-statuses")
+        response = client.post("/api/v2/providers/cleanup-orphaned-statuses")
         assert response.status_code in (200, 422)
 
     def test_cleanup_provider_state_alias(self, client):
-        response = client.post("/api/providers/state/cleanup")
+        response = client.post("/api/v2/providers/state/cleanup")
         assert response.status_code in (200, 422)
 
 
 class TestProvidersRouteReconcile:
     @pytest.fixture(autouse=True)
     def setup_provider(self, client):
-        client.post("/api/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
+        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
 
     def test_reconcile_provider_not_found(self, client):
-        response = client.post("/api/providers/nonexistent/reconcile")
+        response = client.post("/api/v2/providers/nonexistent/reconcile")
         assert response.status_code in (404, 500, 200)
 
     def test_reconciliation_status_not_found(self, client):
-        response = client.get("/api/providers/nonexistent/reconciliation-status")
+        response = client.get("/api/v2/providers/nonexistent/reconciliation-status")
         assert response.status_code in (404, 200)
 
     def test_reconciliation_event_not_found(self, client):
         response = client.post(
-            "/api/providers/nonexistent/reconciliation-event",
+            "/api/v2/providers/nonexistent/reconciliation-event",
             json={"event_type": "test"}
         )
         assert response.status_code in (404, 200, 422)
 
     def test_reconcile_provider_conflict_when_already_running(self, client):
-        client.post("/api/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
+        client.post("/api/v2/providers", json={"id": "test-provider", "type": "beam", "label": "Test"})
         
         from api.deps import get_provider_lifecycle_service
         from api.main import app
@@ -172,7 +172,7 @@ class TestProvidersRouteReconcile:
         app.dependency_overrides[get_provider_lifecycle_service] = lambda: lifecycle
 
         try:
-            response = client.post("/api/providers/test-provider/reconcile")
+            response = client.post("/api/v2/providers/test-provider/reconcile")
         finally:
             del app.dependency_overrides[get_provider_lifecycle_service]
 
@@ -186,7 +186,7 @@ class TestProvidersRouteReconcile:
 
         with patch("api.routes.providers.reconciliation.get_provider_service", return_value=mock_service):
             response = client.post(
-                "/api/providers/test-provider/reconciliation-event",
+                "/api/v2/providers/test-provider/reconciliation-event",
                 json={"status": "reconciling", "phase": "downloading", "stats": {}},
             )
 
@@ -204,7 +204,7 @@ class TestProvidersRouteReconcile:
         with patch("api.routes.providers.reconciliation.get_provider_service", return_value=mock_service), \
              patch("api.routes.providers.reconciliation.emit_provider_stats", new=AsyncMock()) as emit_stats:
             response = client.post(
-                "/api/providers/test-provider/reconciliation-event",
+                "/api/v2/providers/test-provider/reconciliation-event",
                 json={
                     "status": "reconciling",
                     "phase": "downloading",
@@ -226,7 +226,7 @@ class TestProvidersRouteReconcile:
         app.dependency_overrides[get_provider_service] = lambda session=None: mock_service
         try:
             response = client.post(
-                "/api/providers/test-provider/reconciliation-event",
+                "/api/v2/providers/test-provider/reconciliation-event",
                 json={
                     "status": "reconciling",
                     "phase": "validating",
@@ -250,11 +250,11 @@ class TestProvidersRouteReconcile:
             "credentials": {},
             "config": {},
         }
-        create_response = client.post("/api/providers", json=payload)
+        create_response = client.post("/api/v2/providers", json=payload)
         assert create_response.status_code == 200
 
         first_event = client.post(
-            f"/api/providers/{provider_id}/reconciliation-event",
+            f"/api/v2/providers/{provider_id}/reconciliation-event",
             json={
                 "status": "reconciling",
                 "phase": "downloading",
@@ -266,12 +266,12 @@ class TestProvidersRouteReconcile:
         )
         assert first_event.status_code == 200
 
-        first_card = client.get(f"/api/providers/{provider_id}/status-card")
+        first_card = client.get(f"/api/v2/providers/{provider_id}/status-card")
         assert first_card.status_code == 200
         assert first_card.json()["storage"]["total"] == 6
 
         second_event = client.post(
-            f"/api/providers/{provider_id}/reconciliation-event",
+            f"/api/v2/providers/{provider_id}/reconciliation-event",
             json={
                 "status": "reconciling",
                 "phase": "validating",
@@ -279,12 +279,12 @@ class TestProvidersRouteReconcile:
         )
         assert second_event.status_code == 200
 
-        second_card = client.get(f"/api/providers/{provider_id}/status-card")
+        second_card = client.get(f"/api/v2/providers/{provider_id}/status-card")
         assert second_card.status_code == 200
         assert second_card.json()["storage"]["total"] == 6
 
     def test_deploy_provider_not_found(self, client):
-        response = client.post("/api/providers/nonexistent/deploy")
+        response = client.post("/api/v2/providers/nonexistent/deploy")
         assert response.status_code in (404, 500, 200)
 
     def test_deploy_returns_conflict_when_already_running(self, client):
@@ -299,7 +299,7 @@ class TestProvidersRouteReconcile:
         
         client.app.dependency_overrides[get_provider_service] = lambda: mock_service
 
-        response = client.post("/api/providers/test-provider/deploy")
+        response = client.post("/api/v2/providers/test-provider/deploy")
 
         assert response.status_code == 400
         del client.app.dependency_overrides[get_provider_service]
@@ -313,10 +313,10 @@ class TestProvidersRouteReconcile:
             "credentials": {},
             "config": {},
         }
-        create_response = client.post("/api/providers", json=payload)
+        create_response = client.post("/api/v2/providers", json=payload)
         assert create_response.status_code == 200
 
-        response = client.get("/api/providers/deploy-status-provider/deploy-status")
+        response = client.get("/api/v2/providers/deploy-status-provider/deploy-status")
         assert response.status_code == 200
         data = response.json()
         assert data.get("status") in {"idle", "deploying", "failed", "succeeded"}
@@ -330,7 +330,7 @@ class TestProvidersRouteReconcile:
             "credentials": {},
             "config": {},
         }
-        create_response = client.post("/api/providers", json=payload)
+        create_response = client.post("/api/v2/providers", json=payload)
         assert create_response.status_code == 200
 
         sync_payload = {
@@ -358,7 +358,7 @@ class TestProvidersRouteReconcile:
                  "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
                  new=AsyncMock(return_value=storage_payload),
              ):
-            response = client.get("/api/providers/status-card-provider/status-card")
+            response = client.get("/api/v2/providers/status-card-provider/status-card")
 
         assert response.status_code == 200
         data = response.json()
@@ -380,7 +380,7 @@ class TestProvidersRouteReconcile:
                 "credentials": {},
                 "config": {},
             }
-            create_response = client.post("/api/providers", json=payload)
+            create_response = client.post("/api/v2/providers", json=payload)
             assert create_response.status_code == 200
 
         sync_payload = {
@@ -408,7 +408,7 @@ class TestProvidersRouteReconcile:
                  "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
                  new=AsyncMock(return_value=storage_payload),
              ):
-            response = client.get("/api/providers/status-cards")
+            response = client.get("/api/v2/providers/status-cards")
 
         assert response.status_code == 200
         data = response.json()
@@ -424,7 +424,7 @@ class TestProvidersRouteReconcile:
 
     def test_setup_provider_not_found(self, client):
         response = client.post(
-            "/api/providers/nonexistent/setup",
+            "/api/v2/providers/nonexistent/setup",
             json={"step": "init"}
         )
         assert response.status_code in (404, 500, 200, 422)

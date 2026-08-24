@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from sqlalchemy import or_
+from sqlalchemy import or_, func, delete
 
 from api.deps import get_job_service, get_session, get_queue_manager, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
 from infrastructure.repositories.chat_repo import ChatRepository
@@ -20,6 +20,10 @@ from services.job_queue import QueueManager
 from services.llm_workflow import build_chat_llm_workflow
 
 MAX_CONTEXT_MESSAGES = 200
+# Hard cap for endpoints that stream an entire chat history into memory
+# (rollback, regenerate, swipe). Bounds RAM on multi-year single-user campaigns
+# without affecting normal context-window behavior.
+CHAT_HISTORY_HARD_CAP = 5000
 
 router = APIRouter()
 
@@ -627,8 +631,9 @@ async def generate_swipe(
         raise ValidationError("Only character messages can generate swipes")
 
     all_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(CHAT_HISTORY_HARD_CAP)
     ).all()
+    all_messages.reverse()
     
     target_index = next((i for i, m in enumerate(all_messages) if m.id == target_msg.id), -1)
     if target_index < 0:
@@ -737,6 +742,7 @@ def rollback_chat(
     req: RollbackRequest,
     session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), ):
     """Delete the target message and everything after it (undo mistakes)."""
+    from sqlalchemy import delete
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -745,15 +751,20 @@ def rollback_chat(
     if not anchor or anchor.chat_id != chat_id:
         raise NotFoundError("Message", req.message_id)
 
-    all_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
-    ).all()
-
-    to_delete = [m for m in all_messages if m.created_at >= anchor.created_at]
-    for m in to_delete:
-        session.delete(m)
+    # Delete at the SQL level — never loads the full chat history into Python.
+    result = session.execute(
+        delete(Message).where(
+            Message.chat_id == chat_id,
+            Message.created_at >= anchor.created_at,
+        )
+    )
+    deleted = result.rowcount
     session.commit()
-    return {"deleted": len(to_delete), "kept": len(all_messages) - len(to_delete)}
+
+    kept = session.exec(
+        select(func.count(Message.id)).where(Message.chat_id == chat_id)
+    ).one()
+    return {"deleted": deleted, "kept": kept}
 
 @router.post("/{chat_id}/regenerate")
 async def regenerate_reply(
@@ -772,28 +783,30 @@ async def regenerate_reply(
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
-    all_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
-    ).all()
-
     anchor = None
     if req.message_id:
         anchor = session.get(Message, req.message_id)
         if not anchor or anchor.chat_id != chat_id:
             raise NotFoundError("Message", req.message_id)
     else:
-        for m in reversed(all_messages):
-            if m.role == MessageRole.USER:
-                anchor = m
-                break
+        # Find the most recent user message without scanning full history.
+        anchor = session.exec(
+            select(Message)
+            .where(Message.chat_id == chat_id, Message.role == MessageRole.USER)
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        ).first()
 
     if not anchor:
         raise ValidationError("No user message to regenerate")
 
-    anchor_index = next(i for i, m in enumerate(all_messages) if m.id == anchor.id)
-    trailing = all_messages[anchor_index + 1:]
-    for m in trailing:
-        session.delete(m)
+    # Delete trailing messages at the SQL level.
+    session.execute(
+        delete(Message).where(
+            Message.chat_id == chat_id,
+            Message.created_at > anchor.created_at,
+        )
+    )
 
     # Mirror the previous chat_reply job's agentic settings if available.
     prev_agentic = False
@@ -813,7 +826,14 @@ async def regenerate_reply(
             prev_checkpoint = meta.get("generator_checkpoint")
             break
 
-    remaining = [m for m in all_messages[: anchor_index + 1]]
+    # Load only the recent context window (context builder caps to MAX_CONTEXT_MESSAGES).
+    recent = session.exec(
+        select(Message)
+        .where(Message.chat_id == chat_id, Message.created_at <= anchor.created_at)
+        .order_by(Message.created_at.desc())
+        .limit(CHAT_HISTORY_HARD_CAP)
+    ).all()
+    remaining = list(reversed(recent))
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
     ctx_kwargs = chat_context_kwargs(
@@ -860,7 +880,7 @@ async def regenerate_reply(
         session.rollback()
         raise ComfyError(str(e))
 
-    return {"job_id": job.id, "removed_messages": len(trailing)}
+    return {"job_id": job.id, "removed_messages": deleted}
 
 class ImpersonateRequest(BaseModel):
     hint: str = ""  # Optional direction for the impersonation

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api';
+import { settingsApi } from '../api/settingsApi';
 
 const DEFAULT_BRANDING = {
     appName: 'TNH-Comfy',
@@ -11,7 +11,7 @@ export function useBranding() {
     return useQuery({
         queryKey: ['branding'],
         queryFn: async () => {
-            const branding = await api.get('/api/settings/branding');
+            const branding = await settingsApi.getBranding();
             return {
                 appName: branding?.appName || DEFAULT_BRANDING.appName,
                 logoUrl: branding?.logoUrl || DEFAULT_BRANDING.logoUrl,
@@ -32,7 +32,7 @@ export function useSaveBranding() {
                 logoUrl: branding?.logoUrl || DEFAULT_BRANDING.logoUrl,
                 faviconUrl: branding?.faviconUrl || DEFAULT_BRANDING.faviconUrl,
             };
-            await api.post('/api/settings/branding', payload);
+            await settingsApi.updateBranding(payload);
             return payload;
         },
         onSuccess: (data) => {

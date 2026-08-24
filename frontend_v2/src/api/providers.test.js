@@ -14,6 +14,7 @@ vi.mock('./client', () => ({
         patch: patchMock,
         delete: deleteMock,
     },
+    API_V2_BASE: '/api/v2',
 }));
 
 import providersApi from './providers';
@@ -30,14 +31,14 @@ describe('providersApi load balancer aliases', () => {
     it('uses the canonical config endpoint for getLoadBalancing', () => {
         providersApi.getLoadBalancing();
 
-        expect(getMock).toHaveBeenCalledWith('/api/providers/config/load-balancing');
+        expect(getMock).toHaveBeenCalledWith('/api/v2/providers/config/load-balancing');
     });
 
     it('uses the canonical config endpoint for updateLoadBalancing', () => {
         const payload = { strategy: 'least-connections' };
         providersApi.updateLoadBalancing(payload);
 
-        expect(putMock).toHaveBeenCalledWith('/api/providers/config/load-balancing', payload);
+        expect(putMock).toHaveBeenCalledWith('/api/v2/providers/config/load-balancing', payload);
     });
 
 });

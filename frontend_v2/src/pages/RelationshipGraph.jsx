@@ -175,9 +175,13 @@ export default function RelationshipGraph() {
     }), []);
 
     const handleNodeClick = useMemo(() => (node) => {
-        const route = nodeRouteMap[node.type];
-        if (route && navigate) {
-            navigate(route);
+        if (!navigate) return;
+        const base = nodeRouteMap[node.type];
+        if (!base) return;
+        if (node.type === 'story' || node.type === 'chat') {
+            navigate(`${base}/${node.id}`);
+        } else {
+            navigate(base);
         }
     }, [navigate, nodeRouteMap]);
 

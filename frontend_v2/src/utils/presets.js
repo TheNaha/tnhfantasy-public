@@ -17,25 +17,25 @@ export const PRESET_WORKFLOWS = {
         id: 'node_prompt_pos',
         type: 'comfy',
         position: { x: 100, y: 350 },
-        data: { nodeType: 'CLIPTextEncode', widgets: {} }
+        data: { nodeType: 'CLIPTextEncode', widgets: { text: '' } }
       },
       {
         id: 'node_prompt_neg',
         type: 'comfy',
         position: { x: 100, y: 550 },
-        data: { nodeType: 'CLIPTextEncode', widgets: {} }
+        data: { nodeType: 'CLIPTextEncode', widgets: { text: '' } }
       },
       {
         id: 'node_empty_latent',
         type: 'comfy',
         position: { x: 100, y: 750 },
-        data: { nodeType: 'EmptyLatentImage', widgets: {} }
+        data: { nodeType: 'EmptyLatentImage', widgets: { width: 1024, height: 1024, batch_size: 1 } }
       },
       {
         id: 'node_sampler',
         type: 'comfy',
         position: { x: 500, y: 300 },
-        data: { nodeType: 'KSampler', widgets: {} }
+        data: { nodeType: 'KSampler', widgets: { seed: 0, steps: 20, cfg: 7.0, sampler_name: 'euler', scheduler: 'normal', denoise: 1.0 } }
       },
       {
         id: 'node_decode',
@@ -47,7 +47,7 @@ export const PRESET_WORKFLOWS = {
         id: 'node_save',
         type: 'comfy',
         position: { x: 1200, y: 300 },
-        data: { nodeType: 'SaveImage', widgets: {} }
+        data: { nodeType: 'SaveImage', widgets: { filename_prefix: 'ComfyUI' } }
       }
     ],
     edges: [

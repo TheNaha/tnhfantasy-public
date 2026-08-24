@@ -1,9 +1,25 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain } from 'lucide-react';
+import {
+    DndContext,
+    PointerSensor,
+    KeyboardSensor,
+    useSensor,
+    useSensors,
+    closestCenter,
+} from '@dnd-kit/core';
+import {
+    SortableContext,
+    rectSortingStrategy,
+    useSortable,
+    sortableKeyboardCoordinates,
+    arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
@@ -176,7 +192,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                 try {
                     await uploadAvatarMutation.mutateAsync({ characterId: savedCharId, file: form._avatarFile });
                 } catch {
-                    console.error("Avatar upload failed after creation");
+                    toast.error("Avatar upload failed after creation");
                 }
             }
             
@@ -310,15 +326,12 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                     }));
                     toast.success('Profile Enriched!');
                 } catch (e) {
-                    console.error("JSON parse failed:", e);
                     toast.error('Failed to parse AI output');
                 }
             } else {
-                console.error("No JSON block found in output");
                 toast.error('Failed to find JSON in AI output');
             }
         } catch (e) {
-            console.error("Enrich profile error:", e);
             toast.dismiss(tId);
             toast.error('Failed to enrich profile');
         }
@@ -637,12 +650,39 @@ function CharacterCard({ character, onEdit, onDelete, onChat }) {
     const { data: collection } = useCharacterCollection(character.id);
     const imageCount = collection?.image_count || 0;
 
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({ id: character.id });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 50 : undefined,
+    };
+
     return (
         <motion.div
+            ref={setNodeRef}
+            style={style}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-xl border border-white/5 p-4 hover:border-blue-500/30 transition-all group"
+            className={`glass-panel rounded-xl border p-4 transition-all group relative ${isDragging ? 'border-blue-500/60 shadow-lg shadow-blue-500/10' : 'border-white/5 hover:border-blue-500/30'}`}
         >
+            <button
+                type="button"
+                className="absolute -top-1.5 -right-1.5 z-10 p-1 rounded-full bg-gray-800 border border-white/10 text-gray-500 opacity-0 group-hover:opacity-100 hover:text-white hover:bg-gray-700 transition-all cursor-grab active:cursor-grabbing"
+                aria-label={`Reorder ${character.name}`}
+                {...attributes}
+                {...listeners}
+            >
+                <GripVertical size={13} />
+            </button>
             <div className="flex items-start gap-3">
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden">
                     {character.has_avatar ? (
@@ -714,6 +754,28 @@ export default function Characters() {
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
+    const reorderCharacters = useReorderCharacters();
+
+    const sensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    );
+
+    const characterIndex = useMemo(() => {
+        const m = new Map();
+        characters.forEach((c, i) => m.set(c.id, i));
+        return m;
+    }, [characters]);
+
+    const handleDragEnd = useCallback((event) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+        const oldIndex = characterIndex.get(String(active.id));
+        const newIndex = characterIndex.get(String(over.id));
+        if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+        const reordered = arrayMove(characters, oldIndex, newIndex);
+        reorderCharacters.mutate(reordered.map(c => c.id));
+    }, [characterIndex, characters, reorderCharacters]);
 
     // Handle URL hash deep-link: /characters#char-{id}
     const deepLinkCharRef = useRef(null);
@@ -877,17 +939,28 @@ export default function Characters() {
                         />
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {filteredCharacters.map(character => (
-                            <CharacterCard
-                                key={character.id}
-                                character={character}
-                                onEdit={openEdit}
-                                onDelete={handleDelete}
-                                onChat={handleStartChat}
-                            />
-                        ))}
-                    </div>
+                    <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
+                    >
+                        <SortableContext
+                            items={filteredCharacters.map(c => c.id)}
+                            strategy={rectSortingStrategy}
+                        >
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                {filteredCharacters.map(character => (
+                                    <CharacterCard
+                                        key={character.id}
+                                        character={character}
+                                        onEdit={openEdit}
+                                        onDelete={handleDelete}
+                                        onChat={handleStartChat}
+                                    />
+                                ))}
+                            </div>
+                        </SortableContext>
+                    </DndContext>
                 )}
             </div>
 

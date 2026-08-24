@@ -121,6 +121,6 @@ describe('useCharacters', () => {
         const { wrapper } = createWrapper();
         const { result } = renderHook(() => useCharacterCollection('ch1'), { wrapper });
         await waitFor(() => expect(result.current.data).toEqual({ id: 'col1' }));
-        expect(apiMock.get).toHaveBeenCalledWith('/api/collections/by-character/ch1');
+        expect(apiMock.get).toHaveBeenCalledWith('/api/v2/collections/by-character/ch1');
     });
 });

@@ -60,7 +60,7 @@ def _make_job(session, chat_id, *, status=JobStatus.PENDING):
 
 def _install_tick_mocks(monkeypatch, session, context_result=("", [])):
     """Point the tick's locally-imported dependencies at the test session."""
-    from api import deps as api_deps
+    from infrastructure import deps as infrastructure_deps
     from services import context_builder as cb
     from services import job_queue as jq
 
@@ -71,9 +71,17 @@ def _install_tick_mocks(monkeypatch, session, context_result=("", [])):
     async def fake_build_context(messages, **kwargs):
         return context_result
 
-    monkeypatch.setattr(api_deps, "get_session_context", fake_session_context)
+    monkeypatch.setattr(infrastructure_deps, "get_session_context", fake_session_context)
     monkeypatch.setattr(cb, "build_chat_context_async", fake_build_context)
     monkeypatch.setattr(jq.queue_manager, "enqueue", AsyncMock())
+
+    import config as app_config
+    original_config = app_config.get_config
+    monkeypatch.setattr(app_config, "get_config", lambda: {
+        **original_config(),
+        "ai": {**original_config().get("ai", {}), "idleSimEnabled": True},
+    })
+
     return jq.queue_manager.enqueue
 
 

@@ -53,7 +53,7 @@ function extractErrorMessage(payload) {
         for (const key of directKeys) {
             const message = extractErrorMessage(payload[key]);
             if (message) {
-                return message;
+                return payload.code ? `${message} (${payload.code})` : message;
             }
         }
     }

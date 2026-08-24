@@ -26,6 +26,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
 
     const meta = msg.message_metadata || {};
     const isNarrator = msg.kind === 'narrator' || meta.source === 'narrator';
+    const isIdleSim = meta.source === 'idle_simulation' || meta.idle_simulation === true;
     const alternates = meta.alternates || null;
     const activeIndex = meta.active_index ?? 0;
     const altCount = alternates ? alternates.length : 0;
@@ -96,6 +97,9 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                     )}
                     {msg.kind === 'tool' && (
                         <span className="ml-1.5 text-purple-400/80">· 🔧 Tool</span>
+                    )}
+                    {isIdleSim && (
+                        <span className="ml-1.5 text-amber-400/80">· 💤 Idle sim</span>
                     )}
                 </div>
                 {editing ? (

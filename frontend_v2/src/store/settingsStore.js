@@ -53,6 +53,8 @@ const DEFAULT_SETTINGS = {
         maxContextTokens: 4096,
         ttsEnabled: false,
         ragEnabled: true,
+        idleSimEnabled: false,
+        idleSimIntervalSeconds: 600,
         // Character enrichment prompts (consumed by Characters page):
         charGenDescriptionPrompt: 'You are an expert character creator. Expand the provided character details into a rich, detailed background description. Return ONLY the text for the description, no markdown or extra chat.',
         charGenPersonalityPrompt: 'You are an expert character creator. Expand the provided character details into a detailed personality profile covering traits, quirks, and mannerisms. Return ONLY the text, no markdown.',

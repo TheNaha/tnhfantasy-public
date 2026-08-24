@@ -370,8 +370,8 @@ async def test_process_job_timeout_signals_external_worker_cancel(session: Sessi
 
     monkeypatch.setattr("api.main.get_session_context", _async_session_override(session))
     monkeypatch.setattr("api.main.get_job_max_retries", lambda task_type="image": 0)
-    monkeypatch.setattr("api.routes.worker_ws.dispatch_job_to_worker", fake_dispatch_job_to_worker)
-    monkeypatch.setattr("api.routes.worker_ws.request_worker_job_cancel", request_cancel)
+    monkeypatch.setattr("infrastructure.worker_registry.dispatch_job_to_worker", fake_dispatch_job_to_worker)
+    monkeypatch.setattr("infrastructure.worker_registry.request_worker_job_cancel", request_cancel)
     monkeypatch.setattr(
         "services.job_runner.resolve_provider_runtime",
         lambda provider: SimpleNamespace(mode="external_worker", connected=True, worker_url=None),

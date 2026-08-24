@@ -98,7 +98,7 @@ export default function RuntimeTab({
         setPingLatency(null);
         const start = Date.now();
         try {
-            const res = await fetch(`/api/providers/${provider.id}/ping`, { method: 'POST' });
+            const res = await fetch(`/api/v2/providers/${provider.id}/ping`, { method: 'POST' });
             const data = await res.json();
             if (res.ok && data?.healthy) {
                 const latency = data.latency_ms ?? Date.now() - start;

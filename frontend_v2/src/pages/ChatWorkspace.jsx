@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import clsx from 'clsx';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, Activity, Settings, ImageIcon, X, GitBranch, Volume2 } from 'lucide-react';
-import { api } from '../api';
+import { settingsApi, TTS_ENABLE_PAYLOAD } from '../api/settingsApi';
 import { useUpdateSettings } from '../store/settingsStore';
 import SceneGallery from '../components/SceneGallery';
 import BottomTabBar from '../components/BottomTabBar';
@@ -35,7 +35,7 @@ function ChatWorkspaceLayout() {
     const [ttsBannerDismissed, setTtsBannerDismissed] = useState(false);
 
     const enableTtsMutation = useMutation({
-        mutationFn: () => api.put('/api/settings', { ai: { ttsEnabled: true } }),
+        mutationFn: () => settingsApi.update(TTS_ENABLE_PAYLOAD),
         onError: () => {
             // Store update still stands; backend sync failure is non-fatal.
         }

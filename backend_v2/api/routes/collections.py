@@ -5,14 +5,14 @@
 # PNG files live in the output directory and are referenced by filename.
 #
 # KEY ENDPOINTS:
-#   GET    /api/collections                      – List all collections with image counts
-#   POST   /api/collections                      – Create a collection
-#   GET    /api/collections/{id}                 – Get collection (optionally with images)
-#   PUT    /api/collections/{id}                 – Update collection name/color/description
-#   DELETE /api/collections/{id}                 – Delete collection (images NOT deleted)
-#   POST   /api/collections/{id}/images          – Add images to collection
-#   DELETE /api/collections/{id}/images          – Remove images from collection
-#   POST   /api/collections/import               – Bulk import (for localStorage migration)
+#   GET    /api/v2/collections                      – List all collections with image counts
+#   POST   /api/v2/collections                      – Create a collection
+#   GET    /api/v2/collections/{id}                 – Get collection (optionally with images)
+#   PUT    /api/v2/collections/{id}                 – Update collection name/color/description
+#   DELETE /api/v2/collections/{id}                 – Delete collection (images NOT deleted)
+#   POST   /api/v2/collections/{id}/images          – Add images to collection
+#   DELETE /api/v2/collections/{id}/images          – Remove images from collection
+#   POST   /api/v2/collections/import               – Bulk import (for localStorage migration)
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -24,7 +24,7 @@ from core.entities import Collection, CollectionImage
 from core.exceptions import NotFoundError
 from infrastructure.repositories.collection_repo import CollectionRepository
 
-router = APIRouter(prefix="/api/collections", tags=["collections"])
+router = APIRouter(prefix="/api/v2/collections", tags=["collections"])
 
 
 # Request/Response models

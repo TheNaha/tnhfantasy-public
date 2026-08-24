@@ -25,7 +25,7 @@ class ProviderRuntimeTarget:
 
 def resolve_provider_runtime(provider) -> ProviderRuntimeTarget:
     """Resolve the canonical runtime target for a provider."""
-    from api.routes.worker_ws import is_worker_connected
+    from infrastructure.worker_registry import is_worker_connected
 
     container_config = getattr(provider, "container_config", None) or {}
     provider_id = provider.id

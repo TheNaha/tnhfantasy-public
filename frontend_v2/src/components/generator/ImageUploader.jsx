@@ -68,7 +68,7 @@ export default function ImageUploader({
             }
 
         } catch (error) {
-            console.error('Upload failed:', error);
+            toast.error('Upload failed');
             toast.error('Failed to upload image: ' + (error.message || 'Unknown error'));
         } finally {
             setUploading(false);

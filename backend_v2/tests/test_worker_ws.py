@@ -8,16 +8,18 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 from api.routes.worker_ws import (
-    ConnectedWorker,
-    connected_workers,
     dispatch_job_to_worker,
     is_worker_connected,
-    pending_job_futures,
     request_worker_job_cancel,
     worker_websocket,
 )
 from core.entities import JobStatus
 from core.exceptions import NotFoundError
+from infrastructure.worker_registry import (
+    ConnectedWorker,
+    connected_workers,
+    pending_job_futures,
+)
 from services.provider_client import ProviderCallError
 
 

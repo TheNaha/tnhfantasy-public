@@ -15,6 +15,16 @@ class FakeWebSocket:
         self._block_after = block_after
         self.sent = []
 
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._messages:
+            return self._messages.pop(0)
+        if self._block_after:
+            await asyncio.sleep(300)
+        raise StopAsyncIteration
+
     async def send(self, payload):
         self.sent.append(json.loads(payload))
 

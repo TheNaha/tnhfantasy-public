@@ -92,7 +92,6 @@ export default function Dashboard() {
             await cancelJobWs(jobId);
             queryClient.setQueryData(['jobs', 'active'], (old = []) => old.filter(j => j.id !== jobId));
         } catch (error) {
-            console.error('Failed to cancel job:', error);
             toast.error('Failed to cancel job');
         }
     }, [queryClient]);
@@ -126,7 +125,7 @@ export default function Dashboard() {
             const saved = localStorage.getItem('dashboard_filters');
             if (saved) return JSON.parse(saved);
         } catch (e) {
-            console.error('Failed to load dashboard filters', e);
+            // ignore corrupt localStorage
         }
         return { search: '', sort: 'date_desc' };
     });

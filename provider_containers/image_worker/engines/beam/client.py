@@ -106,8 +106,6 @@ class BeamProviderClient(BaseProviderClient):
                                 open_timeout=WS_OPEN_TIMEOUT,
                             ) as ws:
                                 payload = {"workflow": request.workflow}
-                                if use_snapshot:
-                                    payload["use_snapshot"] = True
                                 await ws.send(json.dumps(payload))
                                 async for message in ws:
                                     if job_id and await self.job_tracker.is_cancelled(job_id):

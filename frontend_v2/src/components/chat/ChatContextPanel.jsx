@@ -1,12 +1,13 @@
 import clsx from 'clsx';
 import {
-    User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare,
+    User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown,
 } from 'lucide-react';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
+import MemoriesPanel from './MemoriesPanel';
 import { useChatWorkspace } from '../../contexts/ChatWorkspaceContext';
 
 function ChatContextPanel() {
@@ -27,6 +28,7 @@ function ChatContextPanel() {
         setShowCharacterDetails,
         setShowScenesModal,
         handleChatUpdate,
+        voices,
     } = useChatWorkspace();
 
     const onChatUpdate = (data) => handleChatUpdate(data);
@@ -367,6 +369,22 @@ function ChatContextPanel() {
                         )} />
                     </button>
                 </div>
+                {voices.length > 0 && (
+                    <div>
+                        <p className="text-xs text-gray-300 font-medium mb-1">Default TTS voice</p>
+                        <select
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg text-xs p-1.5 text-gray-300 focus:border-blue-500 outline-none"
+                            value={activeChat?.tts_voice_id || ''}
+                            onChange={(e) => onChatUpdate({ tts_voice_id: e.target.value || null })}
+                        >
+                            <option value="">Character default</option>
+                            {voices.map(v => (
+                                <option key={v.id} value={v.id}>{v.name}</option>
+                            ))}
+                        </select>
+                        <p className="text-[10px] text-gray-600 mt-0.5">Applied to every message in this chat.</p>
+                    </div>
+                )}
                 <div className="flex items-center justify-between">
                     <div>
                         <p className="text-xs text-gray-300 font-medium">Idle simulation</p>
@@ -410,10 +428,11 @@ function ChatContextPanel() {
                         const sceneStream = activeStreamEntries.find(
                             (item) => item.jobId && item.jobData?.chatId === activeChat?.id && (item.jobData?.type === 'image' || item.jobData?.taskType === 'image')
                         );
-                        return sceneStream ? (
+                        const pctNum = Number.isFinite(sceneStream?.jobData?.progress) ? Math.min(100, Math.max(0, Math.round(sceneStream.jobData.progress))) : null;
+                        return (sceneStream && pctNum != null) ? (
                             <span className="text-[10px] text-green-400 flex items-center gap-1">
                                 <Loader2 size={10} className="animate-spin" />
-                                {Math.round(sceneStream.jobData?.progress ?? 0)}%
+                                {pctNum}%
                             </span>
                         ) : (
                             <span className="text-[10px] text-gray-600">
@@ -422,17 +441,27 @@ function ChatContextPanel() {
                         );
                     })()}
                 </div>
-                {sceneJobId && (
-                    <div className="mb-2">
-                        <div className="flex items-center gap-2 text-[10px] text-purple-400 mb-1">
-                            <Loader2 size={12} className="animate-spin" />
-                            Generating scene image...
+                {sceneJobId && (() => {
+                    const ss = activeStreamEntries.find(
+                        (item) => item.jobId && item.jobData?.chatId === activeChat?.id && (item.jobData?.type === 'image' || item.jobData?.taskType === 'image')
+                    );
+                    const prog = ss?.jobData?.progress;
+                    const pct = Number.isFinite(prog) ? Math.min(100, Math.max(0, Math.round(prog))) : null;
+                    return (
+                        <div className="mb-2">
+                            <div className="flex items-center gap-2 text-[10px] text-purple-400 mb-1">
+                                <Loader2 size={12} className="animate-spin" />
+                                {pct != null ? `Generating scene image… ${pct}%` : 'Generating scene image...'}
+                            </div>
+                            <div className="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
+                                <div
+                                    className={`h-full bg-gradient-to-r from-purple-500 to-indigo-400 rounded-full transition-all ${pct == null ? 'animate-pulse' : ''}`}
+                                    style={{ width: `${pct ?? 60}%` }}
+                                />
+                            </div>
                         </div>
-                        <div className="h-1.5 w-full rounded-full bg-gray-800 overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-purple-500 to-indigo-400 rounded-full transition-all animate-pulse" style={{ width: '60%' }} />
-                        </div>
-                    </div>
-                )}
+                    );
+                })()}
                 {activeChat?.character_id ? (
                     <button
                         onClick={onShowScenes}
@@ -498,6 +527,23 @@ function ChatContextPanel() {
                     </p>
                 )}
             </div>
+
+            {/* Memories */}
+            {linkedCharacter && (
+                <div className="glass-panel rounded-xl border border-white/5">
+                    <details className="group">
+                        <summary className="flex items-center justify-between p-4 cursor-pointer list-none">
+                            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Brain size={12} /> Memories
+                            </h4>
+                            <ChevronDown size={14} className="text-gray-500 transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="px-3 pb-3 -mt-1">
+                            <MemoriesPanel characterId={linkedCharacter.id} />
+                        </div>
+                    </details>
+                </div>
+            )}
 
             {/* Expressions (if character has any) */}
             {linkedCharacter?.expressions && Object.keys(linkedCharacter.expressions).some(k => !k.startsWith('_')) && (

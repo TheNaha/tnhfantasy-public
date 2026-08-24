@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText } from 'lucide-react';
+import { Home, Wand2, Settings, HardDrive, Menu, X, Settings2, BarChart3, Server, Globe, MessageSquare, Users, BookOpen, ImagePlus, Paintbrush, Images, MapPin, User, Sparkles, Calendar, Swords, GitBranch, HelpCircle, Command, Mic, FileText, BookMarked } from 'lucide-react';
 import { useMemo, useState, memo, useEffect } from 'react';
 import clsx from 'clsx';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -240,6 +240,7 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/locations" icon={MapPin} label="Locations" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/scenarios" icon={Sparkles} label="Scenarios" />
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/voices" icon={Mic} label="Voices" />
+                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/lorebooks" icon={BookMarked} label="Lorebooks" />
                     
                     <div className="mt-6 mb-3 px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Resources</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/models/installed" icon={HardDrive} label="Installed Models" />

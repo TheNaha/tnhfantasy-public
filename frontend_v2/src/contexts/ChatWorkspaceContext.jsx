@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import toast from 'react-hot-toast';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -34,7 +34,6 @@ export function ChatWorkspaceProvider({ children }) {
 
     const [mobileTab, setMobileTab] = useState('chat'); // 'chats', 'chat', 'context', 'timeline'
     const [timelineVisible, setTimelineVisible] = useState(false);
-    const [activeBranch, setActiveBranch] = useState(null);
     const [chatsCollapsed, setChatsCollapsed] = useState(() => {
         try { return localStorage.getItem('cw.chatsCollapsed') === '1'; } catch { return false; }
     });
@@ -74,6 +73,7 @@ export function ChatWorkspaceProvider({ children }) {
     const location = useLocation();
     const navigate = useNavigate();
     const { chatId: urlChatId } = useParams();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const settings = useSettings();
     
@@ -81,15 +81,23 @@ export function ChatWorkspaceProvider({ children }) {
     const activeChatId = useWorldVaultStore(state => state.activeChatId);
     const setActiveChatId = useWorldVaultStore(state => state.setActiveChat);
 
-    // Deep-linking: /chat/:chatId is the source of truth for the active chat.
-    // URL change -> store, store change -> URL. replace() keeps back/forward
-    // history clean when hopping between chats.
+    const [activeBranch, setActiveBranchState] = useState(() => searchParams.get('branch'));
+
+    const setActiveBranch = useCallback((branchId) => {
+        setActiveBranchState(branchId);
+        setSearchParams(prev => {
+            if (branchId) prev.set('branch', branchId);
+            else prev.delete('branch');
+            return prev;
+        }, { replace: true });
+    }, [setSearchParams]);
+
     useEffect(() => {
-        if (urlChatId && urlChatId !== activeChatId) {
-            setActiveChatId(urlChatId);
-            setActiveBranch(null);
+        const urlBranch = searchParams.get('branch');
+        if (urlBranch && urlBranch !== activeBranch) {
+            setActiveBranchState(urlBranch);
         }
-    }, [urlChatId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (activeChatId && activeChatId !== urlChatId) {

@@ -195,7 +195,6 @@ export default function ProviderModal({ provider, onClose, onSave, saveProvider 
             toast.success(provider ? 'Provider updated' : 'Provider created');
             await onSave();
         } catch (error) {
-            console.error('Failed to save provider:', error);
             toast.error(error.message || 'Failed to save provider');
         }
     };

@@ -27,6 +27,14 @@ vi.mock('../hooks/useWorldVault', () => ({
     useApplyScenario: () => ({ mutate: mockApplyMutate }),
 }));
 
+vi.mock('../hooks/useChats', () => ({
+    useChats: () => ({ data: [{ id: 'c-1', name: 'Test Chat' }] }),
+}));
+
+vi.mock('../hooks/useStories', () => ({
+    useStories: () => ({ data: [{ id: 'st-1', title: 'Test Story' }] }),
+}));
+
 vi.mock('../store/confirmationStore', () => ({
     useConfirmation: () => ({ confirm: mockConfirm }),
 }));
@@ -155,13 +163,31 @@ describe('Scenarios page', () => {
         expect(mockDeleteMutate).not.toHaveBeenCalled();
     });
 
-    it('apply prompts for target type and calls applyScenario', async () => {
-        let calls = 0;
-        vi.stubGlobal('prompt', () => (calls++ === 0 ? 'chat' : 'target-1'));
+    it('apply opens a modal, picks a target, and calls applyScenario', async () => {
         renderWithProviders(<Scenarios />);
         fireEvent.click(screen.getAllByTitle('Apply to chat or story')[0]);
+        expect(screen.getByRole('button', { name: /Test Chat/ })).toBeInTheDocument();
+        const targetBtn = screen.getByText('Test Chat');
+        fireEvent.click(targetBtn);
+        const applyBtn = screen.getByRole('button', { name: /^Apply$/i });
+        expect(applyBtn).not.toBeDisabled();
+        fireEvent.click(applyBtn);
         expect(mockApplyMutate).toHaveBeenCalledWith(
-            { scenarioId: 's-1', targetType: 'chat', targetId: 'target-1' },
+            { scenarioId: 's-1', targetType: 'chat', targetId: 'c-1' },
+            expect.any(Object)
+        );
+    });
+
+    it('apply with story target uses story mode', async () => {
+        renderWithProviders(<Scenarios />);
+        fireEvent.click(screen.getAllByTitle('Apply to chat or story')[0]);
+        const storyToggle = screen.getByTestId('target-type-story');
+        fireEvent.click(storyToggle);
+        const targetBtn = screen.getByText('Test Story');
+        fireEvent.click(targetBtn);
+        fireEvent.click(screen.getByRole('button', { name: /^Apply$/i }));
+        expect(mockApplyMutate).toHaveBeenCalledWith(
+            { scenarioId: 's-1', targetType: 'story', targetId: 'st-1' },
             expect.any(Object)
         );
     });

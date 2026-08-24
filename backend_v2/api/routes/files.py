@@ -563,7 +563,7 @@ class MoveAssetRequest(BaseModel):
     workspace: str | None = None
     character_id: str | None = None
     story_id: str | None = None
-    copy: bool = False
+    copy_file: bool = False
 
 
 @router.post("/api/v2/assets/{asset_id}/move")
@@ -592,7 +592,7 @@ async def move_asset(asset_id: str, body: MoveAssetRequest, session: Session = D
     )
     target_path = os.path.join(OUTPUT_DIR, target_rel)
 
-    if body.copy:
+    if body.copy_file:
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(source_path, "rb") as src, open(target_path, "wb") as dst:
             dst.write(src.read())

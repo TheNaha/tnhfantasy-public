@@ -148,7 +148,7 @@ export function useAddModelToProviders() {
 
     return useMutation({
         mutationFn: ({ directory, modelData, providerIds }) => {
-            return api.post('/api/providers/models/custom', {
+            return api.post('/api/v2/providers/models/custom', {
                 directory,
                 model_data: modelData,
                 provider_ids: providerIds,

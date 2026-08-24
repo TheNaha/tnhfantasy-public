@@ -1567,6 +1567,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add RETRYING label to the Postgres jobstatus enum",
             apply_fn=_migration_054_add_jobstatus_retrying,
         ),
+        MigrationStep(
+            version="055_add_character_sort_order",
+            description="Add sort_order column to characters for drag-and-drop reordering",
+            apply_fn=_migration_055_add_character_sort_order,
+        ),
     ]
 
 
@@ -2110,5 +2115,20 @@ def _migration_054_add_jobstatus_retrying(conn) -> bool:
 
     conn.execute(text("ALTER TYPE jobstatus ADD VALUE 'RETRYING'"))
     logger.info("migration_added_enum_value", type="jobstatus", value="RETRYING")
+    return True
+
+
+def _migration_055_add_character_sort_order(conn) -> bool:
+    """Add sort_order column to characters for drag-and-drop reordering."""
+    inspector = inspect(conn)
+    if "characters" not in inspector.get_table_names():
+        return False
+
+    columns = {col["name"] for col in inspector.get_columns("characters")}
+    if "sort_order" not in columns:
+        conn.execute(text("ALTER TABLE characters ADD COLUMN sort_order INTEGER DEFAULT 0 NOT NULL"))
+        logger.info("migration_column_added", table="characters", column="sort_order")
+
+    _verify_required_columns(conn, "characters", {"sort_order"})
     return True
 

@@ -10,10 +10,11 @@ Works as a post-completion processor inside job_processing.py:
 
 import asyncio
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from core.entities import JobStatus
+from core.entities import JobStatus, Message, MessageRole, MessageKind
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
@@ -352,7 +353,7 @@ async def _tool_update_world_state(
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Update a chat's story_time / story_location (side-effect tool)."""
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
     from core.entities import Chat
 
     time_value = (args.get("time") or "").strip()
@@ -402,7 +403,7 @@ async def _tool_narrate_scene(
 ) -> dict[str, Any]:
     """Run a Narrator LLM job that writes a third-person scene description."""
     from services.job_submission_service import JobSubmissionService
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
 
     scene_direction = args.get("scene_direction", "")
 
@@ -558,6 +559,26 @@ async def _tool_narrate_scene(
                     content = outputs[0].get("content", "")
                 if not content:
                     content = final_result.get("text", "")
+
+                # Persist narration as a visible narrator message so the user
+                # sees the scene being set, not just the final character reply.
+                if content:
+                    try:
+                        narration_msg = Message(
+                            id=str(uuid.uuid4()),
+                            chat_id=chat_id,
+                            role=MessageRole.SYSTEM,
+                            kind=MessageKind.NARRATOR,
+                            content=content,
+                            message_metadata={"source": "narrator", "narration_job_id": job.id},
+                            created_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc),
+                        )
+                        _session.add(narration_msg)
+                        _session.commit()
+                    except Exception as persist_exc:
+                        logger.warning("narrator_message_persist_failed", chat_id=chat_id, error=str(persist_exc))
+
                 return {"status": "success", "narration": content, "job_id": job.id}
             except (JobCancelledError, JobTimeoutError, ProviderCallError) as exc:
                 logger.warning("tool_narrate_scene_inline_failed", job_id=job.id, error=str(exc))
@@ -604,7 +625,7 @@ async def _tool_generate_image(
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline and wait for completion."""
     from services.job_submission_service import JobSubmissionService
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
 
     prompt = args.get("prompt", "a beautiful fantasy landscape")
     negative = args.get("negative_prompt", "worst quality, low quality, bad anatomy")
@@ -716,7 +737,7 @@ async def _tool_recall_memory(
     character_id: str | None = None,
 ) -> dict[str, Any]:
     """Search the character's memories for relevant information."""
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
 
     query = args.get("query", "")
     limit = min(args.get("limit", 5), 20)
@@ -763,7 +784,7 @@ async def _tool_store_memory(
     character_id: str | None = None,
 ) -> dict[str, Any]:
     """Store a new memory for the character."""
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
     from core.entities import CharacterMemory
     from services.embedding_service import get_embedding_service
 
@@ -825,7 +846,7 @@ async def _tool_set_expression(
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Update a character's current expression in the chat context."""
-    from infrastructure.database import get_session_context
+    from infrastructure.deps import get_session_context
     from core.entities import Character
 
     expression = args.get("expression", "")

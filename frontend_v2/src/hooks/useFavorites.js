@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
-import { api } from '../api';
+import { settingsApi } from '../api/settingsApi';
 
 const EMPTY_ARRAY = [];
 
@@ -10,14 +10,14 @@ export function useFavorites() {
   const query = useQuery({
     queryKey: ['favorites'],
     queryFn: async () => {
-      const res = await api.get('/api/settings/favorites');
+      const res = await settingsApi.getFavorites();
       return res.favorites || [];
     },
   });
 
   const mutation = useMutation({
     mutationFn: async (newFavorites) => {
-      const res = await api.post('/api/settings/favorites', { favorites: newFavorites });
+      const res = await settingsApi.updateFavorites(newFavorites);
       return res.favorites;
     },
     onMutate: async (newFavorites) => {

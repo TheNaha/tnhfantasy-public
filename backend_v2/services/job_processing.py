@@ -400,11 +400,6 @@ async def _finalize_llm_job(
         if job_type == "chat_reply" and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
-                # Inherit the tool set the parent job exposed to the model
-                # (already filtered by the chat's allow_image_generation /
-                # allow_narration flags), falling back to safe basics if the
-                # parent defined no tools.
-                job_workflow = job.workflow if isinstance(job.workflow, dict) else {}
                 allowed_tools = {
                     t.get("function", {}).get("name")
                     for t in (job_workflow.get("tools") or [])
@@ -486,6 +481,13 @@ async def _finalize_llm_job(
                 "metadata": {"chat_id": entity_id, "type": event_type_str, "regenerated": job.metadata_.get("regenerated") if job.metadata_ else False},
                 "chat_id": entity_id,
                 "content": assistant_content,
+            }
+        elif job_type == "story_parse":
+            story_id = (job.metadata_.get("story_id") if job.metadata_ else None)
+            event_extra = {
+                "type": "story_parse",
+                "metadata": {"story_id": story_id, "type": "story_parse"},
+                "story_id": story_id,
             }
         else:
             story_id = (job.metadata_.get("story_id") if job.metadata_ else None)

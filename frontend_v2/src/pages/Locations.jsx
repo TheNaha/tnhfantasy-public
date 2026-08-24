@@ -10,6 +10,7 @@ import {
     useSearchLocations,
 } from '../hooks/useLocations';
 import EmptyState from '../components/EmptyState';
+import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
 
 const FORM_FIELDS = [
@@ -27,29 +28,6 @@ const DEFAULT_FORM = {
     tags: [],
     image_path: '',
 };
-
-const FormInput = ({ label, value, onChange, type = 'text', placeholder, required }) => (
-    <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-300 mb-1">{label}{required && '*'}</label>
-        {type === 'textarea' ? (
-            <textarea
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                value={value || ''}
-                onChange={onChange}
-                placeholder={placeholder}
-                rows={3}
-            />
-        ) : (
-            <input
-                type={type}
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={value || ''}
-                onChange={onChange}
-                placeholder={placeholder}
-            />
-        )}
-    </div>
-);
 
 import { useSearchParams } from 'react-router-dom';
 

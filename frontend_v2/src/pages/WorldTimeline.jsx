@@ -2,6 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Filter, MessageSquare, BookOpen, Brain, Image as ImageIcon, Calendar } from 'lucide-react';
 import { useTimeline } from '../hooks/useTimeline';
+import { useCharacters } from '../hooks/useCharacters';
+import { useStories } from '../hooks/useStories';
+import { useChats } from '../hooks/useChats';
+import { useLocations } from '../hooks/useLocations';
 import EmptyState from '../components/EmptyState';
 import { useSearchParams } from 'react-router-dom';
 
@@ -49,6 +53,11 @@ export default function WorldTimeline() {
 
     const { data, isLoading } = useTimeline(filters);
 
+    const { data: characters = [] } = useCharacters();
+    const { data: stories = [] } = useStories();
+    const { data: chats = [] } = useChats();
+    const { data: locations = [] } = useLocations();
+
     const events = useMemo(() => data?.events || [], [data]);
 
     const groupedEvents = useMemo(() => {
@@ -88,44 +97,60 @@ export default function WorldTimeline() {
                 >
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-xs text-gray-400 mb-1">Character ID</label>
-                            <input
-                                type="text"
+                            <label htmlFor="filter-character" className="block text-xs text-gray-400 mb-1">Character</label>
+                            <select
+                                id="filter-character"
                                 value={filters.character_id}
                                 onChange={(e) => updateFilter('character_id', e.target.value)}
-                                placeholder="Filter by character..."
-                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
-                            />
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                            >
+                                <option value="">All characters</option>
+                                {characters.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
-                            <label className="block text-xs text-gray-400 mb-1">Story ID</label>
-                            <input
-                                type="text"
+                            <label htmlFor="filter-story" className="block text-xs text-gray-400 mb-1">Story</label>
+                            <select
+                                id="filter-story"
                                 value={filters.story_id}
                                 onChange={(e) => updateFilter('story_id', e.target.value)}
-                                placeholder="Filter by story..."
-                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
-                            />
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                            >
+                                <option value="">All stories</option>
+                                {stories.map(s => (
+                                    <option key={s.id} value={s.id}>{s.title || s.id}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
-                            <label className="block text-xs text-gray-400 mb-1">Chat ID</label>
-                            <input
-                                type="text"
+                            <label htmlFor="filter-chat" className="block text-xs text-gray-400 mb-1">Chat</label>
+                            <select
+                                id="filter-chat"
                                 value={filters.chat_id}
                                 onChange={(e) => updateFilter('chat_id', e.target.value)}
-                                placeholder="Filter by chat..."
-                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
-                            />
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                            >
+                                <option value="">All chats</option>
+                                {chats.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name || c.id}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
-                            <label className="block text-xs text-gray-400 mb-1">Location</label>
-                            <input
-                                type="text"
+                            <label htmlFor="filter-location" className="block text-xs text-gray-400 mb-1">Location</label>
+                            <select
+                                id="filter-location"
                                 value={filters.location}
                                 onChange={(e) => updateFilter('location', e.target.value)}
-                                placeholder="Filter by location..."
-                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
-                            />
+                                className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                            >
+                                <option value="">All locations</option>
+                                {locations.map(l => (
+                                    <option key={l.id} value={l.id}>{l.name}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
                 </motion.div>

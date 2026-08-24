@@ -255,20 +255,29 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_init", phase="data_cleanup")
     schedule_cleanup(run_data_cleanup, interval_seconds=3600)
 
-    if os.getenv("COMFY_IDLE_SIM_ENABLED", "0").lower() in ("1", "true", "yes"):
-        from services.agent_simulation import run_idle_simulation_tick
-        interval = int(os.getenv("COMFY_IDLE_SIM_INTERVAL_SECONDS", "600"))
-        add_interval_job(
-            run_idle_simulation_tick,
-            interval_seconds=interval,
-            job_id="idle_simulation",
-            start_immediately=False,
-        )
-        logger.info("idle_simulation_enabled", interval_seconds=interval)
+    from config import get_config
+    idle_sim_env = os.getenv("COMFY_IDLE_SIM_ENABLED", "").strip().lower()
+    if idle_sim_env in ("1", "true", "yes"):
+        idle_sim_enabled = True
+    elif idle_sim_env in ("0", "false", "no"):
+        idle_sim_enabled = False
+    else:
+        idle_sim_enabled = bool(get_config().get("ai", {}).get("idleSimEnabled", False))
+
+    from services.agent_simulation import run_idle_simulation_tick
+    from infrastructure.scheduler import add_interval_job
+    interval_env = os.getenv("COMFY_IDLE_SIM_INTERVAL_SECONDS")
+    interval = int(interval_env) if interval_env else int(get_config().get("ai", {}).get("idleSimIntervalSeconds", 600))
+    add_interval_job(
+        run_idle_simulation_tick,
+        interval_seconds=interval,
+        job_id="idle_simulation",
+        start_immediately=False,
+    )
+    logger.info("idle_simulation_registered", enabled=idle_sim_enabled, interval_seconds=interval)
 
     logger.info("startup_init", phase="civitai_resync")
     from api.routes.models.maintenance import run_background_resync
-    from infrastructure.scheduler import add_interval_job
     # Run a full CivitAI resync every 24 hours
     add_interval_job(
         run_background_resync,

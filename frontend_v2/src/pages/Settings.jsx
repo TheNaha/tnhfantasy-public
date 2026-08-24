@@ -3,20 +3,20 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings as SettingsIcon, RotateCcw, Save, Info, Server, Brain, Loader2, CheckCircle, XCircle, Volume2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { settingsApi } from '../api/settingsApi';
 import { useConfirmation } from '../store/confirmationStore';
 import { useSettings, useUpdateSettings } from '../store/settingsStore';
 import { useBranding, useSaveBranding } from '../hooks/useBranding';
 import { useLLMProviderStatus, useSetLLMDefault } from '../hooks/useLLMProviderStatus';
 import useProvidersPageData from '../hooks/useProvidersPageData';
 import React, { useEffect } from 'react';
-import api from '../api/client';
 
 
 function SystemPromptsEditor() {
     const queryClient = useQueryClient();
     const { data: blocksData, isLoading } = useQuery({
         queryKey: ['system_prompts_blocks'],
-        queryFn: () => api.get('/api/settings/system-prompts'),
+        queryFn: () => settingsApi.getSystemPrompts(),
         staleTime: 30000,
     });
     const [draft, setDraft] = useState({});
@@ -29,7 +29,7 @@ function SystemPromptsEditor() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            await api.put('/api/settings/system-prompts', { blocks: draft });
+            await settingsApi.updateSystemPrompts({ blocks: draft });
             toast.success('System prompts updated');
             queryClient.invalidateQueries({ queryKey: ['system_prompts_blocks'] });
         } catch {
@@ -761,11 +761,13 @@ function AISettings({ settings, onUpdate, onReset }) {
         let cancelled = false;
         (async () => {
             try {
-                const res = await api.get('/api/settings');
+                const res = await settingsApi.get();
                 const ai = res?.settings?.ai;
                 if (ai && !cancelled) {
                     if (ai.maxContextTokens) onUpdate('maxContextTokens', Number(ai.maxContextTokens));
                     if (ai.temperature != null) onUpdate('temperature', Number(ai.temperature));
+                    if (ai.idleSimEnabled != null) onUpdate('idleSimEnabled', !!ai.idleSimEnabled);
+                    if (ai.idleSimIntervalSeconds != null) onUpdate('idleSimIntervalSeconds', Number(ai.idleSimIntervalSeconds));
                 }
             } catch {
                 // Backend unreachable — keep local defaults.
@@ -778,12 +780,14 @@ function AISettings({ settings, onUpdate, onReset }) {
     const handleSaveAiBackend = async () => {
         setAiSyncState('saving');
         try {
-            await api.put('/api/settings', {
+            await settingsApi.update({
                 ai: {
                     maxContextTokens: Number(settings.maxContextTokens),
                     temperature: Number(settings.temperature),
                     ttsEnabled: settings.ttsEnabled,
                     ragEnabled: settings.ragEnabled !== false,
+                    idleSimEnabled: !!settings.idleSimEnabled,
+                    idleSimIntervalSeconds: Number(settings.idleSimIntervalSeconds) || 600,
                 }
             });
             toast.success('AI settings saved to backend');
@@ -976,6 +980,43 @@ function AISettings({ settings, onUpdate, onReset }) {
                             ? 'RAG is enabled. Distant memories and lore entries are retrieved semantically into context.'
                             : 'RAG is disabled. Context falls back to recent/recency-based retrieval only.'}
                     </p>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="Idle Simulation"
+                    description="Characters keep the scene alive with proactive in-character messages while you're away"
+                    action={
+                        <button
+                            onClick={() => onUpdate('idleSimEnabled', !settings.idleSimEnabled)}
+                            className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                                settings.idleSimEnabled
+                                    ? 'bg-green-500/20 border border-green-500/30 text-green-400'
+                                    : 'bg-gray-500/20 border border-gray-600/30 text-gray-500'
+                            }`}
+                        >
+                            {settings.idleSimEnabled ? 'On' : 'Off'}
+                        </button>
+                    }
+                >
+                    <p className="text-xs text-gray-500">
+                        {settings.idleSimEnabled
+                            ? `Idle simulation is enabled. Dormant chats will receive periodic updates every ${Math.round((settings.idleSimIntervalSeconds || 600) / 60)} minutes.`
+                            : 'Idle simulation is disabled. Enable to let characters act autonomously in dormant chats.'}
+                    </p>
+                    {settings.idleSimEnabled && (
+                        <div className="mt-3 flex items-center gap-2">
+                            <span className="text-[10px] text-gray-500 uppercase tracking-wider">Interval (min)</span>
+                            <input
+                                type="number"
+                                min="5"
+                                max="1440"
+                                step="5"
+                                value={Math.round((settings.idleSimIntervalSeconds || 600) / 60)}
+                                onChange={(e) => onUpdate('idleSimIntervalSeconds', (parseInt(e.target.value) || 10) * 60)}
+                                className="w-20 px-2 py-1 bg-gray-900 border border-gray-700 rounded text-white text-xs focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                    )}
                 </SettingGroup>
 
                 <SettingGroup title="CharGen: Description Prompt" description="System prompt for generating character description">
