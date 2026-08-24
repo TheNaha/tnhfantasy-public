@@ -25,8 +25,7 @@ import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ChatRouteGuard, StoryRouteGuard } from './components/RouteQueryGuard';
-import useSettingsStore from './store/settingsStore';
-import { useSettings } from './store/settingsStore';
+import useSettings from './store/settingsStore';
 import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
@@ -165,8 +164,8 @@ function GlobalHooks() {
 }
 
 function App() {
-    const queryUiSettings = useSettingsStore((state) => state.settings?.ui);
     const settings = useSettings();
+    const queryUiSettings = settings?.ui;
 
     const [queryClient] = useState(() => (
         new QueryClient({

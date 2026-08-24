@@ -41,14 +41,14 @@ export default function StoryReader() {
             const binaryFormats = ['epub', 'comic', 'webtoon'];
             const exportUrl = `/api/v2/stories/published/${token}/export?format=${format}`;
             const data = binaryFormats.includes(format)
-                ? await api.get(exportUrl, { responseType: 'blob' })
+                ? await api.get(exportUrl)
                 : await api.get(exportUrl);
             let blob, filename;
             if (format === 'md' || format === 'markdown') {
                 blob = new Blob([data.content], { type: 'text/markdown' });
                 filename = 'story.md';
             } else if (binaryFormats.includes(format)) {
-                blob = data;
+                blob = await data.blob();
                 filename = `story.${format === 'comic' ? 'pdf' : format === 'webtoon' ? 'png' : format}`;
             } else {
                 // JSON

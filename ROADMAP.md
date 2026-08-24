@@ -142,3 +142,61 @@ These were listed as bugs in `REMEDIATION_PLAN_v2.md` but are **already fixed or
 - 1.5 dead `StoryRepository` import — used as `Depends` type.
 - 1.3 `useVoicePreview` undefined `voiceId` — works; destructures from args.
 - 1.8 `worldVaultStore` empty stub — holds `activeChatId` (UI state, correct).
+
+## 10. Session 2026-08-24 audit — Codebase hardening & feature completeness
+
+> Deep audit performed 2026-08-24. Focus: correctness, dead code, duplication, performance, missing integration, feature completeness.
+
+### 10.1 Critical correctness (P0) — Must fix before next deploy
+
+| # | Issue | File | Action |
+|---|-------|------|--------|
+| 10.1.1 | **Undefined `job_workflow`** in `_finalize_llm_job` agentic branch — crashes when a chat reply contains tool_calls | `services/job_processing.py:405` | Replace `job_workflow.get("tools")` with `job.metadata_.get("tools")` (or `job.workflow`); add test |
+| 10.1.2 | **CI E2E uses plain Postgres 16** — `vector` extension missing, backend fails to start, workflow times out | `.github/workflows/frontend-e2e.yml:23` | Change image to `pgvector/pgvector:pg16` |
+
+### 10.2 High priority (P1) — Fix in current sprint
+
+| # | Issue | File | Action |
+|---|-------|------|--------|
+| 10.2.1 | **StoryReader blob download broken** — `api.get(..., { responseType: 'blob' })` returns a `Response`, not a `Blob`; `URL.createObjectURL` receives a Response | `frontend_v2/src/pages/StoryReader.jsx:44` | Use `await data.blob()`; fix `client.js` to handle `responseType` or document that callers must call `.blob()` |
+| 10.2.2 | **Duplicate `cleanup_orphaned_models`** — method defined twice (lines 1249 and 1314); second shadows first, confusing maintenance | `infrastructure/repositories/model_repo_v2.py:1314` | Remove the second definition (line 1314); keep the more complete first version (line 1249) |
+| 10.2.3 | **`import time` inside async `__call__`** — redundant; `time` already imported at module top | `services/provider_client.py:249` | Remove the inline import |
+
+### 10.3 Medium priority (P2) — Fix in parallel
+
+| # | Issue | File | Action |
+|---|-------|------|--------|
+| 10.3.1 | **`agent_simulation` busy check loads ALL recent LLM jobs** — should filter by `chat_id` in query | `services/agent_simulation.py:85` | Add `.where(Job.meta["chat_id"].as_string() == chat_id)` or pass chat_id into the check |
+| 10.3.2 | **`model_reconciliation.py` path normalization assumes `models/` prefix** — fails for custom paths | `services/model_reconciliation.py:102` | Use `os.path` or `pathlib` to strip only a leading `models/` if present |
+| 10.3.3 | **`reference_cleanup.py` is dead code** — defined but never imported/called | `services/reference_cleanup.py` | Delete file or wire into entity deletion flows |
+| 10.3.4 | **Dead exports in `useProviderModels.js`** — `normalizeModalStats`/`mergeModalStats` unused | `frontend_v2/src/hooks/useProviderModels.js` | Remove unused exports |
+| 10.3.5 | **Dead `moveAsset` re-export** — redundant wrapper around `assetsApi.move` | `frontend_v2/src/api/files.js:88` | Remove `moveAsset` export |
+| 10.3.6 | **App.jsx double-subscribes to settingsStore** — `queryUiSettings` + `useSettings()` both read the same store | `frontend_v2/src/App.jsx:168-169` | Keep only `useSettings()` and derive `ui` from it |
+
+### 10.4 Feature completeness gaps (Track B — Frontier validation)
+
+These features **exist** but are unverified or rough-edged:
+
+| # | Feature | Status | Action |
+|---|---------|--------|--------|
+| 10.4.1 | **RAG embeddings** | Implemented but unverified | Verify `embedding_service.py` lazy-loads SBERT, test recall quality, add debug UI ("why this memory?") |
+| 10.4.2 | **Idle simulation** | Implemented but unverified | Confirm `lifecycle.py` schedules ticks; verify summaries appear; add UI to view offline activity |
+| 10.4.3 | **Comic/Webtoon export** | Implemented but fallback to gray placeholders | Wire per-page illustration generation so comics aren't blank |
+| 10.4.4 | **Animatediff avatar display** | Fixed backend; frontend display unverified | Show animated avatar in character card/gallery |
+| 10.4.5 | **Relationship Graph / World Timeline / Campaigns** | Implemented but click-through validation needed | Ensure filters persist and entity links resolve |
+
+### 10.5 Verification gates
+
+```bash
+# Backend
+cd backend_v2 && pytest -q
+
+# Frontend
+cd frontend_v2 && npm test && npm run lint
+
+# E2E (requires stack running)
+cd frontend_v2 && npx playwright test
+
+# Full stack
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
+```

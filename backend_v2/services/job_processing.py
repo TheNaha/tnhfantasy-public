@@ -402,7 +402,7 @@ async def _finalize_llm_job(
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
                 allowed_tools = {
                     t.get("function", {}).get("name")
-                    for t in (job_workflow.get("tools") or [])
+                    for t in (job.workflow.get("tools") or [])
                     if isinstance(t, dict) and t.get("function", {}).get("name")
                 }
                 if not allowed_tools:

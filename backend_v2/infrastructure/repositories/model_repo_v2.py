@@ -1311,34 +1311,6 @@ class ModelRepositoryV2:
         stmt = select(ModelFile.storage_filename).where(ModelFile.storage_filename.in_(filenames))
         return [row for row in self.session.exec(stmt).all()]
 
-    def cleanup_orphaned_models(self) -> int:
-        """
-        Remove models that have no versions.
-        Called by background maintenance task.
-        """
-        from sqlmodel import func
-        # Find all models with no versions using a LEFT JOIN
-        stmt = select(ModelV2, func.count(ModelVersion.id).label("version_count")) \
-            .outerjoin(ModelVersion, ModelVersion.model_id == ModelV2.id) \
-            .group_by(ModelV2.id) \
-            .having(func.count(ModelVersion.id) == 0)
-            
-        orphans = self.session.exec(stmt).all()
-        
-        deleted_count = 0
-        from sqlmodel import delete
-        for model, _ in orphans:
-            deleted_count += 1
-            
-        if orphans:
-            orphan_ids = [model.id for model, _ in orphans]
-            self.session.exec(delete(ModelTag).where(ModelTag.model_id.in_(orphan_ids)))
-            for model, _ in orphans:
-                self.session.delete(model)
-            
-        self.session.commit()
-        return deleted_count
-
     def get_models_needing_population(self) -> list[ModelV2]:
         stmt = select(ModelV2).where(
             ModelV2.description.like("%Auto-discovered%"),

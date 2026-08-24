@@ -246,7 +246,6 @@ class _LLMReducer:
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
-        import time
         if event == "delta":
             msg = ev.get("text") or ""
             self.full_content += msg

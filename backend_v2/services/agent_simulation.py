@@ -79,6 +79,7 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
             recent_jobs = session.exec(
                 select(Job)
                 .where(Job.task_type == "llm", Job.created_at >= inflight_cutoff)
+                .where(Job.metadata_["chat_id"].as_string() == chat.id)
             ).all()
             busy = any(
                 bool(j.metadata_) and j.metadata_.get("chat_id") == chat.id
