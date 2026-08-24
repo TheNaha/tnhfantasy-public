@@ -252,7 +252,15 @@ export default memo(function GroupedDashboardContent({
     });
 
     return (
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+        <div
+            style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                position: 'relative',
+                width: '100%',
+                overflowAnchor: 'none',
+                overflow: 'hidden',
+            }}
+        >
             {virtualizer.getVirtualItems().map((virtualItem) => {
                 const [date, groupItems] = sortedGroupedEntries[virtualItem.index];
                 return (

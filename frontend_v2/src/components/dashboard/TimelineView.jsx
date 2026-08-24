@@ -105,7 +105,7 @@ export const TimelineView = memo(function TimelineView({
             {/* Timeline Line */}
             <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-500 via-purple-500 to-transparent hidden md:block" />
 
-            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%' }}>
+            <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative', width: '100%', overflowAnchor: 'none', overflow: 'hidden' }}>
                 {virtualizer.getVirtualItems().map((virtualItem) => {
                     const group = timelineGroups[virtualItem.index];
                     const stats = group.stats;

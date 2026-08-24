@@ -161,11 +161,11 @@ export function PullToRefreshIndicator({ pullDistance, isRefreshing, isPulling, 
     const scale = 0.5 + (progress * 0.5);
     
     return (
-        <div 
-            className="flex justify-center items-center overflow-hidden transition-all duration-200"
-            style={{ 
+        <div
+            className="fixed top-0 left-0 right-0 z-[60] flex justify-center items-center overflow-hidden"
+            style={{
                 height: `${pullDistance}px`,
-                opacity: Math.max(0.5, progress)
+                opacity: Math.max(0.5, progress),
             }}
         >
             <div 

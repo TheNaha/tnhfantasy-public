@@ -115,10 +115,10 @@ export default function DashboardGalleryGrid({
                 />
             )}
 
-            <div ref={sentinelRef} className="h-4" />
+            <div ref={sentinelRef} className="h-4" style={{ overflowAnchor: 'none' }} />
 
             {isFetchingNextPage && (
-                <div className="flex justify-center py-8">
+                <div className="flex justify-center py-8" style={{ overflowAnchor: 'none' }}>
                     <Loader2 className="animate-spin text-gray-400" size={32} />
                 </div>
             )}

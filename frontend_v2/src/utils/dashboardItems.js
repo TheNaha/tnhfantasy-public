@@ -73,18 +73,26 @@ export function buildDashboardItems(data, activeJobs, jobTimelineOverrides = nul
     const usedJobIds = new Set();
 
     if (options.sort?.startsWith('random')) {
-        // For random sort, show active jobs first, then files sorted by a
-        // stable per-item random key. New items get their own key without
-        // disturbing the relative order of existing items.
+        // For random sort, sort each page independently so that new pages
+        // from infinite scroll append at the bottom instead of re-shuffling
+        // the entire accumulated list. This preserves stable ordering of
+        // existing items while still providing a random layout per page.
         const seed = options.sort.split(':')[1] || 'default_random';
-        const shuffledFiles = seededSort(historicalFiles, seed);
+        const sortedFiles = [];
+        if (data && data.pages) {
+            for (const page of data.pages) {
+                const pageFiles = (page.files || []).map(toImageItem);
+                sortedFiles.push(...seededSort(pageFiles, seed));
+            }
+        }
 
+        // Push active jobs first, then sorted files
         Array.from(mergedJobs.values()).forEach((job) => {
             if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') {
                 combined.push(job);
             }
         });
-        shuffledFiles.forEach((image) => {
+        sortedFiles.forEach((image) => {
             combined.push({
                 ...image,
                 type: 'image',

@@ -28,6 +28,7 @@ body {
   min-height: 100vh;
   overscroll-behavior-y: none; /* Disable browser native pull-to-refresh */
   overflow-x: hidden; /* Prevent horizontal scroll on mobile */
+  scrollbar-gutter: stable; /* Reserve scrollbar space to prevent jitter/phantom scrollbar on content height changes */
   background-color: #08080c;
   background-image: 
     radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.12) 0%, transparent 40%),
