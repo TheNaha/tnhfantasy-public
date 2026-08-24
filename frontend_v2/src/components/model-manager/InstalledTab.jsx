@@ -107,7 +107,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                     error: 'Failed to check dependencies'
                 }
             );
-        } catch (error) {
+        } catch {
             toast.error('Failed to check dependencies');
         }
     };
@@ -146,7 +146,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 toast.success("Deleted " + displayName);
             }
             refetch();
-        } catch (e) {
+        } catch {
             toast.error("Error deleting model");
         }
     };

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 from sqlmodel import Session
 
 from core.entities import Chat, Character, Job, Message, MessageRole
-from core.entities import CharacterMemory
 
 
 def _seed_chat_with_char_message(session: Session, content="Hello there", char_name="Aria"):

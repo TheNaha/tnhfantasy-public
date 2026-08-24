@@ -38,7 +38,6 @@ class TestMemorySnapshotHelperPrestartup:
         """Import prestartup_script with is_patched=True to skip module-level execution."""
         comfy_dir = tmp_path / "comfy"
         comfy_dir.mkdir()
-        original_path = comfy_dir / "model_management_original.py"
 
         # Import with is_patched=True to skip the module-level patch call
         with patch("os.path.exists", return_value=True):

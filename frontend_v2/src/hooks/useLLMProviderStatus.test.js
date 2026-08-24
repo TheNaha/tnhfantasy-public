@@ -13,6 +13,7 @@ const api404 = Object.assign(new Error('not found'), { status: 404 });
 
 vi.mock('../api', () => ({
     api: apiMock,
+    API_V2_BASE: '/api/v2',
 }));
 
 import {

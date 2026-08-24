@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 

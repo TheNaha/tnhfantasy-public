@@ -346,7 +346,6 @@ async def get_provider(
     session: Session = Depends(get_session)
 ):
     """Get a provider by ID."""
-    service = get_provider_service(session)
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider_id)
 

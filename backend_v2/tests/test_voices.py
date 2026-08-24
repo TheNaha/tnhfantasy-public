@@ -2,7 +2,6 @@
 import pytest
 
 from core.entities import VoiceModel, Character
-from infrastructure.database import get_session_sync
 
 
 @pytest.fixture

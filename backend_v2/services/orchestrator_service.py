@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from core.entities import JobStatus, Message, MessageRole, MessageKind
+from core.entities import JobStatus, MessageKind
 from infrastructure.logging import get_logger
 from services.chat_utils import insert_world_state_marker
 from services.job_service import JobService
@@ -500,7 +500,6 @@ async def _tool_narrate_scene(
     # claimed by the single LLM worker (deadlock / 180s timeout). The job row
     # is created (not enqueued) so the _LLMReducer streams status/events and
     # the completion event persists the narration via world_integration.
-    from services.job_queue import queue_manager
     from services.load_balancer_factory import create_load_balancer
     from services.provider_runtime import resolve_provider_runtime
     from services.provider_client import (

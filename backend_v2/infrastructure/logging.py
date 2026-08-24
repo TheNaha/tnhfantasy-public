@@ -31,7 +31,7 @@ def compact_renderer(logger, method_name, event_dict):
     timestamp = event_dict.pop("timestamp", "")
     level = event_dict.pop("level", "info").upper()
     event = event_dict.pop("event", "")
-    logger_name = event_dict.pop("logger_name", "")
+    event_dict.pop("logger_name", "")
     
     # Color based on level
     level_colors = {

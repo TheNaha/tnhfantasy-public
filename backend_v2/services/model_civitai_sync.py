@@ -515,9 +515,6 @@ class ModelCivitaiSyncService:
 
         candidates = []
         for score, item in scored:
-            civitai_id = item.get("id")
-            civitai_source = item.get("source", "civitai")
-
             candidates.append({
                 "score": score,
                 "score_percent": score,

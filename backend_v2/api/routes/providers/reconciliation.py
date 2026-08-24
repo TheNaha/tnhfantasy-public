@@ -83,7 +83,6 @@ async def reconcile_provider(
         result = await lifecycle.trigger_reconciliation(provider_id, force=force, quick_sync=quick_sync)
     except ProviderError as exc:
         detail = str(exc)
-        status_code = 400 if "Reconciliation is only available" in detail else 500
         raise ComfyError(detail) from exc
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 409:

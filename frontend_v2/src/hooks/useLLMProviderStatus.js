@@ -6,7 +6,7 @@
  * Used by Settings AI tab and Providers page detail panel.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api';
+import { api, API_V2_BASE } from '../api';
 
 export const LLM_PROVIDERS_KEY = ['llm', 'providers'];
 export const LLM_MODELS_KEY = ['llm', 'available-models'];
@@ -14,18 +14,18 @@ export const LLM_DEFAULT_KEY = ['llm', 'default-provider'];
 
 /** Fetch all registered LLM providers with is_default flag. */
 async function fetchLLMProviders() {
-    return api.get('/api/v2/llm/providers');
+    return api.get(`${API_V2_BASE}/llm/providers`);
 }
 
 /** Fetch available models from the default LLM provider's worker. */
 async function fetchLLMModels() {
-    return api.get('/api/v2/llm/available-models');
+    return api.get(`${API_V2_BASE}/llm/available-models`);
 }
 
 /** Fetch the current default provider config. */
 async function fetchLLMDefault() {
     try {
-        return await api.get('/api/v2/llm/default-provider');
+        return await api.get(`${API_V2_BASE}/llm/default-provider`);
     } catch (err) {
         // 404 means no LLM providers registered — not a hard error
         if (err?.status === 404 || err?.response?.status === 404) return null;
@@ -123,7 +123,7 @@ export function useSetLLMDefault() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: ({ provider_id, model_id }) =>
-            api.put('/api/v2/llm/default-provider', { provider_id, model_id }),
+            api.put(`${API_V2_BASE}/llm/default-provider`, { provider_id, model_id }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: LLM_DEFAULT_KEY });
             queryClient.invalidateQueries({ queryKey: LLM_MODELS_KEY });

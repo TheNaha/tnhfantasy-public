@@ -2,7 +2,6 @@
 import pytest
 
 from core.entities import Character, CharacterMemory
-from infrastructure.database import get_session_sync
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import text, func
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from core.entities import Character

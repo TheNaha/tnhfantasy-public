@@ -249,8 +249,6 @@ class LoadBalancer:
     @classmethod
     async def remove_provider_state(cls, session: Session, provider_id: str, runtime_state: LoadBalancerRuntimeState | None = None):
         """Remove a provider's job counts and failures when the provider is deleted."""
-        state_store = runtime_state or get_global_runtime_state()
-        
         # If runtime_state is provided explicitly, only clean that one up.
         # Otherwise, clean up all known runtime states.
         stores_to_clean = [(None, runtime_state)] if runtime_state else list(_runtime_states.items())

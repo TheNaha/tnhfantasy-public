@@ -284,7 +284,7 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
                 # META-INF/container.xml
                 zf.writestr(
                     "META-INF/container.xml",
-                    f'''<?xml version="1.0"?>
+                    '''<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>

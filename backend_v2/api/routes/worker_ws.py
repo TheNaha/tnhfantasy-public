@@ -12,8 +12,6 @@ Protocol:
 5. Heartbeat keeps connection alive
 """
 
-import asyncio
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
@@ -24,9 +22,10 @@ from api.deps import (
     get_session_context,
 )
 from core.exceptions import NotFoundError
-from infrastructure.worker_registry import (
+from infrastructure.worker_registry import (  # noqa: F401
     _get_live_worker,
     dispatch_job_to_worker,
+    forget_job_future,
     get_connected_workers,
     is_worker_connected,
     register_worker,
@@ -35,7 +34,6 @@ from infrastructure.worker_registry import (
     touch_heartbeat,
     track_job_future,
     unregister_worker,
-    forget_job_future,
 )
 from services.job_processing import (
     finalize_persisted_job_outputs,

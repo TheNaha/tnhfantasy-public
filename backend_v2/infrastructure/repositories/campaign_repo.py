@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from core.entities import Campaign

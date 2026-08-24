@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from io import BytesIO
 from PIL import Image, PngImagePlugin
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from api.deps import get_session, get_character_repo
 from infrastructure.logging import get_logger
@@ -190,7 +190,6 @@ def create_character(character: Character, session: Session = Depends(get_sessio
     session.refresh(character)
 
     # Auto-create a collection for this character's scene images
-    from core.entities import Collection
     collection = Collection(
         name=f"{character.name}'s Gallery",
         color="#8B5CF6",
@@ -242,7 +241,6 @@ def import_character_card(
     session.refresh(character)
 
     # Auto-create collection
-    from core.entities import Collection
     collection = Collection(
         name=f"{character.name}'s Gallery",
         color="#8B5CF6",
@@ -454,7 +452,6 @@ def clone_character(character_id: str, session: Session = Depends(get_session), 
         session.refresh(new_char)
         
     # Auto-create collection
-    from core.entities import Collection
     collection = Collection(
         name=f"{new_char.name}'s Gallery",
         color="#8B5CF6",

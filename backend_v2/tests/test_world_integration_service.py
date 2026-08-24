@@ -12,7 +12,6 @@ from core.entities import (
     CollectionImage,
     Job,
     Lorebook,
-    LorebookEntry,
     Message,
     MessageKind,
     MessageRole,

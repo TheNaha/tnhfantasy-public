@@ -1,0 +1,11 @@
+target-version = "py313"
+line-length = 120
+lint.select = ["F"]
+lint.ignore = ["F401"]
+lint.per-file-ignores = {
+  "__init__.py" = ["F401"],
+  "tests/**" = ["F811"],
+  "api/routes/worker_ws.py" = ["F401"],
+  "api/routes/models/crud.py" = ["F405"],
+  "api/routes/models/maintenance.py" = ["F405"],
+}

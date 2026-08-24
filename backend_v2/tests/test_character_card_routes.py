@@ -1,7 +1,6 @@
 """Route tests for character card operations: clone, import (PNG card),
 export (PNG card), avatar upload/serve, and response shapes (has_avatar)."""
 
-import base64
 import io
 import json
 import os

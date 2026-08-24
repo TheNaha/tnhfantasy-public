@@ -370,7 +370,6 @@ async def setup_provider(
         return await lifecycle.setup_provider(provider_id)
     except ProviderError as exc:
         detail = str(exc)
-        status_code = 400 if "Setup requires" in detail else 500
         raise ComfyError(detail) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise ComfyError(f"Failed to run provider setup: {exc!s}") from exc

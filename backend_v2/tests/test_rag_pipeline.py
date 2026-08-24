@@ -1,6 +1,5 @@
 """Tests for the canonical semantic retrieval pipeline (services/rag_pipeline.py)."""
 
-import pytest
 from sqlmodel import Session, select
 
 from core.entities import Character, CharacterMemory, Lorebook, LorebookEntry
@@ -140,7 +139,6 @@ class TestSearchLorebookEntries:
 
 class TestBackfillLorebookEmbeddings:
     def test_backfills_missing_embeddings(self, session, monkeypatch):
-        import services.rag_pipeline as rag
 
         lb = _seed_lorebook(session)
         entry = _add_entry(session, lb.id, ["key"], "Some content")

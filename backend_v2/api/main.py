@@ -128,8 +128,6 @@ app = FastAPI(
 
 configure_app(app)
 
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):

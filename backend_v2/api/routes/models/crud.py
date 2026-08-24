@@ -10,7 +10,7 @@ from infrastructure.logging import model_logger
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 from services.model_service import ModelServiceV2
 
-from .schemas import *
+from .schemas import *  # noqa: F401, F403, F405
 
 logger = model_logger()
 

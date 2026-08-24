@@ -325,13 +325,13 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
                         default_location: parsed.default_location || f.default_location
                     }));
                     toast.success('Profile Enriched!');
-                } catch (e) {
+                } catch {
                     toast.error('Failed to parse AI output');
                 }
             } else {
                 toast.error('Failed to find JSON in AI output');
             }
-        } catch (e) {
+        } catch {
             toast.dismiss(tId);
             toast.error('Failed to enrich profile');
         }

@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md` (2026-08-24 audit). Many "demonstrated gaps" here were debunked — the features are already implemented. Use the new plan as the authoritative source.
+
 # Feature-Completeness Plan — Eliminating the "Demo" Feel
 
 > Companion to `PLAN.md` (which tracks the original 8-feature roadmap).  

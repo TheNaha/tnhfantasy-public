@@ -25,7 +25,7 @@ export default function PromptPanel() {
                 setPrompt(data.enriched_prompt);
                 toast.success('Prompt enriched!', { icon: '✨' });
             }
-        } catch (error) {
+        } catch {
             toast.error('Failed to enrich prompt');
         } finally {
             setIsMagicLoading(false);

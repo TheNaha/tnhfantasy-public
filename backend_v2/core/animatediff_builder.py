@@ -1,5 +1,4 @@
-import math
-from typing import Any, Optional
+from typing import Any
 
 def build_animatediff_workflow(
     prompt: str,
@@ -80,7 +79,7 @@ def build_animatediff_workflow(
     })
     
     # Video Save
-    save_id = add_node("VHS_VideoCombine", {
+    add_node("VHS_VideoCombine", {
         "frame_rate": fps,
         "loop_count": 0,
         "filename_prefix": filename_prefix,

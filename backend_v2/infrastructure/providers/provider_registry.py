@@ -92,7 +92,7 @@ class ProviderTypeConfig:
     default_port: int = 8000
     
     # The ServerlessProvider class for API interactions
-    client_class: type['ServerlessProvider'] | None = None
+    client_class: type[Any] | None = None
     
     def build_env_vars(self, credentials: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
         """

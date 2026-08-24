@@ -36,7 +36,6 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
 
     Returns the number of jobs spawned.
     """
-    import asyncio
 
     from config import get_config
     idle_sim_enabled = bool(get_config().get("ai", {}).get("idleSimEnabled", False))

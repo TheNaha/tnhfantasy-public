@@ -521,7 +521,6 @@ class QueueManager:
 
     async def recover_pending_jobs(self, job_service) -> tuple:
         """Recover pending jobs, routing each to the correct queue by task_type."""
-        from sqlmodel import select
 
         session = getattr(job_service, "session", None)
         total_recovered = 0

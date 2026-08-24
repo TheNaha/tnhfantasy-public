@@ -135,7 +135,7 @@ class TestGetSession:
         """Test that get_session context manager closes the session properly."""
         with patch("infrastructure.database.Session") as MockSession:
             gen = db_module.get_session()
-            session = next(gen)
+            next(gen)
 
             # Verify Session was instantiated with the engine
             MockSession.assert_called_once_with(db_module.engine)

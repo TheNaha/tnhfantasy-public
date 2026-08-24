@@ -97,7 +97,7 @@ def test_batch_delete_traversal(client: TestClient):
         "files": ["../to_delete_secure.txt"]
     }
 
-    response = client.post("/api/batch/delete", json=payload)
+    client.post("/api/batch/delete", json=payload)
 
     # File should STILL exist
     assert os.path.exists(TO_DELETE_PATH)
@@ -111,7 +111,7 @@ def test_upload_filename_traversal(client: TestClient):
     """
     # Try to upload a file where filename contains traversal characters
     # e.g. filename="../../hacked_filename.txt"
-    response = client.post(
+    client.post(
         "/api/upload",
         files={"file": ("../../hacked_filename.txt", b"hacked content")},
         data={"path": "input"}

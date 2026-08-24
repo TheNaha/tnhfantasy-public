@@ -7,7 +7,7 @@ filters and pagination.
 
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from core.entities import Asset, Character, CharacterMemory, Chat, Message, MessageKind, MessageRole, Story, StoryChapter
 

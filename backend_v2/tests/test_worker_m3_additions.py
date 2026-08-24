@@ -1,11 +1,7 @@
 import asyncio
-import os
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 

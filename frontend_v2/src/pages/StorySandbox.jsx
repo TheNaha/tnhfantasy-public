@@ -251,7 +251,7 @@ export default function StorySandbox() {
             navigate(`/story/${newStory.id}`, { replace: true });
             
             toast.success("Story imported. AI is parsing Characters & Lore in the background!");
-        } catch (err) {
+        } catch {
             toast.error("Failed to import story.");
         }
     };

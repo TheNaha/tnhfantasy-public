@@ -24,17 +24,22 @@ test.describe('Navigation & Page Smoke Tests', () => {
     test(`${route.name} loads (${route.path})`, async ({ page }) => {
       await page.goto(route.path);
 
-      const body = page.locator('body');
-      await expect(body).toBeVisible({ timeout: 30000 });
-
+      // Assert the app actually rendered content — not just that <body>
+      // exists (which is always true even when the React tree crashes).
+      // Each page renders an h1 or h2 heading with its title.
       const h1 = page.locator('h1').first();
       const h2 = page.locator('h2').first();
-      const heading = (await h1.isVisible({ timeout: 2000 }).catch(() => false)) ? h1 : h2;
+      const heading = h1;
+      const fallback = h2;
 
-      if (await heading.isVisible({ timeout: 2000 }).catch(() => false)) {
-        const text = await heading.textContent();
-        expect(text?.length).toBeGreaterThan(0);
-      }
+      // Prefer h1; fall back to h2 only if h1 is not present.
+      const headingToUse = (await heading.isVisible({ timeout: 3000 }).catch(() => false))
+        ? heading
+        : fallback;
+
+      await expect(headingToUse).toBeVisible({ timeout: 15000 });
+      const text = await headingToUse.textContent();
+      expect(text?.trim().length).toBeGreaterThan(0);
     });
   }
 });

@@ -18,7 +18,6 @@ from infrastructure.http_client import (
 @pytest.fixture(autouse=True)
 def reset_client():
     """Reset the singleton client before each test."""
-    original = http_module._client
     http_module._client = None
     yield
     http_module._client = None
@@ -61,7 +60,7 @@ class TestGetHttpClient:
 
 class TestCloseHttpClient:
     async def test_closes_client(self):
-        client = get_http_client()
+        get_http_client()
         await close_http_client()
         assert http_module._client is None
 

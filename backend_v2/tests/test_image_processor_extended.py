@@ -14,7 +14,7 @@ from infrastructure.image_processor import (
 )
 
 try:
-    import blurhash as _blurhash_pkg
+    import blurhash as _blurhash_pkg  # noqa: F401
     HAS_BLURHASH = True
 except ModuleNotFoundError:
     HAS_BLURHASH = False
@@ -128,9 +128,8 @@ class TestProcessDirectory:
         assert len(result) == 0
 
     def test_skips_existing_thumbnails_by_default(self, tmp_dir):
-        path = create_png(tmp_dir, "image_with_thumb.png")
+        create_png(tmp_dir, "image_with_thumb.png")
         # Create fake thumbnail
-        thumb_path = path.replace(".png", ".thumb.png")
         create_png(tmp_dir, "image_with_thumb.thumb.png")
 
         result = process_directory(tmp_dir, skip_existing=True)

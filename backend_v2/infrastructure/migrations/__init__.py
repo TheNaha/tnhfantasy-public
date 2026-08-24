@@ -2,7 +2,7 @@
 Database migrations engine wrapper.
 """
 
-from infrastructure.migrations.steps import (
+from infrastructure.migrations.steps import (  # noqa: F401
     MigrationStep,
     _ensure_schema_migrations_table,
     _get_applied_migrations,

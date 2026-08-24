@@ -206,7 +206,6 @@ async def execute_job(
     async with session_context_manager() as session:
         try:
             job_service = JobService(session)
-            provider_service = ProviderService(session)
 
             try:
                 job = await job_service.get_job(job_id)

@@ -2,7 +2,6 @@
 
 from unittest.mock import AsyncMock
 
-from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient

@@ -81,7 +81,7 @@ class TestModelServiceV2AddModel:
         with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
             with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
                 # First add
-                first_result = await service.add_model_from_civitai(civitai_data, [67890])
+                await service.add_model_from_civitai(civitai_data, [67890])
         
         # Now add with a different version (just to test the existing model path)
         civitai_data_v2 = dict(civitai_data)

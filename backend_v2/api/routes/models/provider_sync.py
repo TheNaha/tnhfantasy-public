@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from api.deps import get_model_service_v2, get_session
+from core.exceptions import ValidationError
 from infrastructure.logging import model_logger
 
 from .schemas import UpdateProviderStatusRequest

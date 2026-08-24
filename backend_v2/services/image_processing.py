@@ -74,7 +74,6 @@ def build_job_outputs(
         save_image_with_metadata,
         write_metadata_sidecar,
     )
-    from PIL import Image
 
     outputs: list[dict[str, Any]] = []
     base_output_dir = settings.output_dir

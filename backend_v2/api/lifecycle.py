@@ -190,7 +190,7 @@ def _run_asset_migration() -> None:
         from services.asset_reconciler import move_existing_assets
 
         output_dir = settings.output_dir
-        with get_session_sync() as session:
+        with get_session_sync():
             moved = move_existing_assets(output_dir, lambda: get_session_sync(), user_id="default_user")
         logger.info("asset_migration_complete", moved=moved)
     except Exception as exc:
@@ -295,7 +295,7 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="world_integration")
     from services.world_integration_service import start_world_integration_service
-    world_integration_task = start_background_task(
+    start_background_task(
         start_world_integration_service(),
         task_name="world_integration",
         timeout=None,

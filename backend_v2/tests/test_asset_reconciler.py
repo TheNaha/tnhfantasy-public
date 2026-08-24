@@ -1,9 +1,7 @@
 # Tests for services/asset_reconciler.py (DB-backed asset index)
 
-import os
 
-import pytest
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from core.entities import Asset
 from services.asset_reconciler import (

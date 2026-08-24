@@ -58,7 +58,6 @@ Tests run on push/PR to `main`/`master` only when the relevant directory changes
 ### Testing
 
 ```bash
-# Run all backend tests
 cd backend_v2 && pytest
 
 # Run a single test file
@@ -66,7 +65,16 @@ cd backend_v2 && pytest tests/test_job_service.py
 
 # Run a single test
 cd backend_v2 && pytest tests/test_job_service.py::test_create_job
+
+# Lint (auto-fix safe, non-noisy rules only)
+cd backend_v2 && ruff check .
 ```
+
+Ruff config in `ruff.toml` selects `F` (pyflakes) only — catching real bugs like
+undefined names (F821), unused imports (F401), and redefined-while-unused (F811).
+F401 is ignored for `__init__.py`, re-export modules (`deps.py`, `worker_ws.py`),
+and star-import consumers (`api/routes/models/crud.py`, `maintenance.py`).
+F811 is ignored for test files (test class redefinition is sometimes intentional).
 
 Tests that create DB sessions must override **both** dependency sources: `api.deps.get_session` and `infrastructure.database.get_session`. See `backend_v2/tests/conftest.py`.
 

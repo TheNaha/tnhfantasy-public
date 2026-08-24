@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md` (2026-08-24 audit). This document contained many false-positive line items that have been debunked — see Appendix A. Use the new plan as the authoritative source for all remaining work.
+
 # TNHComfy Roadmap — Consolidated Plan
 
 > **Authoritative plan.** Supersedes `PLAN.md` and `REMEDIATION_PLAN_v2.md` (both are now stale and contain many false-positive line items — see Appendix A). This document reflects a thorough code audit performed 2026-08-22.

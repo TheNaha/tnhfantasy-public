@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
-from sqlalchemy import or_, func, delete
+from sqlalchemy import func, delete
 
 from api.deps import get_job_service, get_session, get_queue_manager, get_chat_repo, get_message_repo, get_character_repo, get_location_repo
 from infrastructure.repositories.chat_repo import ChatRepository
@@ -801,12 +801,13 @@ async def regenerate_reply(
         raise ValidationError("No user message to regenerate")
 
     # Delete trailing messages at the SQL level.
-    session.execute(
+    delete_result = session.execute(
         delete(Message).where(
             Message.chat_id == chat_id,
             Message.created_at > anchor.created_at,
         )
     )
+    deleted = delete_result.rowcount
 
     # Mirror the previous chat_reply job's agentic settings if available.
     prev_agentic = False
@@ -895,7 +896,6 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     The LLM writes *as the user*, not as the character.
     """
     from services.job_queue import queue_manager
-    from config import get_system_prompt_blocks
 
     chat = chat_repo.get(chat_id)
     if not chat:
@@ -1181,7 +1181,6 @@ async def illustrate_chat(
     the image lands in the chat as a kind=IMAGE message via the chat_image
     event (world_integration_service) and in the roleplay workspace.
     """
-    from services.job_queue import queue_manager
     from services.model_availability_service import ModelAvailabilityService
 
     chat = chat_repo.get(chat_id)
