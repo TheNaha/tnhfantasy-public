@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { useCallback } from "react";
 import { motion } from 'framer-motion';
 import { Calendar, Check, Star } from 'lucide-react';
@@ -249,6 +249,21 @@ export default memo(function GroupedDashboardContent({
         count: sortedGroupedEntries.length,
         estimateSize: () => 800,
         overscan: 2,
+    });
+
+    const prevCountRef = useRef(sortedGroupedEntries.length);
+    const savedScrollYRef = useRef(0);
+
+    useLayoutEffect(() => {
+        const currentCount = sortedGroupedEntries.length;
+        if (currentCount > prevCountRef.current) {
+            const currentY = window.scrollY;
+            if (Math.abs(currentY - savedScrollYRef.current) > 200) {
+                window.scrollTo({ top: savedScrollYRef.current, behavior: 'auto' });
+            }
+        }
+        savedScrollYRef.current = window.scrollY;
+        prevCountRef.current = currentCount;
     });
 
     return (

@@ -1,4 +1,4 @@
-import { useMemo, memo } from 'react';
+import { useMemo, memo, useLayoutEffect, useRef } from 'react';
 import { Calendar, Clock, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { motion as Motion, AnimatePresence } from 'framer-motion';
 import ProgressiveImage from '../ProgressiveImage';
@@ -89,6 +89,21 @@ export const TimelineView = memo(function TimelineView({
         count: timelineGroups.length,
         estimateSize: () => 600,
         overscan: 2,
+    });
+
+    const prevCountRef = useRef(timelineGroups.length);
+    const savedScrollYRef = useRef(0);
+
+    useLayoutEffect(() => {
+        const currentCount = timelineGroups.length;
+        if (currentCount > prevCountRef.current) {
+            const currentY = window.scrollY;
+            if (Math.abs(currentY - savedScrollYRef.current) > 200) {
+                window.scrollTo({ top: savedScrollYRef.current, behavior: 'auto' });
+            }
+        }
+        savedScrollYRef.current = window.scrollY;
+        prevCountRef.current = currentCount;
     });
 
     if (timelineGroups.length === 0) {
