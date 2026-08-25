@@ -1057,3 +1057,19 @@ class Campaign(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+
+class GraphLayout(SQLModel, table=True):
+    __tablename__ = "graph_layouts"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(default="default", index=True)
+    entity_type: str = Field(index=True)  # "character", "story", "chat", "lorebook", "location", "voice"
+    entity_id: str = Field(index=True)
+    x: float = Field(default=0.0)
+    y: float = Field(default=0.0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index('idx_graph_layout_name_entity', 'name', 'entity_type', 'entity_id', unique=True),
+    )
+

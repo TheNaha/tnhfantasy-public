@@ -197,6 +197,7 @@ class TestRunMigrations:
             "036_add_job_typed_columns",
             "045_create_locations",
             "046_create_campaigns",
+            "056_add_graph_layouts",
         }
 
     def test_run_migrations_adds_provider_id_and_backfills_values(self, tmp_path):
@@ -299,6 +300,7 @@ class TestRunMigrations:
             "036_add_job_typed_columns",
             "045_create_locations",
             "046_create_campaigns",
+            "056_add_graph_layouts",
         ]
 
     def test_run_migrations_normalizes_legacy_job_statuses(self, tmp_path):

@@ -1572,6 +1572,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add sort_order column to characters for drag-and-drop reordering",
             apply_fn=_migration_055_add_character_sort_order,
         ),
+        MigrationStep(
+            version="056_add_graph_layouts",
+            description="Create graph_layouts table for relationship graph node positions",
+            apply_fn=_migration_056_add_graph_layouts,
+        ),
     ]
 
 
@@ -2130,5 +2135,34 @@ def _migration_055_add_character_sort_order(conn) -> bool:
         logger.info("migration_column_added", table="characters", column="sort_order")
 
     _verify_required_columns(conn, "characters", {"sort_order"})
+    return True
+
+
+def _migration_056_add_graph_layouts(conn) -> bool:
+    """Create graph_layouts table for storing relationship graph node positions."""
+    inspector = inspect(conn)
+    if "graph_layouts" in inspector.get_table_names():
+        return False
+
+    conn.execute(text("""
+        CREATE TABLE graph_layouts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT 'default',
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            x REAL NOT NULL DEFAULT 0.0,
+            y REAL NOT NULL DEFAULT 0.0,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("CREATE INDEX idx_graph_layout_name ON graph_layouts (name)"))
+    conn.execute(text("CREATE INDEX idx_graph_layout_entity_type ON graph_layouts (entity_type)"))
+    conn.execute(text("CREATE INDEX idx_graph_layout_entity_id ON graph_layouts (entity_id)"))
+    conn.execute(text("""
+        CREATE UNIQUE INDEX idx_graph_layout_name_entity
+        ON graph_layouts (name, entity_type, entity_id)
+    """))
+    logger.info("migration_table_created", table="graph_layouts")
     return True
 

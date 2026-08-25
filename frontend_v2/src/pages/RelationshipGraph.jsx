@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { Users, BookOpen, MessageSquare, MapPin, Globe, Volume2, RefreshCw, Save, RotateCcw, X, Pencil } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useWorldVaultRelationships } from '../hooks/useWorldVault';
+import { useWorldVaultRelationships, useGraphLayout, useSaveGraphLayout } from '../hooks/useWorldVaultSearch';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 const NODE_COLORS = {
@@ -35,16 +35,14 @@ const SVG_WIDTH = 900;
 const SVG_HEIGHT = 700;
 const CENTER_X = SVG_WIDTH / 2;
 const CENTER_Y = SVG_HEIGHT / 2;
+const NODE_RADIUS = 22;
 
-// Simple force-directed layout using a physics simulation.
-// Runs in a requestAnimationFrame loop; no external libraries required.
-function useForceDirectedLayout(nodes, edges, iterations = 300) {
+function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions = null) {
     const [positions, setPositions] = useState(() => {
-        // Random initial positions within the SVG viewport
         return new Map(
             nodes.map(n => [
                 n.id,
-                {
+                savedPositions?.get(n.id) || {
                     x: Math.random() * (SVG_WIDTH - 100) + 50,
                     y: Math.random() * (SVG_HEIGHT - 100) + 50,
                     vx: 0,
@@ -60,18 +58,18 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
         const pos = new Map();
         nodes.forEach(n => {
             pos.set(n.id, {
-                x: Math.random() * (SVG_WIDTH - 100) + 50,
-                y: Math.random() * (SVG_HEIGHT - 100) + 50,
+                x: savedPositions?.get(n.id)?.x ?? (Math.random() * (SVG_WIDTH - 100) + 50),
+                y: savedPositions?.get(n.id)?.y ?? (Math.random() * (SVG_HEIGHT - 100) + 50),
                 vx: 0,
                 vy: 0,
             });
         });
 
-        const k_repel = 6000; // repulsion strength
-        const k_spring = 0.05; // spring strength
-        const rest_length = 180; // ideal edge length
+        const k_repel = 6000;
+        const k_spring = 0.05;
+        const rest_length = 180;
         const damping = 0.85;
-        const bounds = 44; // keep nodes at least nodeRadius+20 from edges
+        const bounds = 44;
 
         const edgeSet = new Set(edges.map(e => `${e.source}→${e.target}`));
 
@@ -79,7 +77,6 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
         const animate = () => {
             frame++;
 
-            // Repulsion between all pairs
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     const a = pos.get(nodes[i].id);
@@ -89,7 +86,6 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
                     const dy = a.y - b.y;
                     let dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
                     if (dist < 2) dist = 2;
-                    // Skip repulsion for connected nodes (handled by spring)
                     if (edgeSet.has(`${nodes[i].id}→${nodes[j].id}`) || edgeSet.has(`${nodes[j].id}→${nodes[i].id}`)) {
                         dist = Math.max(dist, rest_length * 0.6);
                     }
@@ -103,7 +99,6 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
                 }
             }
 
-            // Spring attraction along edges
             for (const edge of edges) {
                 const a = pos.get(edge.source);
                 const b = pos.get(edge.target);
@@ -120,12 +115,10 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
                 b.vy -= fy;
             }
 
-            // Centering force + velocity integration + damping
             for (const n of nodes) {
                 const p = pos.get(n.id);
                 if (!p) continue;
 
-                // Centering
                 p.vx += (CENTER_X - p.x) * 0.0005;
                 p.vy += (CENTER_Y - p.y) * 0.0005;
 
@@ -135,7 +128,6 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
                 p.x += p.vx;
                 p.y += p.vy;
 
-                // Keep inside bounds
                 const minX = bounds;
                 const maxX = SVG_WIDTH - bounds;
                 const minY = bounds;
@@ -154,45 +146,128 @@ function useForceDirectedLayout(nodes, edges, iterations = 300) {
         };
 
         requestAnimationFrame(animate);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [nodes, edges]);
+    }, [nodes, edges, savedPositions, iterations]);
 
-    return positions;
+    const updatePosition = useCallback((nodeId, x, y) => {
+        setPositions(prev => {
+            const next = new Map(prev);
+            const existing = next.get(nodeId) || { x: 0, y: 0, vx: 0, vy: 0 };
+            next.set(nodeId, { ...existing, x, y, vx: 0, vy: 0 });
+            return next;
+        });
+    }, []);
+
+    return { positions, updatePosition };
+}
+
+function EditPanel({ node, onClose, onNavigate }) {
+    const nodeRouteMap = {
+        character: '/characters',
+        story: '/story',
+        chat: '/chat',
+        lorebook: '/lorebooks',
+        voice: '/voices',
+        location: '/locations',
+    };
+
+    const color = NODE_COLORS[node.type] || '#6b7280';
+    const Icon = NODE_ICONS[node.type] || Globe;
+    const route = nodeRouteMap[node.type];
+
+    return (
+        <div className="absolute top-4 right-4 w-72 bg-gray-800 border border-white/10 rounded-xl p-4 z-20 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: color + '30' }}>
+                        <Icon size={16} style={{ color }} />
+                    </div>
+                    <div>
+                        <p className="text-white text-sm font-medium truncate max-w-[160px]">{node.label}</p>
+                        <p className="text-gray-400 text-xs capitalize">{node.type}</p>
+                    </div>
+                </div>
+                <button onClick={onClose} className="p-1 text-gray-400 hover:text-white transition-colors">
+                    <X size={16} />
+                </button>
+            </div>
+            {node.dangling && (
+                <div className="mb-3 px-2 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg">
+                    <p className="text-red-400 text-xs">Dangling link — referenced entity no longer exists</p>
+                </div>
+            )}
+            <div className="flex flex-col gap-2">
+                {route && (
+                    <button
+                        onClick={() => onNavigate(node)}
+                        className="flex items-center gap-2 px-3 py-2 bg-blue-600/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm hover:bg-blue-600/30 transition-colors"
+                    >
+                        <Pencil size={14} />
+                        Edit {node.type}
+                    </button>
+                )}
+                {node.type === 'story' || node.type === 'chat' ? (
+                    <button
+                        onClick={() => onNavigate(node, true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 border border-white/10 rounded-lg text-gray-300 text-sm hover:bg-gray-700 transition-colors"
+                    >
+                        Open {node.type} page
+                    </button>
+                ) : null}
+            </div>
+        </div>
+    );
 }
 
 export default function RelationshipGraph() {
     const navigate = useNavigate();
     const [filter, setFilter] = useState('all');
+    const [selectedNode, setSelectedNode] = useState(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragNodeId, setDragNodeId] = useState(null);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const svgRef = useRef(null);
+
     const { data, isLoading, isError, refetch, isFetching } = useWorldVaultRelationships();
+    const { data: savedLayout } = useGraphLayout('default');
+    const saveLayout = useSaveGraphLayout();
 
     const nodeRouteMap = useMemo(() => ({
         character: '/characters',
         story: '/story',
         chat: '/chat',
-        lorebook: '/world-vault',
+        lorebook: '/lorebooks',
         voice: '/voices',
         location: '/locations',
     }), []);
 
-    const handleNodeClick = useMemo(() => (node) => {
-        if (!navigate) return;
+    const handleNodeNavigate = useCallback((node, openPage = false) => {
         const base = nodeRouteMap[node.type];
         if (!base) return;
-        if (node.type === 'story' || node.type === 'chat') {
-            navigate(`${base}/${node.id}`);
-        } else {
+        if (openPage || (node.type !== 'story' && node.type !== 'chat')) {
             navigate(base);
+        } else {
+            navigate(`${base}/${node.id}`);
         }
+        setSelectedNode(null);
     }, [navigate, nodeRouteMap]);
+
+    const savedPositions = useMemo(() => {
+        if (!savedLayout?.nodes) return null;
+        const map = new Map();
+        savedLayout.nodes.forEach(n => {
+            map.set(n.entity_id, { x: n.x, y: n.y, vx: 0, vy: 0 });
+        });
+        return map;
+    }, [savedLayout]);
 
     const { nodes, edges } = useMemo(() => {
         if (!data) return { nodes: [], edges: [] };
         const nodeMap = new Map();
         const edgeList = [];
 
-        const addNode = (id, label, type) => {
+        const addNode = (id, label, type, dangling = false) => {
             if (!nodeMap.has(id)) {
-                nodeMap.set(id, { id, label, type });
+                nodeMap.set(id, { id, label, type, dangling });
             }
             return id;
         };
@@ -203,15 +278,15 @@ export default function RelationshipGraph() {
             edgeList.push({ source: charId, target: chatId });
         });
 
-        data.character_stories?.forEach(({ character_id, character_name, story_id, story_title }) => {
-            addNode(character_id, character_name, 'character');
+        data.character_stories?.forEach(({ character_id, character_name, story_id, story_title, dangling }) => {
+            addNode(character_id, character_name, 'character', dangling);
             addNode(story_id, story_title, 'story');
             edgeList.push({ source: character_id, target: story_id });
         });
 
-        data.story_lorebooks?.forEach(({ story_id, story_title, lorebook_id, lorebook_name }) => {
+        data.story_lorebooks?.forEach(({ story_id, story_title, lorebook_id, lorebook_name, dangling }) => {
             addNode(story_id, story_title, 'story');
-            addNode(lorebook_id, lorebook_name, 'lorebook');
+            addNode(lorebook_id, lorebook_name, 'lorebook', dangling);
             edgeList.push({ source: story_id, target: lorebook_id });
         });
 
@@ -221,14 +296,12 @@ export default function RelationshipGraph() {
             edgeList.push({ source: charId, target: voiceId });
         });
 
-        // New: Story ↔ Locations
-        data.story_locations?.forEach(({ story_id, story_title, location_id, location_name }) => {
+        data.story_locations?.forEach(({ story_id, story_title, location_id, location_name, dangling }) => {
             addNode(story_id, story_title, 'story');
-            addNode(location_id, location_name, 'location');
+            addNode(location_id, location_name, 'location', dangling);
             edgeList.push({ source: story_id, target: location_id });
         });
 
-        // New: Chat ↔ Locations
         data.chat_locations?.forEach(([chatId, chatName, locId, locName]) => {
             addNode(chatId, chatName, 'chat');
             addNode(locId, locName, 'location');
@@ -238,8 +311,7 @@ export default function RelationshipGraph() {
         return { nodes: Array.from(nodeMap.values()), edges: edgeList };
     }, [data]);
 
-    // Run the force-directed physics simulation
-    const positions = useForceDirectedLayout(nodes, edges, 500);
+    const { positions, updatePosition } = useForceDirectedLayout(nodes, edges, 300, savedPositions);
 
     const filteredNodes = useMemo(() => {
         if (filter === 'all') return nodes;
@@ -250,6 +322,60 @@ export default function RelationshipGraph() {
         const nodeIds = new Set(filteredNodes.map(n => n.id));
         return edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
     }, [edges, filteredNodes]);
+
+    const handleSaveLayout = useCallback(() => {
+        const nodesToSave = filteredNodes.map(n => {
+            const pos = positions.get(n.id);
+            return {
+                entity_type: n.type,
+                entity_id: n.id,
+                x: pos?.x ?? 0,
+                y: pos?.y ?? 0,
+            };
+        });
+        saveLayout.mutate({ name: 'default', nodes: nodesToSave }, {
+            onSuccess: () => setHasUnsavedChanges(false),
+        });
+    }, [filteredNodes, positions, saveLayout]);
+
+    const handleResetLayout = useCallback(() => {
+        window.location.reload();
+    }, []);
+
+    const handleMouseDown = useCallback((e, node) => {
+        e.stopPropagation();
+        setIsDragging(true);
+        setDragNodeId(node.id);
+        setSelectedNode(null);
+    }, []);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!isDragging || !dragNodeId || !svgRef.current) return;
+        const svg = svgRef.current;
+        const rect = svg.getBoundingClientRect();
+        const scale = SVG_WIDTH / rect.width;
+        const x = (e.clientX - rect.left) * scale;
+        const y = (e.clientY - rect.top) * scale;
+        updatePosition(dragNodeId, x, y);
+        setHasUnsavedChanges(true);
+    }, [isDragging, dragNodeId, updatePosition]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsDragging(false);
+        setDragNodeId(null);
+    }, []);
+
+    const handleNodeClick = useCallback((node) => {
+        if (isDragging) return;
+        setSelectedNode(prev => prev?.id === node.id ? null : node);
+    }, [isDragging]);
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener('mouseup', handleMouseUp);
+            return () => window.removeEventListener('mouseup', handleMouseUp);
+        }
+    }, [isDragging, handleMouseUp]);
 
     if (isLoading) {
         return (
@@ -273,7 +399,7 @@ export default function RelationshipGraph() {
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-white mb-1">Relationship Graph</h1>
-                    <p className="text-gray-400 text-sm">Drag nodes to reposition. Visualize connections between characters, stories, chats, and more.</p>
+                    <p className="text-gray-400 text-sm">Drag nodes to reposition. Click to select and edit. Save to persist layout.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <select
@@ -287,16 +413,35 @@ export default function RelationshipGraph() {
                         ))}
                     </select>
                     <button
+                        onClick={handleResetLayout}
+                        className="p-2 bg-gray-800 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition-colors"
+                        title="Reset layout"
+                    >
+                        <RotateCcw size={16} />
+                    </button>
+                    <button
                         onClick={() => refetch()}
                         className="p-2 bg-gray-800 border border-white/10 rounded-lg text-gray-400 hover:text-white hover:border-white/20 transition-colors"
                         title="Refresh"
                     >
                         <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
                     </button>
+                    <button
+                        onClick={handleSaveLayout}
+                        disabled={!hasUnsavedChanges || saveLayout.isPending}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                            hasUnsavedChanges
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                : 'bg-gray-800 border border-white/10 text-gray-500 cursor-not-allowed'
+                        }`}
+                        title="Save layout"
+                    >
+                        <Save size={14} />
+                        {saveLayout.isPending ? 'Saving...' : hasUnsavedChanges ? 'Save' : 'Saved'}
+                    </button>
                 </div>
             </div>
 
-            {/* Legend */}
             <div className="flex flex-wrap gap-3 mb-4 text-xs">
                 {Object.entries(NODE_LABELS).map(([type, label]) => {
                     const Icon = NODE_ICONS[type] || Globe;
@@ -307,14 +452,27 @@ export default function RelationshipGraph() {
                         </div>
                     );
                 })}
+                {hasUnsavedChanges && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                        <span className="text-yellow-400">Unsaved changes</span>
+                    </div>
+                )}
             </div>
+
+            {selectedNode && (
+                <EditPanel
+                    node={selectedNode}
+                    onClose={() => setSelectedNode(null)}
+                    onNavigate={handleNodeNavigate}
+                />
+            )}
 
             {filteredNodes.length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
                     No relationships found. Create characters, stories, and chats to see connections.
                 </div>
             ) : (
-                <div className="bg-gray-800/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
+                <div className="bg-gray-800/40 border border-white/10 rounded-xl p-4 overflow-x-auto relative">
                     <TransformWrapper
                         initialScale={1}
                         minScale={0.1}
@@ -323,23 +481,35 @@ export default function RelationshipGraph() {
                     >
                         {({ zoomIn, zoomOut, resetTransform }) => (
                             <>
-                                <div className="absolute top-2 right-2 flex flex-col gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="absolute top-2 right-2 flex flex-col gap-1 z-10">
                                     <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => zoomIn()}>+</button>
                                     <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => zoomOut()}>-</button>
                                     <button className="p-1.5 bg-gray-900 border border-white/10 rounded text-gray-400 hover:text-white" onClick={() => resetTransform()}>⟲</button>
                                 </div>
                                 <TransformComponent wrapperClass="w-full h-[600px] !block" contentClass="w-full h-full cursor-grab active:cursor-grabbing">
-                                    <svg width={SVG_WIDTH} height={SVG_HEIGHT} className="mx-auto" style={{ overflow: 'visible' }}>
+                                    <svg
+                                        ref={svgRef}
+                                        width={SVG_WIDTH}
+                                        height={SVG_HEIGHT}
+                                        className="mx-auto"
+                                        style={{ overflow: 'visible' }}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseUp={handleMouseUp}
+                                        onMouseLeave={handleMouseUp}
+                                    >
                                         <defs>
                                             <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
                                                 <polygon points="0 0, 10 3.5, 0 7" fill="#4b5563" />
                                             </marker>
+                                            <marker id="arrowhead-highlight" markerWidth="10" markerHeight="7" refX="28" refY="3.5" orient="auto">
+                                                <polygon points="0 0, 10 3.5, 0 7" fill="#8b5cf6" />
+                                            </marker>
                                         </defs>
-                                        {/* Edges */}
                                         {filteredEdges.map((edge, idx) => {
                                             const sourcePos = positions.get(edge.source);
                                             const targetPos = positions.get(edge.target);
                                             if (!sourcePos || !targetPos) return null;
+                                            const isHighlighted = selectedNode && (edge.source === selectedNode.id || edge.target === selectedNode.id);
                                             return (
                                                 <line
                                                     key={idx}
@@ -347,25 +517,34 @@ export default function RelationshipGraph() {
                                                     y1={sourcePos.y}
                                                     x2={targetPos.x}
                                                     y2={targetPos.y}
-                                                    stroke="#4b5563"
-                                                    strokeWidth="1.5"
-                                                    markerEnd="url(#arrowhead)"
+                                                    stroke={isHighlighted ? '#8b5cf6' : '#4b5563'}
+                                                    strokeWidth={isHighlighted ? 2.5 : 1.5}
+                                                    markerEnd={isHighlighted ? 'url(#arrowhead-highlight)' : 'url(#arrowhead)'}
+                                                    opacity={selectedNode && !isHighlighted ? 0.3 : 1}
                                                 />
                                             );
                                         })}
-                                        {/* Nodes */}
                                         {filteredNodes.map((node) => {
                                             const Icon = NODE_ICONS[node.type] || Globe;
                                             const color = NODE_COLORS[node.type] || '#6b7280';
                                             const pos = positions.get(node.id);
                                             if (!pos) return null;
-                                            const label = node.label;
-                                            const typeRoute = nodeRouteMap[node.type];
+                                            const isSelected = selectedNode?.id === node.id;
+                                            const isDimmed = selectedNode && !isSelected;
                                             return (
-                                                <g key={node.id} transform={`translate(${pos.x}, ${pos.y})`} style={{ cursor: typeRoute ? 'pointer' : 'default' }}>
-                                                    <title>{label}</title>
-                                                    <circle r="22" fill={color} opacity="0.15" />
-                                                    <circle r="14" fill={color} />
+                                                <g
+                                                    key={node.id}
+                                                    transform={`translate(${pos.x}, ${pos.y})`}
+                                                    style={{ cursor: isDragging && dragNodeId === node.id ? 'grabbing' : 'pointer' }}
+                                                    onMouseDown={(e) => handleMouseDown(e, node)}
+                                                    onClick={() => handleNodeClick(node)}
+                                                >
+                                                    <title>{node.label}{node.dangling ? ' (dangling)' : ''}</title>
+                                                    {isSelected && (
+                                                        <circle r={NODE_RADIUS + 6} fill="none" stroke={color} strokeWidth="2" opacity="0.6" />
+                                                    )}
+                                                    <circle r={NODE_RADIUS} fill={color} opacity={isDimmed ? 0.1 : 0.15} />
+                                                    <circle r={14} fill={color} opacity={isDimmed ? 0.5 : 1} />
                                                     <foreignObject x="-8" y="-8" width="16" height="16">
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
                                                             <Icon size={12} color="white" />
@@ -375,24 +554,14 @@ export default function RelationshipGraph() {
                                                         x="0"
                                                         y="30"
                                                         textAnchor="middle"
-                                                        fill="#9ca3af"
+                                                        fill={isDimmed ? '#4b5563' : '#9ca3af'}
                                                         fontSize="10"
                                                         fontFamily="sans-serif"
                                                     >
-                                                        {label}
+                                                        {node.label}
                                                     </text>
-                                                    {typeRoute && (
-                                                        <circle
-                                                            r="22"
-                                                            fill="transparent"
-                                                            stroke="transparent"
-                                                            strokeWidth="1"
-                                                            onClick={() => handleNodeClick(node)}
-                                                            onKeyDown={(e) => { if (e.key === 'Enter') handleNodeClick(node); }}
-                                                            tabIndex={0}
-                                                            role="link"
-                                                            aria-label={`Open ${label}`}
-                                                        />
+                                                    {node.dangling && (
+                                                        <circle r={4} cx={10} cy={-16} fill="#ef4444" />
                                                     )}
                                                 </g>
                                             );

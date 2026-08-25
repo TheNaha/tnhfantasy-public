@@ -1,7 +1,7 @@
-"""Tests for World Vault Hub endpoints (entities, relationships, search)."""
+"""Tests for World Vault Hub endpoints (entities, relationships, search, graph layout)."""
 import pytest
 
-from core.entities import Character, Chat, Lorebook, Story
+from core.entities import Character, Chat, Lorebook, Story, GraphLayout
 
 
 @pytest.fixture
@@ -94,4 +94,76 @@ def test_world_vault_relationships_dangling(client, session, setup_entities):
     loc_links = [l for l in data["story_locations"] if l["location_id"] == "ghost-loc"]
     assert len(loc_links) == 1
     assert loc_links[0]["dangling"] is True
+
+
+def test_graph_layout_get_empty(client, session):
+    """Getting a layout with no saved positions returns empty list."""
+    response = client.get("/api/v2/world-vault/graph-layout")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "default"
+    assert data["nodes"] == []
+
+
+def test_graph_layout_save_and_get(client, session):
+    """Saving positions persists them and they can be retrieved."""
+    payload = {
+        "nodes": [
+            {"entity_type": "character", "entity_id": "char-1", "x": 100.0, "y": 200.0},
+            {"entity_type": "story", "entity_id": "story-1", "x": 300.0, "y": 400.0},
+        ]
+    }
+    response = client.put("/api/v2/world-vault/graph-layout", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["saved"] == 2
+
+    response = client.get("/api/v2/world-vault/graph-layout")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["nodes"]) == 2
+    char_node = next(n for n in data["nodes"] if n["entity_id"] == "char-1")
+    assert char_node["x"] == 100.0
+    assert char_node["y"] == 200.0
+
+
+def test_graph_layout_save_replaces_existing(client, session):
+    """Saving a layout replaces all previous positions for that name."""
+    payload1 = {"nodes": [{"entity_type": "character", "entity_id": "char-1", "x": 100.0, "y": 200.0}]}
+    client.put("/api/v2/world-vault/graph-layout", json=payload1)
+
+    payload2 = {"nodes": [{"entity_type": "story", "entity_id": "story-1", "x": 500.0, "y": 600.0}]}
+    client.put("/api/v2/world-vault/graph-layout", json=payload2)
+
+    response = client.get("/api/v2/world-vault/graph-layout")
+    data = response.json()
+    assert len(data["nodes"]) == 1
+    assert data["nodes"][0]["entity_id"] == "story-1"
+
+
+def test_graph_layout_delete(client, session):
+    """Deleting a layout removes all its positions."""
+    payload = {"nodes": [{"entity_type": "character", "entity_id": "char-1", "x": 100.0, "y": 200.0}]}
+    client.put("/api/v2/world-vault/graph-layout", json=payload)
+
+    response = client.delete("/api/v2/world-vault/graph-layout")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["deleted"] == 1
+
+    response = client.get("/api/v2/world-vault/graph-layout")
+    data = response.json()
+    assert data["nodes"] == []
+
+
+def test_graph_layout_custom_name(client, session):
+    """Layouts can be saved with custom names."""
+    payload = {"nodes": [{"entity_type": "character", "entity_id": "char-1", "x": 50.0, "y": 60.0}]}
+    response = client.put("/api/v2/world-vault/graph-layout/?name=custom", json=payload)
+    assert response.status_code == 200
+
+    response = client.get("/api/v2/world-vault/graph-layout/?name=custom")
+    data = response.json()
+    assert data["name"] == "custom"
+    assert len(data["nodes"]) == 1
 

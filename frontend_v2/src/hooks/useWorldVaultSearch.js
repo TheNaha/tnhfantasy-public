@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
 /**
@@ -38,5 +38,24 @@ export const useWorldVaultRelationships = () => {
         queryKey: ['world_vault', 'relationships'],
         queryFn: () => api.get('/api/v2/world-vault/relationships'),
         staleTime: 60000,
+    });
+};
+
+export const useGraphLayout = (name = 'default') => {
+    return useQuery({
+        queryKey: ['world_vault', 'graph-layout', name],
+        queryFn: () => api.get(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`),
+        staleTime: 30000,
+    });
+};
+
+export const useSaveGraphLayout = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ name = 'default', nodes }) =>
+            api.put(`/api/v2/world-vault/graph-layout?name=${encodeURIComponent(name)}`, { nodes }),
+        onSuccess: (_, { name = 'default' }) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'graph-layout', name] });
+        },
     });
 };

@@ -1,13 +1,18 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import RelationshipGraph from './RelationshipGraph';
 
 const mockRelationships = vi.hoisted(() => vi.fn());
 const mockRefetch = vi.hoisted(() => vi.fn());
+const mockGraphLayout = vi.hoisted(() => vi.fn());
+const mockSaveLayout = vi.hoisted(() => vi.fn());
 
-vi.mock('../hooks/useWorldVault', () => ({
+vi.mock('../hooks/useWorldVaultSearch', () => ({
     useWorldVaultRelationships: (...args) => mockRelationships(...args),
+    useGraphLayout: (...args) => mockGraphLayout(...args),
+    useSaveGraphLayout: () => ({ mutate: mockSaveLayout, isPending: false }),
 }));
 
 const graphData = {
@@ -20,6 +25,22 @@ const graphData = {
     ],
     character_voices: [['voice-1', 'Aria Voice', 'char-1', 'Aria']],
 };
+
+function createWrapper() {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+    });
+    function Wrapper({ children }) {
+        return (
+            <QueryClientProvider client={queryClient}>
+                <MemoryRouter>
+                    {children}
+                </MemoryRouter>
+            </QueryClientProvider>
+        );
+    }
+    return Wrapper;
+}
 
 function mockReturn(value) {
     mockRelationships.mockReturnValue({
@@ -35,16 +56,13 @@ describe('RelationshipGraph page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockReturn(graphData);
+        mockGraphLayout.mockReturnValue({ data: null, isLoading: false });
     });
 
     it('renders the main heading and description', () => {
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(screen.getByRole('heading', { name: 'Relationship Graph' })).toBeInTheDocument();
-        expect(screen.getByText(/Visualize connections between characters, stories/i)).toBeInTheDocument();
+        expect(screen.getByText(/Drag nodes to reposition/i)).toBeInTheDocument();
     });
 
     it('shows a loading state while fetching relationships', () => {
@@ -55,11 +73,7 @@ describe('RelationshipGraph page', () => {
             refetch: mockRefetch,
             isFetching: false,
         });
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(screen.getByText('Loading relationships...')).toBeInTheDocument();
     });
 
@@ -71,30 +85,18 @@ describe('RelationshipGraph page', () => {
             refetch: mockRefetch,
             isFetching: false,
         });
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(screen.getByText('Failed to load relationships')).toBeInTheDocument();
     });
 
     it('shows an empty state when there are no relationships', () => {
         mockReturn({});
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(screen.getByText(/No relationships found/)).toBeInTheDocument();
     });
 
     it('renders node labels for all connected entities', () => {
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(screen.getAllByText('Aria').length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText('The Tavern Chat').length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText('The Dragon War').length).toBeGreaterThanOrEqual(1);
@@ -103,30 +105,18 @@ describe('RelationshipGraph page', () => {
     });
 
     it('renders one edge line per relationship', () => {
-        const { container } = render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        const { container } = render(<RelationshipGraph />, { wrapper: createWrapper() });
         expect(container.querySelectorAll('line')).toHaveLength(4);
     });
 
     it('deduplicates shared nodes across relationship types', () => {
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         const ariaNodes = screen.getAllByText('Aria');
         expect(ariaNodes.length).toBeGreaterThanOrEqual(1);
     });
 
     it('filters the graph to the selected entity type', () => {
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
         fireEvent.change(screen.getByRole('combobox'), { target: { value: 'character' } });
         expect(screen.getAllByText('Aria').length).toBeGreaterThanOrEqual(1);
         expect(screen.queryByText('The Dragon War')).not.toBeInTheDocument();
@@ -135,12 +125,22 @@ describe('RelationshipGraph page', () => {
     });
 
     it('refetches relationships when the refresh button is clicked', () => {
-        render(
-            <MemoryRouter>
-                <RelationshipGraph />
-            </MemoryRouter>
-        );
-        fireEvent.click(screen.getByTitle('Refresh'));
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
+        const buttons = screen.getAllByRole('button');
+        const refreshBtn = buttons.find(b => b.title === 'Refresh');
+        fireEvent.click(refreshBtn);
         expect(mockRefetch).toHaveBeenCalled();
+    });
+
+    it('renders a save layout button', () => {
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
+        expect(screen.getByText('Saved')).toBeInTheDocument();
+    });
+
+    it('renders a reset layout button', () => {
+        render(<RelationshipGraph />, { wrapper: createWrapper() });
+        const buttons = screen.getAllByRole('button');
+        const resetBtn = buttons.find(b => b.title === 'Reset layout');
+        expect(resetBtn).toBeInTheDocument();
     });
 });
