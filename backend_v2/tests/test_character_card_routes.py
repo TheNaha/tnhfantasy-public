@@ -88,10 +88,14 @@ class TestImportCharacterCard:
 
 
 class TestExportCharacter:
-    def test_export_requires_avatar(self, client, session):
+    def test_export_without_avatar_falls_back_to_1x1_png(self, client, session):
         char = _seed_char(client, name="NoAvatar")
         resp = client.get(f"/api/v2/characters/{char['id']}/export")
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/png"
+        assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"
+        img = Image.open(io.BytesIO(resp.content))
+        assert "chara" in img.info
 
     def test_export_round_trips_card_fields(self, client, session):
         char = _seed_char(client, name="Exportable")

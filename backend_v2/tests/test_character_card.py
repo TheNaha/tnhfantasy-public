@@ -159,4 +159,4 @@ class TestCharacterCardImport:
             files={"file": ("test.png", png_bytes, "image/png")},
         )
         assert response.status_code == 400
-        assert "chara" in response.json().get("detail", "").lower() or "character data" in response.json().get("detail", "").lower()
+        assert "chara" in response.json().get("error", "").lower() or "character data" in response.json().get("error", "").lower()
