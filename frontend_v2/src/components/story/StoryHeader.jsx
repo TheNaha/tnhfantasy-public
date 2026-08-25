@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download } from 'lucide-react';
+import { BookOpen, Sparkles, Loader2, Save, Edit3, Book, Layers, ImageIcon, Download, FileText } from 'lucide-react';
 import clsx from 'clsx';
 
 export default React.memo(function StoryHeader({
@@ -39,12 +39,22 @@ export default React.memo(function StoryHeader({
                         />
                     </div>
                     <div className="flex items-center gap-1 sm:gap-2 px-1 min-w-0">
-                        <div className="flex flex-col min-w-0">
-                            <p className="font-bold text-sm sm:text-base text-gray-200 truncate flex items-center gap-2">
-                                {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
-                                {activeStory?.genre && <span className="hidden sm:inline font-normal text-xs text-gray-500">· {activeStory.genre}</span>}
-                            </p>
-                        </div>
+                         <div className="flex flex-col min-w-0">
+                             <p className="font-bold text-sm sm:text-base text-gray-200 truncate flex items-center gap-2">
+                                 {activeChapter ? `${activeChapter.title || `Chapter ${activeChapter.chapter_number}`}` : 'Select a chapter'}
+                                 {activeStory?.genre && <span className="hidden sm:inline font-normal text-xs text-gray-500">· {activeStory.genre}</span>}
+                             </p>
+                             {activeChapter?.content && (() => {
+                                 const wordCount = activeChapter.content.trim().split(/\s+/).filter(Boolean).length;
+                                 const readingTime = Math.ceil(wordCount / 200);
+                                 return (
+                                     <p className="text-[10px] text-gray-500 flex items-center gap-1">
+                                         <FileText size={10} />
+                                         <span>{wordCount} words · {readingTime} min read</span>
+                                     </p>
+                                 );
+                             })()}
+                         </div>
                         {activeChapter && (
                             <button 
                                 onClick={onAutoGenerateTitle} 
