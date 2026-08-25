@@ -30,6 +30,8 @@ vi.mock('../hooks/useLorebooks', () => ({
     useDeleteEntry: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useSearchEntries: () => ({ mutate: vi.fn(), data: null, isPending: false }),
     useReindexLorebook: () => ({ mutate: vi.fn(), isPending: false }),
+    useImportLorebookEntries: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useBulkDeleteEntries: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock('../store/confirmationStore', () => ({

@@ -106,3 +106,24 @@ export const useReindexLorebook = () => {
         }
     });
 };
+
+export const useImportLorebookEntries = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ lorebookId, payload }) => api.post(`/api/v2/lorebooks/${lorebookId}/import`, payload),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks', variables.lorebookId, 'entries'] });
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks'] });
+        }
+    });
+};
+
+export const useBulkDeleteEntries = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ lorebookId, entryIds }) => api.post(`/api/v2/lorebooks/${lorebookId}/entries/bulk-delete`, { entry_ids: entryIds }),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'lorebooks', variables.lorebookId, 'entries'] });
+        }
+    });
+};

@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, BookOpen, Search, RefreshCw, X, Save, ChevronRight, Key, FileText } from 'lucide-react';
+import { Plus, Edit3, Trash2, BookOpen, Search, RefreshCw, X, Save, ChevronRight, Key, FileText, Upload, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
     useLorebooks,
@@ -13,6 +13,8 @@ import {
     useDeleteEntry,
     useSearchEntries,
     useReindexLorebook,
+    useImportLorebookEntries,
+    useBulkDeleteEntries,
 } from '../hooks/useLorebooks';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
@@ -152,6 +154,20 @@ export default function Lorebooks() {
                                 <button onClick={() => setActiveLorebookId(lb.id)} className="p-1 text-gray-400 hover:text-blue-400 rounded" title="Manage entries">
                                     <ChevronRight size={14} />
                                 </button>
+                                <button
+                                    onClick={() => {
+                                        const a = document.createElement('a');
+                                        a.href = `/api/v2/lorebooks/${lb.id}/export`;
+                                        a.download = `${(lb.name || 'lorebook').replace(/[^a-z0-9_-]+/gi, '_')}.json`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        a.remove();
+                                    }}
+                                    className="p-1 text-gray-400 hover:text-white rounded"
+                                    title="Export as SillyTavern world-book JSON"
+                                >
+                                    <Download size={14} />
+                                </button>
                                 <button onClick={() => handleEdit(lb)} className="p-1 text-gray-400 hover:text-white rounded" title="Edit">
                                     <Edit3 size={14} />
                                 </button>
@@ -257,6 +273,8 @@ function EntryManagerModal({ lorebook, onClose }) {
     const [editingEntry, setEditingEntry] = useState(null);
     const [entryForm, setEntryForm] = useState({ keys: '', content: '' });
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const fileInputRef = useRef(null);
 
     const { data: entries = [], isLoading } = useLorebookEntries(lorebook.id);
     const createEntry = useCreateEntry();
@@ -264,6 +282,8 @@ function EntryManagerModal({ lorebook, onClose }) {
     const deleteEntry = useDeleteEntry();
     const searchMutation = useSearchEntries();
     const reindexMutation = useReindexLorebook();
+    const importEntries = useImportLorebookEntries();
+    const bulkDeleteEntries = useBulkDeleteEntries();
     const { confirm } = useConfirmation();
 
     const isSearching = searchQuery.trim().length >= 2;
@@ -336,6 +356,54 @@ function EntryManagerModal({ lorebook, onClose }) {
         });
     };
 
+    const handleImportFile = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        let payload;
+        try {
+            payload = JSON.parse(await file.text());
+        } catch {
+            toast.error('Not a valid JSON file');
+            return;
+        }
+        toast.promise(
+            importEntries.mutateAsync({ lorebookId: lorebook.id, payload }),
+            {
+                loading: 'Importing entries...',
+                success: (data) => `Imported ${data?.imported ?? 0} entries`,
+                error: (err) => err?.response?.data?.error || 'Import failed',
+            }
+        );
+    };
+
+    const toggleSelected = (entryId) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            next.has(entryId) ? next.delete(entryId) : next.add(entryId);
+            return next;
+        });
+    };
+
+    const handleBulkDelete = async () => {
+        const count = selectedIds.size;
+        if (count === 0) return;
+        const ok = await confirm({
+            title: 'Delete Entries',
+            message: `Delete ${count} selected ${count === 1 ? 'entry' : 'entries'}?`,
+            confirmText: 'Delete',
+            isDangerous: true,
+        });
+        if (!ok) return;
+        try {
+            const data = await bulkDeleteEntries.mutateAsync({ lorebookId: lorebook.id, entryIds: [...selectedIds] });
+            setSelectedIds(new Set());
+            toast.success(`Deleted ${data?.deleted ?? count} entries`);
+        } catch {
+            toast.error('Bulk delete failed');
+        }
+    };
+
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -393,6 +461,30 @@ function EntryManagerModal({ lorebook, onClose }) {
                     >
                         <Plus size={12} /> Add
                     </button>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".json"
+                        className="hidden"
+                        onChange={handleImportFile}
+                    />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={importEntries.isPending}
+                        className="p-1.5 text-gray-400 hover:text-white border border-white/10 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                        title="Import SillyTavern world-book JSON into this book"
+                    >
+                        <Upload size={14} />
+                    </button>
+                    {selectedIds.size > 0 && (
+                        <button
+                            onClick={handleBulkDelete}
+                            disabled={bulkDeleteEntries.isPending}
+                            className="px-3 py-1.5 bg-red-600/80 hover:bg-red-600 text-white text-xs rounded-lg flex items-center gap-1 transition-colors shrink-0 disabled:opacity-50"
+                        >
+                            <Trash2 size={12} /> Delete ({selectedIds.size})
+                        </button>
+                    )}
                     <button
                         onClick={handleReindex}
                         disabled={reindexMutation.isPending}
@@ -450,6 +542,13 @@ function EntryManagerModal({ lorebook, onClose }) {
                         displayed.map((entry) => (
                             <div key={entry.id} className="bg-gray-800/40 hover:bg-gray-800/60 rounded-lg p-3 border border-white/5 group">
                                 <div className="flex items-start justify-between gap-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(entry.id)}
+                                        onChange={() => toggleSelected(entry.id)}
+                                        className="mt-0.5 shrink-0 accent-blue-500"
+                                        aria-label={`Select entry ${entry.keys?.join(', ') || 'without keys'}`}
+                                    />
                                     <div className="flex-1 min-w-0">
                                         {entry.keys?.length > 0 && (
                                             <div className="flex flex-wrap gap-1 mb-1.5">

@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
+import json
+import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Body
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -10,7 +13,7 @@ from infrastructure.repositories.lorebook_repo import LorebookRepository
 from infrastructure.repositories.lorebook_entry_repo import LorebookEntryRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Lorebook, LorebookEntry
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from services.embedding_service import EmbeddingService
 
 logger = get_logger("lorebooks_route")
@@ -25,6 +28,10 @@ class LorebookUpdate(BaseModel):
 class EntryUpdate(BaseModel):
     keys: list[str] | None = None
     content: str | None = None
+
+
+class BulkEntryDelete(BaseModel):
+    entry_ids: list[str]
 
 @router.get("", response_model=list[Lorebook])
 def list_lorebooks(session: Session = Depends(get_session), lorebook_repo: LorebookRepository = Depends(get_lorebook_repo)):
@@ -192,7 +199,158 @@ def delete_entry(lorebook_id: str, entry_id: str, session: Session = Depends(get
     entry = lorebook_entry_repo.get(entry_id, lorebook_id)
     if not entry or entry.lorebook_id != lorebook_id:
         raise NotFoundError("LorebookEntry", entry_id)
-        
+
     session.delete(entry)
     session.commit()
     return {"message": "Entry deleted"}
+
+
+@router.post("/{lorebook_id}/entries/bulk-delete")
+def bulk_delete_entries(
+    lorebook_id: str,
+    payload: BulkEntryDelete,
+    session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
+    lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo),
+):
+    """Delete multiple entries from a lorebook in one call."""
+    if not lorebook_repo.get(lorebook_id):
+        raise NotFoundError("Lorebook", lorebook_id)
+
+    deleted = 0
+    for entry_id in payload.entry_ids:
+        entry = lorebook_entry_repo.get(entry_id, lorebook_id)
+        if entry and entry.lorebook_id == lorebook_id:
+            session.delete(entry)
+            deleted += 1
+    session.commit()
+    return {"deleted": deleted}
+
+
+# ============================================================================
+# SILLYTAVERN WORLDBOOK IMPORT / EXPORT
+# ============================================================================
+
+def _normalize_st_keys(raw: object) -> list[str]:
+    """SillyTavern `key` may be a list or a comma-separated string."""
+    if isinstance(raw, list):
+        return [str(k).strip() for k in raw if str(k).strip()]
+    if isinstance(raw, str):
+        return [k.strip() for k in raw.split(",") if k.strip()]
+    return []
+
+
+def _extract_st_entries(payload) -> list[dict]:
+    """Pull entry dicts out of any common SillyTavern world-book shape."""
+    if isinstance(payload, dict):
+        entries = payload.get("entries", payload)
+        if isinstance(entries, dict):
+            return [v for v in entries.values() if isinstance(v, dict)]
+        if isinstance(entries, list):
+            return [v for v in entries if isinstance(v, dict)]
+        raise ValidationError("Unrecognized lorebook JSON: no 'entries' object found")
+    if isinstance(payload, list):
+        return [v for v in payload if isinstance(v, dict)]
+    raise ValidationError("Unrecognized lorebook JSON: expected an object or list")
+
+
+@router.post("/{lorebook_id}/import")
+def import_sillytavern_entries(
+    lorebook_id: str,
+    payload=Body(...),
+    session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
+    embedding_service: EmbeddingService = Depends(get_embedding_service),
+):
+    """Import entries from a SillyTavern world-book JSON payload (merged into this book).
+
+    Accepts the full ST export ({name, entries: {uid: {...}}}), a bare
+    {entries: [...]} list, or a top-level list of entries.
+    """
+    lorebook = lorebook_repo.get(lorebook_id)
+    if not lorebook:
+        raise NotFoundError("Lorebook", lorebook_id)
+
+    st_entries = _extract_st_entries(payload)
+    parsed: list[tuple[list[str], str]] = []
+    for raw in st_entries:
+        keys = _normalize_st_keys(raw.get("key") or raw.get("keys") or raw.get("comment"))
+        content = (raw.get("content") or "").strip()
+        if not content:
+            continue
+        parsed.append((keys, content))
+
+    if not parsed:
+        raise ValidationError("No importable entries found (entries need non-empty 'content')")
+
+    texts = [f"{' '.join(keys)} {content}".strip() for keys, content in parsed]
+    try:
+        embeddings = embedding_service.generate_embeddings(texts)
+    except Exception as exc:
+        logger.warning("lorebook_bulk_embedding_failed", lorebook_id=lorebook_id, error=str(exc))
+        embeddings = [None] * len(parsed)
+
+    now = datetime.now(timezone.utc)
+    for (keys, content), emb in zip(parsed, embeddings):
+        entry = LorebookEntry(
+            lorebook_id=lorebook_id,
+            keys=keys,
+            content=content,
+            embedding=emb,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(entry)
+    lorebook.updated_at = now
+    session.add(lorebook)
+    session.commit()
+    return {"imported": len(parsed)}
+
+
+@router.get("/{lorebook_id}/export")
+def export_lorebook_sillytavern(
+    lorebook_id: str,
+    session: Session = Depends(get_session),
+    lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
+    lorebook_entry_repo: LorebookEntryRepository = Depends(get_lorebook_entry_repo),
+):
+    """Export this lorebook as a SillyTavern-compatible world-book JSON download."""
+    lorebook = lorebook_repo.get(lorebook_id)
+    if not lorebook:
+        raise NotFoundError("Lorebook", lorebook_id)
+
+    entries = lorebook_entry_repo.list_by_lorebook(lorebook_id)
+    st_entries: dict[str, dict] = {}
+    for idx, entry in enumerate(entries):
+        st_entries[str(idx)] = {
+            "uid": idx,
+            "key": list(entry.keys or []),
+            "keysecondary": [],
+            "comment": "",
+            "content": entry.content or "",
+            "constant": False,
+            "vectorized": True,
+            "selective": True,
+            "selectiveLogic": 0,
+            "addMemo": True,
+            "order": 100,
+            "position": 0,
+            "disable": False,
+            "excludeRecursion": False,
+            "preventRecursion": False,
+            "probability": 100,
+            "useProbability": True,
+            "depth": 4,
+            "group": "",
+            "displayIndex": idx,
+        }
+
+    export_payload = {"name": lorebook.name, "entries": st_entries}
+
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", lorebook.name).strip("_") or "lorebook"
+    filename = f"{safe_name}.json"
+    return Response(
+        content=json.dumps(export_payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
