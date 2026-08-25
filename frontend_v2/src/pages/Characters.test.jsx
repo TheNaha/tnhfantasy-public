@@ -29,6 +29,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useImportCharacterCard: () => mockImportCharacterCard(),
     useReorderCharacters: () => ({ mutate: vi.fn(), isPending: false }),
     useAnimateCharacterAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useCloneCharacter: () => ({ mutateAsync: vi.fn(), isPending: false }),
     getAvatarUrl: () => '',
 }));
 

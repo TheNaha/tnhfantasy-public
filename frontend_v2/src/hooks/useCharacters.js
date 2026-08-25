@@ -92,6 +92,16 @@ export const useImportCharacterCard = () => {
     });
 };
 
+export const useCloneCharacter = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id) => api.post(`/api/v2/characters/${id}/clone`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'characters'] });
+        }
+    });
+};
+
 export const useCharacterCollection = (characterId) => {
     return useQuery({
         queryKey: ['world_vault', 'characters', characterId, 'collection'],

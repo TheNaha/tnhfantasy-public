@@ -16,10 +16,10 @@ import {
     arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Users, Plus, Upload, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
+import { Users, Plus, Upload, Download, Copy, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
@@ -646,7 +646,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
     );
 }
 
-function CharacterCard({ character, onEdit, onDelete, onChat }) {
+function CharacterCard({ character, onEdit, onDelete, onChat, onExport, onClone, isCloning }) {
     const { data: collection } = useCharacterCollection(character.id);
     const imageCount = collection?.image_count || 0;
 
@@ -730,6 +730,12 @@ function CharacterCard({ character, onEdit, onDelete, onChat }) {
                 <button onClick={() => onEdit(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Edit character">
                     <Edit3 size={14} /> Edit
                 </button>
+                <button onClick={() => onExport(character)} className="flex items-center px-2 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors" title="Export SillyTavern V2 PNG card">
+                    <Download size={14} />
+                </button>
+                <button onClick={() => onClone(character)} disabled={isCloning} className="flex items-center px-2 py-1.5 text-xs bg-white/5 text-gray-400 rounded-lg hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50" title="Clone character">
+                    {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+                </button>
                 <button onClick={() => onDelete(character)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors ml-auto" title="Delete character">
                     <Trash2 size={14} />
                 </button>
@@ -744,6 +750,7 @@ export default function Characters() {
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [activeTab, setActiveTab] = useState('details');
     const fileInputRef = useRef(null);
+    const [cloningId, setCloningId] = useState(null);
 
     const navigate = useNavigate();
     const setActiveChat = useWorldVaultStore(state => state.setActiveChat);
@@ -755,6 +762,7 @@ export default function Characters() {
     const deleteCharacter = useDeleteCharacter();
     const importCharacterCard = useImportCharacterCard();
     const reorderCharacters = useReorderCharacters();
+    const cloneCharacter = useCloneCharacter();
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -848,6 +856,29 @@ export default function Characters() {
             }
         );
         e.target.value = '';
+    };
+
+    const handleExportCard = (character) => {
+        const a = document.createElement('a');
+        a.href = `/api/v2/characters/${character.id}/export`;
+        a.download = `${(character.name || 'character').replace(/[^a-z0-9]+/gi, '_')}_v2.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast.success(`Exporting "${character.name}" card...`, { icon: '📤' });
+    };
+
+    const handleCloneCharacter = async (character) => {
+        if (cloningId) return;
+        setCloningId(character.id);
+        try {
+            const clone = await cloneCharacter.mutateAsync(character.id);
+            toast.success(`"${character.name}" cloned as "${clone.name}"`, { icon: '🧬' });
+        } catch {
+            toast.error('Failed to clone character');
+        } finally {
+            setCloningId(null);
+        }
     };
 
     const openCreate = () => {
@@ -956,6 +987,9 @@ export default function Characters() {
                                         onEdit={openEdit}
                                         onDelete={handleDelete}
                                         onChat={handleStartChat}
+                                        onExport={handleExportCard}
+                                        onClone={handleCloneCharacter}
+                                        isCloning={cloningId === character.id}
                                     />
                                 ))}
                             </div>
