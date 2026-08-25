@@ -255,9 +255,12 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
-    past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
-    ).all()
+    past_messages = list(
+        session.exec(
+            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
+        ).all()
+    )
+    past_messages.reverse()
 
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
@@ -903,9 +906,12 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
     if not chat:
         raise NotFoundError("Chat", chat_id)
 
-    past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
-    ).all()
+    past_messages = list(
+        session.exec(
+            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
+        ).all()
+    )
+    past_messages.reverse()
 
     character = character_repo.get(chat.character_id) if chat.character_id else None
 
@@ -985,10 +991,13 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     if not chat:
         raise NotFoundError("Chat", chat_id)
         
-    past_messages = session.exec(
-        select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at).limit(MAX_CONTEXT_MESSAGES)
-    ).all()
-    
+    past_messages = list(
+        session.exec(
+            select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(MAX_CONTEXT_MESSAGES)
+        ).all()
+    )
+    past_messages.reverse()
+
     character = None
     if chat.character_id:
         character = character_repo.get(chat.character_id)
@@ -1057,7 +1066,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     if req.draft and req.draft.strip():
         all_msgs.append({"role": "user", "content": f"[User's rough draft to refine]:\n{req.draft}"})
         
-    all_msgs = prune_context(all_msgs, suggest_system, [])
+    all_msgs = prune_context(all_msgs, suggest_system, [], _resolve_context_tokens(chat))
 
     try:
         job_service = get_job_service(session)

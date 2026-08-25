@@ -332,19 +332,23 @@ async def _handle_story_tts(job_data: dict[str, Any]):
         try:
             chapter = session.get(StoryChapter, chapter_id)
             if chapter and chapter.story_id == story_id:
-                # Append audio_path to the chapter's metadata or create a beat entry
-                meta = dict(chapter.beats[-1]) if chapter.beats else {}
-                if meta.get("role") == "system_tts":
-                    meta["audio_path"] = audio_path
+                # Append audio_path to the last beat, or create a TTS beat entry.
+                # MutableList does NOT track in-place mutation of its dict members,
+                # so the beats list must be rebuilt (reassigned) to persist.
+                beats = list(chapter.beats or [])
+                if beats and isinstance(beats[-1], dict) and beats[-1].get("role") == "system_tts":
+                    beats[-1] = {**beats[-1], "audio_path": audio_path}
                 else:
-                    meta = {
-                        "id": str(uuid4()),
-                        "parent_beat_id": (chapter.beats[-1].get("id") if chapter.beats else None),
-                        "role": "system_tts",
-                        "content": "",
-                        "audio_path": audio_path,
-                    }
-                    chapter.beats.append(meta)
+                    beats.append(
+                        {
+                            "id": str(uuid4()),
+                            "parent_beat_id": (beats[-1].get("id") if beats and isinstance(beats[-1], dict) else None),
+                            "role": "system_tts",
+                            "content": "",
+                            "audio_path": audio_path,
+                        }
+                    )
+                chapter.beats = beats
                 session.add(chapter)
                 session.commit()
         except Exception as e:

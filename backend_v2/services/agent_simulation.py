@@ -96,12 +96,15 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
             if busy:
                 continue
 
-            past_messages = session.exec(
-                select(Message)
-                .where(Message.chat_id == chat.id)
-                .order_by(Message.created_at)
-                .limit(MAX_CONTEXT_MESSAGES)
-            ).all()
+            past_messages = list(
+                session.exec(
+                    select(Message)
+                    .where(Message.chat_id == chat.id)
+                    .order_by(Message.created_at.desc())
+                    .limit(MAX_CONTEXT_MESSAGES)
+                ).all()
+            )
+            past_messages.reverse()
 
             characters: list[Character] = []
             if chat.character_id:

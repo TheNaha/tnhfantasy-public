@@ -822,7 +822,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         chapter_id=chapter_id,
         model=(story.llm_model if story else None) or _get_default_llm_model(),
         workspace="story",
-        extra_metadata={"max_agentic_depth": story.max_agentic_depth} if story.max_agentic_depth is not None else None,
+        extra_metadata={"max_agentic_depth": story.max_agentic_depth} if story and story.max_agentic_depth is not None else None,
     )
     job = await job_service.create_job(
         task_type="llm",
