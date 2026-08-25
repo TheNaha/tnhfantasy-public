@@ -12,7 +12,6 @@ from .voices import router as voices_router
 from .world_hub import router as world_hub_router
 from .locations import router as locations_router
 from .timeline import router as timeline_router
-from .campaigns import router as campaigns_router
 from .graph_layout import router as graph_layout_router
 
 router = APIRouter(prefix="/api/v2")
@@ -28,6 +27,5 @@ router.include_router(voices_router, prefix="/voices", tags=["Voices"])
 router.include_router(world_hub_router, prefix="/world-vault", tags=["World Vault"])
 router.include_router(locations_router, prefix="/locations", tags=["Locations"])
 router.include_router(timeline_router, prefix="/timeline", tags=["Timeline"])
-router.include_router(campaigns_router, prefix="/campaigns", tags=["Campaigns"])
 router.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
 router.include_router(graph_layout_router, prefix="/world-vault/graph-layout", tags=["Graph Layout"])

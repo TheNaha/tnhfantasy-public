@@ -472,11 +472,7 @@ def export_character(character_id: str, session: Session = Depends(get_session),
     character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
-        
-    if not character.avatar_path or not os.path.exists(character.avatar_path):
-        raise ValidationError("Character must have an avatar to export as a PNG card")
-        
-    # Format as V2 character card
+
     v2_data = {
         "spec": "chara2.0",
         "spec_version": "2.0",
@@ -489,6 +485,7 @@ def export_character(character_id: str, session: Session = Depends(get_session),
             "mes_example": character.mes_example or "",
             "creator_notes": character.creator_notes or "",
             "system_prompt": character.system_prompt or "",
+            "post_history_instructions": character.append_system_prompt or "",
             "alternate_greetings": character.alternate_greetings or [],
             "tags": character.visual_tags or [],
             "creator": character.creator_notes or "",
@@ -496,26 +493,94 @@ def export_character(character_id: str, session: Session = Depends(get_session),
             "extensions": {
                 "lora_triggers": character.lora_triggers or [],
                 "visual_tags": character.visual_tags or [],
-                "voice_profile": character.voice_profile or ""
-            }
-        }
+                "voice_profile": character.voice_profile or "",
+            },
+        },
     }
-    
-    json_str = json.dumps(v2_data)
-    b64_data = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-    
-    img = Image.open(character.avatar_path)
+
+    json_str = json.dumps(v2_data, ensure_ascii=False)
+    b64_data = base64.b64encode(json_str.encode("utf-8")).decode("utf-8")
+
+    if character.avatar_path and os.path.exists(character.avatar_path):
+        img = Image.open(character.avatar_path)
+        metadata = PngImagePlugin.PngInfo()
+        metadata.add_text("chara", b64_data)
+
+        output = BytesIO()
+        img.save(output, format="PNG", pnginfo=metadata)
+        output.seek(0)
+
+        safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
+        if not safe_name:
+            safe_name = "character"
+        filename = f"{safe_name.replace(' ', '_')}_v2.png"
+
+        return StreamingResponse(output, media_type="image/png", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     metadata = PngImagePlugin.PngInfo()
     metadata.add_text("chara", b64_data)
-    
+
     output = BytesIO()
     img.save(output, format="PNG", pnginfo=metadata)
     output.seek(0)
-    
-    # Sanitize filename
-    safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+
+    safe_name = "".join([c for c in character.name if c.isalpha() or c.isdigit() or c == " "]).rstrip()
     if not safe_name:
         safe_name = "character"
     filename = f"{safe_name.replace(' ', '_')}_v2.png"
-    
+
     return StreamingResponse(output, media_type="image/png", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/import")
+def import_character_card(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """Import a character from a SillyTavern-compatible PNG character card."""
+    if not file.content_type or "image/png" not in file.content_type:
+        if not file.filename or not file.filename.lower().endswith(".png"):
+            raise ValidationError("File must be a PNG image")
+
+    try:
+        from PIL import Image
+        img = Image.open(file.file)
+        img.load()
+    except Exception as e:
+        raise ValidationError(f"Invalid PNG file: {e}")
+
+    metadata = img.info.get("chara")
+    if not metadata:
+        raise ValidationError("No character data found in PNG. Expected 'chara' tEXt chunk.")
+
+    try:
+        decoded = base64.b64decode(metadata)
+        card_data = json.loads(decoded.decode("utf-8"))
+    except Exception as e:
+        raise ValidationError(f"Failed to decode character data: {e}")
+
+    data = card_data.get("data", card_data)
+    extensions = data.get("extensions", {})
+
+    character = Character(
+        name=data.get("name", "Imported Character"),
+        description=data.get("description") or None,
+        personality=data.get("personality") or None,
+        scenario=data.get("scenario") or None,
+        first_mes=data.get("first_mes") or None,
+        mes_example=data.get("mes_example") or None,
+        creator_notes=data.get("creator_notes") or None,
+        system_prompt=data.get("system_prompt") or None,
+        append_system_prompt=data.get("post_history_instructions") or None,
+        alternate_greetings=data.get("alternate_greetings") or None,
+        visual_tags=data.get("tags") or extensions.get("visual_tags") or [],
+        lora_triggers=extensions.get("lora_triggers"),
+        voice_profile=extensions.get("voice_profile"),
+    )
+    session.add(character)
+    session.commit()
+    session.refresh(character)
+
+    return character
