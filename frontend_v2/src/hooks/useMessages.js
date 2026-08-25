@@ -1,15 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
-export const useMessages = (chatId, { limit = 100, offset = 0, branchId = null } = {}, options = {}) => {
+export const useMessages = (chatId, { limit = 100, offset = 0, branchId = null, search = null } = {}, options = {}) => {
     return useQuery({
-        queryKey: ['world_vault', 'messages', chatId, limit, offset, branchId ?? 'active'],
+        queryKey: ['world_vault', 'messages', chatId, limit, offset, branchId ?? 'active', search ?? ''],
         queryFn: () => {
             if (!chatId) return [];
             const params = {};
             if (limit) params.limit = limit;
             if (offset) params.offset = offset;
             if (branchId) params.branch_id = branchId;
+            if (search) params.q = search;
             return api.get(`/api/v2/chats/${chatId}/messages`, { params });
         },
         enabled: !!chatId,

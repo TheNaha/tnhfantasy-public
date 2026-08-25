@@ -431,3 +431,44 @@ class TestListChatJobs:
         resp = client.get(f"/api/v2/chats/{chat.id}/jobs")
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+# ── Message search ──────────────────────────────────────────────────────────
+
+class TestMessageSearch:
+    def test_search_messages_by_content(self, client, session):
+        chat = _seed_chat(session)
+        _add_message(session, chat, MessageRole.USER, "Hello there")
+        _add_message(session, chat, MessageRole.CHAR, "Greetings, traveler")
+        _add_message(session, chat, MessageRole.USER, "The dragon is here")
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/messages?q=dragon")
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) == 1
+        assert "dragon" in results[0]["content"].lower()
+
+    def test_search_messages_case_insensitive(self, client, session):
+        chat = _seed_chat(session)
+        _add_message(session, chat, MessageRole.USER, "Hello World")
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/messages?q=hello")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+
+    def test_search_messages_no_match(self, client, session):
+        chat = _seed_chat(session)
+        _add_message(session, chat, MessageRole.USER, "Hello")
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/messages?q=nonexistent")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_search_messages_empty_query_returns_all(self, client, session):
+        chat = _seed_chat(session)
+        _add_message(session, chat, MessageRole.USER, "First")
+        _add_message(session, chat, MessageRole.CHAR, "Second")
+
+        resp = client.get(f"/api/v2/chats/{chat.id}/messages")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 2

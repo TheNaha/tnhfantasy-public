@@ -234,13 +234,15 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0):
+def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = None):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
     query = select(Message).where(Message.chat_id == chat_id)
     if branch_id:
         query = query.where(Message.branch_id == branch_id)
+    if q:
+        query = query.where(Message.content.ilike(f"%{q}%"))
     return session.exec(query.order_by(Message.created_at).offset(offset).limit(limit)).all()
 
 

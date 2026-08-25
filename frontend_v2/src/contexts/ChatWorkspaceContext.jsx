@@ -157,10 +157,11 @@ export function ChatWorkspaceProvider({ children }) {
     const MESSAGE_PAGE_SIZE = 100;
     const MAX_MESSAGE_PAGES = 5;
     const [messagePageCount, setMessagePageCount] = useState(1);
+    const [messageSearch, setMessageSearch] = useState('');
 
     const { data: messagesData = [] } = useMessages(
         activeChatId,
-        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0, branchId: activeBranch }
+        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0, branchId: activeBranch, search: messageSearch || null }
     );
     
     const messages = messagesData;
@@ -854,6 +855,7 @@ export function ChatWorkspaceProvider({ children }) {
         lorebooks,
         message,
         messagePageCount,
+        messageSearch,
         messages,
         messagesEndRef,
         messagesData,
@@ -893,6 +895,7 @@ export function ChatWorkspaceProvider({ children }) {
         setIsUploading,
         setMessage,
         setMessagePageCount,
+        setMessageSearch,
         setMobileTab,
         setNarrateMode,
         setPendingAttachment,

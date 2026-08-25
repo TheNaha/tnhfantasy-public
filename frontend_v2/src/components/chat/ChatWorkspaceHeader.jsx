@@ -1,5 +1,5 @@
-import React from 'react';
-import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, GitBranch } from 'lucide-react';
+import React, { useState } from 'react';
+import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, GitBranch, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 
@@ -16,8 +16,25 @@ export default function ChatWorkspaceHeader({
     messages,
     setTimelineVisible,
     contextCollapsed,
-    setContextCollapsed
+    setContextCollapsed,
+    onSearchChange,
 }) {
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+
+    const handleSearchToggle = () => {
+        if (searchOpen) {
+            setSearchQuery('');
+            onSearchChange?.('');
+        }
+        setSearchOpen(!searchOpen);
+    };
+
+    const handleSearchInput = (e) => {
+        const value = e.target.value;
+        setSearchQuery(value);
+        onSearchChange?.(value);
+    };
     return (
         <div className="h-12 lg:h-16 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 shrink-0 bg-gray-900/40 backdrop-blur-md z-10 gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
@@ -62,6 +79,29 @@ export default function ChatWorkspaceHeader({
             </div>
             
             <div className="hidden md:flex items-center gap-2 mr-1 shrink-0">
+                {searchOpen && (
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={handleSearchInput}
+                            placeholder="Search messages..."
+                            className="w-40 lg:w-56 px-3 py-1.5 pl-8 bg-gray-800/80 border border-white/10 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                            autoFocus
+                        />
+                        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+                    </div>
+                )}
+                <button
+                    onClick={handleSearchToggle}
+                    className={clsx(
+                        "p-2 rounded-xl transition-colors shrink-0",
+                        searchOpen ? "text-blue-400 bg-blue-500/10" : "text-gray-400 hover:text-white hover:bg-white/5"
+                    )}
+                    title={searchOpen ? 'Close search' : 'Search messages'}
+                >
+                    {searchOpen ? <X size={18} /> : <Search size={18} />}
+                </button>
                 {activeChat?.story_time && (
                     <div className="px-2.5 py-1 bg-gray-800/50 border border-white/5 rounded text-[11px] font-medium text-gray-300 flex items-center gap-1.5 shadow-sm" title="Story Time">
                         <Clock size={12} className="text-indigo-400/70" /> 

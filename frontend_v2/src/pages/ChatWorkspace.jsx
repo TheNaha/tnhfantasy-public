@@ -47,7 +47,7 @@ function ChatWorkspaceLayout() {
     };
     const {
         mobileTab, setMobileTab,
-        activeChatId, messages,
+        activeChatId, messages, setMessageSearch,
         setTimelineVisible, listContainerRef,
         showNewChatModal, characters, lorebooks, confirmCreateChat, setShowNewChatModal,
         showCharacterDetails, linkedCharacter, setShowCharacterDetails,
@@ -92,7 +92,10 @@ function ChatWorkspaceLayout() {
                 <ChatSidebar {...context} />
                 
                 <div className={clsx("flex-col min-w-0 bg-[#0B0E14] relative flex-1 lg:flex-auto", mobileTab === 'chat' ? "flex" : "hidden lg:flex")}>
-                    <ChatWorkspaceHeader {...context} />
+                    <ChatWorkspaceHeader
+                        {...context}
+                        onSearchChange={(q) => setMessageSearch(q)}
+                    />
 
                     <AnimatePresence>
                         {!ttsEnabled && !ttsBannerDismissed && (
