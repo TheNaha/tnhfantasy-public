@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters } from '../hooks/useWorldVault';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -67,6 +67,7 @@ export default function StorySandbox() {
     const deleteStory = useDeleteStory();
     const deleteChapter = useDeleteChapter();
     const updateChapter = useUpdateChapter();
+    const reorderChapters = useReorderChapters();
     const illustrateChapter = useIllustrateChapter();
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
@@ -406,6 +407,19 @@ export default function StorySandbox() {
         }
     }, [activeStoryId, activeChapterId, isStreaming, updateChapter, queryClient]);
 
+    const handleReorderChapters = useCallback(async (newChapters) => {
+        if (!activeStoryId || reorderChapters.isPending) return;
+        try {
+            await reorderChapters.mutateAsync({
+                storyId: activeStoryId,
+                chapterIds: newChapters.map(c => c.id),
+            });
+            toast.success('Chapters reordered');
+        } catch {
+            toast.error('Failed to reorder chapters');
+        }
+    }, [activeStoryId, reorderChapters]);
+
     const handleCreateStory = async (data) => {
         return createStory.mutateAsync(data);
     };
@@ -638,6 +652,7 @@ export default function StorySandbox() {
                         onSelectChapter={(id) => { navigate(`/story/${activeStoryId}/chapter/${id}`); setMobileTab('write'); }}
                         onCreateChapter={handleCreateChapter}
                         onDeleteChapter={handleDeleteChapter}
+                        onReorder={handleReorderChapters}
                         isLoading={chaptersLoading}
                     />
                 )}

@@ -171,6 +171,38 @@ export const useUpdateChapter = () => {
     });
 };
 
+export const useReorderChapters = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterIds }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/reorder`, { chapter_ids: chapterIds }),
+        onMutate: async ({ storyId, chapterIds }) => {
+            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                const byId = new Map(old.map((ch) => [ch.id, ch]));
+                return chapterIds
+                    .map((id, idx) => {
+                        const ch = byId.get(id);
+                        return ch ? { ...ch, chapter_number: idx + 1 } : null;
+                    })
+                    .filter(Boolean);
+            });
+            return { previous, key };
+        },
+        onError: (_, __, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(context.key, context.previous);
+            }
+        },
+        onSettled: (_, __, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        },
+    });
+};
+
 export const useParseStory = () => {
     const queryClient = useQueryClient();
     return useMutation({

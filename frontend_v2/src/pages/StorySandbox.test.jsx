@@ -44,6 +44,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useCreateChapter: (...a) => mockCreateChapter(...a),
     useDeleteChapter: (...a) => mockDeleteChapter(...a),
     useUpdateChapter: (...a) => mockUpdateChapter(...a),
+    useReorderChapters: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
     useContinueChapter: (...a) => mockContinueChapter(...a),
     useBranchChapter: (...a) => mockBranchChapter(...a),
     useAddStoryBeat: (...a) => mockAddStoryBeat(...a),

@@ -276,7 +276,22 @@ export default React.memo(function StoryContextPanel({
                     </h4>
                     <div className="space-y-3 text-xs text-gray-400">
                         <p>Chapters: {chapters?.length || 0}</p>
-                        <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
+                        <div className="flex items-center justify-between gap-2">
+                            <p>Status: {activeStory?.is_archived ? 'Archived' : 'Active'}</p>
+                            <button
+                                onClick={() => onUpdateStory({ is_archived: !activeStory?.is_archived })}
+                                disabled={!activeStory}
+                                className={clsx(
+                                    "text-[9px] font-medium px-1.5 py-0.5 rounded transition-colors",
+                                    activeStory?.is_archived
+                                        ? "bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                                        : "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+                                )}
+                                title={activeStory?.is_archived ? 'Restore this story to Active' : 'Archive this story'}
+                            >
+                                {activeStory?.is_archived ? 'Unarchive' : 'Archive'}
+                            </button>
+                        </div>
                         {activeStory?.created_at && (
                             <p className="flex items-center gap-1">
                                 <Calendar size={10} className="text-gray-600" />

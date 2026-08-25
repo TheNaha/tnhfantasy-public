@@ -60,6 +60,7 @@ export default React.memo(function StorySidebar({ stories, activeStoryId, onSele
                                 )}
                             >
                                 <span className="truncate flex-1">{story.title}</span>
+                                {story.is_archived && <span className="text-[9px] uppercase text-amber-500/80 mr-1 shrink-0">archived</span>}
                                 {story.genre && <span className="text-[10px] text-gray-500 ml-2 shrink-0">{story.genre}</span>}
                             </button>
                             <button
