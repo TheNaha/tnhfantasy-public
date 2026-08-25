@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
     listCollections, getCollection, createCollection, deleteCollection,
     updateCollection, addImagesToCollection, removeImagesFromCollection,
-    importCollections
+    importCollections, moveImagesBetweenCollections
 } from '../api/collectionsApi';
 
 const MIGRATION_KEY = 'comfy-collections-migrated';
@@ -145,6 +145,20 @@ export function useRemoveImagesFromCollection() {
         onSuccess: (_, { collectionId }) => {
             invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
+        }
+    });
+}
+
+export function useMoveImagesBetweenCollections() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ fromCollectionId, toCollectionId, images }) => {
+            return moveImagesBetweenCollections(fromCollectionId, toCollectionId, images);
+        },
+        onSuccess: (_, { fromCollectionId, toCollectionId }) => {
+            invalidateAllCollections(queryClient);
+            queryClient.invalidateQueries({ queryKey: ['collections', fromCollectionId, 'images'] });
+            queryClient.invalidateQueries({ queryKey: ['collections', toCollectionId, 'images'] });
         }
     });
 }

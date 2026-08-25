@@ -57,6 +57,7 @@ export default function DashboardHeaderToolbar({
     onBatchFavorite,
     onBatchAddToCollection,
     onBatchRemoveFromCollection,
+    onMoveToCollection,
     onCancelSelectionMode,
 
     filters,
@@ -95,6 +96,7 @@ export default function DashboardHeaderToolbar({
                             onFavorite={onBatchFavorite}
                             onAddToCollection={onBatchAddToCollection}
                             onRemoveFromCollection={onBatchRemoveFromCollection}
+                            onMoveToCollection={onMoveToCollection}
                             onCancel={onCancelSelectionMode}
                             activeCollection={activeCollection}
                         />

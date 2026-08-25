@@ -20,7 +20,8 @@ import {
     useCollections,
     useCollectionImages,
     useAddImagesToCollection,
-    useRemoveImagesFromCollection
+    useRemoveImagesFromCollection,
+    useMoveImagesBetweenCollections
 } from '../hooks/useCollections';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useDashboardModals } from '../hooks/useDashboardModals';
@@ -64,6 +65,8 @@ export default function Dashboard() {
     const { data: activeCollectionImages = [] } = useCollectionImages(activeCollection);
     
     const addImagesToCollectionMutation = useAddImagesToCollection();
+    const moveImagesMutation = useMoveImagesBetweenCollections();
+    const [moveSelectionMode, setMoveSelectionMode] = useState(false);
     const removeImagesFromCollectionMutation = useRemoveImagesFromCollection();
 
     const collectionsWithImages = useMemo(() => {
@@ -375,11 +378,37 @@ export default function Dashboard() {
     }, [confirm, queryClient, refetch]);
 
     const handleSelectCollection = useCallback((collectionId) => {
+        if (moveSelectionMode) {
+            setMoveSelectionMode(false);
+            const images = Array.from(selectedFiles);
+            toast.promise(
+                moveImagesMutation.mutateAsync({
+                    fromCollectionId: activeCollection,
+                    toCollectionId: collectionId,
+                    images,
+                }),
+                {
+                    loading: `Moving ${images.length} image${images.length !== 1 ? 's' : ''}...`,
+                    success: (data) => `Moved ${data?.moved ?? images.length} image${images.length !== 1 ? 's' : ''}`,
+                    error: 'Move failed',
+                }
+            );
+            setSelectedFiles(new Set());
+            setSelectionMode(false);
+            return;
+        }
         addToCollection(collectionId, Array.from(selectedFiles));
         toast.success(`Added ${selectedFiles.size} images to collection`, { icon: '📁' });
         setSelectedFiles(new Set());
         setSelectionMode(false);
-    }, [addToCollection, selectedFiles, setSelectedFiles, setSelectionMode]);
+    }, [moveSelectionMode, moveImagesMutation, activeCollection, addToCollection, selectedFiles, setSelectedFiles, setSelectionMode]);
+
+    const handleMoveSelectionToCollection = useCallback(() => {
+        if (!activeCollection) return;
+        if (selectedFiles.size === 0) return;
+        setMoveSelectionMode(true);
+        setShowSelectCollection(true);
+    }, [activeCollection, selectedFiles, setShowSelectCollection]);
 
     const comparisonImages = useMemo(() => {
         return allItems.filter(item => selectedFiles.has(item.name));
@@ -483,6 +512,7 @@ export default function Dashboard() {
                     onBatchFavorite={handleBatchFavorite}
                     onBatchAddToCollection={handleAddSelectionToCollection}
                     onBatchRemoveFromCollection={handleRemoveSelectionFromCollection}
+                    onMoveToCollection={handleMoveSelectionToCollection}
                     onCancelSelectionMode={handleCancelSelectionMode}
                     filters={filters}
                     onFilterChange={setFilters}

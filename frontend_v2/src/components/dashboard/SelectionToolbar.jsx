@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { Download, Star, Plus, X, Trash2 } from 'lucide-react';
+import { Download, Star, Plus, X, Trash2, FolderInput } from 'lucide-react';
 
 import { memo } from 'react';
 
@@ -11,6 +11,7 @@ export default memo(function SelectionToolbar({
     onFavorite,
     onAddToCollection,
     onRemoveFromCollection,
+    onMoveToCollection,
     onCancel,
     activeCollection
 }) {
@@ -69,6 +70,17 @@ export default memo(function SelectionToolbar({
                         <X size={14} aria-hidden="true" />
                         <span className="hidden sm:inline">Remove from Collection</span>
                         <span className="sm:hidden">Remove</span>
+                    </button>
+                )}
+
+                {activeCollection && onMoveToCollection && (
+                    <button
+                        onClick={onMoveToCollection}
+                        className="px-3 py-1.5 bg-teal-600 rounded-lg text-sm font-medium hover:bg-teal-500 flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 focus-visible:ring-teal-500"
+                        disabled={!hasSelection}
+                    >
+                        <FolderInput size={14} aria-hidden="true" />
+                        Move to…
                     </button>
                 )}
 
