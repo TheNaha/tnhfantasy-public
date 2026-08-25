@@ -29,7 +29,7 @@ export default function Prompts() {
     const [editingPrompt, setEditingPrompt] = useState(null);
     const [isExporting, setIsExporting] = useState(false);
 
-    const confirm = useConfirmation();
+    const { confirm } = useConfirmation();
 
     const displayedPrompts = useMemo(() => {
         let filtered = prompts;
@@ -59,9 +59,9 @@ export default function Prompts() {
     const handleDelete = async (prompt) => {
         const ok = await confirm({
             title: 'Delete prompt',
-            description: `Remove "${prompt.name}" from your library?`,
+            message: `Remove "${prompt.name}" from your library?`,
             confirmText: 'Delete',
-            tone: 'danger',
+            isDangerous: true,
         });
         if (!ok) return;
         try {
