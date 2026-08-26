@@ -1047,6 +1047,19 @@ class StoryChapter(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     story: Optional["Story"] = Relationship(back_populates="chapters")
 
+class StoryChapterRevision(SQLModel, table=True):
+    """Immutable point-in-time snapshot of a chapter's prose."""
+    __tablename__ = "story_chapter_revisions"
+    __table_args__ = (Index('idx_revision_chapter_id', 'chapter_id'),)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    chapter_id: str = Field(foreign_key="story_chapters.id", index=True)
+    story_id: str = Field(foreign_key="stories.id", index=True)
+    content: str = Field(default="", sa_column=Column(Text))
+    # manual | pre_retry | pre_beat_edit | pre_beat_delete | pre_restore
+    source: str = Field(default="manual")
+    word_count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class Location(SQLModel, table=True):
     __tablename__ = "locations"

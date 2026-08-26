@@ -1587,6 +1587,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add stories.word_count_goal and stories.pov writing preference columns",
             apply_fn=_migration_058_add_story_writing_prefs,
         ),
+        MigrationStep(
+            version="059_add_story_chapter_revisions",
+            description="Create story_chapter_revisions table for chapter snapshots",
+            apply_fn=_migration_059_add_story_chapter_revisions,
+        ),
     ]
 
 
@@ -2218,4 +2223,26 @@ def _migration_058_add_story_writing_prefs(conn) -> bool:
         logger.info("migration_column_added", table="stories", column=column)
         changed = True
     return changed
+
+
+def _migration_059_add_story_chapter_revisions(conn) -> bool:
+    """Create story_chapter_revisions table for chapter snapshot history."""
+    inspector = inspect(conn)
+    if "story_chapter_revisions" in inspector.get_table_names():
+        return False
+
+    conn.execute(text("""
+        CREATE TABLE story_chapter_revisions (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL,
+            story_id TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'manual',
+            word_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+    conn.execute(text("CREATE INDEX idx_revision_chapter_id ON story_chapter_revisions (chapter_id)"))
+    logger.info("migration_table_created", table="story_chapter_revisions")
+    return True
 

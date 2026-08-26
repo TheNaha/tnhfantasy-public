@@ -419,3 +419,112 @@ def test_delete_beat_removes_prose(client, session, story_with_character):
     assert [b["id"] for b in reloaded.beats] == [user_id]
     assert ai_text not in reloaded.content
     assert "> Opening move" in reloaded.content
+
+
+def test_revision_create_and_list(client, session, story_with_character):
+    story, chapter = story_with_character
+    from core.entities import StoryChapter as SC
+    ch = session.get(SC, chapter.id)
+    ch.content = "The harbor bells rang through the fog."
+    session.add(ch)
+    session.commit()
+
+    created = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    assert created.status_code == 200
+    body = created.json()
+    assert body["source"] == "manual"
+    assert body["word_count"] == 7
+    assert "harbor bells" in body["preview"]
+
+    listing = client.get(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    assert listing.status_code == 200
+    items = listing.json()
+    assert len(items) == 1
+    assert items[0]["id"] == body["id"]
+
+    rejected = client.post(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions",
+        json={"source": "pre_retry"},
+    )
+    assert rejected.status_code == 400
+
+
+def test_restore_chapter_revision(client, session, story_with_character):
+    story, chapter = story_with_character
+    from core.entities import StoryChapter as SC
+    ch = session.get(SC, chapter.id)
+    original = "The gate creaked open onto an empty road."
+    ch.content = original
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+
+    snap = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    snap_id = snap.json()["id"]
+
+    ch = session.get(SC, ch.id)
+    ch.content = "Everything changed after that night."
+    session.add(ch)
+    session.commit()
+
+    restored = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions/{snap_id}/restore")
+    assert restored.status_code == 200
+
+    session.expire_all()
+    reloaded = session.get(SC, ch.id)
+    assert reloaded.content == original
+
+    listing = client.get(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    sources = [r["source"] for r in listing.json()]
+    assert "pre_restore" in sources
+    assert sources[0] == "pre_restore"
+
+
+def test_retry_last_creates_pre_retry_snapshot(client, session, story_with_character):
+    from core.entities import StoryChapter as SC
+    story, _ = story_with_character
+    ch, _, narr_id = _beat_chapter(session, story)
+
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/retry-last")
+    assert response.status_code == 200
+
+    listing = client.get(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    sources = [r["source"] for r in listing.json()]
+    assert "pre_retry" in sources
+
+
+def test_beat_delete_creates_pre_delete_snapshot(client, session, story_with_character):
+    from core.entities import StoryChapter as SC
+    story, _ = story_with_character
+    ch, user_id, narr_id = _beat_chapter(session, story)
+
+    response = client.delete(f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{narr_id}")
+    assert response.status_code == 200
+
+    listing = client.get(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+    assert any(r["source"] == "pre_beat_delete" for r in listing.json())
+
+
+def test_revisions_cap_prunes_oldest(client, session, story_with_character):
+    story, chapter = story_with_character
+    from core.entities import StoryChapter as SC
+    ch = session.get(SC, chapter.id)
+    ch.content = f"content {chapter.id}"
+    session.add(ch)
+    session.commit()
+
+    first_id = None
+    for i in range(22):
+        resp = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions")
+        if first_id is None:
+            first_id = resp.json()["id"]
+
+    listing = client.get(f"/api/v2/stories/{story.id}/chapters/{ch.id}/revisions").json()
+    assert len(listing) <= 20
+    assert all(r["id"] != first_id for r in listing)
+
+
+def test_revision_endpoints_not_found(client, story_with_character):
+    story, chapter = story_with_character
+    assert client.get(f"/api/v2/stories/{story.id}/chapters/nope/revisions").status_code == 404
+    assert client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/revisions/x/restore").status_code == 404

@@ -9,12 +9,13 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
 import config as app_config
-from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo
+from api.deps import get_job_service, get_session, get_queue_manager, get_story_repo, get_story_chapter_repo, get_story_revision_repo
 from infrastructure.logging import get_logger
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
+from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
+from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevision, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
@@ -960,7 +961,7 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
 
 
 @router.post("/{story_id}/chapters/{chapter_id}/retry-last")
-async def retry_last_continuation(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+async def retry_last_continuation(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
     """Drop the most recent AI continuation (last narrator beat + its prose)
     and immediately enqueue a fresh continuation in its place."""
     chapter = story_chapter_repo.get(chapter_id, story_id)
@@ -985,6 +986,9 @@ async def retry_last_continuation(story_id: str, chapter_id: str, session: Sessi
     else:
         raise ComfyError("Could not locate the last AI continuation inside the chapter text; edit it manually")
 
+    # Safety net: snapshot the prose before it is trimmed.
+    story_revision_repo.create_snapshot(chapter, source="pre_retry")
+
     chapter.beats = beats[:-1]
     chapter.content = new_content
 
@@ -995,6 +999,73 @@ async def retry_last_continuation(story_id: str, chapter_id: str, session: Sessi
 
     job_id = await _enqueue_story_continuation(session, story, chapter)
     return {"job_id": job_id}
+
+
+def _revision_out(revision: StoryChapterRevision) -> dict:
+    preview = (revision.content or "").strip()
+    if len(preview) > 160:
+        preview = preview[:160].rstrip() + "…"
+    return {
+        "id": revision.id,
+        "chapter_id": revision.chapter_id,
+        "story_id": revision.story_id,
+        "source": revision.source,
+        "word_count": revision.word_count,
+        "created_at": revision.created_at.isoformat() if revision.created_at else None,
+        "preview": preview,
+    }
+
+
+class RevisionCreateRequest(BaseModel):
+    source: str | None = None
+
+
+@router.get("/{story_id}/chapters/{chapter_id}/revisions")
+def list_chapter_revisions(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
+    """List snapshot history for a chapter (newest first)."""
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+    return [_revision_out(r) for r in story_revision_repo.list_for_chapter(chapter_id)]
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/revisions")
+def create_chapter_revision(story_id: str, chapter_id: str, data: RevisionCreateRequest | None = None, session: Session = Depends(get_session), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
+    """Manually snapshot the chapter's current prose."""
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+    if data is not None and data.source and data.source != "manual":
+        raise ValidationError("Only manual snapshots can be created from the API")
+    revision = story_revision_repo.create_snapshot(chapter, source="manual")
+    session.add(revision)
+    session.commit()
+    session.refresh(revision)
+    return _revision_out(revision)
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/revisions/{revision_id}/restore", response_model=StoryChapter)
+def restore_chapter_revision(story_id: str, chapter_id: str, revision_id: str, session: Session = Depends(get_session), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
+    """Restore a chapter's prose from a snapshot.
+
+    The current prose is snapshotted first (source 'pre_restore') so the
+    restore itself is undoable. Beats are left untouched — they describe
+    turn structure, not the restored text.
+    """
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+    revision = story_revision_repo.get(revision_id, story_id)
+    if not revision or revision.chapter_id != chapter_id:
+        raise NotFoundError("StoryChapterRevision", revision_id)
+
+    story_revision_repo.create_snapshot(chapter, source="pre_restore")
+    chapter.content = revision.content
+    chapter.updated_at = datetime.now(timezone.utc)
+    session.add(chapter)
+    session.commit()
+    session.refresh(chapter)
+    return chapter
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")
 def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
@@ -1066,7 +1137,7 @@ _ALLOWED_BEAT_ROLES = {r.value for r in StoryBeatRole}
 
 
 @router.patch("/{story_id}/chapters/{chapter_id}/beats/{beat_id}", response_model=StoryChapter)
-def update_story_beat(story_id: str, chapter_id: str, beat_id: str, data: StoryBeatUpdateRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def update_story_beat(story_id: str, chapter_id: str, beat_id: str, data: StoryBeatUpdateRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
     """Edit a single beat's text and/or role, keeping the chapter prose in sync."""
     if data.content is None and data.role is None:
         raise ValidationError("Nothing to update — provide content and/or role")
@@ -1103,6 +1174,7 @@ def update_story_beat(story_id: str, chapter_id: str, beat_id: str, data: StoryB
             raise ValidationError(
                 "Beat text no longer matches the chapter prose — edit the chapter text directly"
             )
+        story_revision_repo.create_snapshot(chapter, source="pre_beat_edit")
         chapter.content = updated
 
     beat["content"] = new_content
@@ -1118,7 +1190,7 @@ def update_story_beat(story_id: str, chapter_id: str, beat_id: str, data: StoryB
 
 
 @router.delete("/{story_id}/chapters/{chapter_id}/beats/{beat_id}", response_model=StoryChapter)
-def delete_story_beat(story_id: str, chapter_id: str, beat_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+def delete_story_beat(story_id: str, chapter_id: str, beat_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo), story_revision_repo: StoryChapterRevisionRepository = Depends(get_story_revision_repo)):
     """Remove a beat and its contribution to the chapter prose."""
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
@@ -1140,6 +1212,7 @@ def delete_story_beat(story_id: str, chapter_id: str, beat_id: str, session: Ses
             raise ValidationError(
                 "Beat text no longer matches the chapter prose — edit the chapter text directly"
             )
+        story_revision_repo.create_snapshot(chapter, source="pre_beat_delete")
         chapter.content = updated
 
     del beats[index]

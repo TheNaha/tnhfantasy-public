@@ -148,6 +148,11 @@ def get_story_chapter_repo(session: Session = Depends(get_session)):
     return StoryChapterRepository(session)
 
 
+def get_story_revision_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
+    return StoryChapterRevisionRepository(session)
+
+
 def get_lorebook_repo(session: Session = Depends(get_session)):
     from infrastructure.repositories.lorebook_repo import LorebookRepository
     return LorebookRepository(session)
