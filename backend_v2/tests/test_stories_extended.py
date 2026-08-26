@@ -315,3 +315,90 @@ def test_export_story_comic_embeds_real_asset(client, session, story_with_charac
     # Non-empty PDF produced from a real embedded image (far larger than a
     # single blank gray page would compress to).
     assert len(response.content) > 500
+
+
+def _beat_chapter(session, story):
+    from core.entities import StoryChapter as SC
+    ch = session.get(SC, session.query(SC).filter_by(story_id=story.id).first().id)
+    user_id, narr_id = str(uuid4()), str(uuid4())
+    ai_text = "A shadow slid across the courtyard wall."
+    ch.beats = [
+        {"id": user_id, "parent_beat_id": None, "role": "user", "content": "Opening move"},
+        {"id": narr_id, "parent_beat_id": None, "role": "narrator", "content": ai_text},
+    ]
+    ch.content = "Once upon a time...\n\n> Opening move\n\n" + f"\n\n{ai_text}\n\n"
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+    return ch, user_id, narr_id
+
+
+def test_update_beat_edits_prose_and_role(client, session, story_with_character):
+    story, _ = story_with_character
+    ch, user_id, _ = _beat_chapter(session, story)
+
+    response = client.patch(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{user_id}",
+        json={"content": "Revised opening", "role": "narrator"},
+    )
+    assert response.status_code == 200
+
+    from core.entities import StoryChapter as SC
+    session.expire_all()
+    reloaded = session.get(SC, ch.id)
+    beat = next(b for b in reloaded.beats if b["id"] == user_id)
+    assert beat["content"] == "Revised opening"
+    assert beat["role"] == "narrator"
+    assert "> Revised opening" not in reloaded.content
+    assert "\n\nRevised opening\n\n" in reloaded.content
+    assert "> Opening move" not in reloaded.content
+
+
+def test_update_beat_unknown_id_and_empty_body(client, session, story_with_character):
+    story, _ = story_with_character
+    ch, _, _ = _beat_chapter(session, story)
+
+    missing = client.patch(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{uuid4()}",
+        json={"content": "x"},
+    )
+    assert missing.status_code == 404
+
+    no_changes = client.patch(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{uuid4()}",
+        json={},
+    )
+    assert no_changes.status_code == 400
+
+
+def test_update_beat_rejects_role_mismatch_and_empty(client, session, story_with_character):
+    story, _ = story_with_character
+    ch, user_id, _ = _beat_chapter(session, story)
+
+    invalid_role = client.patch(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{user_id}",
+        json={"role": "system_tts"},
+    )
+    assert invalid_role.status_code == 400
+
+    empty = client.patch(
+        f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{user_id}",
+        json={"content": "   "},
+    )
+    assert empty.status_code == 400
+
+
+def test_delete_beat_removes_prose(client, session, story_with_character):
+    story, _ = story_with_character
+    ch, user_id, narr_id = _beat_chapter(session, story)
+    ai_text = "A shadow slid across the courtyard wall."
+
+    response = client.delete(f"/api/v2/stories/{story.id}/chapters/{ch.id}/beats/{narr_id}")
+    assert response.status_code == 200
+
+    from core.entities import StoryChapter as SC
+    session.expire_all()
+    reloaded = session.get(SC, ch.id)
+    assert [b["id"] for b in reloaded.beats] == [user_id]
+    assert ai_text not in reloaded.content
+    assert "> Opening move" in reloaded.content

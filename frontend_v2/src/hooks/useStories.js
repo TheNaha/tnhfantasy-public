@@ -133,6 +133,74 @@ export const useAddStoryBeat = () => {
     });
 };
 
+export const useUpdateStoryBeat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, beatId, content, role }) =>
+            api.patch(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats/${beatId}`, {
+                ...(content !== undefined ? { content } : {}),
+                ...(role !== undefined ? { role } : {}),
+            }),
+        onMutate: async ({ storyId, chapterId, beatId, content, role }) => {
+            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                return old.map((ch) => {
+                    if (ch.id !== chapterId) return ch;
+                    return {
+                        ...ch,
+                        beats: (ch.beats || []).map((b) =>
+                            b?.id === beatId
+                                ? { ...b, ...(content !== undefined ? { content } : {}), ...(role !== undefined ? { role } : {}) }
+                                : b
+                        ),
+                    };
+                });
+            });
+            return { previous, key };
+        },
+        onError: (_, __, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(context.key, context.previous);
+            }
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        }
+    });
+};
+
+export const useDeleteStoryBeat = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, beatId }) =>
+            api.delete(`/api/v2/stories/${storyId}/chapters/${chapterId}/beats/${beatId}`),
+        onMutate: async ({ storyId, chapterId, beatId }) => {
+            const key = ['world_vault', 'stories', storyId, 'chapters'];
+            await queryClient.cancelQueries({ queryKey: key });
+            const previous = queryClient.getQueryData(key);
+            queryClient.setQueryData(key, (old) => {
+                if (!old) return old;
+                return old.map((ch) => {
+                    if (ch.id !== chapterId) return ch;
+                    return { ...ch, beats: (ch.beats || []).filter((b) => b?.id !== beatId) };
+                });
+            });
+            return { previous, key };
+        },
+        onError: (_, __, context) => {
+            if (context?.previous) {
+                queryClient.setQueryData(context.key, context.previous);
+            }
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+        }
+    });
+};
+
 export const useStoryAiAction = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, action, target_text, directive }) =>

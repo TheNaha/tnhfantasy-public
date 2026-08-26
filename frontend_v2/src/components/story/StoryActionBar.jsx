@@ -21,6 +21,8 @@ export default React.memo(function StoryActionBar({
     beatInput,
     onBeatInputChange,
     onAddBeat,
+    beatRole,
+    onBeatRoleChange,
     onExport,
     onPublish,
     isPublished,
@@ -119,6 +121,28 @@ export default React.memo(function StoryActionBar({
 
             <div className="flex-1 flex flex-col gap-2 w-full min-w-0">
                 <div className="flex gap-2 w-full">
+                    {onBeatRoleChange && (
+                        <div className="flex shrink-0 rounded-lg border border-gray-700/50 overflow-hidden" role="group" aria-label="New beat role">
+                            {['user', 'narrator'].map((r) => (
+                                <button
+                                    key={r}
+                                    type="button"
+                                    onClick={() => onBeatRoleChange(r)}
+                                    className={clsx(
+                                        "px-2.5 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                                        beatRole === r
+                                            ? r === 'user'
+                                                ? "bg-blue-500/20 text-blue-300"
+                                                : "bg-purple-500/20 text-purple-300"
+                                            : "bg-gray-800/60 text-gray-500 hover:text-gray-300"
+                                    )}
+                                    title={r === 'user' ? "Add as your own input (prefixed with > in the prose)" : "Add as narrator prose"}
+                                >
+                                    {r}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     <input
                         type="text"
                         value={beatInput}

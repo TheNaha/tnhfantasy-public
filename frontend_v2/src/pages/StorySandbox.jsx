@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -37,6 +37,7 @@ export default function StorySandbox() {
     const [isPanelOpen, setIsPanelOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
     const [editorContent, setEditorContent] = useState('');
     const [beatInput, setBeatInput] = useState('');
+    const [beatRole, setBeatRole] = useState('user');
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showParseModal, setShowParseModal] = useState(false);
     const [newStoryTitle, setNewStoryTitle] = useState('');
@@ -72,6 +73,8 @@ export default function StorySandbox() {
     const illustrateChapter = useIllustrateChapter();
     const storyAiAction = useStoryAiAction();
     const retryLastContinuation = useRetryLastContinuation();
+    const updateStoryBeat = useUpdateStoryBeat();
+    const deleteStoryBeat = useDeleteStoryBeat();
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
     const narrateChapter = useNarrateChapter();
@@ -460,14 +463,16 @@ export default function StorySandbox() {
         if (!beatInput.trim() || !activeStoryId || !activeChapterId) return;
         try {
             const newBeat = beatInput.trim();
-            const newContent = editorContent ? editorContent + '\n\n' + newBeat : newBeat;
+            const snippet = beatRole === 'user' ? `\n\n> ${newBeat}\n\n` : `\n\n${newBeat}\n\n`;
+            const newContent = editorContent ? editorContent.replace(/\n+$/, '') + snippet : snippet;
             setEditorContent(newContent);
             streamingBaseRef.current = newContent;
 
             await addStoryBeat.mutateAsync({
                 storyId: activeStoryId,
                 chapterId: activeChapterId,
-                content: newBeat
+                content: newBeat,
+                role: beatRole,
             });
             setBeatInput('');
             queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
@@ -476,7 +481,7 @@ export default function StorySandbox() {
             toast.error('Failed to add beat');
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [beatInput, activeStoryId, activeChapterId, addStoryBeat, queryClient, editorContent]);
+    }, [beatInput, beatRole, activeStoryId, activeChapterId, addStoryBeat, queryClient, editorContent]);
 
     const handleBranchFromBeat = useCallback(async (beatId) => {
         if (!activeStoryId || !activeChapterId || isStreaming || branchChapter.isPending) return;
@@ -518,6 +523,87 @@ export default function StorySandbox() {
             toast.error('Failed to reorder beats');
         }
     }, [activeStoryId, activeChapterId, isStreaming, updateChapter, queryClient]);
+
+    // Mirror the backend's beat-prose surgery locally so the open editor
+    // stays in sync with the persisted chapter after a beat edit/delete.
+    const syncEditorWithBeat = useCallback((oldContent, oldRole, newContent, newRole) => {
+        setEditorContent((prev) => {
+            if (!prev) return prev;
+            const fmt = (c, r) => (r === 'user' ? `\n\n> ${c}\n\n` : `\n\n${c}\n\n`);
+            let next = prev;
+            let replaced = false;
+            if (newContent != null) {
+                const oldSnip = fmt(oldContent, oldRole);
+                const i = next.lastIndexOf(oldSnip);
+                if (i >= 0) {
+                    next = next.slice(0, i) + fmt(newContent, newRole) + next.slice(i + oldSnip.length);
+                    replaced = true;
+                }
+            } else {
+                const snip = fmt(oldContent, oldRole);
+                const i = next.lastIndexOf(snip);
+                if (i >= 0) {
+                    next = (next.slice(0, i) + '\n\n' + next.slice(i + snip.length)).trim();
+                    replaced = true;
+                }
+            }
+            if (replaced) {
+                streamingBaseRef.current = next.replace(/\n{4,}/g, '\n\n\n');
+                return streamingBaseRef.current;
+            }
+            return prev;
+        });
+    }, [streamingBaseRef]);
+
+    const handleEditBeat = useCallback(async (beatId, patch) => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        const beat = (activeChapter?.beats || []).find((b) => b?.id === beatId);
+        if (!beat) return;
+        try {
+            await updateStoryBeat.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                beatId,
+                content: patch.content,
+                role: patch.role,
+            });
+            const oldContent = beat.content || '';
+            const oldRole = beat.role || 'narrator';
+            const newContent = patch.content !== undefined ? patch.content : oldContent;
+            const newRole = patch.role !== undefined ? patch.role : oldRole;
+            if (newContent !== oldContent || newRole !== oldRole) {
+                syncEditorWithBeat(oldContent, oldRole, newContent, newRole);
+            }
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            toast.success('Beat updated');
+        } catch (err) {
+            toast.error(err?.message || 'Failed to update beat');
+        }
+    }, [activeStoryId, activeChapterId, activeChapter, isStreaming, updateStoryBeat, syncEditorWithBeat, queryClient]);
+
+    const handleDeleteBeat = useCallback(async (beatId) => {
+        if (!activeStoryId || !activeChapterId || isStreaming) return;
+        const beat = (activeChapter?.beats || []).find((b) => b?.id === beatId);
+        if (!beat) return;
+        const ok = await confirm({
+            title: 'Delete Beat',
+            message: 'Remove this beat and its text from the chapter prose?',
+            confirmText: 'Delete',
+        });
+        if (!ok) return;
+        try {
+            await deleteStoryBeat.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                beatId,
+            });
+            syncEditorWithBeat(beat.content || '', beat.role || 'narrator', null, null);
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', activeStoryId, 'chapters'] });
+            toast.success('Beat deleted');
+        } catch (err) {
+            toast.error(err?.message || 'Failed to delete beat');
+        }
+    }, [activeStoryId, activeChapterId, activeChapter, isStreaming, deleteStoryBeat, confirm, syncEditorWithBeat, queryClient]);
 
     const handleReorderChapters = useCallback(async (newChapters) => {
         if (!activeStoryId || reorderChapters.isPending) return;
@@ -849,6 +935,8 @@ export default function StorySandbox() {
                                                 branchPending={branchChapter.isPending}
                                                 onBranch={handleBranchFromBeat}
                                                 onReorder={handleReorderBeats}
+                                                onUpdateBeat={handleEditBeat}
+                                                onDeleteBeat={handleDeleteBeat}
                                                 onClose={() => setShowBeatsPanel(false)}
                                             />
                                         )}
@@ -869,6 +957,8 @@ export default function StorySandbox() {
                                             beatInput={beatInput}
                                             onBeatInputChange={setBeatInput}
                                             onAddBeat={handleAddBeat}
+                                            beatRole={beatRole}
+                                            onBeatRoleChange={setBeatRole}
                                             onExport={handleExportStory}
                                             onPublish={handlePublishStory}
                                             isPublished={activeStory?.is_published}

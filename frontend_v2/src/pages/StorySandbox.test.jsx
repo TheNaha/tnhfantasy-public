@@ -35,6 +35,8 @@ const mockBranchChapter = vi.hoisted(() => vi.fn());
 const mockAddStoryBeat = vi.hoisted(() => vi.fn());
 const mockIllustrateChapter = vi.hoisted(() => vi.fn());
 const mockStoryAiAction = vi.hoisted(() => vi.fn());
+const mockUpdateStoryBeat = vi.hoisted(() => vi.fn());
+const mockDeleteStoryBeat = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVault', () => ({
     useStories: (...a) => mockStories(...a),
@@ -54,6 +56,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useIllustrateChapter: (...a) => mockIllustrateChapter(...a),
     useStoryAiAction: (...a) => mockStoryAiAction(...a),
     useRetryLastContinuation: () => ({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false }),
+    useUpdateStoryBeat: (...a) => mockUpdateStoryBeat(...a),
+    useDeleteStoryBeat: (...a) => mockDeleteStoryBeat(...a),
     useCharacters: () => ({ data: [] }),
     useLocations: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),
@@ -71,6 +75,10 @@ vi.mock('../hooks/useWorldVault', () => ({
 vi.mock('../api/websocket', () => ({
     useWebSocket: () => ({ subscribe: vi.fn(() => vi.fn()), unsubscribe: vi.fn() }),
     EventTypes: { JOB_PROGRESS: 'job.progress', JOB_COMPLETED: 'job.completed', JOB_FAILED: 'job.failed', JOB_CANCELLED: 'job.cancelled' },
+}));
+
+vi.mock('../store/confirmationStore', () => ({
+    useConfirmation: () => ({ confirm: vi.fn(() => Promise.resolve(true)) }),
 }));
 
 vi.mock('../api', () => ({
@@ -256,6 +264,93 @@ describe('StorySandbox page', () => {
             storyId: 'story-1',
             chapterId: 'ch-1',
             content: 'A new challenge arises',
+            role: 'user',
+        });
+    });
+
+    it('adds a narrator-role beat when the role toggle is switched', async () => {
+        const mockMutate = vi.fn().mockResolvedValue({});
+        mockAddStoryBeat.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByPlaceholderText(/story beat/i)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/Add as narrator prose/i));
+        const beatInput = screen.getByPlaceholderText(/story beat/i);
+        fireEvent.change(beatInput, { target: { value: 'Dark clouds gathered' } });
+        fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+        expect(mockMutate).toHaveBeenCalledWith(
+            expect.objectContaining({ content: 'Dark clouds gathered', role: 'narrator' })
+        );
+    });
+
+    it('edits a beat in place and saves through the update hook', async () => {
+        const mockBeatUpdate = vi.fn().mockResolvedValue({});
+        mockUpdateStoryBeat.mockReturnValue({ mutateAsync: mockBeatUpdate, isPending: false });
+        mockChapters.mockReturnValue({
+            data: [{
+                id: 'ch-1',
+                story_id: 'story-1',
+                chapter_number: 1,
+                content: 'Once upon a time...\n\n> Opening move\n\n',
+                beats: [{ id: 'b-1', parent_beat_id: null, role: 'user', content: 'Opening move' }],
+                image_paths: [],
+            }],
+            isLoading: false,
+        });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByDisplayValue(/Once upon a time/)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/Show story beats/i));
+        await waitFor(() => {
+            expect(screen.getAllByText(/Opening move/).length).toBeGreaterThan(0);
+        });
+        fireEvent.click(screen.getByTitle('Edit this beat'));
+        const textarea = screen.getByDisplayValue('Opening move');
+        fireEvent.change(textarea, { target: { value: 'Revised opening' } });
+        fireEvent.click(screen.getByTitle(/Save beat/));
+        await waitFor(() => {
+            expect(mockBeatUpdate).toHaveBeenCalledWith({
+                storyId: 'story-1',
+                chapterId: 'ch-1',
+                beatId: 'b-1',
+                content: 'Revised opening',
+                role: 'user',
+            });
+        });
+    });
+
+    it('deletes a beat after confirmation', async () => {
+        const mockBeatDelete = vi.fn().mockResolvedValue({});
+        mockDeleteStoryBeat.mockReturnValue({ mutateAsync: mockBeatDelete, isPending: false });
+        mockChapters.mockReturnValue({
+            data: [{
+                id: 'ch-1',
+                story_id: 'story-1',
+                chapter_number: 1,
+                content: 'Once upon a time...\n\n> Opening move\n\n',
+                beats: [{ id: 'b-1', parent_beat_id: null, role: 'user', content: 'Opening move' }],
+                image_paths: [],
+            }],
+            isLoading: false,
+        });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByDisplayValue(/Once upon a time/)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/Show story beats/i));
+        await waitFor(() => {
+            expect(screen.getAllByText(/Opening move/).length).toBeGreaterThan(0);
+        });
+        fireEvent.click(screen.getByTitle('Delete this beat and its prose'));
+        // confirmationStore is mocked to auto-accept
+        await waitFor(() => {
+            expect(mockBeatDelete).toHaveBeenCalledWith({
+                storyId: 'story-1',
+                chapterId: 'ch-1',
+                beatId: 'b-1',
+            });
         });
     });
 

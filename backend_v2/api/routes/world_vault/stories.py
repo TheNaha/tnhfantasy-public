@@ -46,6 +46,11 @@ class StoryBeatRequest(BaseModel):
     role: str = "user"
 
 
+class StoryBeatUpdateRequest(BaseModel):
+    content: str | None = None
+    role: str | None = None
+
+
 class StoryIllustrateRequest(BaseModel):
     image_prompt: str = ""
 
@@ -992,6 +997,11 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     content = data.content
     role = data.role
 
+    if not content.strip():
+        raise ValidationError("Beat content cannot be empty")
+    if role not in _ALLOWED_BEAT_ROLES:
+        raise ValidationError(f"role must be one of {sorted(_ALLOWED_BEAT_ROLES)}")
+
     _ensure_beat_ids(session, chapter)
     chapter.beats.append({
         "id": str(uuid4()),
@@ -1009,6 +1019,130 @@ def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Se
     session.commit()
     session.refresh(chapter)
     return chapter
+
+
+def _beat_snippet(content: str, role: str) -> str:
+    """The exact text a beat contributes to the flat chapter prose."""
+    if role == StoryBeatRole.USER.value:
+        return f"\n\n> {content}\n\n"
+    return f"\n\n{content}\n\n"
+
+
+def _replace_beat_text(content: str, old_snippet: str, new_snippet: str) -> str | None:
+    """Surgically swap one beat's prose inside the chapter text.
+
+    Returns None when the snippet cannot be located (content was edited
+    independently of the beats list) so callers can fail before mutating.
+    """
+    idx = content.rfind(old_snippet)
+    if idx >= 0:
+        return content[:idx] + new_snippet + content[idx + len(old_snippet):]
+    # Tolerate a missing trailing blank line (end-of-chapter beats).
+    stripped_old = old_snippet.rstrip("\n")
+    if content.endswith(stripped_old):
+        return content[: -len(stripped_old)].rstrip("\n") + new_snippet
+    return None
+
+
+def _remove_beat_text(content: str, snippet: str) -> str | None:
+    stripped = snippet.rstrip("\n")
+    idx = content.rfind(snippet)
+    if idx >= 0:
+        return (content[:idx] + "\n\n" + content[idx + len(snippet):]).strip()
+    if content.endswith(stripped):
+        return content[: -len(stripped)].rstrip()
+    return None
+
+
+_ALLOWED_BEAT_ROLES = {r.value for r in StoryBeatRole}
+
+
+@router.patch("/{story_id}/chapters/{chapter_id}/beats/{beat_id}", response_model=StoryChapter)
+def update_story_beat(story_id: str, chapter_id: str, beat_id: str, data: StoryBeatUpdateRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    """Edit a single beat's text and/or role, keeping the chapter prose in sync."""
+    if data.content is None and data.role is None:
+        raise ValidationError("Nothing to update — provide content and/or role")
+    if data.role is not None and data.role not in _ALLOWED_BEAT_ROLES:
+        raise ValidationError(f"role must be one of {sorted(_ALLOWED_BEAT_ROLES)}")
+
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+
+    _ensure_beat_ids(session, chapter)
+    beats = list(chapter.beats or [])
+    index = next((i for i, b in enumerate(beats) if isinstance(b, dict) and b.get("id") == beat_id), None)
+    if index is None:
+        raise NotFoundError("StoryBeat", beat_id)
+
+    beat = dict(beats[index])
+    old_content = beat.get("content") or ""
+    old_role = beat.get("role") or StoryBeatRole.NARRATOR.value
+    new_content = old_content if data.content is None else data.content.strip()
+    new_role = old_role if data.role is None else data.role
+
+    if not new_content:
+        raise ValidationError("Beat content cannot be empty")
+
+    content = chapter.content or ""
+    if new_content != old_content or new_role != old_role:
+        updated = _replace_beat_text(
+            content,
+            _beat_snippet(old_content, old_role),
+            _beat_snippet(new_content, new_role),
+        )
+        if updated is None:
+            raise ValidationError(
+                "Beat text no longer matches the chapter prose — edit the chapter text directly"
+            )
+        chapter.content = updated
+
+    beat["content"] = new_content
+    beat["role"] = new_role
+    beats[index] = beat
+    chapter.beats = beats
+
+    chapter.updated_at = datetime.now(timezone.utc)
+    session.add(chapter)
+    session.commit()
+    session.refresh(chapter)
+    return chapter
+
+
+@router.delete("/{story_id}/chapters/{chapter_id}/beats/{beat_id}", response_model=StoryChapter)
+def delete_story_beat(story_id: str, chapter_id: str, beat_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    """Remove a beat and its contribution to the chapter prose."""
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+
+    _ensure_beat_ids(session, chapter)
+    beats = list(chapter.beats or [])
+    index = next((i for i, b in enumerate(beats) if isinstance(b, dict) and b.get("id") == beat_id), None)
+    if index is None:
+        raise NotFoundError("StoryBeat", beat_id)
+
+    removed = beats[index]
+    removed_text = (removed.get("content") or "").strip()
+    removed_role = removed.get("role") or StoryBeatRole.NARRATOR.value
+    if removed_text:
+        content = chapter.content or ""
+        updated = _remove_beat_text(content, _beat_snippet(removed_text, removed_role))
+        if updated is None:
+            raise ValidationError(
+                "Beat text no longer matches the chapter prose — edit the chapter text directly"
+            )
+        chapter.content = updated
+
+    del beats[index]
+    chapter.beats = beats
+
+    chapter.updated_at = datetime.now(timezone.utc)
+    session.add(chapter)
+    session.commit()
+    session.refresh(chapter)
+    return chapter
+
 
 @router.post("/{story_id}/chapters/{chapter_id}/branch", response_model=StoryChapter)
 def branch_chapter(story_id: str, chapter_id: str, data: StoryBranchRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):

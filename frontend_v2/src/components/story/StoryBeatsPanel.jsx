@@ -1,5 +1,5 @@
-import React from 'react';
-import { GitBranch, X, Loader2, GripVertical, Volume2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { GitBranch, X, Loader2, GripVertical, Volume2, Pencil, Trash2, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 import {
@@ -18,8 +18,14 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, branchPending, branchingBeatId, onBranch }) {
+const BEAT_ROLE_OPTIONS = ['user', 'narrator', 'system'];
+
+const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, branchPending, branchingBeatId, onBranch, onUpdateBeat, onDeleteBeat }) {
     const beatId = beat?.id || null;
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const [draftRole, setDraftRole] = useState('user');
+    const [saving, setSaving] = useState(false);
     const snippet = (beat?.content || '').length > 140
         ? (beat?.content || '').slice(0, 140) + '…'
         : (beat?.content || '');
@@ -39,13 +45,35 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
         opacity: isDragging ? 0.4 : 1,
     };
 
+    const startEdit = () => {
+        setDraft(beat?.content || '');
+        const current = beat?.role || 'narrator';
+        setDraftRole(BEAT_ROLE_OPTIONS.includes(current) ? current : 'narrator');
+        setEditing(true);
+    };
+
+    const saveEdit = async () => {
+        const text = draft.trim();
+        if (!text || !beatId || saving) return;
+        setSaving(true);
+        try {
+            await onUpdateBeat(beatId, { content: text, role: draftRole });
+            setEditing(false);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     return (
         <div
             ref={setNodeRef}
             style={style}
             {...attributes}
-            {...listeners}
-            className="group flex items-start gap-2 rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-1.5 cursor-grab active:cursor-grabbing"
+            {...(editing ? {} : listeners)}
+            className={clsx(
+                "group flex items-start gap-2 rounded-lg bg-white/[0.03] border px-2.5 py-1.5",
+                editing ? "border-indigo-500/40" : "border-white/5 cursor-grab active:cursor-grabbing"
+            )}
         >
             <span className={clsx(
                 "mt-0.5 shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-1",
@@ -58,19 +86,83 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
                 {beat?.role === 'system_tts' && <Volume2 size={9} />}
                 {isUser ? 'user' : (beat?.role || 'narrator')}
             </span>
-            <p className="flex-1 text-xs text-gray-400 leading-relaxed min-w-0">{snippet || <span className="italic text-gray-600">(empty)</span>}</p>
-            {beat?.audio_path && (
-                <audio src={assetUrl(beat.audio_path)} controls className="shrink-0 h-7 w-44" title="Chapter narration" />
+            {editing ? (
+                <div className="flex-1 min-w-0 space-y-1.5">
+                    <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
+                            if (e.key === 'Escape') setEditing(false);
+                        }}
+                        rows={3}
+                        autoFocus
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-indigo-500/60 resize-y custom-scrollbar"
+                    />
+                    <div className="flex items-center gap-1.5">
+                        <select
+                            value={draftRole}
+                            onChange={(e) => setDraftRole(e.target.value)}
+                            className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-[10px] text-gray-300 focus:outline-none focus:border-indigo-500/60"
+                            title="Beat role"
+                        >
+                            {BEAT_ROLE_OPTIONS.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={saveEdit}
+                            disabled={!draft.trim() || saving || isStreaming}
+                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30 transition-colors"
+                            title="Save beat (Ctrl+Enter)"
+                        >
+                            {saving ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                            Save
+                        </button>
+                        <button
+                            onClick={() => setEditing(false)}
+                            disabled={saving}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <>
+                    <p className="flex-1 text-xs text-gray-400 leading-relaxed min-w-0">{snippet || <span className="italic text-gray-600">(empty)</span>}</p>
+                    {beat?.audio_path && (
+                        <audio src={assetUrl(beat.audio_path)} controls className="shrink-0 h-7 w-44" title="Chapter narration" />
+                    )}
+                    <div className="shrink-0 flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <button
+                            onClick={startEdit}
+                            disabled={!beatId || isStreaming}
+                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 disabled:opacity-20 transition-colors"
+                            title="Edit this beat"
+                        >
+                            <Pencil size={10} />
+                        </button>
+                        <button
+                            onClick={() => onDeleteBeat(beatId)}
+                            disabled={!beatId || isStreaming}
+                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-20 transition-colors"
+                            title="Delete this beat and its prose"
+                        >
+                            <Trash2 size={10} />
+                        </button>
+                    </div>
+                    <button
+                        onClick={() => onBranch(beatId)}
+                        disabled={!beatId || isStreaming || branchPending || branchingBeatId === beatId}
+                        className="shrink-0 opacity-60 group-hover:opacity-100 disabled:opacity-20 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+                        title="Branch the story from this beat into a new chapter"
+                    >
+                        {branchingBeatId === beatId ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
+                        Branch
+                    </button>
+                </>
             )}
-            <button
-                onClick={() => onBranch(beatId)}
-                disabled={!beatId || isStreaming || branchPending || branchingBeatId === beatId}
-                className="shrink-0 opacity-60 group-hover:opacity-100 disabled:opacity-20 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
-                title="Branch the story from this beat into a new chapter"
-            >
-                {branchingBeatId === beatId ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
-                Branch
-            </button>
         </div>
     );
 });
@@ -82,6 +174,8 @@ export default React.memo(function StoryBeatsPanel({
     branchPending,
     onBranch,
     onReorder,
+    onUpdateBeat,
+    onDeleteBeat,
     onClose,
 }) {
     const sensors = useSensors(
@@ -145,6 +239,8 @@ export default React.memo(function StoryBeatsPanel({
                                         branchPending={branchPending}
                                         branchingBeatId={branchingBeatId}
                                         onBranch={onBranch}
+                                        onUpdateBeat={onUpdateBeat}
+                                        onDeleteBeat={onDeleteBeat}
                                     />
                                 );
                             })}
