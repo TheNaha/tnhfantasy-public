@@ -14,6 +14,7 @@ from .world_hub import router as world_hub_router
 from .locations import router as locations_router
 from .timeline import router as timeline_router
 from .graph_layout import router as graph_layout_router
+from .util import router as util_router
 
 router = APIRouter(prefix="/api/v2")
 
@@ -31,3 +32,4 @@ router.include_router(locations_router, prefix="/locations", tags=["Locations"])
 router.include_router(timeline_router, prefix="/timeline", tags=["Timeline"])
 router.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
 router.include_router(graph_layout_router, prefix="/world-vault/graph-layout", tags=["Graph Layout"])
+router.include_router(util_router, prefix="/world-vault", tags=["World Vault"])

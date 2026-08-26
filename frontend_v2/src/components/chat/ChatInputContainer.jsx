@@ -3,6 +3,7 @@ import { X, ImageIcon, Loader2, Paperclip, MoreHorizontal, Palette, Wand2, BookO
 import clsx from 'clsx';
 import CommandPalette from './CommandPalette';
 import StreamingInput from './StreamingInput';
+import TokenMeter from './TokenMeter';
 
 export default function ChatInputContainer({
     pendingAttachment, setPendingAttachment, activeChat, targetCharacterId,
@@ -228,10 +229,12 @@ export default function ChatInputContainer({
                             </button>
                         </div>
                         
-                        <button
-                            onClick={handleSendMessage}
-                            disabled={!canSend}
-                            aria-label="Send message"
+                        <div className="flex items-center">
+                            <TokenMeter text={message} />
+                            <button
+                                onClick={handleSendMessage}
+                                disabled={!canSend}
+                                aria-label="Send message"
                             className={clsx(
                                 "p-1.5 sm:p-2 transition-all rounded-xl",
                                 canSend
@@ -244,6 +247,7 @@ export default function ChatInputContainer({
                                 : <Send size={16} className={canSend ? "translate-x-0.5 -translate-y-0.5" : ""} />
                             }
                         </button>
+                        </div>
                     </div>
                 </div>
                 <div className="mt-1.5 hidden sm:flex items-center justify-between px-1 text-[10px] text-gray-600">

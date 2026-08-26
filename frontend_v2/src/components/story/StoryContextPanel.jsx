@@ -2,6 +2,7 @@ import React from 'react';
 import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
+import SamplingControls from '../common/SamplingControls';
 
 export default React.memo(function StoryContextPanel({
     activeStory,
@@ -238,6 +239,7 @@ export default React.memo(function StoryContextPanel({
                          </select>
                          <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
                      </div>
+                     <SamplingControls values={activeStory || {}} onChange={onUpdateStory} />
                      <div>
                          <div className="flex items-center justify-between mb-1.5">
                              <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>

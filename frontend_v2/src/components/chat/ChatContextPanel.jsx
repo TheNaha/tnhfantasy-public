@@ -5,6 +5,7 @@ import {
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
+import SamplingControls from '../common/SamplingControls';
 import SystemPromptPanel from './SystemPromptPanel';
 import ExpressionSelector from './ExpressionSelector';
 import MemoriesPanel from './MemoriesPanel';
@@ -294,6 +295,7 @@ function ChatContextPanel() {
                         </button>
                     )}
                 </div>
+                <SamplingControls values={activeChat || {}} onChange={onChatUpdate} />
                 <div>
                     <div className="flex items-center justify-between mb-1.5">
                         <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
