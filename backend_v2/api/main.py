@@ -129,10 +129,31 @@ app = FastAPI(
 configure_app(app)
 
 
+def _json_safe_validation_errors(errors):
+    """Coerce pydantic error dicts into JSON-serializable shapes.
+
+    ctx payloads may hold arbitrary objects (e.g. ValueError instances from
+    model validators) that JSONResponse cannot encode.
+    """
+    safe = []
+    for err in errors:
+        item = {k: v for k, v in err.items() if k != "ctx"}
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = {
+                k: (v if isinstance(v, (str, int, float, bool)) else str(v))
+                for k, v in ctx.items()
+            }
+        elif ctx is not None:
+            item["ctx"] = str(ctx)
+        safe.append(item)
+    return safe
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     logger.error(f"Validation Error 422: {exc.errors()} - Body: {exc.body}")
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "body": exc.body},
+        content={"detail": _json_safe_validation_errors(exc.errors()), "body": exc.body},
     )

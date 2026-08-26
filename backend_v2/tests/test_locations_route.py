@@ -50,6 +50,12 @@ class TestLocationCRUD:
         assert body["name"] == "Keep"
         assert body["description"] is None
 
+    def test_patch_location_null_name_is_422(self, client, session):
+        created = client.post("/api/v2/locations", json={"name": "Keep"}).json()
+        resp = client.patch(f"/api/v2/locations/{created['id']}", json={"name": None})
+        assert resp.status_code == 422
+        assert session.get(Location, created["id"]).name == "Keep"
+
     def test_delete_location(self, client, session):
         created = client.post("/api/v2/locations", json={"name": "Doomed"}).json()
         resp = client.delete(f"/api/v2/locations/{created['id']}")

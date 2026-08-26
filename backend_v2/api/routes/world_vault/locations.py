@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlmodel import Session, select, func
 
 from api.deps import get_session, get_location_repo
@@ -27,6 +27,14 @@ class LocationUpdate(BaseModel):
     atmosphere: str | None = None
     tags: list[str] | None = None
     image_path: str | None = None
+
+    @model_validator(mode="after")
+    def _reject_null_name(self):
+        # name is a NOT NULL column: an explicit {"name": null} is a client bug
+        # and must surface as a 422 instead of an IntegrityError (500).
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("name cannot be null")
+        return self
 
 
 @router.get("", response_model=list[Location])
