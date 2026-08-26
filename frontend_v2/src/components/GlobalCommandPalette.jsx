@@ -23,6 +23,7 @@ const NAV_ITEMS = [
     { label: 'Lorebooks', to: '/lorebooks' },
     { label: 'Prompt Library', to: '/prompts' },
     { label: 'Scenarios', to: '/scenarios' },
+    { label: 'Personas', to: '/personas' },
     { label: 'Voices', to: '/voices' },
     { label: 'Installed Models', to: '/models/installed' },
     { label: 'Discover Models', to: '/models/discover' },

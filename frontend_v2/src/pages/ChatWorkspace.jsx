@@ -49,7 +49,7 @@ function ChatWorkspaceLayout() {
         mobileTab, setMobileTab,
         activeChatId, messages, setMessageSearch,
         setTimelineVisible, listContainerRef,
-        showNewChatModal, characters, lorebooks, confirmCreateChat, setShowNewChatModal,
+        showNewChatModal, characters, lorebooks, personas: personasCtx = [], confirmCreateChat, setShowNewChatModal,
         showCharacterDetails, linkedCharacter, setShowCharacterDetails,
         greetingModal, setGreetingModal, hasCreatedChatRef,
         showScenesModal, setShowScenesModal, sceneTab, setSceneTab, chatImages,
@@ -225,6 +225,7 @@ function ChatWorkspaceLayout() {
                     <NewChatModal
                         characters={characters}
                         lorebooks={lorebooks}
+                        personas={personasCtx}
                         onCreate={confirmCreateChat}
                         onClose={() => setShowNewChatModal(false)}
                     />

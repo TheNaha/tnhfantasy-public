@@ -4,6 +4,7 @@ export * from './useMessages';
 export * from './useStories';
 export * from './useLorebooks';
 export * from './useScenarios';
+export * from './usePersonas';
 export * from './useVoices';
 
 export * from './useExpressions';

@@ -47,6 +47,7 @@ const ChatWorkspace = lazy(() => import('./pages/ChatWorkspace'));
 const StorySandbox = lazy(() => import('./pages/StorySandbox'));
 const StoryReader = lazy(() => import('./pages/StoryReader'));
 const Scenarios = lazy(() => import('./pages/Scenarios'));
+const Personas = lazy(() => import('./pages/Personas'));
 const Voices = lazy(() => import('./pages/Voices'));
 const Lorebooks = lazy(() => import('./pages/Lorebooks'));
 const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
@@ -106,6 +107,7 @@ function AnimatedRoutes() {
                 </Route>
                 <Route path="/characters" element={<Boundary routeKey={routeKey}><Characters /></Boundary>} />
                 <Route path="/scenarios" element={<Boundary routeKey={routeKey}><Scenarios /></Boundary>} />
+                <Route path="/personas" element={<Boundary routeKey={routeKey}><Personas /></Boundary>} />
                 <Route path="/voices" element={<Boundary routeKey={routeKey}><Voices /></Boundary>} />
                 <Route path="/lorebooks" element={<Boundary routeKey={routeKey}><Lorebooks /></Boundary>} />
                 <Route path="/world-vault" element={<Boundary routeKey={routeKey}><WorldVaultHub /></Boundary>} />

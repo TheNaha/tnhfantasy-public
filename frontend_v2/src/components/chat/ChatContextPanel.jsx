@@ -1,6 +1,8 @@
 import clsx from 'clsx';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-    User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown,
+    User, Clock, MapPin, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
 } from 'lucide-react';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 import ContextField from './ContextField';
@@ -30,7 +32,10 @@ function ChatContextPanel() {
         setShowScenesModal,
         handleChatUpdate,
         voices,
+        personas = [],
     } = useChatWorkspace();
+
+    const navigate = useNavigate();
 
     const onChatUpdate = (data) => handleChatUpdate(data);
     const onCharacterPatch = (data) => patchCharacterMutation.mutate(data);
@@ -86,7 +91,34 @@ function ChatContextPanel() {
                 <p className="text-[10px] text-gray-600 mt-2 px-1">
                     Sets <code className="text-gray-500">{'{{user}}'}</code> and injects a persona block into the system prompt.
                 </p>
+                {personas.length > 0 && (
+                    <div className="mt-3">
+                        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                            Library Persona
+                        </label>
+                        <select
+                            data-testid="chat-persona-select"
+                            value={activeChat?.persona_id || ''}
+                            onChange={(e) => onChatUpdate({ persona_id: e.target.value || null })}
+                            className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 focus:outline-none focus:border-blue-500/40 appearance-none"
+                        >
+                            <option value="">None (custom fields only)</option>
+                            {personas.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                        <p className="text-[10px] text-gray-600 mt-1 px-1">
+                            Library values fill any persona field left blank above. Manage in{' '}
+                            <button type="button" onClick={() => navigate('/personas')} className="text-blue-400 hover:text-blue-300 underline">
+                                Personas
+                            </button>.
+                        </p>
+                    </div>
+                )}
             </div>
+
+            {/* Author's Note */}
+            <AuthorsNoteSection key={`an-${activeChat?.id}`} chat={activeChat} onSave={onChatUpdate} />
             
             {/* World State */}
             <ContextField
@@ -551,6 +583,61 @@ function ChatContextPanel() {
             {linkedCharacter?.expressions && Object.keys(linkedCharacter.expressions).some(k => !k.startsWith('_')) && (
                 <ExpressionSelector character={linkedCharacter} characterId={linkedCharacter.id} inline />
             )}
+        </div>
+    );
+}
+
+function AuthorsNoteSection({ chat, onSave }) {
+    const [depth, setDepth] = useState(chat?.authors_note_depth ?? 4);
+    const savedDepth = chat?.authors_note_depth ?? 4;
+
+    return (
+        <div className="glass-panel p-4 rounded-xl border border-white/5">
+            <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                <NotebookPen size={12} /> Author's Note
+            </h4>
+            <textarea
+                data-testid="authors-note-input"
+                defaultValue={chat?.authors_note || ''}
+                onBlur={(e) => {
+                    const val = e.target.value.trim() || null;
+                    if (val !== (chat?.authors_note || null)) onSave({ authors_note: val });
+                }}
+                placeholder="A directive injected N messages from the end of context (survives pruning)…"
+                rows={2}
+                className="w-full bg-gray-800/60 border border-white/5 text-xs rounded-lg px-2.5 py-2 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/40 resize-none"
+            />
+            <div className="mt-2 flex items-center gap-3">
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider shrink-0">Depth</span>
+                <input
+                    data-testid="authors-note-depth"
+                    type="range"
+                    min={0}
+                    max={20}
+                    step={1}
+                    value={depth}
+                    onChange={(e) => setDepth(Number(e.target.value))}
+                    onMouseUp={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
+                    onTouchEnd={() => { if (depth !== savedDepth) onSave({ authors_note_depth: depth }); }}
+                    className="flex-1 accent-sky-500 h-1"
+                />
+                <span className={`text-[10px] font-mono w-8 text-right ${depth !== savedDepth ? 'text-amber-400' : 'text-sky-400'}`}>
+                    {depth}{depth !== savedDepth ? '*' : ''}
+                </span>
+                {chat?.authors_note_depth != null && (
+                    <button
+                        type="button"
+                        onClick={() => onSave({ authors_note_depth: null })}
+                        className="text-[9px] text-gray-500 hover:text-gray-300 transition-colors shrink-0"
+                        title="Reset to global default depth (4)"
+                    >
+                        reset
+                    </button>
+                )}
+            </div>
+            <p className="text-[10px] text-gray-600 mt-1 px-1">
+                0 pins the note to the very end; default is 4 messages from the tail.
+            </p>
         </div>
     );
 }

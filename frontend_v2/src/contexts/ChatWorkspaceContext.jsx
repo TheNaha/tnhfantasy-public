@@ -6,7 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     useMessages, useChats, useSendMessage, useChat,
-    useCreateChat, useDeleteChat, useLorebooks, useCharacters,
+    useCreateChat, useDeleteChat, useLorebooks, useCharacters, usePersonas,
     useRenameChat, useUpdateChat, useSuggestReply,
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
     useCharacterCollection, useEditMessage, useRollbackChat,
@@ -172,6 +172,7 @@ export function ChatWorkspaceProvider({ children }) {
     const { data: activeChat } = useChat(activeChatId);
     const { data: lorebooks = [] } = useLorebooks();
     const { data: characters = [] } = useCharacters();
+    const { data: personas = [] } = usePersonas();
     const { data: availableModels = [] } = useLLMAvailableModels();
     const { data: defaultLlmConfig } = useLLMDefaultProvider();
     const { data: systemPromptData } = useChatSystemPrompt(activeChatId);
@@ -533,16 +534,17 @@ export function ChatWorkspaceProvider({ children }) {
     const confirmCreateChat = (config) => {
         if (createChatMutation.isPending) return;
         setShowNewChatModal(false);
-        const { chatName, characterId, personaName, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
-        
+        const { chatName, characterId, personaName, personaId, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
+
         const character = characterId ? characters.find(c => c.id === characterId) : null;
         const hasMultipleGreetings = character && (character.alternate_greetings?.length > 0);
 
-        const payload = { 
-            name: chatName, 
-            character_id: characterId, 
-            persona_name: personaName, 
-            story_time: storyTime, 
+        const payload = {
+            name: chatName,
+            character_id: characterId,
+            persona_name: personaName,
+            persona_id: personaId || null,
+            story_time: storyTime,
             story_location: storyLocation,
             active_lorebook_ids: newSelectedLorebooks
         };
@@ -831,6 +833,7 @@ export function ChatWorkspaceProvider({ children }) {
         canSend,
         characters,
         chatCollection,
+        personas,
         chatImages,
         chatJobs,
         chatOffset,

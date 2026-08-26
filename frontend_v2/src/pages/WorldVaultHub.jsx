@@ -68,6 +68,7 @@ export default function WorldVaultHub() {
             case 'campaign':
             case 'lorebook':
             case 'scenario':
+            case 'persona':
             case 'voice':
                 // Navigate to the entity list page (deep-link support pending on target page)
                 navigate(`/${entity.type}s`);

@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Check } from 'lucide-react';
 
-function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
+function NewChatModal({ characters, lorebooks, personas = [], onCreate, onClose }) {
     const [selectedCharacter, setSelectedCharacter] = useState(null);
     const [selectedLorebooks, setSelectedLorebooks] = useState([]);
     const [chatName, setChatName] = useState('New Chat');
     const [personaName, setPersonaName] = useState('');
+    const [selectedPersonaId, setSelectedPersonaId] = useState('');
     const [storyTime, setStoryTime] = useState('');
     const [storyLocation, setStoryLocation] = useState('');
 
@@ -95,6 +96,19 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
                             className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-colors"
                             placeholder="e.g. Wanderer"
                         />
+                        {personas.length > 0 && (
+                            <select
+                                data-testid="new-chat-persona-select"
+                                value={selectedPersonaId}
+                                onChange={(e) => setSelectedPersonaId(e.target.value)}
+                                className="w-full bg-gray-800/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-gray-200 focus:outline-none focus:border-blue-500/50 transition-colors appearance-none"
+                            >
+                                <option value="">Library persona: none</option>
+                                {personas.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                            </select>
+                        )}
                     </div>
 
                     <div className="space-y-2">
@@ -149,7 +163,7 @@ function NewChatModal({ characters, lorebooks, onCreate, onClose }) {
                         Cancel
                     </button>
                     <button 
-                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, storyTime, storyLocation, selectedLorebooks })}
+                        onClick={() => onCreate({ chatName: chatName.trim() || 'New Chat', characterId: selectedCharacter?.id || null, personaName: personaName.trim() || null, personaId: selectedPersonaId || null, storyTime, storyLocation, selectedLorebooks })}
                         className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg"
                     >
                         Create

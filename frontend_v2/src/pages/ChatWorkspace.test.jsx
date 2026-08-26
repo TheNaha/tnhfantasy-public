@@ -52,6 +52,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useUpdateChat: (...a) => mockUpdateChat(...a),
     useCharacters: (...a) => mockCharacters(...a),
     useLorebooks: (...a) => mockLorebooks(...a),
+    usePersonas: () => ({ data: [] }),
     useChat: () => ({ data: null }),
     useDeleteMessage: () => ({ mutateAsync: vi.fn() }),
     useSuggestReply: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
