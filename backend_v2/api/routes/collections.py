@@ -179,17 +179,7 @@ def move_images_between_collections(
     }
 
 
-@router.get("/by-character/{character_id}")
-def get_character_collection(
-    character_id: str,
-    include_images: bool = Query(True),
-    repo: CollectionRepository = Depends(get_collection_repo),
-):
-    """Get or create the auto-generated collection for a character."""
-    collection = repo.get_collection_by_character_id(character_id)
-    if not collection:
-        return None
-
+def _serialize_collection(repo: CollectionRepository, collection: Collection, include_images: bool) -> dict:
     result = {
         "id": collection.id,
         "name": collection.name,
@@ -207,6 +197,37 @@ def get_character_collection(
         result["images"] = [img.image_filename for img in images]
         result["image_count"] = len(images)
 
+    return result
+
+
+@router.get("/by-character/{character_id}")
+def get_character_collection(
+    character_id: str,
+    include_images: bool = Query(True),
+    repo: CollectionRepository = Depends(get_collection_repo),
+):
+    """Get or create the auto-generated collection for a character."""
+    collection = repo.get_collection_by_character_id(character_id)
+    if not collection:
+        return None
+
+    return _serialize_collection(repo, collection, include_images)
+
+
+@router.get("/by-characters")
+def get_character_collections_batch(
+    ids: str = Query("", description="Comma-separated character ids"),
+    include_images: bool = Query(True),
+    repo: CollectionRepository = Depends(get_collection_repo),
+):
+    """Batch variant of by-character: one round-trip for N character cards."""
+    result: dict[str, dict | None] = {}
+    for character_id in {i.strip() for i in ids.split(",") if i.strip()}:
+        collection = repo.get_collection_by_character_id(character_id)
+        if not collection:
+            result[character_id] = None
+            continue
+        result[character_id] = _serialize_collection(repo, collection, include_images)
     return result
 
 

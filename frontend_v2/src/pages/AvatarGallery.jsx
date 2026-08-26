@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, User, Images, MessageSquare, ExternalLink, Grid, LayoutGrid, Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCharacterCollection, getAvatarUrl } from '../hooks/useWorldVault';
+import { useCharacters, useCharacterCollection, useCharacterCollections, getAvatarUrl } from '../hooks/useWorldVault';
 import SceneGallery from '../components/SceneGallery';
 import EmptyState from '../components/EmptyState';
 
@@ -17,6 +17,7 @@ export default function AvatarGallery() {
     const [selectedCharacter, setSelectedCharacter] = useState(null);
 
     const { data: characters = [], isLoading } = useCharacters();
+    const { data: characterCollections } = useCharacterCollections(characters.map(c => c.id));
     const navigate = useNavigate();
 
     const filteredCharacters = useMemo(() => {
@@ -93,6 +94,7 @@ export default function AvatarGallery() {
                         <CharacterCard
                             key={character.id}
                             character={character}
+                            collections={characterCollections}
                             onChat={handleChat}
                             onNavigateToCharacter={handleCharacterClick}
                         />
@@ -104,6 +106,7 @@ export default function AvatarGallery() {
                         <CharacterGridItem
                             key={character.id}
                             character={character}
+                            collections={characterCollections}
                             onChat={handleChat}
                             onNavigateToCharacter={handleCharacterClick}
                         />
@@ -123,8 +126,8 @@ export default function AvatarGallery() {
     );
 }
 
-function CharacterCard({ character, onChat, onNavigateToCharacter }) {
-    const { data: collection } = useCharacterCollection(character.id);
+function CharacterCard({ character, collections, onChat, onNavigateToCharacter }) {
+    const collection = collections?.[character.id];
     const imageCount = collection?.image_count || 0;
 
     return (
@@ -194,8 +197,8 @@ function CharacterCard({ character, onChat, onNavigateToCharacter }) {
     );
 }
 
-function CharacterGridItem({ character, onNavigateToCharacter }) {
-    const { data: collection } = useCharacterCollection(character.id);
+function CharacterGridItem({ character, collections, onNavigateToCharacter }) {
+    const collection = collections?.[character.id];
 
     return (
         <motion.div

@@ -9,6 +9,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCharacters = vi.hoisted(() => vi.fn());
 const mockCharacterCollection = vi.hoisted(() => vi.fn());
+const mockCharacterCollections = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', async (importOriginal) => {
     const actual = await importOriginal();
@@ -18,6 +19,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 vi.mock('../hooks/useWorldVault', () => ({
     useCharacters: (...args) => mockCharacters(...args),
     useCharacterCollection: (...args) => mockCharacterCollection(...args),
+    useCharacterCollections: (...args) => mockCharacterCollections(...args),
     getAvatarUrl: (id) => (id ? `/api/v2/characters/${id}/avatar` : null),
 }));
 
@@ -87,9 +89,14 @@ describe('AvatarGallery page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCharacters.mockReturnValue({ data: characters, isLoading: false });
+        const batchCollections = {
+            c1: { image_count: 2, images: ['scene_a.png', 'scene_b.png'] },
+            c2: { image_count: 2, images: ['scene_a.png', 'scene_b.png'] },
+        };
         mockCharacterCollection.mockReturnValue({
             data: { image_count: 2, images: ['scene_a.png', 'scene_b.png'] },
         });
+        mockCharacterCollections.mockReturnValue({ data: batchCollections });
     });
 
     it('renders the main heading and subtitle', () => {
@@ -118,6 +125,12 @@ describe('AvatarGallery page', () => {
     it('shows scene counts from character collections', () => {
         renderPage();
         expect(screen.getAllByText('Scenes (2)')).toHaveLength(2);
+    });
+
+    it('fetches collections in one batched request instead of per-card', () => {
+        renderPage();
+        expect(mockCharacterCollections).toHaveBeenCalledTimes(1);
+        expect(mockCharacterCollections).toHaveBeenCalledWith(['c1', 'c2']);
     });
 
     it('shows loading state while fetching characters', () => {

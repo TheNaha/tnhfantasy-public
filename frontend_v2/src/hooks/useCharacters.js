@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
@@ -107,6 +108,18 @@ export const useCharacterCollection = (characterId) => {
         queryKey: ['world_vault', 'characters', characterId, 'collection'],
         queryFn: () => api.get(`/api/v2/collections/by-character/${characterId}`),
         enabled: !!characterId
+    });
+};
+
+export const useCharacterCollections = (characterIds) => {
+    const idsParam = useMemo(
+        () => [...new Set((characterIds || []).filter(Boolean))].sort().join(','),
+        [characterIds]
+    );
+    return useQuery({
+        queryKey: ['world_vault', 'characters', 'collections-batch', idsParam],
+        queryFn: () => api.get('/api/v2/collections/by-characters', { params: { ids: idsParam } }),
+        enabled: idsParam.length > 0
     });
 };
 

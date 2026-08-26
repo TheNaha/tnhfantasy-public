@@ -19,7 +19,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Users, Plus, Upload, Download, Copy, Search, Edit3, Trash2, MessageSquare, X, Loader2, User, Images, Sparkles, Brain, GripVertical } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollection, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
+import { useCharacters, useCreateCharacter, useUpdateCharacter, useDeleteCharacter, useUploadAvatar, useCharacterCollections, useImportCharacterCard, getAvatarUrl, useAnimateCharacterAvatar, useReorderCharacters, useCloneCharacter } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import SceneGallery, { SceneCount } from '../components/SceneGallery';
@@ -646,8 +646,8 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab =
     );
 }
 
-function CharacterCard({ character, onEdit, onDelete, onChat, onExport, onClone, isCloning }) {
-    const { data: collection } = useCharacterCollection(character.id);
+function CharacterCard({ character, collections, onEdit, onDelete, onChat, onExport, onClone, isCloning }) {
+    const collection = collections?.[character.id];
     const imageCount = collection?.image_count || 0;
 
     const {
@@ -757,6 +757,7 @@ export default function Characters() {
     const { confirm } = useConfirmation();
 
     const { data: characters = [], isLoading } = useCharacters();
+    const { data: characterCollections } = useCharacterCollections(characters.map(c => c.id));
     const createCharacter = useCreateCharacter();
     const updateCharacter = useUpdateCharacter();
     const deleteCharacter = useDeleteCharacter();
@@ -984,6 +985,7 @@ export default function Characters() {
                                     <CharacterCard
                                         key={character.id}
                                         character={character}
+                                        collections={characterCollections}
                                         onEdit={openEdit}
                                         onDelete={handleDelete}
                                         onChat={handleStartChat}

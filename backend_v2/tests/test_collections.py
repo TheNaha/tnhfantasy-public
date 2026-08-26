@@ -343,3 +343,51 @@ class TestCollectionsMove:
         assert response.status_code == 200
         assert response.json()["moved"] == 0
         assert client.get(f"/api/v2/collections/{dst}").json()["image_count"] == 0
+
+
+class TestCollectionsByCharacterBatch:
+    """GET /by-characters — one round-trip for N character cards."""
+
+    def test_batch_returns_collections_keyed_by_character(self, client):
+        client.post("/api/v2/collections", json={
+            "name": "Elara Art", "character_id": "ch1", "workspace": "chat",
+        })
+
+        response = client.get("/api/v2/collections/by-characters", params={"ids": "ch1,missing"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["missing"] is None
+        entry = data["ch1"]
+        assert entry["character_id"] == "ch1"
+        assert entry["image_count"] == 0
+        assert entry["images"] == []
+
+    def test_batch_counts_images_per_character(self, client):
+        client.post("/api/v2/collections", json={"name": "Art", "character_id": "ch9"})
+        col_id = client.get("/api/v2/collections/by-character/ch9").json()["id"]
+        client.post(f"/api/v2/collections/{col_id}/images", json={"images": ["a.png", "b.png"]})
+
+        data = client.get("/api/v2/collections/by-characters", params={"ids": "ch9"}).json()
+        assert data["ch9"]["image_count"] == 2
+        assert sorted(data["ch9"]["images"]) == ["a.png", "b.png"]
+
+    def test_batch_empty_ids_returns_empty_map(self, client):
+        response = client.get("/api/v2/collections/by-characters")
+        assert response.status_code == 200
+        assert response.json() == {}
+
+    def test_batch_deduplicates_ids(self, client):
+        client.post("/api/v2/collections", json={"name": "Once", "character_id": "chd"})
+        data = client.get(
+            "/api/v2/collections/by-characters", params={"ids": "chd,chd,chd"}
+        ).json()
+        assert list(data.keys()) == ["chd"]
+
+    def test_single_by_character_route_still_serializes_images(self, client):
+        client.post("/api/v2/collections", json={"name": "Solo", "character_id": "ch2"})
+        col_id = client.get("/api/v2/collections/by-character/ch2").json()["id"]
+        client.post(f"/api/v2/collections/{col_id}/images", json={"images": ["solo.png"]})
+
+        data = client.get("/api/v2/collections/by-character/ch2").json()
+        assert data["images"] == ["solo.png"]
+        assert data["image_count"] == 1
