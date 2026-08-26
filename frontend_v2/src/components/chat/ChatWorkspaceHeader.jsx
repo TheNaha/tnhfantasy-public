@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, GitBranch, Search, X } from 'lucide-react';
+import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, MessageSquare, Sparkles, Loader2, Clock, MapPin, Download, FileJson, GitBranch, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 
@@ -13,6 +13,7 @@ export default function ChatWorkspaceHeader({
     isGeneratingTitle,
     activeChatId,
     handleExportChat,
+    handleExportChatJsonl,
     messages,
     setTimelineVisible,
     contextCollapsed,
@@ -122,6 +123,14 @@ export default function ChatWorkspaceHeader({
                 title="Export chat as Markdown"
             >
                 <Download size={18} />
+            </button>
+            <button
+                onClick={handleExportChatJsonl}
+                disabled={!activeChatId || !messages.length}
+                className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed hidden lg:block"
+                title="Export chat as SillyTavern-compatible JSONL"
+            >
+                <FileJson size={18} />
             </button>
             <button
                 onClick={() => setTimelineVisible(true)}

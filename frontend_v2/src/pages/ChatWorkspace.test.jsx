@@ -75,6 +75,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useIllustrateChat: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useGenerateScene: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useSearchChats: () => ({ data: [] }),
+    useExportChatJsonl: () => ({ mutateAsync: vi.fn(async () => ({ blob: new Blob(), filename: 'chat.jsonl' })), isPending: false }),
+    useImportChat: () => ({ mutateAsync: vi.fn(), isPending: false }),
     getAvatarUrl: () => '',
 }));
 

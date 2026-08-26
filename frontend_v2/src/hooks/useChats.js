@@ -62,6 +62,27 @@ export const useCreateChat = () => useCreateResource({
     listQueryKey: CHAT_LIST_KEY,
 });
 
+export function useExportChatJsonl() {
+    return useMutation({
+        mutationFn: async ({ chatId, chatName }) => {
+            const resp = await api.get(`/api/v2/chats/${chatId}/export`, { params: { format: 'jsonl' } });
+            const blob = await resp.blob();
+            const safeName = (chatName || 'chat').replace(/[^a-zA-Z0-9-_ ]/g, '').trim().replace(/\s+/g, '_') || chatId;
+            return { blob, filename: `${safeName}.jsonl` };
+        },
+    });
+}
+
+export function useImportChat() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (formData) => api.post('/api/v2/chats/import', formData),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+        },
+    });
+}
+
 export const useRenameChat = () => {
     const queryClient = useQueryClient();
     return useMutation({

@@ -1,5 +1,5 @@
-import React from 'react';
-import { Plus, MessageSquare, Edit3, Trash2, Loader2 } from 'lucide-react';
+import React, { useRef } from 'react';
+import { Plus, MessageSquare, Edit3, Trash2, Loader2, Upload } from 'lucide-react';
 import clsx from 'clsx';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
 
@@ -23,10 +23,19 @@ export default function ChatSidebar({
     characters,
     startRename,
     handleDeleteChat,
+    handleImportChatFile,
+    isImportingChat,
     hasMoreChats,
     CHAT_PAGE_SIZE,
     setRenamingChatId
 }) {
+    const importInputRef = useRef(null);
+
+    const onImportFilePicked = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file && handleImportChatFile) handleImportChatFile(file);
+    };
     return (
         <div className={clsx(
             "flex-col shrink-0 border-b lg:border-r border-white/5 bg-gray-900 flex-1 lg:flex-none overflow-hidden min-w-0",
@@ -36,13 +45,30 @@ export default function ChatSidebar({
         )}>
             <div className="h-12 lg:h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
                 <h3 className="font-semibold text-gray-200 tracking-wide">Chats</h3>
-                <button
-                    onClick={() => handleCreateChat()}
-                    className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                    title="New chat"
-                >
-                    <Plus size={18} />
-                </button>
+                <div className="flex items-center gap-1">
+                    <input
+                        ref={importInputRef}
+                        type="file"
+                        accept=".jsonl,.json,application/x-ndjson,application/json"
+                        className="hidden"
+                        onChange={onImportFilePicked}
+                    />
+                    <button
+                        onClick={() => importInputRef.current?.click()}
+                        disabled={isImportingChat}
+                        className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors disabled:opacity-40"
+                        title="Import chat (SillyTavern JSONL or app JSON)"
+                    >
+                        {isImportingChat ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                    </button>
+                    <button
+                        onClick={() => handleCreateChat()}
+                        className="p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                        title="New chat"
+                    >
+                        <Plus size={18} />
+                    </button>
+                </div>
             </div>
 
             <div className="px-3 py-2 border-b border-white/5 shrink-0">

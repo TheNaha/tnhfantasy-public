@@ -13,7 +13,7 @@ import {
     useRegenerateReply, useChatJobs, usePatchCharacter,
     useImpersonateMessage, usePinMessage, useSwipeMessage, useGenerateSwipe, useChatImages,
     useIllustrateChat, useGenerateScene, useNarrateMessage, useDeleteMessage,
-    useSearchChats
+    useSearchChats, useExportChatJsonl, useImportChat
 } from '../hooks/useWorldVault';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
@@ -206,6 +206,8 @@ export function ChatWorkspaceProvider({ children }) {
 
     const sendMessageMutation = useSendMessage();
     const createChatMutation = useCreateChat();
+    const exportJsonlMutation = useExportChatJsonl();
+    const importChatMutation = useImportChat();
     const deleteChatMutation = useDeleteChat();
     const renameChatMutation = useRenameChat();
     const updateChatMutation = useUpdateChat();
@@ -725,6 +727,42 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [activeChatId, deleteMessageMutation]);
 
+    const handleExportChatJsonl = async () => {
+        if (!activeChatId) { toast.error('No active chat to export'); return; }
+        try {
+            const { blob, filename } = await exportJsonlMutation.mutateAsync({
+                chatId: activeChatId,
+                chatName: activeChat?.name,
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            toast.success(`Exported ${filename} (SillyTavern-compatible)`);
+        } catch (err) {
+            toast.error(err.message || 'Failed to export JSONL');
+        }
+    };
+
+    const isImportingChat = importChatMutation.isPending;
+    const handleImportChatFile = async (file) => {
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const chat = await importChatMutation.mutateAsync(formData);
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'chats'] });
+            setActiveChatId(chat.id);
+            toast.success(`Imported "${chat.name}"`);
+        } catch (err) {
+            toast.error(err.message || 'Failed to import chat');
+        }
+    };
+
     const handleExportChat = () => {
         if (!messages.length) { toast.error('No messages to export'); return; }
         const charName = linkedCharacter?.name || 'AI';
@@ -822,6 +860,9 @@ export function ChatWorkspaceProvider({ children }) {
         handleDeleteMessage,
         handleEditMessage,
         handleExportChat,
+        handleExportChatJsonl,
+        handleImportChatFile,
+        isImportingChat,
         handleGenerateScene,
         handleGenerateSwipe,
         handleGenerateTTS,
