@@ -1,5 +1,5 @@
 import React from 'react';
-import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2, PenLine, Maximize2, ScrollText, RotateCcw } from 'lucide-react';
+import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2, PenLine, Maximize2, ScrollText, RotateCcw, History } from 'lucide-react';
 import clsx from 'clsx';
 
 const iconBtn = "flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-all text-sm";
@@ -15,6 +15,7 @@ export default React.memo(function StoryActionBar({
     onAiDirectiveChange,
     canRetryLast,
     onRetryLast,
+    onOpenRevisions,
     onAiAction,
     isIllustrating,
     onIllustrate,
@@ -73,6 +74,15 @@ export default React.memo(function StoryActionBar({
                     >
                         <RotateCcw size={14} />
                         <span className="hidden sm:inline">Retry</span>
+                    </button>
+                )}
+                {onOpenRevisions && (
+                    <button
+                        onClick={onOpenRevisions}
+                        className={clsx(iconBtn, "bg-gray-800 text-sky-300 hover:bg-gray-700")}
+                        title="Revision history — browse and restore chapter snapshots"
+                    >
+                        <History size={14} />
                     </button>
                 )}
                 {onAiAction && (

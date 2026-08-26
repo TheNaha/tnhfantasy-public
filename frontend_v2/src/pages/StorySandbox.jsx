@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat } from '../hooks/useWorldVault';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation, useUpdateStoryBeat, useDeleteStoryBeat, useChapterRevisions, useCreateChapterRevision, useRestoreChapterRevision } from '../hooks/useWorldVault';
 import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -25,6 +25,7 @@ import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import IllustrateModal from '../components/story/IllustrateModal';
 import StoryActionModal from '../components/story/StoryActionModal';
+import ChapterRevisionsModal from '../components/story/ChapterRevisionsModal';
 import StoryGalleryModal from '../components/story/StoryGalleryModal';
 import ParseStoryModal from '../components/story/ParseStoryModal';
 import { CharacterModal } from './Characters';
@@ -73,6 +74,13 @@ export default function StorySandbox() {
     const illustrateChapter = useIllustrateChapter();
     const storyAiAction = useStoryAiAction();
     const retryLastContinuation = useRetryLastContinuation();
+    const restoreRevision = useRestoreChapterRevision();
+    const createRevision = useCreateChapterRevision();
+    const [revisionsOpen, setRevisionsOpen] = useState(false);
+    const chapterRevisions = useChapterRevisions(
+        activeStoryId || null,
+        revisionsOpen ? activeChapterId : null
+    );
     const updateStoryBeat = useUpdateStoryBeat();
     const deleteStoryBeat = useDeleteStoryBeat();
     const parseStory = useParseStory();
@@ -427,6 +435,42 @@ export default function StorySandbox() {
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeStoryId, activeChapterId, isStreaming, retryLastContinuation, confirm, queryClient]);
+
+    const handleSaveRevision = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || createRevision.isPending) return;
+        try {
+            await createRevision.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId });
+            toast.success('Snapshot saved');
+        } catch {
+            toast.error('Failed to save snapshot');
+        }
+    }, [activeStoryId, activeChapterId, createRevision]);
+
+    const handleRestoreRevision = useCallback(async (rev) => {
+        if (!activeStoryId || !activeChapterId || restoreRevision.isPending) return;
+        const ok = await confirm({
+            title: 'Restore Revision',
+            message: 'Replace the current chapter prose with this snapshot? The current text is snapshotted first, so this can be undone.',
+            confirmText: 'Restore',
+        });
+        if (!ok) return;
+        try {
+            await restoreRevision.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId, revisionId: rev.id });
+            const key = ['world_vault', 'stories', activeStoryId, 'chapters'];
+            await queryClient.invalidateQueries({ queryKey: key });
+            const data = queryClient.getQueryData(key);
+            const fresh = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
+            const restored = fresh?.content ?? '';
+            isDirtyRef.current = false;
+            setEditorContent(restored);
+            streamingBaseRef.current = restored;
+            setRevisionsOpen(false);
+            toast.success('Revision restored');
+        } catch {
+            toast.error('Failed to restore revision');
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeStoryId, activeChapterId, restoreRevision, confirm, queryClient]);
 
     const handleAutoGenerateTitle = async () => {
         if (!activeStoryId || !activeChapterId) return;
@@ -952,6 +996,7 @@ export default function StorySandbox() {
                                             onAiDirectiveChange={setAiDirective}
                                             canRetryLast={activeChapter?.beats?.length > 0 && activeChapter.beats[activeChapter.beats.length - 1]?.role === 'narrator'}
                                             onRetryLast={handleRetryLast}
+                                            onOpenRevisions={() => setRevisionsOpen(true)}
                                             onAiAction={handleOpenStoryAction}
                                             isIllustrating={isIllustrating}
                                             onIllustrate={handleIllustrate}
@@ -1041,6 +1086,17 @@ export default function StorySandbox() {
                 onConfirm={handleConfirmStoryAction}
                 onApply={handleApplyStoryAction}
                 onClose={handleCloseStoryAction}
+            />
+
+            <ChapterRevisionsModal
+                open={revisionsOpen}
+                chapterTitle={activeChapter?.title || 'Untitled chapter'}
+                revisions={chapterRevisions.data || []}
+                isLoading={chapterRevisions.isLoading}
+                isRestoring={restoreRevision.isPending}
+                onRestore={handleRestoreRevision}
+                onSnapshot={handleSaveRevision}
+                onClose={() => setRevisionsOpen(false)}
             />
 
             <StoryGalleryModal

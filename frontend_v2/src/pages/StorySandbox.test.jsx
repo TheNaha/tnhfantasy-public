@@ -58,6 +58,9 @@ vi.mock('../hooks/useWorldVault', () => ({
     useRetryLastContinuation: () => ({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false }),
     useUpdateStoryBeat: (...a) => mockUpdateStoryBeat(...a),
     useDeleteStoryBeat: (...a) => mockDeleteStoryBeat(...a),
+    useChapterRevisions: () => ({ data: [], isLoading: false }),
+    useCreateChapterRevision: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
+    useRestoreChapterRevision: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
     useCharacters: () => ({ data: [] }),
     useLocations: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),
@@ -430,5 +433,17 @@ describe('StorySandbox page', () => {
         await waitFor(() => {
             expect(toast.error).toHaveBeenCalledWith('Select some text in the editor first');
         });
+    });
+
+    it('opens the revision history modal from the action bar', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByTitle(/revision history/i)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/revision history/i));
+        await waitFor(() => {
+            expect(screen.getByTestId('revisions-modal')).toBeInTheDocument();
+        });
+        expect(screen.queryAllByTestId('revision-row')).toHaveLength(0);
     });
 });

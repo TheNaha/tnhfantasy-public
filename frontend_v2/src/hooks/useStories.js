@@ -219,6 +219,40 @@ export const useRetryLastContinuation = () => {
     });
 };
 
+const revisionsKey = (storyId, chapterId) =>
+    ['world_vault', 'stories', storyId, 'chapters', chapterId, 'revisions'];
+
+export const useChapterRevisions = (storyId, chapterId) => {
+    return useQuery({
+        queryKey: revisionsKey(storyId, chapterId),
+        queryFn: () => api.get(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions`),
+        enabled: Boolean(storyId && chapterId),
+    });
+};
+
+export const useCreateChapterRevision = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: revisionsKey(variables.storyId, variables.chapterId) });
+        },
+    });
+};
+
+export const useRestoreChapterRevision = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, revisionId }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/revisions/${revisionId}/restore`),
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ['world_vault', 'stories', variables.storyId, 'chapters'] });
+            queryClient.invalidateQueries({ queryKey: revisionsKey(variables.storyId, variables.chapterId) });
+        },
+    });
+};
+
 export const useIllustrateChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, image_prompt }) =>
