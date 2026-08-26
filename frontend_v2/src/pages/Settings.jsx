@@ -766,6 +766,10 @@ function AISettings({ settings, onUpdate, onReset }) {
                 if (ai && !cancelled) {
                     if (ai.maxContextTokens) onUpdate('maxContextTokens', Number(ai.maxContextTokens));
                     if (ai.temperature != null) onUpdate('temperature', Number(ai.temperature));
+                    if (ai.top_p != null) onUpdate('topP', Number(ai.top_p));
+                    if (ai.max_output_tokens != null) onUpdate('maxOutputTokens', Number(ai.max_output_tokens));
+                    if (ai.frequency_penalty != null) onUpdate('frequencyPenalty', Number(ai.frequency_penalty));
+                    if (ai.presence_penalty != null) onUpdate('presencePenalty', Number(ai.presence_penalty));
                     if (ai.idleSimEnabled != null) onUpdate('idleSimEnabled', !!ai.idleSimEnabled);
                     if (ai.idleSimIntervalSeconds != null) onUpdate('idleSimIntervalSeconds', Number(ai.idleSimIntervalSeconds));
                 }
@@ -784,6 +788,10 @@ function AISettings({ settings, onUpdate, onReset }) {
                 ai: {
                     maxContextTokens: Number(settings.maxContextTokens),
                     temperature: Number(settings.temperature),
+                    top_p: settings.topP == null ? null : Number(settings.topP),
+                    max_output_tokens: settings.maxOutputTokens == null ? null : Number(settings.maxOutputTokens),
+                    frequency_penalty: settings.frequencyPenalty == null ? null : Number(settings.frequencyPenalty),
+                    presence_penalty: settings.presencePenalty == null ? null : Number(settings.presencePenalty),
                     ttsEnabled: settings.ttsEnabled,
                     ragEnabled: settings.ragEnabled !== false,
                     idleSimEnabled: !!settings.idleSimEnabled,
@@ -933,6 +941,45 @@ function AISettings({ settings, onUpdate, onReset }) {
                             className="w-full md:w-64 accent-purple-500"
                         />
                         <span className="text-white font-bold text-sm w-16 text-center bg-white/5 py-1.5 rounded-lg border border-white/5">{settings.temperature.toFixed(1)}</span>
+                    </div>
+                </SettingGroup>
+
+                <SettingGroup
+                    title="Sampling Defaults"
+                    description="Global LLM sampling defaults. Per-chat and per-story overrides take precedence; blank = provider default. Penalties are ignored by engines that don't support them."
+                >
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                            { key: 'topP', label: 'Top P', min: 0, max: 1, step: 0.01 },
+                            { key: 'maxOutputTokens', label: 'Max Output Tokens', min: 16, max: 32768, step: 16 },
+                            { key: 'frequencyPenalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.1 },
+                            { key: 'presencePenalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.1 },
+                        ].map(({ key, label, min, max, step }) => (
+                            <label key={key} className="flex flex-col gap-1.5">
+                                <span className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">{label}</span>
+                                <div className="flex items-center gap-1">
+                                    <input
+                                        type="number"
+                                        min={min}
+                                        max={max}
+                                        step={step}
+                                        placeholder="default"
+                                        value={settings[key] ?? ''}
+                                        onChange={(e) => onUpdate(key, e.target.value === '' ? null : Number(e.target.value))}
+                                        className="w-full bg-white/5 py-1.5 px-2 rounded-lg border border-white/10 text-white text-sm focus:outline-none focus:border-blue-500/50 placeholder-gray-600"
+                                    />
+                                    {settings[key] != null && (
+                                        <button
+                                            onClick={() => onUpdate(key, null)}
+                                            className="p-1 text-gray-500 hover:text-red-400 transition-colors"
+                                            title="Reset to engine default"
+                                        >
+                                            <RotateCcw size={12} />
+                                        </button>
+                                    )}
+                                </div>
+                            </label>
+                        ))}
                     </div>
                 </SettingGroup>
 

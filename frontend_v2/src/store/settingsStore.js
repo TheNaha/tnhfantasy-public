@@ -50,6 +50,12 @@ const DEFAULT_SETTINGS = {
     ai: {
         // Wired to backend config (config.json `ai` block via /api/settings):
         temperature: 0.8,
+        // Global sampler defaults (null = provider/engine default).
+        // Persisted to backend config ai block as snake_case on save.
+        topP: null,
+        maxOutputTokens: null,
+        frequencyPenalty: null,
+        presencePenalty: null,
         maxContextTokens: 4096,
         ttsEnabled: true,
         ragEnabled: true,
