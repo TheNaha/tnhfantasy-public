@@ -217,7 +217,7 @@ export default function FantasyHub() {
                 <div className="w-1 h-1 rounded-full bg-gray-600" />
                 <div className="flex items-center gap-2">
                     <ImageIcon size={16} />
-                    <span>Unified asset library</span>
+                    <span>Unified image gallery</span>
                 </div>
                 <div className="w-1 h-1 rounded-full bg-gray-600" />
                 <div className="flex items-center gap-2">

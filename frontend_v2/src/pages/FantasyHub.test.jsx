@@ -59,7 +59,7 @@ describe('FantasyHub page', () => {
 
     it('renders the feature footer items', () => {
         renderPage();
-        expect(screen.getByText('Unified asset library')).toBeInTheDocument();
+        expect(screen.getByText('Unified image gallery')).toBeInTheDocument();
         expect(screen.getByText('Agentic AI workflows')).toBeInTheDocument();
     });
 
