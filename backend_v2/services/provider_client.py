@@ -329,18 +329,25 @@ async def call_llm_provider(
     provider_type: str = "modal",
 ) -> dict:
     reducer = _LLMReducer(job_id, job_service, provider_id, workflow)
-    temperature = workflow.get("temperature")
-    if temperature is None:
-        try:
-            from config import get_config
-            temperature = (get_config() or {}).get("ai", {}).get("temperature")
-        except Exception:
-            temperature = None
+    try:
+        from config import get_config
+        global_ai = ((get_config() or {}).get("ai") or {})
+    except Exception:
+        global_ai = {}
+
+    def _resolve(key: str):
+        # Per-job override wins; otherwise the global default (may be None).
+        return workflow.get(key) if workflow.get(key) is not None else global_ai.get(key)
+
     payload = {
         "messages": workflow.get("messages"),
         "tools": workflow.get("tools"),
         "model": workflow.get("model"),
-        "temperature": temperature,
+        "temperature": _resolve("temperature"),
+        "top_p": _resolve("top_p"),
+        "max_output_tokens": _resolve("max_output_tokens"),
+        "frequency_penalty": _resolve("frequency_penalty"),
+        "presence_penalty": _resolve("presence_penalty"),
         "job_id": job_id,
         "timeout_seconds": timeout,
     }

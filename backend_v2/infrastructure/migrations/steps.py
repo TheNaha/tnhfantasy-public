@@ -1577,6 +1577,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create graph_layouts table for relationship graph node positions",
             apply_fn=_migration_056_add_graph_layouts,
         ),
+        MigrationStep(
+            version="057_add_llm_sampler_columns",
+            description="Add per-chat/story LLM sampling override columns",
+            apply_fn=_migration_057_add_llm_sampler_columns,
+        ),
     ]
 
 
@@ -2165,4 +2170,31 @@ def _migration_056_add_graph_layouts(conn) -> bool:
     """))
     logger.info("migration_table_created", table="graph_layouts")
     return True
+
+
+_SAMPLER_COLUMNS = (
+    "temperature",
+    "top_p",
+    "max_output_tokens",
+    "frequency_penalty",
+    "presence_penalty",
+)
+
+
+def _migration_057_add_llm_sampler_columns(conn) -> bool:
+    """Add per-entity LLM sampling override columns to chats and stories."""
+    inspector = inspect(conn)
+    changed = False
+    for table in ("chats", "stories"):
+        if table not in inspector.get_table_names():
+            continue
+        existing = {col["name"] for col in inspector.get_columns(table)}
+        for column in _SAMPLER_COLUMNS:
+            if column in existing:
+                continue
+            sql_type = "INTEGER" if column == "max_output_tokens" else "FLOAT"
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            logger.info("migration_column_added", table=table, column=column)
+            changed = True
+    return changed
 

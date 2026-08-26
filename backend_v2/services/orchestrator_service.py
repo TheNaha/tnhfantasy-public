@@ -471,7 +471,17 @@ async def _tool_narrate_scene(
             except Exception as _e:
                 logger.warning("narrator_char_prompt_rebuild_failed", chat_id=chat_id, error=str(_e))
 
-        from services.llm_workflow import build_llm_workflow
+        from services.llm_workflow import build_llm_workflow, sampler_overrides
+
+        narrator_samplers: dict = {}
+        if chat_id:
+            try:
+                from core.entities import Chat as _Chat
+                _chat_row = session.get(_Chat, chat_id)
+                if _chat_row:
+                    narrator_samplers = sampler_overrides(_chat_row)
+            except Exception as _e:
+                logger.warning("narrator_sampler_lookup_failed", chat_id=chat_id, error=str(_e))
 
         workflow, metadata = build_llm_workflow(
             messages=messages,
@@ -482,6 +492,7 @@ async def _tool_narrate_scene(
             model=source_meta.get("model"),
             source="narrator",
             parent_job_id=source_job_id,
+            samplers=narrator_samplers or None,
         )
 
         try:
@@ -970,11 +981,12 @@ async def process_tool_calls_and_chain(
     context.append(assistant_output)
     context.extend(tool_results)
 
-    from services.llm_workflow import build_llm_workflow
+    from services.llm_workflow import SAMPLER_KEYS, build_llm_workflow
 
-    followup_model = (
-        (job.workflow if isinstance(job.workflow, dict) else {}).get("model")
-    )
+    prev_workflow = job.workflow if isinstance(job.workflow, dict) else {}
+    followup_model = prev_workflow.get("model")
+    # Carry the original job's sampling overrides through every chained hop.
+    followup_samplers = {k: prev_workflow[k] for k in SAMPLER_KEYS if prev_workflow.get(k) is not None}
 
     followup_workflow, followup_metadata = build_llm_workflow(
         messages=context,
@@ -985,6 +997,7 @@ async def process_tool_calls_and_chain(
         model=followup_model,
         workspace="chat",
         parent_job_id=job.id,
+        samplers=followup_samplers or None,
         extra_metadata={
             "agentic": True,
             "orchestrator_depth": depth + 1,

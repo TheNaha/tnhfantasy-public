@@ -172,8 +172,11 @@ def _chain_fixtures(monkeypatch, assistant_tool_calls, allowed_tools=None):
     captured = {"workflow": None, "enqueued": []}
 
     def fake_build_llm_workflow(*, messages, type_, chat_id, character_id, character_system_prompt,
-                                model, workspace, parent_job_id, extra_metadata):
-        return ({"messages": messages, "type": type_, "model": model}, {"type": type_})
+                                model, workspace, parent_job_id, extra_metadata, samplers=None):
+        wf = {"messages": messages, "type": type_, "model": model}
+        if samplers:
+            wf.update(samplers)
+        return (wf, {"type": type_})
 
     monkeypatch.setattr("services.llm_workflow.build_llm_workflow", fake_build_llm_workflow)
 

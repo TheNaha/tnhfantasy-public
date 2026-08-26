@@ -17,7 +17,7 @@ from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
 from core.exceptions import ComfyError, NotFoundError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
-from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow
+from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
 from services.job_service import JobService
 from services.job_queue import QueueManager, queue_manager
 from services.model_availability_service import ModelAvailabilityService
@@ -74,6 +74,11 @@ class UpdateStoryRequest(BaseModel):
     memory: str | None = None
     is_archived: bool | None = None
     max_agentic_depth: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
 
 
 def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
@@ -660,7 +665,7 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
         raise NotFoundError("Story", story_id)
     
     update_data = req.model_dump(exclude_unset=True)
-    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'location_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth'}
+    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'location_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth', 'temperature', 'top_p', 'max_output_tokens', 'frequency_penalty', 'presence_penalty'}
     for key, value in update_data.items():
         if key in allowed:
             setattr(story, key, value)
@@ -822,6 +827,7 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         chapter_id=chapter_id,
         model=(story.llm_model if story else None) or _get_default_llm_model(),
         workspace="story",
+        samplers=sampler_overrides(story),
         extra_metadata={"max_agentic_depth": story.max_agentic_depth} if story and story.max_agentic_depth is not None else None,
     )
     job = await job_service.create_job(
@@ -1033,6 +1039,7 @@ async def illustrate_chapter(
         chapter_id=chapter_id,
         model=(story.llm_model if story else None) or _get_default_llm_model(),
         workspace="story",
+        samplers=sampler_overrides(story),
         source="story_illustrate_prompt",
         extra_metadata={"scene_checkpoint": checkpoint},
     )

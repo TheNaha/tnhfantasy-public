@@ -1,4 +1,4 @@
-from services.llm_workflow import build_llm_workflow
+from services.llm_workflow import build_llm_workflow, sampler_overrides
 
 
 def test_build_llm_workflow_chat_reply():
@@ -54,3 +54,38 @@ def test_build_llm_workflow_extra_metadata():
     )
     assert metadata["agentic"] is True
     assert metadata["orchestrator_depth"] == 0
+
+
+class _Entity:
+    temperature = 0.35
+    top_p = None
+    max_output_tokens = 512
+    frequency_penalty = None
+    presence_penalty = 0.2
+
+
+def test_sampler_overrides_extracts_only_set_fields():
+    overrides = sampler_overrides(_Entity())
+    assert overrides == {
+        "temperature": 0.35,
+        "max_output_tokens": 512,
+        "presence_penalty": 0.2,
+    }
+
+
+def test_sampler_overrides_handles_none_entity():
+    assert sampler_overrides(None) == {}
+
+
+def test_build_llm_workflow_includes_samplers():
+    workflow, _ = build_llm_workflow(
+        messages=[],
+        type_="chat_reply",
+        chat_id="chat-1",
+        samplers=sampler_overrides(_Entity()),
+    )
+    assert workflow["temperature"] == 0.35
+    assert workflow["max_output_tokens"] == 512
+    assert workflow["presence_penalty"] == 0.2
+    assert "top_p" not in workflow
+    assert "frequency_penalty" not in workflow

@@ -1,5 +1,23 @@
 from typing import Any
 
+# Per-entity LLM sampling override keys (Chat/Story columns; None = inherit global).
+SAMPLER_KEYS = (
+    "temperature",
+    "top_p",
+    "max_output_tokens",
+    "frequency_penalty",
+    "presence_penalty",
+)
+
+
+def sampler_overrides(entity) -> dict[str, Any]:
+    """Extract non-None sampling overrides from a Chat/Story entity."""
+    return {
+        key: getattr(entity, key)
+        for key in SAMPLER_KEYS
+        if getattr(entity, key, None) is not None
+    }
+
 
 def build_llm_workflow(
     *,
@@ -14,6 +32,7 @@ def build_llm_workflow(
     workspace: str = "chat",
     source: str | None = None,
     parent_job_id: str | None = None,
+    samplers: dict[str, Any] | None = None,
     extra_metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build a standardized LLM job workflow + metadata pair.
@@ -26,6 +45,8 @@ def build_llm_workflow(
         "type": type_,
         "model": model,
     }
+    if samplers:
+        workflow.update(samplers)
     if chat_id is not None:
         workflow["chat_id"] = chat_id
     if story_id is not None:
@@ -65,6 +86,7 @@ def build_chat_llm_workflow(
     type_: str = "chat_reply",
     workspace: str = "chat",
     source: str | None = None,
+    samplers: dict[str, Any] | None = None,
     extra_metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build an LLM workflow for a chat reply with pre-filled common metadata.
@@ -92,6 +114,7 @@ def build_chat_llm_workflow(
         model=model,
         workspace=workspace,
         source=source,
+        samplers=samplers,
         extra_metadata=metadata,
     )
 

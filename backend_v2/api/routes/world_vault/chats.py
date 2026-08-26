@@ -17,7 +17,7 @@ from services.chat_utils import insert_world_state_marker, resolve_voice_for_cha
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
 from services.job_service import JobService
 from services.job_queue import QueueManager
-from services.llm_workflow import build_chat_llm_workflow
+from services.llm_workflow import build_chat_llm_workflow, sampler_overrides
 
 MAX_CONTEXT_MESSAGES = 200
 # Hard cap for endpoints that stream an entire chat history into memory
@@ -58,6 +58,11 @@ class UpdateChatRequest(BaseModel):
     append_system_prompt: str | None = None
     max_context_tokens: int | None = None
     max_agentic_depth: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    max_output_tokens: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
     tts_voice_id: str | None = None
     idle_sim_enabled: bool | None = None
 
@@ -398,6 +403,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
+                    samplers=sampler_overrides(chat),
                     type_="narrator",
                     source="narrator",
                 )
@@ -409,6 +415,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     character_id=request.target_character_id or chat.character_id,
                     system_prompt=system_prompt or None,
                     model=chat.llm_model or _get_default_llm_model(),
+                    samplers=sampler_overrides(chat),
                 )
 
             if request.agentic:
@@ -668,6 +675,7 @@ async def generate_swipe(
         character_id=chat.character_id,
         system_prompt=system_prompt or None,
         model=chat.llm_model or _get_default_llm_model(),
+        samplers=sampler_overrides(chat),
         extra_metadata={
             "is_swipe": True,
             "target_message_id": message_id
@@ -859,6 +867,7 @@ async def regenerate_reply(
         character_id=chat.character_id,
         system_prompt=system_prompt or None,
         model=chat.llm_model or _get_default_llm_model(),
+        samplers=sampler_overrides(chat),
         extra_metadata={"regenerated": True},
     )
     if prev_agentic:
@@ -956,6 +965,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
             chat_id=chat_id,
             character_id=chat.character_id,
             model=chat.llm_model or _get_default_llm_model(),
+            samplers=sampler_overrides(chat),
             type_="suggest_reply",
             source="suggest_reply",
             extra_metadata={
@@ -1076,6 +1086,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
             chat_id=chat_id,
             character_id=chat.character_id,
             model=chat.llm_model or _get_default_llm_model(),
+            samplers=sampler_overrides(chat),
             type_="suggest_reply",
             extra_metadata={"is_suggestion": True, "max_agentic_depth": chat.max_agentic_depth},
         )
@@ -1144,6 +1155,7 @@ async def generate_scene(
         chat_id=chat_id,
         character_id=chat.character_id,
         model=chat.llm_model or _get_default_llm_model(),
+        samplers=sampler_overrides(chat),
         type_="chat_reply",
         workspace="roleplay",
         source="scene_prompt",
