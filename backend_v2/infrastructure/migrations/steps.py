@@ -1592,6 +1592,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create story_chapter_revisions table for chapter snapshots",
             apply_fn=_migration_059_add_story_chapter_revisions,
         ),
+        MigrationStep(
+            version="060_add_message_character_id",
+            description="Add messages.character_id speaker attribution for group chats",
+            apply_fn=_migration_060_add_message_character_id,
+        ),
     ]
 
 
@@ -2221,6 +2226,24 @@ def _migration_058_add_story_writing_prefs(conn) -> bool:
             continue
         conn.execute(text(f"ALTER TABLE stories ADD COLUMN {column} {sql_type}"))
         logger.info("migration_column_added", table="stories", column=column)
+        changed = True
+    return changed
+
+
+def _migration_060_add_message_character_id(conn) -> bool:
+    """Add per-message speaker attribution column for group chats."""
+    inspector = inspect(conn)
+    changed = False
+    if "messages" not in inspector.get_table_names():
+        return False
+    existing = {col["name"] for col in inspector.get_columns("messages")}
+    if "character_id" not in existing:
+        conn.execute(text("ALTER TABLE messages ADD COLUMN character_id VARCHAR"))
+        logger.info("migration_column_added", table="messages", column="character_id")
+        changed = True
+    index_names = {idx["name"] for idx in inspector.get_indexes("messages")}
+    if "idx_message_character_id" not in index_names:
+        conn.execute(text("CREATE INDEX idx_message_character_id ON messages (character_id)"))
         changed = True
     return changed
 

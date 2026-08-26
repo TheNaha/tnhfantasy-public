@@ -248,6 +248,7 @@ async def _handle_chat_reply(job_data: dict[str, Any]):
                 kind=MessageKind.CHAR,
                 content=content,
                 chat_id=chat_id,
+                character_id=metadata.get("character_id"),
                 tool_calls=tool_calls,
                 message_metadata=msg_metadata,
             )

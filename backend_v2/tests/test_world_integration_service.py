@@ -266,6 +266,29 @@ async def test_handle_chat_reply_persists_assistant_message(session, wired_engin
 
 
 @pytest.mark.asyncio
+async def test_handle_chat_reply_stamps_speaker_character(session, wired_engine):
+    from core.entities import Character
+
+    chat_id, primary = _seed_chat_with_character(session)
+    other = Character(name="Second Speaker")
+    session.add(other)
+    session.commit()
+    session.refresh(other)
+
+    job_data = {
+        "id": "job-6b",
+        "metadata": {"chat_id": chat_id, "character_id": other.id},
+        "outputs": [{"role": "assistant", "content": "I am the second speaker."}],
+    }
+    await wis._handle_chat_reply(job_data)
+
+    with Session(wired_engine) as check:
+        msg = check.exec(select(Message).where(Message.chat_id == chat_id)).one()
+        assert msg.character_id == other.id
+        assert msg.character_id != primary
+
+
+@pytest.mark.asyncio
 async def test_handle_chat_reply_stores_tool_calls_transcript(session, wired_engine):
     chat_id, _ = _seed_chat_with_character(session)
 

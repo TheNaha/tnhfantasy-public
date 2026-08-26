@@ -131,6 +131,7 @@ def export_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
             "id": msg.id,
             "role": msg.role.value,
             "kind": msg.kind.value if msg.kind else None,
+            "character_id": msg.character_id,
             "content": msg.content,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
             "updated_at": msg.updated_at.isoformat() if msg.updated_at else None,
@@ -408,7 +409,6 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
                     source="narrator",
                 )
             else:
-
                 workflow, metadata = build_chat_llm_workflow(
                     messages=context,
                     chat_id=chat_id,
@@ -864,7 +864,7 @@ async def regenerate_reply(
     workflow, metadata = build_chat_llm_workflow(
         messages=context,
         chat_id=chat_id,
-        character_id=chat.character_id,
+        character_id=getattr(anchor, "character_id", None) or chat.character_id,
         system_prompt=system_prompt or None,
         model=chat.llm_model or _get_default_llm_model(),
         samplers=sampler_overrides(chat),

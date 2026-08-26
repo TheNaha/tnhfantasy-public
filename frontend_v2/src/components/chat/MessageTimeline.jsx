@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import clsx from 'clsx';
 import { Loader2, Wand2, ImageIcon, MessageSquare } from 'lucide-react';
 import MessageItem from './MessageItem';
@@ -11,6 +11,7 @@ export default function MessageTimeline() {
     const context = useChatWorkspace();
     const {
         messages, listItems, rowVirtualizer, linkedCharacter, activeChat,
+        characters = [], targetCharacterId,
         settings, handleEditMessage, handleDeleteMessage, handleRegenerate, handleRollback,
         handlePinMessage, handleSwipe, handleGenerateSwipe, handleAvatarClick,
         handleGenerateTTS, handleMessageIllustrate, hasMoreMessages, loadOlderMessages,
@@ -19,14 +20,26 @@ export default function MessageTimeline() {
 
     const { data: voices = [] } = useVoices();
 
+    const characterById = useMemo(
+        () => new Map(characters.map((c) => [c.id, c])),
+        [characters]
+    );
+    // Group chats: attribute each message to its actual speaker, falling back
+    // to the primary linked character when untagged.
+    const resolveSpeaker = (msg) =>
+        (msg?.character_id && characterById.get(msg.character_id)) || linkedCharacter;
+    const pendingSpeaker =
+        (targetCharacterId && characterById.get(targetCharacterId)) || linkedCharacter;
+
     const renderRow = (item) => {
         if (item.item) {
             const msg = item.item;
             const idx = messages.findIndex(m => (m.id || m._idx) === (msg.id || msg._idx));
+            const speaker = resolveSpeaker(msg);
             return (
                 <MessageItem
                     msg={msg}
-                    linkedCharacter={linkedCharacter}
+                    linkedCharacter={speaker}
                     activeChat={activeChat}
                     canRegenerate={idx === messages.length - 1}
                     onEdit={handleEditMessage}
@@ -42,7 +55,7 @@ export default function MessageTimeline() {
                     ttsEnabled={settings.ai?.ttsEnabled}
                     voices={voices}
                     chatTtsVoiceId={activeChat?.tts_voice_id}
-                    characterVoiceId={linkedCharacter?.voice_model_id}
+                    characterVoiceId={speaker?.voice_model_id}
                 />
             );
         }
@@ -86,20 +99,20 @@ export default function MessageTimeline() {
             <div key={jobId} className="flex gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%] self-start flex-row">
                 <button
                     type="button"
-                    onClick={() => linkedCharacter?.avatar_path && handleAvatarClick(getAvatarUrl(linkedCharacter.id))}
+                    onClick={() => pendingSpeaker?.avatar_path && handleAvatarClick(getAvatarUrl(pendingSpeaker.id))}
                     className={clsx(
                         "w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center shrink-0 overflow-hidden self-end",
-                        linkedCharacter?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
+                        pendingSpeaker?.avatar_path && "cursor-pointer hover:border-blue-500/50 transition-colors"
                     )}
                 >
-                    {linkedCharacter?.avatar_path
-                        ? <img src={getAvatarUrl(linkedCharacter.id)} alt="" className="w-full h-full object-cover" />
+                    {pendingSpeaker?.avatar_path
+                        ? <img src={getAvatarUrl(pendingSpeaker.id)} alt="" className="w-full h-full object-cover" />
                         : <MessageSquare className="text-blue-400" size={12} />
                     }
                 </button>
                 <div className="flex flex-col max-w-full">
                     <div className="text-[10px] mb-1 text-gray-400 flex items-center gap-1.5">
-                        <span>{linkedCharacter?.name || 'AI'}</span>
+                        <span>{pendingSpeaker?.name || 'AI'}</span>
                         <span className="inline-flex items-center gap-0.5 text-blue-400/70">
                             <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                             <span className="w-1 h-1 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -111,7 +124,7 @@ export default function MessageTimeline() {
                             <TavernMessage content={jobData.text + '\u25CD'} />
                         ) : (
                             <span className="flex items-center gap-2 text-gray-400 text-sm italic">
-                                *{linkedCharacter?.name || 'AI'} is thinking...*
+                                *{pendingSpeaker?.name || 'AI'} is thinking...*
                             </span>
                         )}
                     </div>

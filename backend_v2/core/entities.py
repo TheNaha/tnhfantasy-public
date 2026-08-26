@@ -909,6 +909,8 @@ class Message(SQLModel, table=True):
     )
     content: str = Field(sa_column=Column(Text))
     image_path: str | None = Field(default=None)
+    # Speaking character for group chats (None = narrator/user/primary-agnostic)
+    character_id: str | None = Field(default=None, foreign_key="characters.id", index=True)
     tool_calls: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     message_metadata: dict | None = Field(default=None, sa_column=Column(JSONColumn))
     pinned: bool = Field(default=False)

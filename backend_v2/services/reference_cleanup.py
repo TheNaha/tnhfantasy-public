@@ -8,7 +8,7 @@ broken dashboard links, etc.).
 """
 from sqlmodel import Session, select
 
-from core.entities import Campaign, Character, Chat, Story
+from core.entities import Campaign, Character, Chat, Message, Story
 
 
 def _without(ids, entity_id):
@@ -43,6 +43,8 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
         _scrub_campaigns(session, "character_ids", entity_id)
         for chat in session.exec(select(Chat).where(Chat.character_id == entity_id)).all():
             chat.character_id = None
+        for msg in session.exec(select(Message).where(Message.character_id == entity_id)).all():
+            msg.character_id = None
     elif kind == "lorebook":
         _scrub_stories(session, "lorebook_ids", entity_id)
         _scrub_chats(session, "active_lorebook_ids", entity_id)
