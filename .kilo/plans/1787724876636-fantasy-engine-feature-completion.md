@@ -1,9 +1,20 @@
 # Fantasy Engine Feature-Completion Plan
 
-Status: ACTIVE (supersedes pillar-hardening notes for this effort)
+Status: COMPLETE (all phases implemented 2026-08-26; tip `1f9cbc0` — backend 1594 passed / 2 skipped, frontend 588 passed, ruff+eslint clean)
 Created: 2026-08-26
 Baseline: `9158ac9` pushed to origin; backend 1553 passed / 2 skipped, frontend 563 passed, lint clean.
 Audit basis: full-stack audit of 2026-08-26 (feature gaps vs SillyTavern / NovelAI / AI Dungeon / Civitai + cross-pillar integration map).
+
+## Execution record (commits, in order)
+
+- P1 quick wins: c09663b, 528e9c0, dde1b10, 05c6421, c94e1f4, 25d553c
+- P2 samplers: 7e1b368 (engines), b57fe91 (threading+057), 381ca71 (Settings defaults), d3b89e2 (panels+TokenMeter+estimate-tokens util router)
+- P3 story loop: 281e854 (AI actions rewrite/expand/summarize + retry-last + directives), 913a2d0 (beat PATCH/DELETE + roles), 351e015 (POV + word goal, migration 058), 5a94da2+b7005f3 (chapter revision snapshots, migration 059, cap 20), 1fec46f (story agentic illustration — generate_image only, depth gate incl. 0=off)
+- P4 group chats: b83a4fc (Message.character_id, migration 060, speaker attribution + per-speaker voice + pending-speaker placeholder)
+- P5 interop/hygiene: a82ebfd (illustrate RAG routing), e674a47 (ST JSONL export + JSONL/JSON import backend), 3101344 (agentic image dedupe via submit_image_job), b089c9d (JSONL export button + sidebar import UI)
+- P6 perf/QoL: 024b5ed (batch character-collection endpoint /by-characters + single-request cards), 841b1ad (BatchGenerate ws streaming via useJobStatus cache; no more 4s N-polling), 1f9cbc0 (dead API exports removed: promptsApi.getPrompt, providersApi.get, assetsApi.move, settingsApi.{getSchema,reset,getSession,updateSession,getPresets}, ws.disconnect/emit; palette + Lorebooks/Prompts routes; Voices type select w/ embedding option; Scenarios default_checkpoint select from installed checkpoints; RelationshipGraph simulation: 6 steps/frame + kinetic-energy early-exit)
+
+Stale backlog items verified non-issues or deferred: civitai localStorage TTL (no unbounded metadata cache exists anymore; only small filter prefs), WorldVaultHub per-entity deep-links (routes all valid; hash-focus on list pages remains nice-to-have), personas global library / author's-note depth / Timeline cap-100 / pagination tiebreakers / except→ComfyError laundering / PUT-PATCH None semantics (deferred backlog).
 
 ## User decisions (locked)
 
