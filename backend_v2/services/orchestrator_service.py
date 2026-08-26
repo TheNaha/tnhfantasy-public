@@ -651,7 +651,6 @@ async def _tool_generate_image(
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline and wait for completion."""
-    from services.job_submission_service import JobSubmissionService
     from infrastructure.deps import get_session_context
 
     prompt = args.get("prompt", "a beautiful fantasy landscape")
@@ -660,8 +659,6 @@ async def _tool_generate_image(
     logger.info("tool_generate_image", prompt=prompt[:80], chat_id=chat_id)
 
     async with get_session_context() as session:
-        submission = JobSubmissionService(session)
-
         # 1. Start with system default checkpoint
         ckpt_name = None
         lora_name = None
@@ -709,29 +706,28 @@ async def _tool_generate_image(
         if lora_name and resolved_lora is None:
             logger.warning("tool_generate_image_lora_unavailable", preferred=lora_name)
 
-        from core.workflow_builder import build_image_job_workflow
-
         is_story_tool = bool(story_id and chapter_id)
-        workflow, metadata = build_image_job_workflow(
-            prompt=prompt,
-            negative=negative,
-            checkpoint=resolved_ckpt,
-            lora=resolved_lora,
-            filename_prefix="StoryAgenticGen" if is_story_tool else "AgenticGen",
-            source="agentic_tool",
-            workspace="story" if is_story_tool else "chat",
-            chat_id=None if is_story_tool else chat_id,
-            character_id=None if is_story_tool else character_id,
-            story_id=story_id if is_story_tool else None,
-            chapter_id=chapter_id if is_story_tool else None,
-            parent_job_id=source_job_id,
-            extra_metadata={"tool_name": "generate_image"},
-        )
+
+        # Shared submission helper (checkpoint re-resolution inside is
+        # idempotent — resolved_ckpt is already confirmed available).
+        from services.image_submission import submit_image_job
 
         try:
-            job = await submission.create_and_enqueue_job(
-                workflow=workflow,
-                metadata=metadata,
+            job = await submit_image_job(
+                session,
+                prompt=prompt,
+                negative_prompt=negative,
+                checkpoint=resolved_ckpt,
+                lora=resolved_lora,
+                filename_prefix="StoryAgenticGen" if is_story_tool else "AgenticGen",
+                source="agentic_tool",
+                workspace="story" if is_story_tool else "chat",
+                chat_id=None if is_story_tool else chat_id,
+                character_id=None if is_story_tool else character_id,
+                story_id=story_id if is_story_tool else None,
+                chapter_id=chapter_id if is_story_tool else None,
+                parent_job_id=source_job_id,
+                extra_metadata={"tool_name": "generate_image"},
             )
         except Exception as e:
             logger.error("tool_generate_image_failed", error=str(e))
