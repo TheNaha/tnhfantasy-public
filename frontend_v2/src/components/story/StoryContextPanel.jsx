@@ -240,37 +240,40 @@ export default React.memo(function StoryContextPanel({
                          <p className="text-[10px] text-gray-500 mt-1">Per-story model override; used for continuations and titles.</p>
                      </div>
                      <SamplingControls values={activeStory || {}} onChange={onUpdateStory} />
-                     <div>
-                         <div className="flex items-center justify-between mb-1.5">
-                             <p className="text-xs text-gray-300 font-medium">Agentic Loop Depth</p>
-                             <span className="text-[10px] text-gray-500 font-mono">
-                                 {activeStory?.max_agentic_depth
-                                     ? `${activeStory.max_agentic_depth} steps`
-                                     : 'Global default (5)'}
-                             </span>
-                         </div>
-                         <input
-                             type="range"
-                             min="1"
-                             max="10"
-                             step="1"
-                             value={activeStory?.max_agentic_depth || 5}
-                             onChange={(e) => onUpdateStory({ max_agentic_depth: parseInt(e.target.value) })}
-                             className="w-full accent-purple-500"
-                             title="Max agentic tool-call loops per continuation. Higher = more autonomous but slower."
-                         />
-                         <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
-                             <span>1</span><span>5</span><span>10</span>
-                         </div>
-                         {activeStory?.max_agentic_depth && (
-                             <button
-                                 onClick={() => onUpdateStory({ max_agentic_depth: null })}
-                                 className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
-                             >
-                                 Reset to global default
-                             </button>
-                         )}
-                     </div>
+                      <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-xs text-gray-300 font-medium">Autonomous Illustration</p>
+                              <span className="text-[10px] text-gray-500 font-mono">
+                                  {activeStory?.max_agentic_depth != null
+                                      ? (activeStory.max_agentic_depth > 0
+                                          ? `${activeStory.max_agentic_depth} image${activeStory.max_agentic_depth === 1 ? '' : 's'} max`
+                                          : 'Off')
+                                      : 'Global default (5)'}
+                              </span>
+                          </div>
+                          <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={activeStory?.max_agentic_depth ?? 5}
+                              onChange={(e) => onUpdateStory({ max_agentic_depth: parseInt(e.target.value) })}
+                              className="w-full accent-purple-500"
+                              title="How many images the AI may generate on its own while continuing the story. 0 disables autonomous illustration."
+                          />
+                          <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+                              <span>Off</span><span>5</span><span>10</span>
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1">While continuing the story, the AI can illustrate scenes itself; generated art attaches to this chapter.</p>
+                          {activeStory?.max_agentic_depth != null && (
+                              <button
+                                  onClick={() => onUpdateStory({ max_agentic_depth: null })}
+                                  className="mt-1 text-[9px] text-gray-500 hover:text-red-400 transition-colors"
+                              >
+                                  Reset to global default
+                              </button>
+                          )}
+                      </div>
                  </div>
                 <div className="glass-panel p-4 rounded-xl border border-white/5">
                     <h4 className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">

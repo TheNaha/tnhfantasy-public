@@ -850,6 +850,16 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
     )
 
     job_service = JobService(session)
+
+    # Story agentic mode: when the story opts in (max_agentic_depth > 0),
+    # offer the story-safe toolset so the model can illustrate its own scenes.
+    story_tools: list[dict] = []
+    story_agentic = bool(story and (story.max_agentic_depth or 0) > 0)
+    if story_agentic:
+        from services.orchestrator_service import story_agentic_tools
+
+        story_tools = story_agentic_tools()
+
     workflow, metadata = build_llm_workflow(
         messages=context,
         type_="story_continue",
@@ -858,8 +868,13 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         model=((story.llm_model if story else None) or _get_default_llm_model()),
         workspace="story",
         samplers=sampler_overrides(story),
-        extra_metadata={"max_agentic_depth": story.max_agentic_depth} if story and story.max_agentic_depth is not None else None,
+        extra_metadata={
+            "agentic": story_agentic,
+            "max_agentic_depth": story.max_agentic_depth,
+        } if story and story.max_agentic_depth is not None else None,
     )
+    if story_tools:
+        workflow["tools"] = story_tools
     job = await job_service.create_job(
         task_type="llm",
         workflow=workflow,

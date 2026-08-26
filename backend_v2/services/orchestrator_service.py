@@ -235,6 +235,17 @@ def filter_agentic_tools(
     return allowed
 
 
+def story_agentic_tools() -> list[dict[str, Any]]:
+    """Tool subset available to story continuations.
+
+    Stories have no chat entity, so narration/world-state/expression/memory
+    tools (all of which persist to chats) are excluded; only image generation
+    is offered, letting the model illustrate its own scenes. Generated images
+    land in the story workspace and attach to the chapter.
+    """
+    return [t for t in AGENTIC_TOOLS if t.get("function", {}).get("name") == "generate_image"]
+
+
 def has_tool_calls(assistant_output: dict[str, Any]) -> bool:
     """Check if an LLM output dict contains tool calls."""
     return bool(assistant_output.get("tool_calls"))
@@ -266,6 +277,8 @@ async def execute_tool(
     *,
     chat_id: str | None = None,
     character_id: str | None = None,
+    story_id: str | None = None,
+    chapter_id: str | None = None,
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -290,6 +303,8 @@ async def execute_tool(
                 args,
                 chat_id=chat_id,
                 character_id=character_id,
+                story_id=story_id,
+                chapter_id=chapter_id,
                 source_job_id=source_job_id,
             )
 
@@ -631,6 +646,8 @@ async def _tool_generate_image(
     *,
     chat_id: str | None = None,
     character_id: str | None = None,
+    story_id: str | None = None,
+    chapter_id: str | None = None,
     source_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an image via the job pipeline and wait for completion."""
@@ -694,16 +711,19 @@ async def _tool_generate_image(
 
         from core.workflow_builder import build_image_job_workflow
 
+        is_story_tool = bool(story_id and chapter_id)
         workflow, metadata = build_image_job_workflow(
             prompt=prompt,
             negative=negative,
             checkpoint=resolved_ckpt,
             lora=resolved_lora,
-            filename_prefix="AgenticGen",
+            filename_prefix="StoryAgenticGen" if is_story_tool else "AgenticGen",
             source="agentic_tool",
-            workspace="chat",
-            chat_id=chat_id,
-            character_id=character_id,
+            workspace="story" if is_story_tool else "chat",
+            chat_id=None if is_story_tool else chat_id,
+            character_id=None if is_story_tool else character_id,
+            story_id=story_id if is_story_tool else None,
+            chapter_id=chapter_id if is_story_tool else None,
             parent_job_id=source_job_id,
             extra_metadata={"tool_name": "generate_image"},
         )
@@ -918,9 +938,15 @@ async def process_tool_calls_and_chain(
     job_service,
     enqueue_fn,
     allowed_tools: set[str] | None = None,
+    story_id: str | None = None,
+    chapter_id: str | None = None,
 ) -> bool:
     """
     Detect tool_calls in an LLM response and chain follow-up jobs.
+
+    When ``story_id`` is provided the follow-up is a story continuation
+    (workspace "story") instead of a chat reply; only story-safe tools
+    (image generation) are re-attached.
 
     Returns True if a follow-up job was enqueued (caller should NOT finalize).
     Returns False if there are no tool_calls (caller should finalize normally).
@@ -963,6 +989,8 @@ async def process_tool_calls_and_chain(
             tc,
             chat_id=chat_id,
             character_id=character_id,
+            story_id=story_id,
+            chapter_id=chapter_id,
             source_job_id=job.id,
         )
         tool_results.append({
@@ -988,14 +1016,17 @@ async def process_tool_calls_and_chain(
     # Carry the original job's sampling overrides through every chained hop.
     followup_samplers = {k: prev_workflow[k] for k in SAMPLER_KEYS if prev_workflow.get(k) is not None}
 
+    is_story_chain = bool(story_id)
     followup_workflow, followup_metadata = build_llm_workflow(
         messages=context,
-        type_="chat_reply",
-        chat_id=chat_id,
+        type_="story_continue" if is_story_chain else "chat_reply",
+        chat_id=None if is_story_chain else chat_id,
+        story_id=story_id or None,
+        chapter_id=chapter_id,
         character_id=character_id,
         character_system_prompt=metadata.get("character_system_prompt"),
         model=followup_model,
-        workspace="chat",
+        workspace="story" if is_story_chain else "chat",
         parent_job_id=job.id,
         samplers=followup_samplers or None,
         extra_metadata={
@@ -1005,10 +1036,11 @@ async def process_tool_calls_and_chain(
             "max_agentic_depth": metadata.get("max_agentic_depth"),
         },
     )
+    tool_pool = story_agentic_tools() if is_story_chain else AGENTIC_TOOLS
     if allowed_tools is not None:
         followup_workflow["tools"] = [
             t
-            for t in AGENTIC_TOOLS
+            for t in tool_pool
             if t.get("function", {}).get("name") in allowed_tools
         ]
     else:
@@ -1016,7 +1048,7 @@ async def process_tool_calls_and_chain(
         # when the caller (job_processing.py) omits allowed_tools —
         # normally the parent job's already-filtered tool list is passed
         # through, so this is just a safe fallback to the full tool set.
-        followup_workflow["tools"] = AGENTIC_TOOLS
+        followup_workflow["tools"] = tool_pool
 
     try:
         followup_job = await job_service.create_job(

@@ -11,7 +11,7 @@ from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
-from services.orchestrator_service import MAX_AGENTIC_DEPTH
+from services.orchestrator_service import MAX_AGENTIC_DEPTH, get_max_agentic_depth
 
 logger = get_logger("job_processing")
 
@@ -397,16 +397,26 @@ async def _finalize_llm_job(
         entity_id = chat_id if job_type == "chat_reply" else story_id
 
         # --- Agentic tool-call handling ---
-        if job_type == "chat_reply" and assistant_output.get("tool_calls"):
+        # Chats chain the full toolset; story continuations chain only
+        # story-safe tools (image generation) via metadata.story_id routing.
+        is_story_job = job_type == "story_continue" and bool(story_id)
+        if (job_type == "chat_reply" or is_story_job) and assistant_output.get("tool_calls"):
             metadata = job.metadata_ or {}
-            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < MAX_AGENTIC_DEPTH:
+            max_depth = (
+                get_max_agentic_depth(metadata=metadata)
+                if is_story_job
+                else MAX_AGENTIC_DEPTH
+            )
+            if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < max_depth:
                 allowed_tools = {
                     t.get("function", {}).get("name")
                     for t in (job.workflow.get("tools") or [])
                     if isinstance(t, dict) and t.get("function", {}).get("name")
                 }
                 if not allowed_tools:
-                    allowed_tools = {"generate_image", "narrate_scene", "update_world_state"}
+                    allowed_tools = {"generate_image"} if is_story_job else {
+                        "generate_image", "narrate_scene", "update_world_state"
+                    }
                 from services.orchestrator_service import process_tool_calls_and_chain
                 from services.job_queue import queue_manager
 
@@ -414,11 +424,13 @@ async def _finalize_llm_job(
                     job=job,
                     assistant_output=assistant_output,
                     final_result=final_result,
-                    chat_id=entity_id,
+                    chat_id=entity_id if not is_story_job else None,
                     character_id=metadata.get("character_id"),
                     job_service=job_service,
                     enqueue_fn=lambda jid: queue_manager.enqueue(jid, task_type="llm"),
                     allowed_tools=allowed_tools,
+                    story_id=story_id if is_story_job else None,
+                    chapter_id=(metadata.get("chapter_id") if metadata else None),
                 )
                 if chained:
                     if provider_id:

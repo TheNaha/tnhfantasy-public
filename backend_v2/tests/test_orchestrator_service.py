@@ -172,17 +172,19 @@ def _chain_fixtures(monkeypatch, assistant_tool_calls, allowed_tools=None):
     captured = {"workflow": None, "enqueued": []}
 
     def fake_build_llm_workflow(*, messages, type_, chat_id, character_id, character_system_prompt,
-                                model, workspace, parent_job_id, extra_metadata, samplers=None):
+                                model, workspace, parent_job_id, extra_metadata, samplers=None,
+                                story_id=None, chapter_id=None):
         wf = {"messages": messages, "type": type_, "model": model}
         if samplers:
             wf.update(samplers)
-        return (wf, {"type": type_})
+        return (wf, {"type": type_, "story_id": story_id})
 
     monkeypatch.setattr("services.llm_workflow.build_llm_workflow", fake_build_llm_workflow)
 
     class _FakeJobService:
         async def create_job(self, *, task_type, workflow, metadata):
             captured["workflow"] = workflow
+            captured["metadata"] = metadata
             return _FakeJob(job_id="j2")
 
     async def fake_enqueue(job_id, **kw):
@@ -252,3 +254,76 @@ async def test_followup_all_tools_filtered_returns_false(monkeypatch):
     assert result is False
     assert captured["workflow"] is None
     assert captured["enqueued"] == []
+
+
+# ── Story agentic mode ────────────────────────────────────────────────────────
+
+
+def test_story_agentic_tools_only_image():
+    from services.orchestrator_service import story_agentic_tools
+
+    tools = story_agentic_tools()
+    names = [t["function"]["name"] for t in tools]
+    assert names == ["generate_image"]
+
+
+@pytest.mark.asyncio
+async def test_followup_story_mode_builds_story_continue(monkeypatch):
+    chain, _AGENTIC_TOOLS, captured, job_service, enqueue = _chain_fixtures(
+        monkeypatch, [_tool_call("generate_image", "c1")],
+        allowed_tools={"generate_image"},
+    )
+    result = await chain(
+        job=_FakeJob(),
+        assistant_output={"tool_calls": [_tool_call("generate_image", "c1")]},
+        final_result={},
+        chat_id=None,
+        character_id=None,
+        job_service=job_service,
+        enqueue_fn=enqueue,
+        allowed_tools={"generate_image"},
+        story_id="s1",
+        chapter_id="ch1",
+    )
+    assert result is True
+    wf = captured["workflow"]
+    assert wf["type"] == "story_continue"
+    tool_names = [t["function"]["name"] for t in wf["tools"]]
+    assert tool_names == ["generate_image"]
+
+
+@pytest.mark.asyncio
+async def test_followup_story_mode_filters_chat_only_tools(monkeypatch):
+    chain, _AGENTIC_TOOLS, captured, job_service, enqueue = _chain_fixtures(
+        monkeypatch, [_tool_call("narrate_scene", "c1"), _tool_call("generate_image", "c2")],
+        allowed_tools={"narrate_scene", "generate_image"},
+    )
+    result = await chain(
+        job=_FakeJob(),
+        assistant_output={
+            "tool_calls": [_tool_call("narrate_scene", "c1"), _tool_call("generate_image", "c2")]
+        },
+        final_result={},
+        chat_id=None,
+        character_id=None,
+        job_service=job_service,
+        enqueue_fn=enqueue,
+        allowed_tools={"narrate_scene", "generate_image"},
+        story_id="s1",
+        chapter_id="ch1",
+    )
+    # narrate_scene executed (parent allow-list) but the follow-up workflow
+    # must only re-offer story-safe tools.
+    assert result is True
+    tool_names = [t["function"]["name"] for t in captured["workflow"]["tools"]]
+    assert tool_names == ["generate_image"]
+
+
+def test_tool_generate_image_story_mode_routes_to_story_workspace():
+    import inspect
+
+    from services.orchestrator_service import _tool_generate_image
+
+    src = inspect.getsource(_tool_generate_image)
+    assert 'workspace="story"' in src
+    assert "StoryAgenticGen" in src

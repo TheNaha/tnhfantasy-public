@@ -120,6 +120,64 @@ def test_continue_story_404(client, session):
     assert resp.status_code == 404
 
 
+def test_continue_story_agentic_tools_attached(client, session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    story_id = _seed_story(session)
+    chapter_id = session.exec(select(StoryChapter)).first().id
+
+    story = session.get(Story, story_id)
+    story.max_agentic_depth = 3
+    session.add(story)
+    session.commit()
+
+    async def fake_build_chat_context_async(*args, **kwargs):
+        return ("system prompt", [{"role": "user", "content": "the story so far"}])
+
+    monkeypatch.setattr("services.context_builder.build_chat_context_async", fake_build_chat_context_async)
+    monkeypatch.setattr("services.llm_config.get_default_llm_model", lambda: "test-model")
+    monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+
+    resp = client.post(f"/api/v2/stories/{story_id}/chapters/{chapter_id}/continue", json={"prompt": ""})
+    assert resp.status_code == 200, resp.text
+
+    from core.entities import Job
+
+    job = session.get(Job, resp.json()["job_id"])
+    tool_names = [t["function"]["name"] for t in (job.workflow.get("tools") or [])]
+    assert tool_names == ["generate_image"]
+    assert job.metadata_["agentic"] is True
+    assert job.metadata_["max_agentic_depth"] == 3
+
+
+def test_continue_story_no_tools_when_depth_zero(client, session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    story_id = _seed_story(session)
+    chapter_id = session.exec(select(StoryChapter)).first().id
+
+    story = session.get(Story, story_id)
+    story.max_agentic_depth = 0
+    session.add(story)
+    session.commit()
+
+    async def fake_build_chat_context_async(*args, **kwargs):
+        return ("system prompt", [{"role": "user", "content": "the story so far"}])
+
+    monkeypatch.setattr("services.context_builder.build_chat_context_async", fake_build_chat_context_async)
+    monkeypatch.setattr("services.llm_config.get_default_llm_model", lambda: "test-model")
+    monkeypatch.setattr("services.job_queue.queue_manager.enqueue", AsyncMock(return_value=True))
+
+    resp = client.post(f"/api/v2/stories/{story_id}/chapters/{chapter_id}/continue", json={"prompt": ""})
+    assert resp.status_code == 200, resp.text
+
+    from core.entities import Job
+
+    job = session.get(Job, resp.json()["job_id"])
+    assert not (job.workflow.get("tools") or [])
+    assert not job.metadata_.get("agentic")
+
+
 def test_add_beat_assigns_ids_and_parent(client, session):
     story_id = _seed_story(session)
     chapter = session.exec(select(StoryChapter).where(StoryChapter.story_id == story_id).order_by(StoryChapter.chapter_number)).first()
