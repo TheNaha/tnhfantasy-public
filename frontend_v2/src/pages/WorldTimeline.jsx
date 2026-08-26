@@ -7,7 +7,7 @@ import { useStories } from '../hooks/useStories';
 import { useChats } from '../hooks/useChats';
 import { useLocations } from '../hooks/useLocations';
 import EmptyState from '../components/EmptyState';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 const EVENT_ICONS = {
     message: MessageSquare,
@@ -41,6 +41,7 @@ export default function WorldTimeline() {
         location: searchParams.get('location') || '',
     };
     const [filters, setFilters] = useState(initialFilters);
+    const [limit, setLimit] = useState(100);
 
     useEffect(() => {
         const next = {};
@@ -51,7 +52,7 @@ export default function WorldTimeline() {
         setSearchParams(next, { replace: true });
     }, [filters, setSearchParams]);
 
-    const { data, isLoading } = useTimeline(filters);
+    const { data, isLoading } = useTimeline({ ...filters, limit });
 
     const { data: characters = [] } = useCharacters();
     const { data: stories = [] } = useStories();
@@ -72,6 +73,26 @@ export default function WorldTimeline() {
 
     const updateFilter = (key, value) => {
         setFilters(f => ({ ...f, [key]: value }));
+    };
+
+    const navigate = useNavigate();
+    const total = data?.total ?? 0;
+
+    const destinationLabel = (event) => {
+        switch (event.type) {
+            case 'message': return 'Open chat';
+            case 'chapter': return 'Open story';
+            case 'memory': return 'Open characters';
+            case 'image': return 'Open gallery';
+            default: return 'Open';
+        }
+    };
+
+    const handleEventClick = (event) => {
+        if (event.type === 'message' && event.chat_id) navigate(`/chat/${event.chat_id}`);
+        else if (event.type === 'chapter' && event.story_id) navigate(`/story/${event.story_id}`);
+        else if (event.type === 'memory') navigate('/characters');
+        else if (event.type === 'image') navigate('/gallery');
     };
 
     return (
@@ -201,7 +222,14 @@ export default function WorldTimeline() {
                                             <div className={`absolute -left-[31px] top-3 w-4 h-4 rounded-full border-2 ${colorClass} flex items-center justify-center`}>
                                                 <Icon size={10} />
                                             </div>
-                                            <div className="p-4 bg-gray-800/40 border border-white/10 rounded-xl hover:border-white/20 transition-colors">
+                                            <div
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => handleEventClick(event)}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') handleEventClick(event); }}
+                                                title={destinationLabel(event)}
+                                                className="p-4 bg-gray-800/40 border border-white/10 rounded-xl hover:border-white/20 hover:cursor-pointer transition-colors"
+                                            >
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <span className={`text-xs px-2 py-0.5 rounded-full border ${colorClass}`}>
                                                         {label}
@@ -221,6 +249,19 @@ export default function WorldTimeline() {
                             </div>
                         </div>
                     ))}
+                    {total > 0 && (
+                        <div className="flex items-center justify-between mt-6 text-sm text-gray-400">
+                            <span>Showing {events.length} of {total} events</span>
+                            {events.length < total && limit < 500 && (
+                                <button
+                                    onClick={() => setLimit(l => Math.min(l + 100, 500))}
+                                    className="px-4 py-2 rounded-lg bg-gray-800 text-gray-200 hover:bg-gray-700 transition-colors"
+                                >
+                                    Load more
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

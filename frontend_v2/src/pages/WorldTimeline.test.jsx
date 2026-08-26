@@ -7,10 +7,16 @@ import WorldTimeline from './WorldTimeline';
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 const mockTimeline = vi.hoisted(() => vi.fn());
+const mockNavigate = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useTimeline', () => ({
     useTimeline: (...args) => mockTimeline(...args),
 }));
+
+vi.mock('react-router-dom', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, useNavigate: () => mockNavigate };
+});
 
 vi.mock('../hooks/useCharacters', () => ({
     useCharacters: () => ({ data: [{ id: 'c-1', name: 'Aria' }] }),
@@ -64,8 +70,8 @@ vi.mock('framer-motion', () => ({
 
 const eventsData = {
     events: [
-        { id: 'm1', type: 'message', timestamp: '2026-08-10T14:30:00', title: 'Aria greets the party', description: 'A cheerful hello' },
-        { id: 'ch1', type: 'chapter', timestamp: '2026-08-10T18:05:00', title: 'Chapter 5 written', description: 'The battle begins' },
+        { id: 'm1', type: 'message', timestamp: '2026-08-10T14:30:00', title: 'Aria greets the party', description: 'A cheerful hello', chat_id: 'ch-1' },
+        { id: 'ch1', type: 'chapter', timestamp: '2026-08-10T18:05:00', title: 'Chapter 5 written', description: 'The battle begins', story_id: 's-1' },
         { id: 'mem1', type: 'memory', timestamp: '2026-08-11T09:15:00', title: 'Memory consolidated' },
     ],
 };
@@ -81,6 +87,7 @@ function renderWithProviders(ui) {
 describe('WorldTimeline page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockNavigate.mockReset();
         mockTimeline.mockReturnValue({ data: eventsData, isLoading: false });
     });
 
@@ -139,6 +146,25 @@ describe('WorldTimeline page', () => {
         });
         expect(mockTimeline).toHaveBeenLastCalledWith(
             expect.objectContaining({ character_id: 'c-1' })
+        );
+    });
+
+    it('navigates to the source entity when an event card is clicked', () => {
+        renderWithProviders(<WorldTimeline />);
+        fireEvent.click(screen.getByTitle('Open chat'));
+        expect(mockNavigate).toHaveBeenCalledWith('/chat/ch-1');
+        fireEvent.click(screen.getByTitle('Open story'));
+        expect(mockNavigate).toHaveBeenCalledWith('/story/s-1');
+    });
+
+    it('shows a load-more control and grows the page size when more events exist', () => {
+        mockTimeline.mockReturnValue({ data: { ...eventsData, total: 150 }, isLoading: false });
+        renderWithProviders(<WorldTimeline />);
+        expect(screen.getByText('Showing 3 of 150 events')).toBeInTheDocument();
+        const loadMore = screen.getByRole('button', { name: /load more/i });
+        fireEvent.click(loadMore);
+        expect(mockTimeline).toHaveBeenLastCalledWith(
+            expect.objectContaining({ limit: 200 })
         );
     });
 });
