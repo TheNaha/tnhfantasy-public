@@ -54,7 +54,7 @@ export default function ChatTimeline({ chatId, activeBranch, onBranchChange, onN
                             <div className="flex items-center gap-2">
                                 <GitBranch size={14} className={isActive ? 'text-blue-400' : 'text-gray-500'} />
                                 <span className="text-sm font-medium text-white">
-                                    {branch.branch_name || `Branch ${branch.branch_id.slice(0, 8)}`}
+                                    {branch.messages?.[0]?.branch_name || `Branch ${branch.branch_id.slice(0, 8)}`}
                                 </span>
                                 <span className="text-xs text-gray-500">
                                     ({branch.messages?.length || 0} messages)
