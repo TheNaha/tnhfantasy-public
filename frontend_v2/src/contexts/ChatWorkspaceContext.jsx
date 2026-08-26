@@ -4,20 +4,9 @@ import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import {
-    useMessages, useChats, useSendMessage, useChat,
-    useCreateChat, useDeleteChat, useLorebooks, useCharacters, usePersonas,
-    useRenameChat, useUpdateChat, useSuggestReply,
-    useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
-    useCharacterCollection, useEditMessage, useRollbackChat,
-    useRegenerateReply, useChatJobs, usePatchCharacter,
-    useImpersonateMessage, usePinMessage, useSwipeMessage, useGenerateSwipe, useChatImages,
-    useIllustrateChat, useGenerateScene, useNarrateMessage, useDeleteMessage,
-    useSearchChats, useExportChatJsonl, useImportChat
-} from '../hooks/useWorldVault';
-import { useVoices } from '../hooks/useVoices';
+import { useChatWorkspaceData } from '../hooks/useChatWorkspaceData';
+import { useChatWorkspaceMutations } from '../hooks/useChatWorkspaceMutations';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
-import { useCollections } from '../hooks/useCollections';
 import { filesApi } from '../api/files';
 import { addImagesToCollection } from '../api/collectionsApi';
 import { useWorldVaultStore } from '../store/worldVaultStore';
@@ -25,7 +14,7 @@ import { useConfirmation } from '../store/confirmationStore';
 import { useSettings } from '../store/settingsStore';
 import { useWebSocket, EventTypes } from '../api/websocket';
 import { useChatStreaming } from '../hooks/useChatStreaming';
-import { setStreamingJob, useActiveChatStreams } from '../hooks/useStreamingJobs';
+import { setStreamingJob } from '../hooks/useStreamingJobs';
 import { COMMANDS } from '../components/chat/chatCommands';
 
 const ChatWorkspaceContext = createContext(null);
@@ -107,20 +96,11 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const activeStreamEntries = useActiveChatStreams(activeChatId);
-    const activeStreams = useMemo(
-        () => activeStreamEntries
-            .filter(item => item.jobData?.status === 'running')
-            .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData })),
-        [activeStreamEntries]
-    );
-    
-    const suggestReplyMutation = useSuggestReply();
     const [suggestJobId, setSuggestJobId] = useState(null);
     const suggestJobIdRef = useRef(null);
     const suggestSafetyTimerRef = useRef(null);
     const titlePollCancelledRef = useRef(false);
-    
+
     useEffect(() => {
         return () => {
             if (suggestSafetyTimerRef.current) {
@@ -129,10 +109,10 @@ export function ChatWorkspaceProvider({ children }) {
             }
         };
     }, []);
-    
+
     const [activeCommand, setActiveCommand] = useState(null);
     const [targetCharacterId, setTargetCharacterId] = useState('');
-    
+
     useEffect(() => {
         suggestJobIdRef.current = suggestJobId;
     }, [suggestJobId]);
@@ -147,45 +127,40 @@ export function ChatWorkspaceProvider({ children }) {
     const CHAT_PAGE_SIZE = 50;
     const [chatOffset, setChatOffset] = useState(0);
     const [chatSearchQuery, setChatSearchQuery] = useState('');
-    const { data: chats, isLoading: isChatsLoading } = useChats({ limit: CHAT_PAGE_SIZE, offset: chatOffset });
-    const { data: searchResults } = useSearchChats(chatSearchQuery);
-    const activeChatList = chatSearchQuery.trim() ? (searchResults || []) : chats;
-    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim();
 
-    // Message pagination: page 0 is the newest 100 messages (ascending order,
-    // newest last). Older pages are appended above them on demand.
     const MESSAGE_PAGE_SIZE = 100;
     const MAX_MESSAGE_PAGES = 5;
     const [messagePageCount, setMessagePageCount] = useState(1);
     const [messageSearch, setMessageSearch] = useState('');
 
-    const { data: messagesData = [] } = useMessages(
-        activeChatId,
-        { limit: messagePageCount * MESSAGE_PAGE_SIZE, offset: 0, branchId: activeBranch, search: messageSearch || null }
-    );
-    
+    const cwData = useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQuery, messagePageCount, messageSearch, chatOffset });
+    const {
+        chats, isChatsLoading, searchResults, messagesData, activeChat, lorebooks, characters,
+        personas, availableModels, defaultLlmConfig, systemPromptData, chatCollection, chatImages,
+        collectionsMap, voices, chatJobs, activeStreamEntries, activeStreams,
+    } = cwData;
+    const cwMutations = useChatWorkspaceMutations();
+    const {
+        sendMessageMutation, createChatMutation, exportJsonlMutation, importChatMutation,
+        deleteChatMutation, renameChatMutation, updateChatMutation, editMessageMutation,
+        rollbackMutation, regenerateMutation, patchCharacterMutation, deleteMessageMutation,
+        impersonateMutation, pinMessageMutation, swipeMessageMutation, generateSwipeMutation,
+        narrateMutation, illustrateMutation, generateSceneMutation, suggestReplyMutation,
+    } = cwMutations;
+
+    const activeChatList = chatSearchQuery.trim() ? (searchResults || []) : chats;
+    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim();
+
     const messages = messagesData;
     const lastLoadedPageFull = messagesData.length === messagePageCount * MESSAGE_PAGE_SIZE;
     const hasMoreMessages = messagePageCount < MAX_MESSAGE_PAGES && lastLoadedPageFull;
     const loadOlderMessages = () => setMessagePageCount(c => Math.min(c + 1, MAX_MESSAGE_PAGES));
 
-    const { data: activeChat } = useChat(activeChatId);
-    const { data: lorebooks = [] } = useLorebooks();
-    const { data: characters = [] } = useCharacters();
-    const { data: personas = [] } = usePersonas();
-    const { data: availableModels = [] } = useLLMAvailableModels();
-    const { data: defaultLlmConfig } = useLLMDefaultProvider();
-    const { data: systemPromptData } = useChatSystemPrompt(activeChatId);
-    const { data: chatCollection } = useCharacterCollection(activeChat?.character_id);
-    const { data: chatImages = [] } = useChatImages(activeChatId);
-    const { data: collectionsMap = {} } = useCollections('chat');
     const collectionsList = useMemo(
         () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
         [collectionsMap]
     );
 
-    // Combine messages + active streaming jobs for virtualized list.
-    // `activeStreams` is sourced from the React-Query-backed hook above.
     const listItems = useMemo(
         () => [
             ...messages.map(msg => ({ _key: msg.id || `msg-${messages.indexOf(msg)}`, item: msg })),
@@ -201,31 +176,8 @@ export function ChatWorkspaceProvider({ children }) {
         overscan: 8,
     });
 
-    // Use activeChat's lorebooks instead of the store's global state
     const emptyLorebooks = useMemo(() => [], []);
     const selectedLorebooks = activeChat?.active_lorebook_ids || emptyLorebooks;
-
-    const sendMessageMutation = useSendMessage();
-    const createChatMutation = useCreateChat();
-    const exportJsonlMutation = useExportChatJsonl();
-    const importChatMutation = useImportChat();
-    const deleteChatMutation = useDeleteChat();
-    const renameChatMutation = useRenameChat();
-    const updateChatMutation = useUpdateChat();
-    const editMessageMutation = useEditMessage();
-    const rollbackMutation = useRollbackChat();
-    const regenerateMutation = useRegenerateReply();
-    const patchCharacterMutation = usePatchCharacter();
-    const deleteMessageMutation = useDeleteMessage();
-    const impersonateMutation = useImpersonateMessage();
-    const pinMessageMutation = usePinMessage();
-    const swipeMessageMutation = useSwipeMessage();
-    const generateSwipeMutation = useGenerateSwipe();
-    const narrateMutation = useNarrateMessage();
-    const { data: voices = [] } = useVoices();
-    const illustrateMutation = useIllustrateChat();
-    const generateSceneMutation = useGenerateScene();
-    const { data: chatJobs = [] } = useChatJobs(activeChatId);
 
     const { subscribe } = useWebSocket();
     const runLLMJob = useLLMJobResult();
