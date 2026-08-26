@@ -140,7 +140,10 @@ describe('StoryReader page', () => {
         await screen.findByText('The Dragon of Ashvale');
         fireEvent.click(screen.getByTitle('Export as Markdown'));
         await waitFor(() =>
-            expect(mockApiGet).toHaveBeenCalledWith('/api/v2/stories/published/tok123/export?format=md')
+            expect(mockApiGet).toHaveBeenCalledWith(
+                '/api/v2/stories/published/tok123/export?format=md',
+                { timeout: 180000 }
+            )
         );
         expect(URL.createObjectURL).toHaveBeenCalled();
         expect(mockToast.success).toHaveBeenCalledWith('Exported as MD');

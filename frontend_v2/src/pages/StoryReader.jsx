@@ -37,12 +37,12 @@ export default function StoryReader() {
 
     const handleExport = async (format) => {
         try {
-            // Binary formats (epub, comic, webtoon) need responseType: 'blob'
+            // Binary formats (epub, comic, webtoon) resolve to a raw Response
+            // (the api client returns it for non-JSON content types).
             const binaryFormats = ['epub', 'comic', 'webtoon'];
             const exportUrl = `/api/v2/stories/published/${token}/export?format=${format}`;
-            const data = binaryFormats.includes(format)
-                ? await api.get(exportUrl)
-                : await api.get(exportUrl);
+            // Comic/webtoon rendering can take a while on long chapters.
+            const data = await api.get(exportUrl, { timeout: 180000 });
             let blob, filename;
             if (format === 'md' || format === 'markdown') {
                 blob = new Blob([data.content], { type: 'text/markdown' });
