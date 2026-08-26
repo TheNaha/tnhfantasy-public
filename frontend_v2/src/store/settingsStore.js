@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS = {
         // Wired to backend config (config.json `ai` block via /api/settings):
         temperature: 0.8,
         maxContextTokens: 4096,
-        ttsEnabled: false,
+        ttsEnabled: true,
         ragEnabled: true,
         idleSimEnabled: false,
         idleSimIntervalSeconds: 600,

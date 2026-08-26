@@ -1,6 +1,7 @@
 import React from 'react';
-import { GitBranch, X, Loader2, GripVertical } from 'lucide-react';
+import { GitBranch, X, Loader2, GripVertical, Volume2 } from 'lucide-react';
 import clsx from 'clsx';
+import { assetUrl } from '../../utils/assetUrl';
 import {
     DndContext,
     closestCenter,
@@ -47,12 +48,20 @@ const BeatItem = React.memo(function BeatItem({ beat, idx, isUser, isStreaming, 
             className="group flex items-start gap-2 rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-1.5 cursor-grab active:cursor-grabbing"
         >
             <span className={clsx(
-                "mt-0.5 shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded",
-                isUser ? "bg-blue-500/15 text-blue-300" : "bg-purple-500/15 text-purple-300"
+                "mt-0.5 shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded inline-flex items-center gap-1",
+                isUser
+                    ? "bg-blue-500/15 text-blue-300"
+                    : beat?.role === 'system_tts'
+                        ? "bg-sky-500/15 text-sky-300"
+                        : "bg-purple-500/15 text-purple-300"
             )}>
+                {beat?.role === 'system_tts' && <Volume2 size={9} />}
                 {isUser ? 'user' : (beat?.role || 'narrator')}
             </span>
             <p className="flex-1 text-xs text-gray-400 leading-relaxed min-w-0">{snippet || <span className="italic text-gray-600">(empty)</span>}</p>
+            {beat?.audio_path && (
+                <audio src={assetUrl(beat.audio_path)} controls className="shrink-0 h-7 w-44" title="Chapter narration" />
+            )}
             <button
                 onClick={() => onBranch(beatId)}
                 disabled={!beatId || isStreaming || branchPending || branchingBeatId === beatId}
