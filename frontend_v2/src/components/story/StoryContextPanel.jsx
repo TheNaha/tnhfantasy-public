@@ -1,5 +1,5 @@
 import React from 'react';
-import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin } from 'lucide-react';
+import { ImageIcon, X, Layers, Check, Settings, Book, Calendar, Tag, PenTool, Edit2, Plus, MapPin, Eye, Target } from 'lucide-react';
 import clsx from 'clsx';
 import { assetUrl } from '../../utils/assetUrl';
 import SamplingControls from '../common/SamplingControls';
@@ -318,6 +318,43 @@ export default React.memo(function StoryContextPanel({
                         className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
                     />
                     <p className="text-[10px] text-gray-500 mt-1">Steer story continuation tone/style.</p>
+                </div>
+
+                {/* Writing preferences */}
+                <div className="glass-panel p-4 rounded-xl border border-white/5 space-y-3">
+                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Eye size={12} className="text-sky-400" /> Writing Preferences
+                    </label>
+                    <div>
+                        <label className="block text-[10px] text-gray-500 mb-1">Narration perspective</label>
+                        <select
+                            value={activeStory?.pov || ''}
+                            onChange={(e) => {
+                                onUpdateStory({ pov: e.target.value || null });
+                            }}
+                            className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-purple-500/50 transition-colors"
+                        >
+                            <option value="">Story default</option>
+                            <option value="first">First person (I)</option>
+                            <option value="second">Second person (You)</option>
+                            <option value="third">Third person (He/She/They)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-[10px] text-gray-500 mb-1">Word count goal (optional)</label>
+                        <input
+                            type="number"
+                            min="0"
+                            value={activeStory?.word_count_goal ?? ''}
+                            onChange={(e) => {
+                                const v = parseInt(e.target.value, 10);
+                                onUpdateStory({ word_count_goal: Number.isFinite(v) && v > 0 ? v : null });
+                            }}
+                            placeholder="e.g. 50000"
+                            className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition-colors"
+                        />
+                        <p className="text-[10px] text-gray-500 mt-1"><Target size={9} className="inline mr-0.5 -mt-px" />Shows a progress bar in the editor.</p>
+                    </div>
                 </div>
 
                 {/* Description */}

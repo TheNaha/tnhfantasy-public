@@ -1582,6 +1582,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add per-chat/story LLM sampling override columns",
             apply_fn=_migration_057_add_llm_sampler_columns,
         ),
+        MigrationStep(
+            version="058_add_story_writing_prefs",
+            description="Add stories.word_count_goal and stories.pov writing preference columns",
+            apply_fn=_migration_058_add_story_writing_prefs,
+        ),
     ]
 
 
@@ -2196,5 +2201,21 @@ def _migration_057_add_llm_sampler_columns(conn) -> bool:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
             logger.info("migration_column_added", table=table, column=column)
             changed = True
+    return changed
+
+
+def _migration_058_add_story_writing_prefs(conn) -> bool:
+    """Add writing preference columns (word_count_goal, pov) to stories."""
+    inspector = inspect(conn)
+    changed = False
+    if "stories" not in inspector.get_table_names():
+        return False
+    existing = {col["name"] for col in inspector.get_columns("stories")}
+    for column, sql_type in (("word_count_goal", "INTEGER"), ("pov", "TEXT")):
+        if column in existing:
+            continue
+        conn.execute(text(f"ALTER TABLE stories ADD COLUMN {column} {sql_type}"))
+        logger.info("migration_column_added", table="stories", column=column)
+        changed = True
     return changed
 

@@ -267,6 +267,22 @@ def test_sections_story_blocks(session):
     assert "Hero" in by_key["story_characters"]["content"]
 
 
+def test_sections_story_pov(session):
+    sections = build_system_prompt_sections(
+        session,
+        story_genre="Fantasy",
+        story_pov="second",
+        include_roleplay_default=False,
+    )
+    by_key = {s["key"]: s for s in sections}
+    assert "story_pov" in by_key
+    assert "second person" in by_key["story_pov"]["content"]
+
+    # Absent when not requested
+    sections = build_system_prompt_sections(session, story_genre="Fantasy", include_roleplay_default=False)
+    assert all(s["key"] != "story_pov" for s in sections)
+
+
 # ── build_chat_context (DB) ─────────────────────────────────────────────────
 
 def test_build_chat_context_assembles_and_maps_messages(session):

@@ -1008,6 +1008,9 @@ class Story(SQLModel, table=True):
     max_output_tokens: int | None = Field(default=None)
     frequency_penalty: float | None = Field(default=None)
     presence_penalty: float | None = Field(default=None)
+    # Writing preferences
+    word_count_goal: int | None = Field(default=None)  # optional target length for progress tracking
+    pov: str | None = Field(default=None)  # narration perspective: first | second | third
     # Publishing / export
     published_token: str | None = Field(default=None, index=True)
     is_published: bool = Field(default=False)

@@ -71,6 +71,8 @@ class CreateStoryRequest(BaseModel):
     llm_model: str | None = None
     memory: str | None = None
     max_agentic_depth: int | None = None
+    pov: str | None = None
+    word_count_goal: int | None = None
 
 
 class UpdateStoryRequest(BaseModel):
@@ -90,6 +92,8 @@ class UpdateStoryRequest(BaseModel):
     max_output_tokens: int | None = None
     frequency_penalty: float | None = None
     presence_penalty: float | None = None
+    pov: str | None = None
+    word_count_goal: int | None = None
 
 
 def _ensure_beat_ids(session: Session, chapter: StoryChapter) -> None:
@@ -199,6 +203,8 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
         llm_model=req.llm_model,
         memory=req.memory,
         max_agentic_depth=req.max_agentic_depth,
+        pov=req.pov,
+        word_count_goal=req.word_count_goal,
     )
     story.created_at = datetime.now(timezone.utc)
     story.updated_at = story.created_at
@@ -676,7 +682,7 @@ def update_story(story_id: str, req: UpdateStoryRequest, session: Session = Depe
         raise NotFoundError("Story", story_id)
     
     update_data = req.model_dump(exclude_unset=True)
-    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'location_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth', 'temperature', 'top_p', 'max_output_tokens', 'frequency_penalty', 'presence_penalty'}
+    allowed = {'title', 'description', 'genre', 'character_ids', 'lorebook_ids', 'location_ids', 'llm_model', 'memory', 'scenario_id', 'is_archived', 'max_agentic_depth', 'temperature', 'top_p', 'max_output_tokens', 'frequency_penalty', 'presence_penalty', 'pov', 'word_count_goal'}
     for key, value in update_data.items():
         if key in allowed:
             setattr(story, key, value)
@@ -836,6 +842,7 @@ async def _enqueue_story_continuation(session: Session, story: Story | None, cha
         system_prompt_override=base_prompt,
         story_genre=story.genre if story else None,
         story_memory=story.memory if story else None,
+        story_pov=story.pov if story else None,
         story_scenario=story_scenario_template,
         story_character_ids=(story.character_ids if story else None) or None,
         location_ids=(story.location_ids if story else None) or None,
@@ -932,6 +939,7 @@ async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionReque
         system_prompt_override=_ACTION_PROMPTS[action],
         story_genre=story.genre if story else None,
         story_memory=story.memory if story else None,
+        story_pov=story.pov if story else None,
         story_character_ids=(story.character_ids if story else None) or None,
         location_ids=(story.location_ids if story else None) or None,
     )

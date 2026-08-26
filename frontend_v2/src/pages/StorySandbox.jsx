@@ -924,6 +924,7 @@ export default function StorySandbox() {
                                     activeChapterId={activeChapterId}
                                     wordCount={wordCount}
                                     readingTimeMinutes={readingTimeMinutes}
+                                    wordCountGoal={activeStory?.word_count_goal || null}
                                 />
                                 {activeChapterId && (
                                     <div className="px-2 sm:px-4 lg:px-6 pb-4 pt-2 border-t border-white/5 bg-gray-900/40 shrink-0">

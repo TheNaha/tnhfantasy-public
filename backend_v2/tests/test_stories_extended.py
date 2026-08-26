@@ -52,6 +52,23 @@ def test_publish_story_not_found(client):
     assert response.status_code == 404
 
 
+def test_update_story_writing_prefs(client, session, story_with_character):
+    story, _chapter = story_with_character
+    resp = client.put(
+        f"/api/v2/stories/{story.id}",
+        json={"pov": "second", "word_count_goal": 50000},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pov"] == "second"
+    assert data["word_count_goal"] == 50000
+
+    # Explicit null clears the override
+    resp = client.put(f"/api/v2/stories/{story.id}", json={"pov": None})
+    assert resp.status_code == 200
+    assert resp.json()["pov"] is None
+
+
 def test_read_published_story(client, session, story_with_character):
     story, chapter = story_with_character
     # Publish first

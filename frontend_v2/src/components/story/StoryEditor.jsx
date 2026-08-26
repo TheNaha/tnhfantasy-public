@@ -3,7 +3,7 @@ import { Sparkles } from 'lucide-react';
 import MDEditor from '@uiw/react-md-editor';
 import MentionPicker from './MentionPicker';
 
-export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId, wordCount, readingTimeMinutes }) {
+export default React.memo(function StoryEditor({ isPreviewMode, editorContent, onEditorChange, textareaRef, isStreaming, activeChapterId, wordCount, readingTimeMinutes, wordCountGoal }) {
     const handleSelectEntity = useCallback((item, startIndex, endIndex) => {
         const textBefore = editorContent.slice(0, startIndex);
         const textAfter = editorContent.slice(endIndex);
@@ -57,6 +57,23 @@ export default React.memo(function StoryEditor({ isPreviewMode, editorContent, o
                         <div className="flex items-center justify-between text-[10px] text-gray-600 mt-2 px-1">
                             <span>{wordCount?.toLocaleString?.() || 0} words</span>
                             <span>{readingTimeMinutes || 0} min read</span>
+                        </div>
+                    )}
+
+                    {!isPreviewMode && !!wordCountGoal && (
+                        <div className="mt-1 px-1">
+                            <div className="flex items-center justify-between text-[10px] mb-1">
+                                <span className={wordCount >= wordCountGoal ? 'text-emerald-400' : 'text-sky-400'}>
+                                    Goal: {Math.min(100, Math.round((wordCount / wordCountGoal) * 100))}%
+                                </span>
+                                <span className="text-gray-600">of {wordCountGoal.toLocaleString()} words</span>
+                            </div>
+                            <div className="h-1 rounded-full bg-gray-800 overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-500 ${wordCount >= wordCountGoal ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                                    style={{ width: `${Math.min(100, (wordCount / wordCountGoal) * 100)}%` }}
+                                />
+                            </div>
                         </div>
                     )}
                     
