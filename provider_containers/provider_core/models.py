@@ -22,6 +22,11 @@ class InferenceRequest(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
     model: Optional[str] = None
     temperature: Optional[float] = None
+    # Extended sampling controls (LLM workers only; engines map what they support)
+    top_p: Optional[float] = None
+    max_output_tokens: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     use_snapshot: bool = False
     job_id: Optional[str] = None
     timeout_seconds: Optional[float] = None

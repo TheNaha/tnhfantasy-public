@@ -153,8 +153,19 @@ class GoogleProviderClient(BaseProviderClient):
                 if tools:
                     payload["tools"] = translate_tools(tools)
 
+                generation_config: dict = {}
                 if request.temperature is not None:
-                    payload["generationConfig"] = {"temperature": request.temperature}
+                    generation_config["temperature"] = request.temperature
+                if request.top_p is not None:
+                    generation_config["topP"] = request.top_p
+                if request.max_output_tokens is not None:
+                    generation_config["maxOutputTokens"] = request.max_output_tokens
+                if request.frequency_penalty is not None:
+                    generation_config["frequencyPenalty"] = request.frequency_penalty
+                if request.presence_penalty is not None:
+                    generation_config["presencePenalty"] = request.presence_penalty
+                if generation_config:
+                    payload["generationConfig"] = generation_config
 
                 if system_prompt:
                     payload["systemInstruction"] = {

@@ -83,6 +83,14 @@ class OpenAICompatProviderClient(BaseProviderClient):
                     payload["tools"] = tools
                 if request.temperature is not None:
                     payload["temperature"] = request.temperature
+                if request.top_p is not None:
+                    payload["top_p"] = request.top_p
+                if request.max_output_tokens is not None:
+                    payload["max_tokens"] = request.max_output_tokens
+                if request.frequency_penalty is not None:
+                    payload["frequency_penalty"] = request.frequency_penalty
+                if request.presence_penalty is not None:
+                    payload["presence_penalty"] = request.presence_penalty
 
                 headers = {"Content-Type": "application/json"}
                 if self.api_key:

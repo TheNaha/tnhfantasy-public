@@ -115,6 +115,7 @@ class VLLMEngine:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         timeout_seconds: Optional[float] = None,
+        sampling: Optional[Dict[str, Any]] = None,
     ):
         import uuid
 
@@ -133,11 +134,20 @@ class VLLMEngine:
 
         from vllm.sampling_params import SamplingParams
 
-        sampling_params = SamplingParams(
-            temperature=0.8,
-            top_p=0.95,
-            max_tokens=1024,
-        )
+        # Engine defaults; caller-provided sampling overrides win when present.
+        # Keys arrive as max_output_tokens (contract name) and map to vLLM's
+        # max_tokens; penalties pass straight through.
+        params = {
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "max_tokens": 1024,
+        }
+        if sampling:
+            key_map = {"max_output_tokens": "max_tokens"}
+            for key, value in sampling.items():
+                if value is not None:
+                    params[key_map.get(key, key)] = value
+        sampling_params = SamplingParams(**params)
 
         request_id = str(uuid.uuid4())
 

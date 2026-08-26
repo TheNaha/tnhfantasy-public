@@ -142,12 +142,15 @@ class AnthropicProviderClient(BaseProviderClient):
                     "model": model_id,
                     "messages": messages,
                     "stream": True,
-                    "max_tokens": 4096,
+                    "max_tokens": request.max_output_tokens or 4096,
                 }
                 if tools:
                     payload["tools"] = translate_tools(tools)
                 if request.temperature is not None:
                     payload["temperature"] = request.temperature
+                # Anthropic supports top_p but NOT frequency/presence penalties.
+                if request.top_p is not None:
+                    payload["top_p"] = request.top_p
                 if system_prompt:
                     payload["system"] = system_prompt.strip()
 

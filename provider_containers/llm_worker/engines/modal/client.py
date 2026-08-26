@@ -71,6 +71,13 @@ class VLLMModalProviderClient(BaseProviderClient):
         tools = request.tools or workflow.get("tools")
         model_id = (request.model or workflow.get("model") or "default-model")
         job_id = request.job_id
+        # Forward extended sampling controls to the vLLM engine (None values
+        # are dropped so the engine keeps its own defaults).
+        sampling: dict[str, float | int] = {}
+        for key in ("temperature", "top_p", "max_output_tokens", "frequency_penalty", "presence_penalty"):
+            value = getattr(request, key, None)
+            if value is not None:
+                sampling[key] = value
         inference_timeout = max(
             1.0,
             float(request.timeout_seconds or self.runtime_config.get("inference_timeout_seconds", 3600.0)),
@@ -91,7 +98,7 @@ class VLLMModalProviderClient(BaseProviderClient):
                     async def fetcher():
                         try:
                             async for update in vllm_instance.generate.remote_gen.aio(
-                                model_id, messages, tools, request.timeout_seconds
+                                model_id, messages, tools, request.timeout_seconds, sampling or None
                             ):
                                 await q.put(update)
                             await q.put(None)
