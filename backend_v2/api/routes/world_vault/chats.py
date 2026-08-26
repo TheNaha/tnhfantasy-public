@@ -1,6 +1,8 @@
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import func, delete
@@ -11,7 +13,7 @@ from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, Message, MessageRole, VoiceModel
+from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, VoiceModel
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
@@ -116,8 +118,65 @@ def list_chats(
     return session.exec(stmt).all()
 
 
+def _st_speaker_name(msg: Message, chat: Chat, char_names: dict[str, str]) -> str:
+    if msg.role == MessageRole.USER:
+        return chat.persona_name or "User"
+    if msg.role == MessageRole.SYSTEM:
+        return "System"
+    if msg.kind == MessageKind.NARRATOR:
+        return "Narrator"
+    return (
+        char_names.get(msg.character_id or "")
+        or char_names.get(chat.character_id or "")
+        or "Assistant"
+    )
+
+
+def _chat_to_sillytavern_jsonl(
+    chat: Chat,
+    messages: list[Message],
+    character: Character | None,
+    group_characters: list[Character],
+) -> str:
+    """Serialize a chat as SillyTavern-compatible JSONL.
+
+    Line 1 is the ST metadata header; each following line is one message
+    (``{name, is_user, is_system, send_date, mes}``). Non-text messages
+    (world-state dividers, images) are skipped.
+    """
+    char_names = {c.id: c.name for c in ([character] if character else []) + group_characters}
+    created = chat.created_at or datetime.now(timezone.utc)
+    header = {
+        "user_name": chat.persona_name or "User",
+        "character_name": char_names.get(chat.character_id or "", "Assistant"),
+        "create_date": created.strftime("%Y-%m-%d"),
+        "chat_metadata": {},
+    }
+    lines = [json.dumps(header, ensure_ascii=False)]
+    for msg in messages:
+        meta = msg.message_metadata or {}
+        if meta.get("source") == "world_state":
+            continue
+        if msg.kind == MessageKind.IMAGE:
+            continue
+        alternates = meta.get("alternates") or [msg.content]
+        active_index = meta.get("active_index", 0)
+        entry = {
+            "name": _st_speaker_name(msg, chat, char_names),
+            "is_user": msg.role == MessageRole.USER,
+            "is_system": msg.role == MessageRole.SYSTEM,
+            "send_date": msg.created_at.isoformat() if msg.created_at else created.isoformat(),
+            "meta": {"tnh_kind": msg.kind.value if msg.kind else None},
+            "swipes": [msg.content] + [a for a in alternates if a != msg.content],
+            "swipe_id": active_index,
+            "mes": msg.content,
+        }
+        lines.append(json.dumps(entry, ensure_ascii=False))
+    return "\n".join(lines)
+
+
 @router.get("/{chat_id}/export")
-def export_chat(chat_id: str, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)):
+def export_chat(chat_id: str, format: str = "json", session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo), character_repo: CharacterRepository = Depends(get_character_repo)):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)
@@ -159,7 +218,168 @@ def export_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
             "message_count": len(messages),
         },
     }
+    if format == "jsonl":
+        group_characters = (
+            session.exec(
+                select(Character).where(Character.id.in_(chat.additional_character_ids or []))
+            ).all()
+            if chat.additional_character_ids
+            else []
+        )
+        text = _chat_to_sillytavern_jsonl(chat, messages, character, group_characters)
+        safe_name = "".join(c for c in (chat.name or "chat") if c.isalnum() or c in "-_ ").strip().replace(" ", "_")[:60] or chat.id
+        return Response(
+            content=text,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.jsonl"'},
+        )
+
     return payload
+
+
+def _parse_message_timestamp(raw: object) -> datetime:
+    """Best-effort parse of a SillyTavern send_date / app ISO timestamp."""
+    if isinstance(raw, (int, float)) and raw > 0:
+        try:
+            return datetime.fromtimestamp(raw / 1000 if raw > 1e12 else raw, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            pass
+    if isinstance(raw, str):
+        candidate = raw.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc)
+
+
+@router.post("/import", response_model=Chat)
+async def import_chat(
+    file: UploadFile = File(...),
+    name: str | None = Form(None),
+    character_id: str | None = Form(None),
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """Import a chat from a SillyTavern JSONL export or this app's JSON export."""
+    try:
+        text = (await file.read()).decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValidationError("Chat file must be UTF-8 encoded") from exc
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        raise ValidationError("Chat file is empty")
+    try:
+        first = json.loads(lines[0])
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"Invalid JSON on first line: {exc}") from exc
+
+    st_format = isinstance(first, dict) and "messages" not in first and (
+        "chat_metadata" in first or "character_name" in first or "user_name" in first
+    )
+    persona_name: str | None = None
+    source_chat: dict = {}
+    raw_messages: list[dict] = []
+    if st_format:
+        persona_name = (first.get("user_name") or "").strip() or None
+        for i, ln in enumerate(lines[1:], start=2):
+            try:
+                obj = json.loads(ln)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(f"Invalid JSON on line {i}: {exc}") from exc
+            if isinstance(obj, dict):
+                raw_messages.append(obj)
+        if not raw_messages:
+            raise ValidationError("No messages found in JSONL file")
+    elif isinstance(first, dict) and isinstance(first.get("messages"), list):
+        source_chat = first.get("chat") if isinstance(first.get("chat"), dict) else {}
+        raw_messages = [m for m in first["messages"] if isinstance(m, dict)]
+        if not raw_messages:
+            raise ValidationError("No messages found in export file")
+    else:
+        raise ValidationError("Unrecognized chat file — expected SillyTavern JSONL or an exported chat JSON")
+
+    primary: Character | None = None
+    if character_id:
+        primary = character_repo.get(character_id)
+        if not primary:
+            raise ValidationError(f"Character '{character_id}' not found")
+    if primary is None and source_chat.get("character_id"):
+        primary = character_repo.get(source_chat["character_id"])
+
+    all_characters = session.exec(select(Character)).all()
+    char_by_name = {c.name.strip().lower(): c for c in all_characters if c.name}
+
+    base_ts = datetime.now(timezone.utc) - timedelta(minutes=len(raw_messages))
+
+    chat = Chat(
+        name=name or source_chat.get("name") or (f"{primary.name} chat" if primary else "Imported Chat"),
+        character_id=primary.id if primary else None,
+        chat_type=source_chat.get("chat_type") or "chat",
+        persona_name=persona_name or source_chat.get("persona_name"),
+        story_time=source_chat.get("story_time"),
+        story_location=source_chat.get("story_location"),
+    )
+    session.add(chat)
+    session.flush()
+
+    created_messages: list[Message] = []
+    for i, obj in enumerate(raw_messages):
+        if st_format:
+            content = str(obj.get("mes") or "").strip()
+            if not content:
+                continue
+            if obj.get("is_system"):
+                role, kind = MessageRole.SYSTEM, MessageKind.SYSTEM
+            elif obj.get("is_user"):
+                role, kind = MessageRole.USER, MessageKind.USER
+            else:
+                role, kind = MessageRole.CHAR, MessageKind.CHAR
+            speaker = str(obj.get("name") or "").strip()
+            ts = _parse_message_timestamp(obj.get("send_date")) or (base_ts + timedelta(seconds=i))
+            cid: str | None = None
+            if role == MessageRole.CHAR:
+                matched = char_by_name.get(speaker.lower())
+                primary_id = primary.id if primary else None
+                if matched and matched.id != primary_id:
+                    cid = matched.id
+                elif primary_id:
+                    cid = primary_id
+        else:
+            content = str(obj.get("content") or "").strip()
+            if not content or obj.get("kind") == MessageKind.IMAGE.value:
+                continue
+            try:
+                role = MessageRole(obj.get("role") or MessageRole.CHAR.value)
+            except ValueError:
+                role = MessageRole.CHAR
+            kind_str = obj.get("kind")
+            try:
+                kind = MessageKind(kind_str) if kind_str else (
+                    MessageKind.USER if role == MessageRole.USER else MessageKind.CHAR
+                )
+            except ValueError:
+                kind = MessageKind.CHAR
+            cid = obj.get("character_id")
+            ts = _parse_message_timestamp(obj.get("created_at")) or (base_ts + timedelta(seconds=i))
+        created_messages.append(
+            Message(
+                chat_id=chat.id,
+                role=role,
+                kind=kind,
+                content=content,
+                character_id=cid,
+                created_at=ts,
+                updated_at=ts,
+            )
+        )
+    for msg in created_messages:
+        session.add(msg)
+    session.commit()
+    session.refresh(chat)
+    return chat
 
 
 @router.post("", response_model=Chat)
