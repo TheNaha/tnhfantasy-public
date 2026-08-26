@@ -19,6 +19,7 @@ from core.entities import Story, StoryBeatRole, StoryChapter, StoryChapterRevisi
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
+from services.rag_pipeline import rag_enabled, search_lorebook_entries
 from services.job_service import JobService
 from services.job_queue import QueueManager, queue_manager
 from services.model_availability_service import ModelAvailabilityService
@@ -1372,34 +1373,45 @@ async def illustrate_chapter(
         if characters_content:
             system_prompt += "\n\nStory Characters (Use these details for illustration):\n" + "\n".join(characters_content)
 
-    # NOTE: Lorebook context is loaded directly here for the art-director prompt.
-    # For high-fidelity semantic retrieval, consider routing through
-    # build_system_prompt_sections_async (which uses pgvector top-K retrieval).
     if story and story.lorebook_ids:
-        # Batch-load all lorebooks + their entries in 2 queries instead of 2N
-        lorebooks = session.exec(
-            select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids))
-        ).all()
-        lb_map = {lb.id: lb for lb in lorebooks}
-        all_entries = session.exec(
-            select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(story.lorebook_ids))
-        ).all()
-        entries_by_lb: dict[str, list] = {}
-        for entry in all_entries:
-            entries_by_lb.setdefault(entry.lorebook_id, []).append(entry)
-        lorebooks_content = []
-        for lb_id in story.lorebook_ids:
-            lb = lb_map.get(lb_id)
-            if lb:
-                entries = entries_by_lb.get(lb.id, [])
-                if entries:
-                    lb_text = f"Lorebook: {lb.name}\n"
-                    for entry in entries:
-                        keys_str = ", ".join(entry.keys) if entry.keys else "General"
-                        lb_text += f"- [{keys_str}]: {entry.content}\n"
-                    lorebooks_content.append(lb_text)
-        if lorebooks_content:
-            system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lorebooks_content)
+        lore_lines = []
+        if rag_enabled():
+            # Semantic top-K retrieval — same canonical path as chat/story context.
+            try:
+                relevant = search_lorebook_entries(
+                    session,
+                    story.lorebook_ids,
+                    query=(chapter.content or "")[-2000:],
+                    limit=8,
+                )
+            except Exception as exc:  # pragma: no cover - retrieval edge cases
+                logger.warning("illustrate_lorebook_retrieval_failed", error=str(exc))
+                relevant = []
+            for entry in relevant:
+                keys_str = ", ".join(entry.keys) if entry.keys else "General"
+                lore_lines.append(f"- [{keys_str}]: {entry.content}")
+        else:
+            # RAG disabled: fall back to dumping entries so prompts keep parity
+            # with the pre-RAG behavior instead of silently losing all lore.
+            lorebooks = session.exec(
+                select(Lorebook).where(Lorebook.id.in_(story.lorebook_ids))
+            ).all()
+            lb_map = {lb.id: lb for lb in lorebooks}
+            all_entries = session.exec(
+                select(LorebookEntry).where(LorebookEntry.lorebook_id.in_(story.lorebook_ids))
+            ).all()
+            entries_by_lb: dict[str, list] = {}
+            for entry in all_entries:
+                entries_by_lb.setdefault(entry.lorebook_id, []).append(entry)
+            for lb_id in story.lorebook_ids:
+                lb = lb_map.get(lb_id)
+                if not lb:
+                    continue
+                for entry in entries_by_lb.get(lb.id, []):
+                    keys_str = ", ".join(entry.keys) if entry.keys else "General"
+                    lore_lines.append(f"- [{keys_str}]: {entry.content}")
+        if lore_lines:
+            system_prompt += "\n\nRelevant World Lore:\n" + "\n".join(lore_lines)
 
     job_service = JobService(session)
 
