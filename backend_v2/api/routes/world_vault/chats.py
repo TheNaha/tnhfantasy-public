@@ -13,7 +13,7 @@ from infrastructure.repositories.message_repo import MessageRepository
 from infrastructure.repositories.character_repo import CharacterRepository
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
-from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, VoiceModel
+from core.entities import Chat, Character, Job, JobStatus, Message, MessageKind, MessageRole, Persona, VoiceModel
 from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.chat_utils import insert_world_state_marker, resolve_voice_for_character, substitute_tavern_vars
 from services.context_builder import build_chat_context_async, build_system_prompt_sections_async, chat_context_kwargs, prune_context
@@ -67,6 +67,9 @@ class UpdateChatRequest(BaseModel):
     presence_penalty: float | None = None
     tts_voice_id: str | None = None
     idle_sim_enabled: bool | None = None
+    persona_id: str | None = None
+    authors_note: str | None = None
+    authors_note_depth: int | None = None
 
 
 class NarrateRequest(BaseModel):
@@ -87,6 +90,7 @@ class CreateChatRequest(BaseModel):
     active_lorebook_ids: list[str] = []
     max_agentic_depth: int | None = None
     idle_sim_enabled: bool = False
+    persona_id: str | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -388,6 +392,10 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         character = character_repo.get(req.character_id)
         if not character:
             raise NotFoundError("Character", req.character_id)
+    if req.persona_id:
+        persona = session.get(Persona, req.persona_id)
+        if not persona:
+            raise NotFoundError("Persona", req.persona_id)
 
     chat = Chat(
         name=req.name,
@@ -400,6 +408,7 @@ async def create_chat(req: CreateChatRequest, session: Session = Depends(get_ses
         active_lorebook_ids=req.active_lorebook_ids or [],
         max_agentic_depth=req.max_agentic_depth,
         idle_sim_enabled=req.idle_sim_enabled,
+        persona_id=req.persona_id,
     )
     chat.created_at = datetime.now(timezone.utc)
     chat.updated_at = chat.created_at
@@ -490,7 +499,7 @@ async def get_chat_system_prompt(chat_id: str, session: Session = Depends(get_se
 
     characters = _load_characters_ordered(session, chat.character_id, chat.additional_character_ids or [])
 
-    ctx_kwargs = chat_context_kwargs(chat, characters=characters)
+    ctx_kwargs = chat_context_kwargs(chat, characters=characters, session=session)
 
     sections = await build_system_prompt_sections_async(
         **ctx_kwargs,
@@ -530,6 +539,15 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
         voice = session.get(VoiceModel, update_fields["tts_voice_id"])
         if not voice:
             raise NotFoundError("VoiceModel", update_fields["tts_voice_id"])
+    # Validate persona_id if provided (null clears the library link)
+    if "persona_id" in update_fields and update_fields["persona_id"] is not None:
+        persona = session.get(Persona, update_fields["persona_id"])
+        if not persona:
+            raise NotFoundError("Persona", update_fields["persona_id"])
+    # Author's-note depth sanity: 0 pins the note to the very end
+    if "authors_note_depth" in update_fields and update_fields["authors_note_depth"] is not None:
+        if update_fields["authors_note_depth"] < 0 or update_fields["authors_note_depth"] > 100:
+            raise ValidationError("authors_note_depth must be between 0 and 100")
     changed_state = {}
     if "story_time" in update_fields and update_fields["story_time"] != chat.story_time:
         changed_state["time"] = update_fields["story_time"]
@@ -594,6 +612,7 @@ async def add_message(chat_id: str, request: SendMessageRequest, session: Sessio
         ctx_kwargs = chat_context_kwargs(
             chat,
             characters=characters,
+            session=session,
             lorebook_ids=request.lorebook_ids,
             max_context_tokens=_resolve_context_tokens(chat),
             active_character_id=request.target_character_id,
@@ -878,6 +897,7 @@ async def generate_swipe(
     ctx_kwargs = chat_context_kwargs(
         chat,
         characters=characters,
+        session=session,
         max_context_tokens=_resolve_context_tokens(chat),
     )
     system_prompt, context = await build_chat_context_async(
@@ -1073,6 +1093,7 @@ async def regenerate_reply(
     ctx_kwargs = chat_context_kwargs(
         chat,
         characters=characters,
+        session=session,
         max_context_tokens=_resolve_context_tokens(chat),
     )
     system_prompt, context = await build_chat_context_async(
@@ -1149,7 +1170,7 @@ async def impersonate(chat_id: str, req: ImpersonateRequest, session: Session = 
 
     # Build world-state context without character identity (same approach as suggest)
     world_sections = await build_system_prompt_sections_async(
-        **chat_context_kwargs(chat, character=None, include_roleplay_default=False),
+        **chat_context_kwargs(chat, character=None, include_roleplay_default=False, session=session),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 
@@ -1235,7 +1256,7 @@ async def suggest_reply(chat_id: str, req: SuggestReplyRequest, session: Session
     from config import get_system_prompt_blocks
 
     world_sections = await build_system_prompt_sections_async(
-        **chat_context_kwargs(chat, character=None, include_roleplay_default=False),
+        **chat_context_kwargs(chat, character=None, include_roleplay_default=False, session=session),
     )
     world_context_str = "\n\n".join(s["content"] for s in world_sections) if world_sections else ""
 

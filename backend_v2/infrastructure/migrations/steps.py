@@ -1597,6 +1597,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add messages.character_id speaker attribution for group chats",
             apply_fn=_migration_060_add_message_character_id,
         ),
+        MigrationStep(
+            version="061_add_personas_and_chat_persona_fields",
+            description="Create personas library table; add chats persona link + author's note columns",
+            apply_fn=_migration_061_add_personas_and_chat_persona_fields,
+        ),
     ]
 
 
@@ -2268,4 +2273,36 @@ def _migration_059_add_story_chapter_revisions(conn) -> bool:
     conn.execute(text("CREATE INDEX idx_revision_chapter_id ON story_chapter_revisions (chapter_id)"))
     logger.info("migration_table_created", table="story_chapter_revisions")
     return True
+
+
+def _migration_061_add_personas_and_chat_persona_fields(conn) -> bool:
+    """Create personas library table and add persona-link + author's-note columns to chats."""
+    inspector = inspect(conn)
+    changed = False
+    if "personas" not in inspector.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE personas (
+                id TEXT PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("CREATE INDEX ix_personas_name ON personas (name)"))
+        logger.info("migration_table_created", table="personas")
+        changed = True
+    if "chats" in inspector.get_table_names():
+        existing = {col["name"] for col in inspector.get_columns("chats")}
+        for column, sql_type in (("persona_id", "VARCHAR"), ("authors_note", "TEXT"), ("authors_note_depth", "INTEGER")):
+            if column in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE chats ADD COLUMN {column} {sql_type}"))
+            logger.info("migration_column_added", table="chats", column=column)
+            changed = True
+        index_names = {idx["name"] for idx in inspector.get_indexes("chats")}
+        if "idx_chat_persona_id" not in index_names:
+            conn.execute(text("CREATE INDEX idx_chat_persona_id ON chats (persona_id)"))
+            changed = True
+    return changed
 

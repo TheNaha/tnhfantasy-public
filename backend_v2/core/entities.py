@@ -856,7 +856,12 @@ class Chat(SQLModel, table=True):
     tts_voice_id: str | None = Field(default=None, foreign_key="voice_models.id", index=True)
     # Per-chat user persona description injected into the system prompt
     persona_description: str | None = Field(default=None, sa_column=Column(Text))
-    
+    # Global persona-library link (None → per-chat persona strings only)
+    persona_id: str | None = Field(default=None, foreign_key="personas.id", index=True)
+    # SillyTavern-style Author's Note — injected as a system message N turns from the tail
+    authors_note: str | None = Field(default=None, sa_column=Column(Text))
+    authors_note_depth: int | None = Field(default=None)  # None → default depth 4
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     active_lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))
@@ -984,6 +989,15 @@ class Scenario(SQLModel, table=True):
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
     prompt_template: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Persona(SQLModel, table=True):
+    """Reusable user-persona template assignable to any chat (persona library)."""
+    __tablename__ = "personas"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    name: str = Field(index=True)
+    description: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

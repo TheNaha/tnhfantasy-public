@@ -118,17 +118,9 @@ async def run_idle_simulation_tick(min_activity_age_minutes: int = IDLE_SIM_ACTI
                 if extra and extra not in characters:
                     characters.append(extra)
 
-            ctx_kwargs = {
-                "characters": characters,
-                "lorebook_ids": chat.active_lorebook_ids or None,
-                "persona_name": chat.persona_name,
-                "persona_description": getattr(chat, "persona_description", None),
-                "story_time": chat.story_time,
-                "story_location": chat.story_location,
-                "location_id": getattr(chat, "location_id", None),
-                "system_prompt_override": chat.system_prompt_override,
-                "append_system_prompt": chat.append_system_prompt,
-            }
+            from services.context_builder import chat_context_kwargs
+
+            ctx_kwargs = chat_context_kwargs(chat, characters=characters)
             if chat.max_context_tokens:
                 ctx_kwargs["max_context_tokens"] = chat.max_context_tokens
 

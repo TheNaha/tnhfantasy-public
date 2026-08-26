@@ -54,6 +54,9 @@ def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None
     elif kind == "scenario":
         for story in session.exec(select(Story).where(Story.scenario_id == entity_id)).all():
             story.scenario_id = None
+    elif kind == "persona":
+        for chat in session.exec(select(Chat).where(Chat.persona_id == entity_id)).all():
+            chat.persona_id = None
     elif kind == "story":
         _scrub_campaigns(session, "story_ids", entity_id)
     elif kind == "chat":

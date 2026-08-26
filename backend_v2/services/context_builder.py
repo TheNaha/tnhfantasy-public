@@ -10,7 +10,7 @@ from typing import Any
 
 import tiktoken
 from cachetools import TTLCache
-from core.entities import Character, Location, LorebookEntry, MessageRole
+from core.entities import Character, Location, LorebookEntry, MessageRole, Persona
 from sqlmodel import Session, select
 
 logger = logging.getLogger("context_builder")
@@ -246,6 +246,10 @@ def build_system_prompt_sections(
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
     include_roleplay_default: bool = True,
+    # Author's note is a message-level injection (build_chat_context) — accepted
+    # here so chat_context_kwargs can feed both builders uniformly; unused.
+    authors_note: str | None = None,
+    authors_note_depth: int | None = None,
     _lorebook_query: str | None = None,
     story_genre: str | None = None,
     story_memory: str | None = None,
@@ -563,6 +567,8 @@ def build_chat_context(
     location_id: str | None = None,
     system_prompt_override: str | None = None,
     append_system_prompt: str | None = None,
+    authors_note: str | None = None,
+    authors_note_depth: int | None = None,
     story_genre: str | None = None,
     story_memory: str | None = None,
     story_pov: str | None = None,
@@ -695,6 +701,18 @@ def build_chat_context(
 
     all_msgs = prune_context(all_msgs, system_prompt, [], max_context_tokens)
 
+    # Author's Note — deliberately injected AFTER pruning so a note the user
+    # wrote always survives, even in long chats. Depth N places it N messages
+    # from the tail (SillyTavern convention); depth 0 pins it to the very end.
+    if authors_note and authors_note.strip():
+        depth = max(0, authors_note_depth if authors_note_depth is not None else 4)
+        floor = 1 if all_msgs and all_msgs[0].get("role") == "system" else 0
+        insert_at = max(floor, len(all_msgs) - min(depth, len(all_msgs)))
+        all_msgs.insert(insert_at, {
+            "role": "system",
+            "content": f"[Author's Note]\n{authors_note.strip()}",
+        })
+
     # Strip the internal _pinned/_kind/_id helper keys before returning so
     # unknown fields never leak into provider-bound LLM payloads.
     for m in all_msgs:
@@ -743,24 +761,38 @@ async def build_system_prompt_sections_async(
     return await asyncio.to_thread(_run)
 
 
-def chat_context_kwargs(chat, *, characters=None, **overrides) -> dict[str, Any]:
+def chat_context_kwargs(chat, *, characters=None, session=None, **overrides) -> dict[str, Any]:
     """Build common kwargs for build_chat_context_async / build_system_prompt_sections_async
     from a Chat entity.
 
     Centralising this mapping here means route handlers (chats.py, stories.py)
     and services (agent_simulation.py, orchestrator_service.py) all use the
     same field-to-kwarg mapping — no per-caller copies to drift.
+
+    Pass `session` to enable persona-library resolution: when chat.persona_id
+    is set, the Persona row fills any per-chat persona string that is unset.
     """
+    persona_name = getattr(chat, "persona_name", None)
+    persona_description = getattr(chat, "persona_description", None)
+    persona_id = getattr(chat, "persona_id", None)
+    if persona_id and session is not None:
+        persona = session.get(Persona, persona_id)
+        if persona:
+            persona_name = persona_name or persona.name
+            persona_description = persona_description or persona.description
+
     kwargs: dict[str, Any] = {
         "characters": characters,
         "lorebook_ids": overrides.get("lorebook_ids", getattr(chat, "active_lorebook_ids", None) or None),
-        "persona_name": getattr(chat, "persona_name", None),
-        "persona_description": getattr(chat, "persona_description", None),
+        "persona_name": persona_name,
+        "persona_description": persona_description,
         "story_time": getattr(chat, "story_time", None),
         "story_location": getattr(chat, "story_location", None),
         "location_id": getattr(chat, "location_id", None),
         "system_prompt_override": getattr(chat, "system_prompt_override", None),
         "append_system_prompt": getattr(chat, "append_system_prompt", None),
+        "authors_note": getattr(chat, "authors_note", None),
+        "authors_note_depth": getattr(chat, "authors_note_depth", None),
     }
     if "max_context_tokens" in overrides:
         kwargs["max_context_tokens"] = overrides["max_context_tokens"]

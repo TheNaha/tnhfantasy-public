@@ -62,16 +62,15 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     .where(Message.chat_id == imp_chat_id)
                     .order_by(Message.created_at)
                 ).all()
+                from services.context_builder import chat_context_kwargs
+
                 _sp, _ctx = await build_chat_context_async(
                     _past,
-                    characters=[_character] if _character else None,
-                    lorebook_ids=_chat.active_lorebook_ids or None,
-                    persona_name=_chat.persona_name,
-                    story_time=_chat.story_time,
-                    story_location=_chat.story_location,
-                    system_prompt_override=_chat.system_prompt_override,
-                    append_system_prompt=_chat.append_system_prompt,
-                    max_context_tokens=_resolve_context_tokens(_chat),
+                    **chat_context_kwargs(
+                        _chat,
+                        characters=[_character] if _character else None,
+                        max_context_tokens=_resolve_context_tokens(_chat),
+                    ),
                 )
                 _reply_job_svc = JobService(session)
                 from services.llm_workflow import build_llm_workflow

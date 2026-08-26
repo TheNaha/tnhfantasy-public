@@ -188,6 +188,11 @@ def get_scenario_repo(session: Session = Depends(get_session)):
     return ScenarioRepository(session)
 
 
+def get_persona_repo(session: Session = Depends(get_session)):
+    from infrastructure.repositories.persona_repo import PersonaRepository
+    return PersonaRepository(session)
+
+
 def get_embedding_service():
     from services.embedding_service import get_embedding_service as get_service
     return get_service()
