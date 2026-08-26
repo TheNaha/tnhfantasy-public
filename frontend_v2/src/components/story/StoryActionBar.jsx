@@ -1,6 +1,8 @@
 import React from 'react';
-import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2 } from 'lucide-react';
+import { GitBranch, Play, ImageIcon, Loader2, FileDown, BookOpen, Wand2, PenLine, Maximize2, ScrollText, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
+
+const iconBtn = "flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-all text-sm";
 
 export default React.memo(function StoryActionBar({
     beatCount,
@@ -9,6 +11,11 @@ export default React.memo(function StoryActionBar({
     isStreaming,
     isContinuePending,
     onContinue,
+    aiDirective,
+    onAiDirectiveChange,
+    canRetryLast,
+    onRetryLast,
+    onAiAction,
     isIllustrating,
     onIllustrate,
     beatInput,
@@ -55,6 +62,30 @@ export default React.memo(function StoryActionBar({
                         <><Play size={14} fill="currentColor" /> Continue</>
                     )}
                 </button>
+                {onRetryLast && (
+                    <button
+                        onClick={onRetryLast}
+                        disabled={isStreaming || isContinuePending || !canRetryLast}
+                        className={clsx(iconBtn, "bg-gray-800 text-gray-300", (isStreaming || isContinuePending || !canRetryLast) ? "opacity-40 cursor-not-allowed" : "hover:bg-gray-700")}
+                        title={canRetryLast ? "Discard the AI's last continuation and regenerate it" : "No AI continuation to retry yet"}
+                    >
+                        <RotateCcw size={14} />
+                        <span className="hidden sm:inline">Retry</span>
+                    </button>
+                )}
+                {onAiAction && (
+                    <>
+                        <button onClick={() => onAiAction('rewrite')} disabled={isStreaming} className={clsx(iconBtn, "bg-gray-800 text-indigo-300", isStreaming ? "opacity-40 cursor-not-allowed" : "hover:bg-gray-700")} title="Rewrite the selected text with AI">
+                            <PenLine size={14} />
+                        </button>
+                        <button onClick={() => onAiAction('expand')} disabled={isStreaming} className={clsx(iconBtn, "bg-gray-800 text-purple-300", isStreaming ? "opacity-40 cursor-not-allowed" : "hover:bg-gray-700")} title="Expand the selected text with more detail">
+                            <Maximize2 size={14} />
+                        </button>
+                        <button onClick={() => onAiAction('summarize')} disabled={isStreaming} className={clsx(iconBtn, "bg-gray-800 text-emerald-300", isStreaming ? "opacity-40 cursor-not-allowed" : "hover:bg-gray-700")} title="Summarize the selected text (or whole chapter)">
+                            <ScrollText size={14} />
+                        </button>
+                    </>
+                )}
                 <button
                     onClick={onIllustrate}
                     disabled={isIllustrating}
@@ -86,22 +117,34 @@ export default React.memo(function StoryActionBar({
                 )}
             </div>
 
-            <div className="flex-1 flex gap-2 w-full">
-                <input
-                    type="text"
-                    value={beatInput}
-                    onChange={(e) => onBeatInputChange(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && onAddBeat()}
-                    placeholder="Add a story beat..."
-                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 sm:px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 min-w-0"
-                />
-                <button
-                    onClick={onAddBeat}
-                    disabled={!beatInput.trim()}
-                    className="px-3 sm:px-4 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors shrink-0"
-                >
-                    Add
-                </button>
+            <div className="flex-1 flex flex-col gap-2 w-full min-w-0">
+                <div className="flex gap-2 w-full">
+                    <input
+                        type="text"
+                        value={beatInput}
+                        onChange={(e) => onBeatInputChange(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && onAddBeat()}
+                        placeholder="Add a story beat..."
+                        className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 sm:px-4 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500/50 min-w-0"
+                    />
+                    <button
+                        onClick={onAddBeat}
+                        disabled={!beatInput.trim()}
+                        className="px-3 sm:px-4 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors shrink-0"
+                    >
+                        Add
+                    </button>
+                </div>
+                {onAiDirectiveChange && (
+                    <input
+                        type="text"
+                        value={aiDirective || ''}
+                        onChange={(e) => onAiDirectiveChange(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && !isStreaming && !isContinuePending && onContinue()}
+                        placeholder="Direct the AI before continuing (optional) — e.g. 'introduce a storm', 'in first person'"
+                        className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-3 sm:px-4 py-1.5 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500/50 min-w-0"
+                    />
+                )}
             </div>
 
             <div className="flex gap-2 shrink-0">

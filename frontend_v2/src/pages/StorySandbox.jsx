@@ -4,8 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, Edit3, Layers } from 'lucide-react';
 import clsx from 'clsx';
 import toast from 'react-hot-toast';
-import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters } from '../hooks/useWorldVault';
-import { useLLMJobResult } from '../hooks/useLLMJobResult';
+import { useStories, useStory, useStoryChapters, useCreateStory, useCreateChapter, useContinueChapter, useBranchChapter, useAddStoryBeat, useLorebooks, useCharacters, useLocations, useDeleteStory, useDeleteChapter, useUpdateChapter, useUpdateStory, useIllustrateChapter, useLLMAvailableModels, useLLMDefaultProvider, useStoryImages, useUpdateCharacter, useParseStory, usePublishStory, useNarrateChapter, useReorderChapters, useStoryAiAction, useRetryLastContinuation } from '../hooks/useWorldVault';
+import { useLLMJobResult, awaitJobText } from '../hooks/useLLMJobResult';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useStoryStreaming } from '../hooks/useStoryStreaming';
@@ -24,6 +24,7 @@ import ExportModal from '../components/story/ExportModal';
 import StoryContextPanel from '../components/story/StoryContextPanel';
 import CreateStoryModal from '../components/story/CreateStoryModal';
 import IllustrateModal from '../components/story/IllustrateModal';
+import StoryActionModal from '../components/story/StoryActionModal';
 import StoryGalleryModal from '../components/story/StoryGalleryModal';
 import ParseStoryModal from '../components/story/ParseStoryModal';
 import { CharacterModal } from './Characters';
@@ -69,6 +70,8 @@ export default function StorySandbox() {
     const updateChapter = useUpdateChapter();
     const reorderChapters = useReorderChapters();
     const illustrateChapter = useIllustrateChapter();
+    const storyAiAction = useStoryAiAction();
+    const retryLastContinuation = useRetryLastContinuation();
     const parseStory = useParseStory();
     const publishStory = usePublishStory();
     const narrateChapter = useNarrateChapter();
@@ -105,6 +108,10 @@ export default function StorySandbox() {
     const [illustratePrompt, setIllustratePrompt] = useState('');
     const [lastIllustrationPrompt, setLastIllustrationPrompt] = useState('');
     const [showIllustrateModal, setShowIllustrateModal] = useState(false);
+    const [storyAction, setStoryAction] = useState(null);
+    const [actionResult, setActionResult] = useState(null);
+    const [isActionRunning, setIsActionRunning] = useState(false);
+    const [aiDirective, setAiDirective] = useState('');
     const [showGallery, setShowGallery] = useState(false);
     const [editingCharacter, setEditingCharacter] = useState(null);
     const [editingLorebook, setEditingLorebook] = useState(null);
@@ -304,14 +311,119 @@ export default function StorySandbox() {
         setIsStreaming(true);
         streamingBaseRef.current = editorContent;
         try {
-            await continueChapter.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId });
+            await continueChapter.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId, prompt: aiDirective.trim() });
+            setAiDirective('');
             toast('AI is continuing the story...', { icon: '📖' });
         } catch {
             toast.error('Failed to start story continuation');
             setIsStreaming(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent]);
+    }, [activeStoryId, activeChapterId, isStreaming, continueChapter, editorContent, aiDirective]);
+
+    const captureEditorSelection = useCallback(() => {
+        if (textareaRef.current) {
+            const { selectionStart: s, selectionEnd: e, value } = textareaRef.current;
+            if (s !== e) return { start: s, end: e, text: value.substring(s, e) };
+        }
+        return null;
+    }, []);
+
+    const handleOpenStoryAction = useCallback((action) => {
+        if (!activeStoryId || !activeChapterId || isStreaming || isActionRunning) return;
+        const sel = captureEditorSelection();
+        if (!sel && action !== 'summarize') {
+            toast.error('Select some text in the editor first');
+            return;
+        }
+        setStoryAction({
+            action,
+            start: sel?.start ?? editorContent.length,
+            end: sel?.end ?? editorContent.length,
+            selectionText: sel ? sel.text : editorContent,
+            directive: '',
+        });
+        setActionResult(null);
+     
+    }, [activeStoryId, activeChapterId, isStreaming, isActionRunning, captureEditorSelection, editorContent]);
+
+    const handleConfirmStoryAction = useCallback(async () => {
+        if (!storyAction || isActionRunning || !activeStoryId || !activeChapterId) return;
+        setIsActionRunning(true);
+        try {
+            const { job_id } = await storyAiAction.mutateAsync({
+                storyId: activeStoryId,
+                chapterId: activeChapterId,
+                action: storyAction.action,
+                target_text: storyAction.selectionText,
+                directive: storyAction.directive,
+            });
+            const { text } = await awaitJobText({ jobId: job_id, queryClient });
+            if (!text) {
+                toast.error('AI returned no text');
+                return;
+            }
+            setActionResult(text.trim());
+        } catch {
+            toast.error('AI action failed');
+        } finally {
+            setIsActionRunning(false);
+        }
+     
+    }, [storyAction, isActionRunning, activeStoryId, activeChapterId, storyAiAction, queryClient]);
+
+    const handleCloseStoryAction = useCallback(() => {
+        if (isActionRunning) return;
+        setStoryAction(null);
+        setActionResult(null);
+    }, [isActionRunning]);
+
+    const handleApplyStoryAction = useCallback((insertAtCursor = false) => {
+        if (!storyAction || !actionResult) return;
+        const { action, start, end } = storyAction;
+        let next;
+        if ((action === 'rewrite' || action === 'expand') && !insertAtCursor) {
+            next = editorContent.slice(0, start) + actionResult + editorContent.slice(end);
+        } else {
+            const pos = Math.min(start, editorContent.length);
+            const sepBefore = pos > 0 && !/\n\n$/.test(editorContent.slice(0, pos)) ? '\n\n' : '';
+            next = editorContent.slice(0, pos) + sepBefore + actionResult + '\n\n' + editorContent.slice(pos);
+        }
+        next = next.replace(/\n{4,}/g, '\n\n\n');
+        isDirtyRef.current = true;
+        setEditorContent(next);
+        streamingBaseRef.current = next;
+        setStoryAction(null);
+        setActionResult(null);
+        toast.success('Applied to chapter');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [storyAction, actionResult, editorContent]);
+
+    const handleRetryLast = useCallback(async () => {
+        if (!activeStoryId || !activeChapterId || isStreaming || retryLastContinuation.isPending) return;
+        const ok = await confirm({
+            title: 'Retry Last Continuation',
+            message: "Discard the AI's most recent continuation and generate a fresh one?",
+            confirmText: 'Retry',
+        });
+        if (!ok) return;
+        try {
+            await retryLastContinuation.mutateAsync({ storyId: activeStoryId, chapterId: activeChapterId });
+            const key = ['world_vault', 'stories', activeStoryId, 'chapters'];
+            await queryClient.invalidateQueries({ queryKey: key });
+            const data = queryClient.getQueryData(key);
+            const fresh = Array.isArray(data) ? data.find(ch => ch.id === activeChapterId) : null;
+            const trimmed = fresh?.content ?? '';
+            isDirtyRef.current = false;
+            setEditorContent(trimmed);
+            streamingBaseRef.current = trimmed;
+            setIsStreaming(true);
+            toast('Retrying continuation...', { icon: '🔁' });
+        } catch {
+            toast.error('Failed to retry last continuation');
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeStoryId, activeChapterId, isStreaming, retryLastContinuation, confirm, queryClient]);
 
     const handleAutoGenerateTitle = async () => {
         if (!activeStoryId || !activeChapterId) return;
@@ -747,6 +859,11 @@ export default function StorySandbox() {
                                             isStreaming={isStreaming}
                                             isContinuePending={continueChapter.isPending}
                                             onContinue={handleContinue}
+                                            aiDirective={aiDirective}
+                                            onAiDirectiveChange={setAiDirective}
+                                            canRetryLast={activeChapter?.beats?.length > 0 && activeChapter.beats[activeChapter.beats.length - 1]?.role === 'narrator'}
+                                            onRetryLast={handleRetryLast}
+                                            onAiAction={handleOpenStoryAction}
                                             isIllustrating={isIllustrating}
                                             onIllustrate={handleIllustrate}
                                             beatInput={beatInput}
@@ -820,6 +937,19 @@ export default function StorySandbox() {
                 onPromptChange={setIllustratePrompt}
                 onConfirm={handleConfirmIllustrate}
                 onClose={() => { setShowIllustrateModal(false); setIllustratePrompt(''); }}
+            />
+
+            <StoryActionModal
+                open={!!storyAction}
+                action={storyAction?.action}
+                selectionText={storyAction?.selectionText || ''}
+                directive={storyAction?.directive || ''}
+                onDirectiveChange={(v) => setStoryAction(sa => sa ? { ...sa, directive: v } : sa)}
+                isRunning={isActionRunning}
+                result={actionResult}
+                onConfirm={handleConfirmStoryAction}
+                onApply={handleApplyStoryAction}
+                onClose={handleCloseStoryAction}
             />
 
             <StoryGalleryModal

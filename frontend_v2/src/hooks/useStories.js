@@ -133,6 +133,24 @@ export const useAddStoryBeat = () => {
     });
 };
 
+export const useStoryAiAction = () => {
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, action, target_text, directive }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/ai-action`, {
+                action,
+                target_text: target_text || '',
+                directive: directive || '',
+            }),
+    });
+};
+
+export const useRetryLastContinuation = () => {
+    return useMutation({
+        mutationFn: ({ storyId, chapterId }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/retry-last`),
+    });
+};
+
 export const useIllustrateChapter = () => {
     return useMutation({
         mutationFn: ({ storyId, chapterId, image_prompt }) =>

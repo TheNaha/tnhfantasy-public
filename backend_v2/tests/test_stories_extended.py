@@ -143,6 +143,66 @@ def test_narrate_chapter_not_found(client):
     assert response.status_code == 404
 
 
+def test_ai_action_rejects_unknown_action(client, session, story_with_character):
+    story, chapter = story_with_character
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/ai-action", json={
+        "action": "vibes", "target_text": "some text",
+    })
+    assert response.status_code == 400
+
+
+def test_ai_action_requires_target_text(client, session, story_with_character):
+    story, chapter = story_with_character
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/ai-action", json={
+        "action": "summarize", "target_text": "   ",
+    })
+    assert response.status_code == 400
+
+
+def test_ai_action_enqueues_job(client, session, story_with_character):
+    story, chapter = story_with_character
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/ai-action", json={
+        "action": "rewrite",
+        "target_text": "Once upon a time...",
+        "directive": "make it darker",
+    })
+    assert response.status_code == 200
+    assert response.json()["job_id"]
+
+
+def test_retry_last_requires_narrator_tail(client, session, story_with_character):
+    story, chapter = story_with_character
+    # Chapter has no beats at all -> nothing AI-generated to retry
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{chapter.id}/retry-last")
+    assert response.status_code == 400
+
+
+def test_retry_last_trims_beat_and_content_then_requeues(client, session, story_with_character):
+    story, chapter = story_with_character
+    from core.entities import StoryChapter as SC
+    ch = session.get(SC, chapter.id)
+    ai_text = "A shadow slid across the courtyard wall."
+    ch.beats = [
+        {"id": str(uuid4()), "parent_beat_id": None, "role": "user", "content": "Opening move"},
+        {"id": str(uuid4()), "parent_beat_id": None, "role": "narrator", "content": ai_text},
+    ]
+    ch.content = "Once upon a time...\n\n> Opening move\n\n" + f"\n\n{ai_text}\n\n"
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+
+    response = client.post(f"/api/v2/stories/{story.id}/chapters/{ch.id}/retry-last")
+    assert response.status_code == 200
+    assert response.json()["job_id"]
+
+    session.expire_all()
+    reloaded = session.get(SC, ch.id)
+    assert len(reloaded.beats) == 1
+    assert reloaded.beats[0]["role"] == "user"
+    assert ai_text not in reloaded.content
+    assert "Opening move" in reloaded.content
+
+
 def test_story_branch_chapter(client, session, story_with_character):
     story, chapter = story_with_character
     # First ensure the chapter has beats with IDs

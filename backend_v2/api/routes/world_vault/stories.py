@@ -15,7 +15,7 @@ from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Story, StoryBeatRole, StoryChapter, Lorebook, LorebookEntry, Character, Location, Scenario, Asset, AssetKind
-from core.exceptions import ComfyError, NotFoundError
+from core.exceptions import ComfyError, NotFoundError, ValidationError
 from services.llm_config import get_default_llm_model as _get_default_llm_model
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
 from services.job_service import JobService
@@ -28,6 +28,12 @@ router = APIRouter()
 
 class StoryContinueRequest(BaseModel):
     prompt: str = ""
+
+
+class StoryActionRequest(BaseModel):
+    action: str  # "rewrite" | "expand" | "summarize"
+    target_text: str = ""
+    directive: str = ""
 
 
 class ParseStoryRequest(BaseModel):
@@ -770,15 +776,12 @@ def delete_chapter(story_id: str, chapter_id: str, session: Session = Depends(ge
 
 @router.post("/{story_id}/chapters/{chapter_id}/continue")
 async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
-    from services.context_builder import build_chat_context_async
-    from services.llm_config import get_default_llm_model as _get_default_llm_model
-
     chapter = story_chapter_repo.get(chapter_id, story_id)
     if not chapter or chapter.story_id != story_id:
         raise NotFoundError("StoryChapter", chapter_id)
 
     story = story_repo.get(story_id)
-        
+
     prompt = data.prompt
     if prompt:
         _ensure_beat_ids(session, chapter)
@@ -792,7 +795,22 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         session.add(chapter)
         session.commit()
         session.refresh(chapter)
-    
+
+    job_id = await _enqueue_story_continuation(session, story, chapter)
+    return {"job_id": job_id}
+
+
+async def _enqueue_story_continuation(session: Session, story: Story | None, chapter: StoryChapter) -> str:
+    """Build the story-continue LLM job for a chapter and enqueue it.
+
+    Shared by the continue and retry-last endpoints so both produce an
+    identical context assembly (lorebooks, genre, memory, scenario,
+    characters, locations) and identical sampler handling.
+    """
+    from services.context_builder import build_chat_context_async
+
+    story_id = chapter.story_id
+
     # Build story context using the shared context builder so we get
     # semantic lorebook injection, context pruning, and consistent formatting.
     base_prompt = (
@@ -800,32 +818,31 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         "from the provided text. Maintain the tone and style. Do not include conversational filler "
         "(e.g. 'Sure, here is the continuation:'). Just output the next part of the prose."
     )
-    
+
     story_scenario_template = None
     if story and story.scenario_id:
         scenario = session.get(Scenario, story.scenario_id)
         if scenario and scenario.prompt_template:
             story_scenario_template = scenario.prompt_template
-    
+
     system_prompt, context = await build_chat_context_async(
         [{"role": "user", "content": chapter.content.strip()}],
-        lorebook_ids=story.lorebook_ids or None,
+        lorebook_ids=(story.lorebook_ids if story else None) or None,
         system_prompt_override=base_prompt,
-        story_genre=story.genre,
-        story_memory=story.memory,
+        story_genre=story.genre if story else None,
+        story_memory=story.memory if story else None,
         story_scenario=story_scenario_template,
-        story_character_ids=story.character_ids or None,
-        location_ids=story.location_ids or None,
+        story_character_ids=(story.character_ids if story else None) or None,
+        location_ids=(story.location_ids if story else None) or None,
     )
-    
 
     job_service = JobService(session)
     workflow, metadata = build_llm_workflow(
         messages=context,
         type_="story_continue",
         story_id=story_id,
-        chapter_id=chapter_id,
-        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        chapter_id=chapter.id,
+        model=((story.llm_model if story else None) or _get_default_llm_model()),
         workspace="story",
         samplers=sampler_overrides(story),
         extra_metadata={"max_agentic_depth": story.max_agentic_depth} if story and story.max_agentic_depth is not None else None,
@@ -835,9 +852,136 @@ async def continue_story(story_id: str, chapter_id: str, data: StoryContinueRequ
         workflow=workflow,
         metadata=metadata,
     )
-    
+
+    await queue_manager.enqueue(job.id, task_type="llm")
+    return job.id
+
+
+_ACTION_PROMPTS = {
+    "rewrite": (
+        "You are a skilled fiction editor. Rewrite the provided passage according to the "
+        "author's directive (if any). Preserve the author's voice, tense, POV, and the "
+        "surrounding story's continuity. Match the surrounding prose style. Output ONLY the "
+        "rewritten prose — no preamble, no quotes, no commentary."
+    ),
+    "expand": (
+        "You are a skilled fiction writer. Expand the provided passage with richer detail — "
+        "sensory description, character interiority, pacing beats — roughly doubling its length. "
+        "Respect any author's directive. Preserve the author's voice, tense, POV, and continuity "
+        "with the surrounding story. Output ONLY the expanded prose — no preamble, no quotes."
+    ),
+    "summarize": (
+        "You are a concise story analyst. Summarize the provided story text into a tight synopsis "
+        "(at most 150 words) capturing key events, characters, and outcome. Output ONLY the "
+        "summary prose — no preamble, no bullet points unless asked."
+    ),
+}
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/ai-action")
+async def story_ai_action(story_id: str, chapter_id: str, data: StoryActionRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    """Run a targeted AI editing action (rewrite/expand/summarize).
+
+    Unlike continue, the result is NOT persisted into the chapter — it is
+    returned to the client via the completed job's output so the author can
+    preview and apply/discard it in the editor.
+    """
+    action = data.action
+    if action not in _ACTION_PROMPTS:
+        raise ValidationError(f"action must be one of: {', '.join(sorted(_ACTION_PROMPTS))}")
+    target_text = data.target_text.strip()
+    if not target_text:
+        raise ValidationError("target_text is required")
+
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+    story = story_repo.get(story_id)
+
+    directive = data.directive.strip()
+    directive_line = f"\n\nAuthor's directive: {directive}" if directive else ""
+
+    # Give targeted edits a window of surrounding prose for continuity.
+    context_tail = ""
+    full_text = (chapter.content or "").strip()
+    if action in ("rewrite", "expand") and full_text:
+        pos = full_text.find(target_text)
+        if pos > 0:
+            before = full_text[max(0, pos - 1200):pos]
+            after = full_text[pos + len(target_text):][:400]
+            context_tail = (
+                "Surrounding story (for continuity only, do NOT repeat it):\n"
+                f"---\n{before}[...]{after}\n---\n\n"
+            )
+
+    user_content = (
+        f"{context_tail}Passage to {action}:{directive_line}\n\n{target_text}"
+        if action != "summarize"
+        else f"{directive_line}\n\n{target_text}".strip()
+    )
+
+    from services.context_builder import build_chat_context_async
+    system_prompt, context = await build_chat_context_async(
+        [{"role": "user", "content": user_content}],
+        lorebook_ids=(story.lorebook_ids if story else None) or None,
+        system_prompt_override=_ACTION_PROMPTS[action],
+        story_genre=story.genre if story else None,
+        story_memory=story.memory if story else None,
+        story_character_ids=(story.character_ids if story else None) or None,
+        location_ids=(story.location_ids if story else None) or None,
+    )
+
+    job_service = JobService(session)
+    workflow, metadata = build_llm_workflow(
+        messages=context,
+        type_="story_action",
+        story_id=story_id,
+        chapter_id=chapter_id,
+        model=(story.llm_model if story else None) or _get_default_llm_model(),
+        workspace="story",
+        samplers=sampler_overrides(story),
+    )
+    job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
     await queue_manager.enqueue(job.id, task_type="llm")
     return {"job_id": job.id}
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/retry-last")
+async def retry_last_continuation(story_id: str, chapter_id: str, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):
+    """Drop the most recent AI continuation (last narrator beat + its prose)
+    and immediately enqueue a fresh continuation in its place."""
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+    story = story_repo.get(story_id)
+
+    _ensure_beat_ids(session, chapter)
+    beats = list(chapter.beats or [])
+    last = beats[-1] if beats else None
+    if not last or last.get("role") != StoryBeatRole.NARRATOR.value:
+        raise ValidationError("No AI continuation to retry — the latest beat is not an AI-generated one")
+
+    removed_text = (last.get("content") or "").strip()
+    content = chapter.content or ""
+    marker = f"\n\n{removed_text}\n\n"
+    idx = content.rfind(marker)
+    if idx >= 0:
+        new_content = (content[:idx] + "\n\n" + content[idx + len(marker):]).strip()
+    elif content.endswith(f"\n\n{removed_text}"):
+        new_content = content[: -len(removed_text)].rstrip()
+    else:
+        raise ComfyError("Could not locate the last AI continuation inside the chapter text; edit it manually")
+
+    chapter.beats = beats[:-1]
+    chapter.content = new_content
+
+    chapter.updated_at = datetime.now(timezone.utc)
+    session.add(chapter)
+    session.commit()
+    session.refresh(chapter)
+
+    job_id = await _enqueue_story_continuation(session, story, chapter)
+    return {"job_id": job_id}
 
 @router.post("/{story_id}/chapters/{chapter_id}/beats")
 def add_beat(story_id: str, chapter_id: str, data: StoryBeatRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo)):

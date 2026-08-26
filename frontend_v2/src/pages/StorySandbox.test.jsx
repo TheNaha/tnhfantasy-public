@@ -2,6 +2,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import toast from 'react-hot-toast';
+import { awaitJobText } from '../hooks/useLLMJobResult';
 import StorySandbox from './StorySandbox';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -32,6 +34,7 @@ const mockContinueChapter = vi.hoisted(() => vi.fn());
 const mockBranchChapter = vi.hoisted(() => vi.fn());
 const mockAddStoryBeat = vi.hoisted(() => vi.fn());
 const mockIllustrateChapter = vi.hoisted(() => vi.fn());
+const mockStoryAiAction = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useWorldVault', () => ({
     useStories: (...a) => mockStories(...a),
@@ -49,6 +52,8 @@ vi.mock('../hooks/useWorldVault', () => ({
     useBranchChapter: (...a) => mockBranchChapter(...a),
     useAddStoryBeat: (...a) => mockAddStoryBeat(...a),
     useIllustrateChapter: (...a) => mockIllustrateChapter(...a),
+    useStoryAiAction: (...a) => mockStoryAiAction(...a),
+    useRetryLastContinuation: () => ({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false }),
     useCharacters: () => ({ data: [] }),
     useLocations: () => ({ data: [] }),
     useLLMAvailableModels: () => ({ data: [] }),
@@ -70,6 +75,10 @@ vi.mock('../api/websocket', () => ({
 
 vi.mock('../api', () => ({
     api: { put: vi.fn().mockResolvedValue({}) },
+}));
+vi.mock('../hooks/useLLMJobResult', () => ({
+    useLLMJobResult: () => vi.fn().mockResolvedValue({ text: '', cancelled: false }),
+    awaitJobText: vi.fn().mockResolvedValue({ jobId: 'job-1', text: 'A tight summary.' }),
 }));
 vi.mock('../hooks/useCollections', () => ({
     useCollections: () => ({ data: {} }),
@@ -156,6 +165,7 @@ describe('StorySandbox page', () => {
         mockBranchChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: 'branch-ch' }), isPending: false });
         mockAddStoryBeat.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({}) });
         mockIllustrateChapter.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'img-1' }) });
+        mockStoryAiAction.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ job_id: 'job-1' }), isPending: false });
     });
 
     it('renders the stories sidebar', () => {
@@ -228,6 +238,7 @@ describe('StorySandbox page', () => {
         expect(mockMutate).toHaveBeenCalledWith({
             storyId: 'story-1',
             chapterId: 'ch-1',
+            prompt: '',
         });
     });
 
@@ -277,6 +288,52 @@ describe('StorySandbox page', () => {
             storyId: 'story-1',
             chapterId: 'ch-1',
             image_prompt: 'A dark castle',
+        });
+    });
+
+    it('opens AI action modal when Summarize button clicked', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByTitle(/summarize the selected text/i)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/summarize the selected text/i));
+        await waitFor(() => {
+            expect(screen.getByText('Summarize')).toBeInTheDocument();
+        });
+    });
+
+    it('submits summarize action with chapter content when confirmed', async () => {
+        const mockMutate = vi.fn().mockResolvedValue({ job_id: 'job-1' });
+        mockStoryAiAction.mockReturnValue({ mutateAsync: mockMutate, isPending: false });
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByTitle(/summarize the selected text/i)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/summarize the selected text/i));
+        await waitFor(() => {
+            expect(screen.getByText('Summarize')).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByRole('button', { name: /generate/i }));
+        await waitFor(() => {
+            expect(mockMutate).toHaveBeenCalledWith({
+                storyId: 'story-1',
+                chapterId: 'ch-1',
+                action: 'summarize',
+                target_text: 'Once upon a time...',
+                directive: '',
+            });
+        });
+        expect(awaitJobText).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1' }));
+    });
+
+    it('shows toast error when Rewrite clicked without a selection', async () => {
+        renderWithProviders(<StorySandbox />);
+        await waitFor(() => {
+            expect(screen.getByTitle(/rewrite the selected text/i)).toBeInTheDocument();
+        });
+        fireEvent.click(screen.getByTitle(/rewrite the selected text/i));
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith('Select some text in the editor first');
         });
     });
 });
