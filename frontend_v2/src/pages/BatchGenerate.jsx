@@ -2,8 +2,9 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, Play, Settings2, Wand2, Shuffle, Image as ImageIcon, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { jobsApi, generateApi, ApiError } from '../api';
+import { generateApi, ApiError } from '../api';
 import { useModelDirectories } from '../hooks/useModelDirectories';
+import { useJobStatus } from '../hooks/useJobStatus';
 
 const PRESETS = {
     character_sheet: {
@@ -46,7 +47,7 @@ const SIZE_OPTIONS = [
     { label: '1024 × 1024', width: 1024, height: 1024 },
 ];
 
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
+const TERMINAL_STATUSES = ['completed', 'failed', 'error', 'cancelled'];
 
 import { useQueryClient } from '@tanstack/react-query';
 import useSettingsStore from '../store/settingsStore';
@@ -70,9 +71,9 @@ export default function BatchGenerate() {
     const [sceneName, setSceneName] = useState('');
     const [seedMode, setSeedMode] = useState('random'); // 'random' | 'fixed' | 'increment'
     const [fixedSeed, setFixedSeed] = useState('');
-    const [jobs, setJobs] = useState([]);
+    const [jobIds, setJobIds] = useState([]);
+    const [settledCount, setSettledCount] = useState(0);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [isPolling, setIsPolling] = useState(false);
     const [checkpoint, setCheckpoint] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [sizeKey, setSizeKey] = useState(1); // 512 × 768 default
@@ -142,9 +143,11 @@ export default function BatchGenerate() {
             });
 
             const data = await generateApi.batch(workflows);
-            setJobs(data.jobs || []);
-            setIsPolling(true);
-            toast.success(`Created ${data.count} generation jobs`);
+            const created = data.jobs || [];
+            created.forEach(job => queryClient.setQueryData(['jobs', job.id], job));
+            setJobIds(created.map(j => j.id));
+            setSettledCount(0);
+            toast.success(`Created ${created.length} generation jobs`);
         } catch (e) {
             if (e instanceof ApiError) {
                 toast.error(e.message || 'Batch generation failed');
@@ -193,33 +196,15 @@ export default function BatchGenerate() {
         toast.success(`Loaded preset "${name}"`);
     }, [batchPresets]);
 
-    useEffect(() => {
-        if (!isPolling || jobs.length === 0) {
-            return;
-        }
-        let cancelled = false;
-        const timer = setInterval(async () => {
-            try {
-                const updated = await Promise.all(jobs.map(j => jobsApi.get(j.id)));
-                if (cancelled) {
-                    return;
-                }
-                setJobs(updated);
-                if (updated.every(j => TERMINAL_STATUSES.includes(j.status))) {
-                    clearInterval(timer);
-                    setIsPolling(false);
-                }
-            } catch {
-                clearInterval(timer);
-                setIsPolling(false);
-            }
-        }, 4000);
-        return () => {
-            cancelled = true;
-            clearInterval(timer);
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isPolling, jobs.length]);
+    // Job progress arrives via the global WebSocket bridge (useJobsRealtime)
+    // which keeps the ['jobs', id] cache fresh; BatchJobRow reads it with
+    // useJobStatus (REST polling only as socket-down fallback). The parent
+    // just counts how many rows have reached a terminal state.
+    const handleJobSettled = useCallback(() => {
+        setSettledCount(count => count + 1);
+    }, []);
+
+    const batchActive = jobIds.length > 0 && settledCount < jobIds.length;
 
     return (
         <div className="p-6 max-w-5xl mx-auto">
@@ -412,38 +397,51 @@ export default function BatchGenerate() {
                         </button>
                     </div>
 
-                    {jobs.length > 0 && (
+                    {jobIds.length > 0 && (
                         <div className="bg-gray-800/40 border border-white/10 rounded-xl p-5">
                             <h2 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                                <RefreshCw size={14} className={isPolling ? 'animate-spin' : ''} /> Batch Jobs
+                                <RefreshCw size={14} className={batchActive ? 'animate-spin' : ''} /> Batch Jobs
                             </h2>
                             <div className="space-y-2">
-                                {jobs.map((job, idx) => {
-                                    const imageName = job.outputs?.[0]?.content;
-                                    return (
-                                        <div key={job.id} className="flex items-center gap-3 p-3 bg-gray-900/50 rounded-lg border border-white/5">
-                                            <span className="text-xs text-gray-500 font-mono w-6">{idx + 1}</span>
-                                            {imageName ? (
-                                                <img
-                                                    src={`/api/view/output/${imageName}`}
-                                                    alt={job.metadata?.prompt || 'Generated image'}
-                                                    className="w-14 h-14 object-cover rounded-md border border-white/10"
-                                                />
-                                            ) : (
-                                                <div className="w-14 h-14 rounded-md border border-white/10 bg-gray-800 flex items-center justify-center">
-                                                    <svg className="w-4 h-4 text-gray-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                                                </div>
-                                            )}
-                                            <span className="flex-1 text-sm text-gray-300 truncate">{job.metadata?.prompt || 'Untitled'}</span>
-                                            <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${job.status === 'completed' ? 'bg-green-500/10 text-green-400' : job.status === 'failed' || job.status === 'cancelled' ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400'}`}>{job.status}</span>
-                                        </div>
-                                    );
-                                })}
+                                {jobIds.map((jobId, idx) => (
+                                    <BatchJobRow key={jobId} jobId={jobId} index={idx} onSettled={handleJobSettled} />
+                                ))}
                             </div>
                         </div>
                     )}
                 </div>
             </div>
+        </div>
+    );
+}
+function BatchJobRow({ jobId, index, onSettled }) {
+    const { data: job } = useJobStatus(jobId);
+    const status = job?.status || 'queued';
+
+    useEffect(() => {
+        if (job && TERMINAL_STATUSES.includes(status)) {
+            onSettled?.(jobId);
+        }
+    }, [job, status, jobId, onSettled]);
+
+    const imageName = job?.outputs?.[0]?.content;
+
+    return (
+        <div className="flex items-center gap-3 p-3 bg-gray-900/50 rounded-lg border border-white/5">
+            <span className="text-xs text-gray-500 font-mono w-6">{index + 1}</span>
+            {imageName ? (
+                <img
+                    src={`/api/view/output/${imageName}`}
+                    alt={job.metadata?.prompt || 'Generated image'}
+                    className="w-14 h-14 object-cover rounded-md border border-white/10"
+                />
+            ) : (
+                <div className="w-14 h-14 rounded-md border border-white/10 bg-gray-800 flex items-center justify-center">
+                    <svg className="w-4 h-4 text-gray-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                </div>
+            )}
+            <span className="flex-1 text-sm text-gray-300 truncate">{job?.metadata?.prompt || 'Untitled'}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${status === 'completed' ? 'bg-green-500/10 text-green-400' : status === 'failed' || status === 'error' || status === 'cancelled' ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400'}`}>{status}</span>
         </div>
     );
 }

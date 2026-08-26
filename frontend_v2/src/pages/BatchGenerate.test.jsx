@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import BatchGenerate from './BatchGenerate';
@@ -19,11 +19,12 @@ function renderPage() {
     const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false } },
     });
-    return render(
+    render(
         <QueryClientProvider client={queryClient}>
             <BatchGenerate />
         </QueryClientProvider>
     );
+    return { queryClient };
 }
 
 describe('BatchGenerate page', () => {
@@ -162,5 +163,26 @@ describe('BatchGenerate page', () => {
         renderPage();
         fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
         await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Batch generation failed'));
+    });
+
+    it('reflects websocket-driven status changes without REST polling', async () => {
+        const { queryClient } = renderPage();
+        fireEvent.click(screen.getByRole('button', { name: /Generate 4 Images/ }));
+
+        await waitFor(() => expect(screen.getAllByText('queued')).toHaveLength(4));
+        const jobGets = fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/jobs/j'));
+        expect(jobGets).toHaveLength(0);
+
+        // Simulate the realtime bridge applying a JOB_COMPLETED payload.
+        act(() => {
+            queryClient.setQueryData(['jobs', 'j1'], {
+                ...createdJobs[0],
+                status: 'completed',
+                outputs: [{ content: 'done_1.png' }],
+            });
+        });
+
+        await waitFor(() => expect(screen.getByText('completed')).toBeInTheDocument());
+        expect(screen.getByAltText('prompt-1')).toHaveAttribute('src', '/api/view/output/done_1.png');
     });
 });
