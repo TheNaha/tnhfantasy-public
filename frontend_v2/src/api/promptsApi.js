@@ -19,13 +19,6 @@ export async function getCategories() {
 }
 
 /**
- * Get a single prompt by ID
- */
-export async function getPrompt(id) {
-    return api.get(`${API_BASE}/${id}`);
-}
-
-/**
  * Create a new prompt
  */
 export async function createPrompt(data) {
@@ -77,7 +70,6 @@ export async function magicPrompt(prompt) {
 export default {
     listPrompts,
     getCategories,
-    getPrompt,
     createPrompt,
     updatePrompt,
     deletePrompt,

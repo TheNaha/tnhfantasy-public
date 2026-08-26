@@ -20,6 +20,7 @@ const TYPE_OPTIONS = [
     { value: 'xtts', label: 'XTTS v2' },
     { value: 'bark', label: 'Bark' },
     { value: 'coqui', label: 'Coqui' },
+    { value: 'embedding', label: 'Embedding' },
     { value: 'other', label: 'Other' },
 ];
 
@@ -159,12 +160,16 @@ export default function Voices() {
                             value={formData.name}
                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         />
-                        <FormInput
-                            label="Type"
-                            placeholder="Select type"
-                            value={formData.type}
+                        <label className="block text-xs text-gray-400 mb-1">Type</label>
+                        <select
+                            value={formData.type || 'xtts'}
                             onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                        />
+                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                        >
+                            {TYPE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
                         <FormInput
                             label="Voice Profile"
                             placeholder="e.g. test_speaker, default"

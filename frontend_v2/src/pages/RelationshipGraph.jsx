@@ -73,10 +73,15 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
 
         const edgeSet = new Set(edges.map(e => `${e.source}→${e.target}`));
 
-        let frame = 0;
-        const animate = () => {
-            frame++;
+        // The simulation produces no visible output until it finishes (final
+        // positions are committed once), so run several physics steps per
+        // animation frame and bail out early once the layout has settled —
+        // this keeps large graphs from stalling for hundreds of frames.
+        let step = 0;
+        const stepsTotal = iterations;
+        const stepsPerFrame = nodes.length > 100 ? 2 : 6;
 
+        const simulateStep = () => {
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     const a = pos.get(nodes[i].id);
@@ -115,6 +120,7 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
                 b.vy -= fy;
             }
 
+            let energy = 0;
             for (const n of nodes) {
                 const p = pos.get(n.id);
                 if (!p) continue;
@@ -128,6 +134,8 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
                 p.x += p.vx;
                 p.y += p.vy;
 
+                energy += p.vx * p.vx + p.vy * p.vy;
+
                 const minX = bounds;
                 const maxX = SVG_WIDTH - bounds;
                 const minY = bounds;
@@ -137,11 +145,26 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
                 if (p.y < minY) { p.y = minY; p.vy *= -0.3; }
                 if (p.y > maxY) { p.y = maxY; p.vy *= -0.3; }
             }
+            return energy;
+        };
 
-            if (frame < iterations) {
-                requestAnimationFrame(animate);
-            } else {
+        const animate = () => {
+            let settled = false;
+            for (let s = 0; s < stepsPerFrame && step < stepsTotal; s++) {
+                step++;
+                const energy = simulateStep();
+                // Settled layouts stay put — stop burning frames once motion
+                // is negligible regardless of remaining iteration budget.
+                if (energy < 0.05) {
+                    settled = true;
+                    break;
+                }
+            }
+
+            if (settled || step >= stepsTotal) {
                 setPositions(new Map(pos));
+            } else {
+                requestAnimationFrame(animate);
             }
         };
 

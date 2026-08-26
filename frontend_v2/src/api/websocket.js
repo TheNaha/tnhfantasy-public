@@ -169,18 +169,6 @@ export function connect() {
 }
 
 /**
- * Disconnect from WebSocket server
- */
-export function disconnect() {
-    if (socket) {
-        socket.disconnect();
-        socket = null;
-    }
-    isConnected = false;
-    connectionPromise = null;
-}
-
-/**
  * Get connection status
  * @returns {boolean}
  */
@@ -290,19 +278,6 @@ function emitLocal(event, data) {
                 console.error(`[WebSocket] Listener error for ${event}:`, e);
             }
         });
-    }
-}
-
-/**
- * Send a message to the server (emit)
- * @param {string} event - Event name
- * @param {any} data - Data to send
- */
-export async function emit(event, data) {
-    await connect();
-
-    if (socket) {
-        socket.emit(event, data);
     }
 }
 
@@ -493,7 +468,6 @@ export function useWebSocket(topics = []) {
     return {
         isConnected: connected,
         subscribe: subscribeToEvent,
-        emit,
         cancelJob,
     };
 }
@@ -504,12 +478,10 @@ export function useWebSocket(topics = []) {
 
 export default {
     connect,
-    disconnect,
     subscribe,
     unsubscribe,
     on,
     off,
-    emit,
     cancelJob,
     requestReplay,
     dispatchReplayEvents,

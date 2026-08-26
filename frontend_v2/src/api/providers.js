@@ -15,12 +15,6 @@ export const providersApi = {
     list: () => api.get(P),
 
     /**
-     * Get a single provider by its unique ID.
-     * @param {string} providerId - e.g. "modal-primary"
-     */
-    get: (providerId) => api.get(`${P}/${providerId}`),
-
-    /**
      * Register a new provider.
      * @param {object} config - Provider configuration including `id`, `type`,
      *   `credentials`, and `config` fields.

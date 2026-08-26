@@ -11,6 +11,7 @@ import {
 } from '../hooks/useWorldVault';
 import { useChats } from '../hooks/useChats';
 import { useStories } from '../hooks/useStories';
+import { useModelDirectories } from '../hooks/useModelDirectories';
 import EmptyState from '../components/EmptyState';
 import FormInput from '../components/common/FormInput';
 import { useConfirmation } from '../store/confirmationStore';
@@ -37,6 +38,8 @@ export default function Scenarios() {
     const { mutate: applyScenario } = useApplyScenario();
     const { data: chats = [] } = useChats();
     const { data: stories = [] } = useStories();
+    const { modelsByKey } = useModelDirectories([{ key: 'checkpoints', directory: 'models/checkpoints', label: 'checkpoints' }]);
+    const checkpoints = modelsByKey.checkpoints || [];
     const { confirm } = useConfirmation();
 
     const handleCreate = () => {
@@ -140,15 +143,31 @@ export default function Scenarios() {
                             {editingId ? 'Edit Scenario' : 'New Scenario'}
                         </h2>
                         {FORM_FIELDS.map((field) => (
-                            <FormInput
-                                key={field.key}
-                                label={field.label}
-                                type={field.type}
-                                placeholder={field.placeholder}
-                                required={field.required}
-                                value={formData[field.key]}
-                                onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
-                            />
+                            field.key === 'default_checkpoint' ? (
+                                <div key={field.key}>
+                                    <label className="block text-xs text-gray-400 mb-1">{field.label}</label>
+                                    <select
+                                        value={formData[field.key] || ''}
+                                        onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
+                                        className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                                    >
+                                        <option value="">Auto (global default)</option>
+                                        {checkpoints.map(c => (
+                                            <option key={c.name} value={c.name}>{c.display_name || c.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            ) : (
+                                <FormInput
+                                    key={field.key}
+                                    label={field.label}
+                                    type={field.type}
+                                    placeholder={field.placeholder}
+                                    required={field.required}
+                                    value={formData[field.key]}
+                                    onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
+                                />
+                            )
                         ))}
                         <div className="flex justify-end gap-3">
                             <button onClick={closeForm} className="px-4 py-2 text-gray-400 hover:text-white">

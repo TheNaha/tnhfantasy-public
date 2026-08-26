@@ -81,8 +81,6 @@ export const assetsApi = {
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)),
         ...options,
     }),
-
-    move: (assetId, body) => api.post(`${API_V2_BASE}/assets/${assetId}/move`, body),
 };
 
 export default filesApi;

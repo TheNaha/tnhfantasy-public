@@ -20,6 +20,8 @@ const NAV_ITEMS = [
     { label: 'World Graph', to: '/world-graph' },
     { label: 'World Vault', to: '/world-vault' },
     { label: 'Locations', to: '/locations' },
+    { label: 'Lorebooks', to: '/lorebooks' },
+    { label: 'Prompt Library', to: '/prompts' },
     { label: 'Scenarios', to: '/scenarios' },
     { label: 'Voices', to: '/voices' },
     { label: 'Installed Models', to: '/models/installed' },
