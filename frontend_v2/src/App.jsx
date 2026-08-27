@@ -25,7 +25,7 @@ import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ChatRouteGuard, StoryRouteGuard } from './components/RouteQueryGuard';
-import { useSettings } from './store/settingsStore';
+import { useSettingsStore } from './store/settingsStore';
 import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
@@ -166,8 +166,11 @@ function GlobalHooks() {
 }
 
 function App() {
-    const settings = useSettings();
-    const queryUiSettings = settings?.ui;
+    const queryUiSettings = useSettingsStore((state) => state.settings.ui);
+    const toastDurations = useSettingsStore((state) => ({
+        success: state.settings.ui.toastSuccessDuration,
+        error: state.settings.ui.toastErrorDuration,
+    }));
 
     const [queryClient] = useState(() => (
         new QueryClient({
@@ -243,14 +246,14 @@ function App() {
                             border: '1px solid #374151',
                         },
                         success: {
-                            duration: settings.ui.toastSuccessDuration,
+                            duration: toastDurations.success,
                             iconTheme: {
                                 primary: '#10b981',
                                 secondary: '#1f2937',
                             },
                         },
                         error: {
-                            duration: settings.ui.toastErrorDuration,
+                            duration: toastDurations.error,
                             iconTheme: {
                                 primary: '#ef4444',
                                 secondary: '#1f2937',

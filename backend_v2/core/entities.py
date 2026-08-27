@@ -971,16 +971,22 @@ class LorebookEntry(SQLModel, table=True):
     __tablename__ = "lorebook_entries"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     lorebook_id: str = Field(foreign_key="lorebooks.id", index=True)
-    
+
     # Trigger words or keys for this entry
     keys: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     content: str = Field(sa_column=Column(Text))
-    
+    category: str | None = Field(default=None, index=True)
+    tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
+    depth: int = Field(default=4)
+    case_sensitive: bool = Field(default=False)
+    selective_logic: str | None = Field(default=None)
+    probability: int | None = Field(default=None)
+
     # 384 dimensions for all-MiniLM-L6-v2 (CPU optimized)
     embedding: list[float] | None = Field(default=None, sa_column=Column(Vector(384)))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
+
     lorebook: Optional["Lorebook"] = Relationship(back_populates="entries")
 
 class Scenario(SQLModel, table=True):
@@ -989,6 +995,8 @@ class Scenario(SQLModel, table=True):
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
     prompt_template: str = Field(sa_column=Column(Text))
+    default_checkpoint: str | None = Field(default=None)
+    default_voice_profile: str | None = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -1011,7 +1019,7 @@ class Story(SQLModel, table=True):
     character_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # protagonist characters
     lorebook_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active lorebooks
     location_ids: list[str] = Field(default=[], sa_column=Column(JSONColumn))  # active locations
-    scenario_id: str | None = Field(default=None)  # base scenario
+    scenario_id: str | None = Field(default=None, foreign_key="scenarios.id")  # base scenario
     llm_model: str | None = Field(default=None)  # Per-story LLM model override
     memory: str | None = Field(default=None, sa_column=Column(Text))  # Global author's note / story memory
     # Story state

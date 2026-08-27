@@ -23,6 +23,21 @@ from infrastructure.logging import get_logger
 logger = get_logger("model_repo_v2")
 
 
+def get_file_priority(f):
+    """Lower is better. Prefer safetensors, avoid GGUF."""
+    name = f.get("name", "").lower()
+    score = 0
+    if name.endswith(".safetensors"):
+        score -= 100
+    elif name.endswith(".gguf"):
+        score -= 75
+    elif name.endswith((".ckpt", ".pt", ".pth", ".bin")):
+        score -= 50
+    if f.get("primary", False):
+        score -= 10
+    return score
+
+
 def parse_civitai_datetime(value: Any) -> datetime | None:
     """Parse CivitAI datetime string to Python datetime object."""
     if value is None:
@@ -154,29 +169,8 @@ class ModelRepositoryV2:
             # Create files - prefer safetensors format
             files_list = version_data.get("files", [])
             
-            # Find the best file to use (prefer safetensors)
-            def get_file_priority(f):
-                """Lower is better. Prefer safetensors, avoid GGUF."""
-                name = f.get("name", "").lower()
-                score = 0
-                
-                # Extension priority
-                if name.endswith(".safetensors"):
-                    score -= 100
-                elif name.endswith(".gguf"):
-                    score -= 75  # Prefer GGUF over ckpt
-                elif name.endswith((".ckpt", ".pt", ".pth", ".bin")):
-                    score -= 50
-                    
-                # Primary flag priority
-                if f.get("primary", False):
-                    score -= 10
-                    
-                return score
-            
-            # Sort files by priority and take the best one
             sorted_files = sorted(files_list, key=get_file_priority)
-            
+
             # Only store the primary (best) file - no need for multiple formats
             for i, file_data in enumerate(sorted_files[:1]):  # Take only the first (best) file
                 hashes = file_data.get("hashes", {})
@@ -271,26 +265,8 @@ class ModelRepositoryV2:
             # Create files - prefer safetensors format
             files_list = version_data.get("files", [])
             
-            def get_file_priority(f):
-                name = f.get("name", "").lower()
-                score = 0
-                
-                # Extension priority
-                if name.endswith(".safetensors"):
-                    score -= 100
-                elif name.endswith(".gguf"):
-                    score -= 75  # Prefer GGUF over ckpt
-                elif name.endswith((".ckpt", ".pt", ".pth", ".bin")):
-                    score -= 50
-                    
-                # Primary flag priority
-                if f.get("primary", False):
-                    score -= 10
-                    
-                return score
-            
             sorted_files = sorted(files_list, key=get_file_priority)
-            
+
             for file_data in sorted_files[:1]:
                 hashes = file_data.get("hashes", {})
                 original_name = file_data.get("name", "model.safetensors")
@@ -1322,17 +1298,24 @@ class ModelRepositoryV2:
         stmt = select(ModelV2).where(ModelV2.description.like("%Auto-discovered%"))
         return self.session.exec(stmt).all()
 
-    def get_all_storage_paths(self) -> list[str]:
+    def _iter_file_model_paths(self, paths: list[str] | None = None):
+        """Yield (file, version, model) tuples for files joined with their model info."""
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
         )
-        paths = []
+        if paths:
+            filenames = [p.split('/')[-1] for p in paths]
+            stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
         for file, version, model in self.session.exec(stmt).all():
             storage_path = f"models/{model.directory}/{file.storage_filename}"
-            paths.append(storage_path)
-        return paths
+            if paths and storage_path not in paths:
+                continue
+            yield file, version, model, storage_path
+
+    def get_all_storage_paths(self) -> list[str]:
+        return [p for _, _, _, p in self._iter_file_model_paths()]
 
     def get_models_by_civitai_ids(self, civitai_ids: list[int]) -> list[ModelV2]:
         stmt = select(ModelV2).where(ModelV2.civitai_model_id.in_(civitai_ids))
@@ -1343,18 +1326,7 @@ class ModelRepositoryV2:
         return self.session.exec(stmt).all()
         
     def get_file_ids_by_storage_paths(self, paths: list[str]) -> dict[str, int]:
-        stmt = select(ModelFile, ModelVersion, ModelV2).join(
-            ModelVersion, ModelFile.version_id == ModelVersion.id
-        ).join(
-            ModelV2, ModelVersion.model_id == ModelV2.id
-        )
-        if paths:
-            filenames = [p.split('/')[-1] for p in paths]
-            stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
-            
-        path_to_file_id = {}
-        for file, version, model in self.session.exec(stmt).all():
-            storage_path = f"models/{model.directory}/{file.storage_filename}"
-            if not paths or storage_path in paths:
-                path_to_file_id[storage_path] = file.id
-        return path_to_file_id
+        return {
+            path: file.id
+            for file, _, _, path in self._iter_file_model_paths(paths)
+        }

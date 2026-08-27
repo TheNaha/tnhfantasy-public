@@ -91,7 +91,7 @@ export default function WorldTimeline() {
     const handleEventClick = (event) => {
         if (event.type === 'message' && event.chat_id) navigate(`/chat/${event.chat_id}`);
         else if (event.type === 'chapter' && event.story_id) navigate(`/story/${event.story_id}`);
-        else if (event.type === 'memory') navigate('/characters');
+        else if (event.type === 'memory' && event.character_id) navigate(`/characters#char-${event.character_id}`);
         else if (event.type === 'image') navigate('/gallery');
     };
 

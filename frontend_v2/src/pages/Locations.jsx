@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Search, MapPin, X } from 'lucide-react';
+import { Plus, Edit3, Trash2, Search, MapPin, X, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { api } from '../api';
 import {
     useLocations,
     useCreateLocation,
@@ -18,7 +19,6 @@ const FORM_FIELDS = [
     { key: 'description', label: 'Description', type: 'textarea', placeholder: 'A vivid description of this location...' },
     { key: 'atmosphere', label: 'Atmosphere', type: 'textarea', placeholder: 'The mood, lighting, sounds, and feeling of this place...' },
     { key: 'tags', label: 'Tags', type: 'text', placeholder: 'tavern, forest, castle (comma-separated)' },
-    { key: 'image_path', label: 'Image Path', type: 'text', placeholder: 'Optional reference image path' },
 ];
 
 const DEFAULT_FORM = {
@@ -34,7 +34,9 @@ import { useSearchParams } from 'react-router-dom';
 export default function Locations() {
     const [searchParams, setSearchParams] = useSearchParams();
     const searchQuery = searchParams.get('q') || '';
-    
+    const imageInputRef = useRef(null);
+    const [uploadingImage, setUploadingImage] = false;
+
     const setSearchQuery = (query) => {
         if (query) {
             setSearchParams({ q: query }, { replace: true });
@@ -125,6 +127,24 @@ export default function Locations() {
         }
     };
 
+    const handleImageUpload = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file || !editingLocation) return;
+        setUploadingImage(true);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            await api.post(`/api/v2/locations/${editingLocation.id}/image`, formData);
+            toast.success('Image uploaded');
+            window.location.reload();
+        } catch {
+            toast.error('Failed to upload image');
+        } finally {
+            setUploadingImage(false);
+        }
+    };
+
     const addTag = () => {
         const tag = tagInput.trim();
         if (tag && !form.tags.includes(tag)) {
@@ -198,6 +218,13 @@ export default function Locations() {
                             layout
                             className="p-4 rounded-xl border border-white/10 bg-gray-800/40 hover:bg-gray-800/60 hover:border-white/20 transition-all group"
                         >
+                            {location.image_path && (
+                                <img
+                                    src={location.image_path.startsWith('/') ? location.image_path : `/static/${location.image_path}`}
+                                    alt={location.name}
+                                    className="w-full h-32 rounded-lg object-cover mb-3 border border-white/10"
+                                />
+                            )}
                             <div className="flex items-start justify-between mb-2">
                                 <div className="flex items-center gap-2 min-w-0">
                                     <MapPin size={16} className="text-blue-400 shrink-0" />
@@ -303,6 +330,40 @@ export default function Locations() {
                                     )}
                                 </div>
                             ))}
+                            {editingLocation && (
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-300 mb-1">Image</label>
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            ref={imageInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={handleImageUpload}
+                                        />
+                                        {editingLocation.image_path ? (
+                                            <img
+                                                src={editingLocation.image_path.startsWith('/') ? editingLocation.image_path : `/static/${editingLocation.image_path}`}
+                                                alt={editingLocation.name}
+                                                className="w-16 h-16 rounded-lg object-cover border border-white/10"
+                                            />
+                                        ) : (
+                                            <div className="w-16 h-16 rounded-lg bg-gray-800 border border-white/10 flex items-center justify-center">
+                                                <ImageIcon size={20} className="text-gray-600" />
+                                            </div>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => imageInputRef.current?.click()}
+                                            disabled={uploadingImage}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-40"
+                                        >
+                                            {uploadingImage ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                                            {uploadingImage ? 'Uploading...' : 'Upload'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex gap-2 justify-end mt-4">
                                 <button onClick={resetForm} className="px-4 py-2 text-gray-400 hover:text-white transition-colors">
                                     Cancel

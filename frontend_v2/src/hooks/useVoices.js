@@ -1,13 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
-export const useVoices = (characterId = null) => {
+export const useVoices = () => {
     return useQuery({
-        queryKey: ['world_vault', 'voices', characterId],
-        queryFn: () => {
-            const url = characterId ? `/api/v2/voices?character_id=${characterId}` : '/api/v2/voices';
-            return api.get(url);
-        },
+        queryKey: ['world_vault', 'voices'],
+        queryFn: () => api.get('/api/v2/voices'),
     });
 };
 

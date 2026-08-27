@@ -45,14 +45,18 @@ export default function StoryReader() {
             const data = await api.get(exportUrl, { timeout: 180000 });
             let blob, filename;
             if (format === 'md' || format === 'markdown') {
-                blob = new Blob([data.content], { type: 'text/markdown' });
+                const md = typeof data === 'string' ? data
+                    : data instanceof Response ? await data.text()
+                        : data.content;
+                blob = new Blob([md], { type: 'text/markdown' });
                 filename = 'story.md';
             } else if (binaryFormats.includes(format)) {
-                blob = await data.blob();
+                blob = data instanceof Response ? await data.blob() : new Blob([data]);
                 filename = `story.${format === 'comic' ? 'pdf' : format === 'webtoon' ? 'png' : format}`;
             } else {
                 // JSON
-                blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+                blob = new Blob([json], { type: 'application/json' });
                 filename = 'story.json';
             }
             const url = URL.createObjectURL(blob);

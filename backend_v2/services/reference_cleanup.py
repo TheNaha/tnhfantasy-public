@@ -17,22 +17,28 @@ def _without(ids, entity_id):
     return [i for i in ids if i != entity_id]
 
 
+def _scrub_json_array(session, model, field, entity_id):
+    """Remove entity_id from JSON arrays using SQL-level filtering.
+
+    Uses LIKE to find only rows that may contain the id, avoiding
+    full-table scans on every delete.
+    """
+    pattern = f'%"{entity_id}"%'
+    rows = session.exec(select(model).where(getattr(model, field).like(pattern))).all()
+    for row in rows:
+        setattr(row, field, _without(getattr(row, field), entity_id))
+
+
 def _scrub_stories(session, field, entity_id):
-    for row in session.exec(select(Story)).all():
-        if entity_id in getattr(row, field):
-            setattr(row, field, _without(getattr(row, field), entity_id))
+    _scrub_json_array(session, Story, field, entity_id)
 
 
 def _scrub_chats(session, field, entity_id):
-    for row in session.exec(select(Chat)).all():
-        if entity_id in getattr(row, field):
-            setattr(row, field, _without(getattr(row, field), entity_id))
+    _scrub_json_array(session, Chat, field, entity_id)
 
 
 def _scrub_campaigns(session, field, entity_id):
-    for row in session.exec(select(Campaign)).all():
-        if entity_id in getattr(row, field):
-            setattr(row, field, _without(getattr(row, field), entity_id))
+    _scrub_json_array(session, Campaign, field, entity_id)
 
 
 def scrub_entity_references(session: Session, kind: str, entity_id: str) -> None:

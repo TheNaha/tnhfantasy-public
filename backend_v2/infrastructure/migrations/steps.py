@@ -1602,6 +1602,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Create personas library table; add chats persona link + author's note columns",
             apply_fn=_migration_061_add_personas_and_chat_persona_fields,
         ),
+        MigrationStep(
+            version="062_add_scenario_fields_and_lorebook_entry_taxonomy",
+            description="Add scenario default_checkpoint/voice_profile; add lorebook entry category/tags/depth/case_sensitive/selective_logic/probability",
+            apply_fn=_migration_062_add_scenario_fields_and_lorebook_entry_taxonomy,
+        ),
     ]
 
 
@@ -2303,6 +2308,42 @@ def _migration_061_add_personas_and_chat_persona_fields(conn) -> bool:
         index_names = {idx["name"] for idx in inspector.get_indexes("chats")}
         if "idx_chat_persona_id" not in index_names:
             conn.execute(text("CREATE INDEX idx_chat_persona_id ON chats (persona_id)"))
+            changed = True
+    return changed
+
+
+def _migration_062_add_scenario_fields_and_lorebook_entry_taxonomy(conn) -> bool:
+    """Add scenario default_checkpoint/voice_profile and lorebook entry taxonomy columns."""
+    inspector = inspect(conn)
+    changed = False
+    if "scenarios" in inspector.get_table_names():
+        existing = {col["name"] for col in inspector.get_columns("scenarios")}
+        for column, sql_type in (("default_checkpoint", "VARCHAR"), ("default_voice_profile", "TEXT")):
+            if column in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE scenarios ADD COLUMN {column} {sql_type}"))
+            logger.info("migration_column_added", table="scenarios", column=column)
+            changed = True
+    if "lorebook_entries" in inspector.get_table_names():
+        existing = {col["name"] for col in inspector.get_columns("lorebook_entries")}
+        for column, sql_type in (
+            ("category", "VARCHAR"),
+            ("tags", "JSON"),
+            ("depth", "INTEGER"),
+            ("case_sensitive", "BOOLEAN"),
+            ("selective_logic", "VARCHAR"),
+            ("probability", "INTEGER"),
+        ):
+            if column in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE lorebook_entries ADD COLUMN {column} {sql_type}"))
+            logger.info("migration_column_added", table="lorebook_entries", column=column)
+            changed = True
+        if "depth" not in existing:
+            conn.execute(text("UPDATE lorebook_entries SET depth = 4 WHERE depth IS NULL"))
+        index_names = {idx["name"] for idx in inspector.get_indexes("lorebook_entries")}
+        if "idx_lorebook_entry_category" not in index_names:
+            conn.execute(text("CREATE INDEX idx_lorebook_entry_category ON lorebook_entries (category)"))
             changed = True
     return changed
 

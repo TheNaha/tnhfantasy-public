@@ -27,10 +27,10 @@ export default function ExpressionSelector({ characterId, character, inline = fa
     const activeExpression = expressionData._active || Object.keys(expressionData).filter(k => !k.startsWith('_'))[0];
 
     const handleSelect = (expressionKey) => {
+        const next = { ...expressionData, _active: expressionKey };
         updateExpressions({
             characterId,
-            expressions: expressionData,
-            active_expression: expressionKey,
+            expressions: next,
         }, {
             onSuccess: () => {
                 toast.success(`Switched to ${expressionKey}`);

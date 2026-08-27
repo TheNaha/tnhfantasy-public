@@ -1,9 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { normalizeReconciliationStatus as normalizeRealtimeReconciliationStatus } from '../utils/providerStatus';
-import { unwrapPayload, normalizeObject, extractProviderId } from '../utils/providerUtils';
-
-export { extractProviderId };
+import { unwrapPayload, normalizeObject } from '../utils/providerUtils';
 
 export function normalizeProviderSyncStatus(payload) {
     const source = unwrapPayload(payload);
@@ -95,52 +93,6 @@ export function mergeProviderSyncStatus(current, patch) {
         message: patchSource.message ?? currentStatus.message,
     });
 }
-
-
-
-export function normalizeModalStats(payload) {
-    const source = unwrapPayload(payload);
-    const statsSource = normalizeObject(source.modal_stats ?? source.stats ?? source);
-    const byDirectory = normalizeObject(statsSource.by_directory ?? statsSource.byDirectory);
-
-    return {
-        ...statsSource,
-        provider_id: statsSource.provider_id ?? source.provider_id ?? source.providerId ?? null,
-        total: Number(statsSource.total ?? statsSource.total_models ?? statsSource.total_models_in_modal ?? 0),
-        by_directory: byDirectory,
-    };
-}
-
-export function mergeModalStats(current, patch) {
-    const currentStats = normalizeModalStats(current);
-    const patchSource = unwrapPayload(patch);
-    const patchStats = normalizeModalStats(patchSource);
-    const rawPatchStats = normalizeObject(patchSource.modal_stats ?? patchSource.stats);
-    const hasExplicitTotal = patchSource.total !== undefined
-        || patchSource.total_models !== undefined
-        || patchSource.total_models_in_modal !== undefined
-        || rawPatchStats.total !== undefined
-        || rawPatchStats.total_models !== undefined
-        || rawPatchStats.total_models_in_modal !== undefined;
-    const mergedDirectory = {
-        ...currentStats.by_directory,
-        ...patchStats.by_directory,
-    };
-    const mergedStats = {
-        ...currentStats,
-        ...patchStats,
-        total: hasExplicitTotal ? patchStats.total : currentStats.total,
-        by_directory: mergedDirectory,
-    };
-
-    return normalizeModalStats({
-        ...currentStats,
-        ...patchSource,
-        stats: mergedStats,
-    });
-}
-
-
 
 // Add model to providers
 export function useAddModelToProviders() {

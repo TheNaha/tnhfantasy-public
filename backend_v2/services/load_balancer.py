@@ -197,7 +197,7 @@ class LoadBalancer:
             # Calculate actual running job counts from database.
             active_states = [JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING]
             running_jobs = session.exec(
-                select(Job).where(Job.status.in_(active_states))
+                select(Job).where(Job.status.in_(active_states)).limit(1000)
             ).all()
 
             active_job_counts: dict[str, int] = {}

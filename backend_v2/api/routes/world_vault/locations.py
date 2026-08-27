@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, model_validator
 from sqlmodel import Session, select, func
 
@@ -9,6 +10,7 @@ from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from core.entities import Location
 from core.exceptions import NotFoundError
+import config as app_config
 
 router = APIRouter()
 
@@ -121,3 +123,26 @@ def delete_location(location_id: str, session: Session = Depends(get_session), l
     session.delete(location)
     session.commit()
     return {"message": "Location deleted"}
+
+
+@router.post("/{location_id}/image")
+async def upload_location_image(location_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
+    location = location_repo.get(location_id)
+    if not location:
+        raise NotFoundError("Location", location_id)
+
+    base_dir = app_config.settings.location_image_dir
+    os.makedirs(f"{base_dir}/{location_id}", exist_ok=True)
+    ext = os.path.splitext(file.filename or "")[1] or ".png"
+    image_path = f"{base_dir}/{location_id}/image{ext}"
+
+    with open(image_path, "wb") as buffer:
+        from shutil import copyfileobj
+        copyfileobj(file.file, buffer)
+
+    location.image_path = image_path
+    location.updated_at = datetime.now(timezone.utc)
+    session.add(location)
+    session.commit()
+    session.refresh(location)
+    return {"message": "Image uploaded", "image_path": image_path}

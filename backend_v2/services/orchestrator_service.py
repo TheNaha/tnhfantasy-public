@@ -455,6 +455,7 @@ async def _tool_narrate_scene(
                 select(Message)
                 .where(Message.chat_id == chat_id, Message.created_at >= cutoff)
                 .order_by(Message.created_at)
+                .limit(200)
             ).all()
             for m in recent[-20:]:
                 if m.role == MessageRole.SYSTEM and (m.message_metadata or {}).get("source") == "narrator":

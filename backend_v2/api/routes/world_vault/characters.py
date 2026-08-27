@@ -265,6 +265,62 @@ def get_character_expressions(character_id: str, session: Session = Depends(get_
         "expressions_lora": character.expressions_lora or [],
     }
 
+class ExpressionUpdateRequest(BaseModel):
+    name: str
+    image_path: str | None = None
+    lora: str | None = None
+
+@router.post("/{character_id}/expressions")
+def add_character_expression(character_id: str, req: ExpressionUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+    expressions = dict(character.expressions or {})
+    expressions[req.name] = req.image_path or ""
+    character.expressions = expressions
+    if req.lora:
+        loras = list(character.expressions_lora or [])
+        if req.lora not in loras:
+            loras.append(req.lora)
+            character.expressions_lora = loras
+    character.updated_at = datetime.now(timezone.utc)
+    session.add(character)
+    session.commit()
+    session.refresh(character)
+    return _character_to_dict(character)
+
+@router.put("/{character_id}/expressions/{name}")
+def update_character_expression(character_id: str, name: str, req: ExpressionUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+    expressions = dict(character.expressions or {})
+    if name not in expressions:
+        raise NotFoundError("Expression", name)
+    expressions[name] = req.image_path or ""
+    character.expressions = expressions
+    character.updated_at = datetime.now(timezone.utc)
+    session.add(character)
+    session.commit()
+    session.refresh(character)
+    return _character_to_dict(character)
+
+@router.delete("/{character_id}/expressions/{name}")
+def delete_character_expression(character_id: str, name: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+    expressions = dict(character.expressions or {})
+    if name not in expressions:
+        raise NotFoundError("Expression", name)
+    expressions.pop(name, None)
+    character.expressions = expressions
+    character.updated_at = datetime.now(timezone.utc)
+    session.add(character)
+    session.commit()
+    session.refresh(character)
+    return _character_to_dict(character)
+
 @router.get("/{character_id}")
 def get_character(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
     character = character_repo.get(character_id)

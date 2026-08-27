@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    extractProviderId,
-    mergeModalStats,
     mergeProviderSyncStatus,
-    normalizeModalStats,
     normalizeProviderSyncStatus,
 } from './useProviderModels';
 
@@ -23,7 +20,6 @@ describe('useProviderModels helpers', () => {
 
         const normalized = normalizeProviderSyncStatus(payload);
 
-        expect(extractProviderId(payload)).toBe('provider-1');
         expect(normalized.status).toBe('completed');
         expect(normalized.phase).toBe('completed');
         expect(normalized.stats.downloads_completed).toBe(3);
@@ -88,56 +84,6 @@ describe('useProviderModels helpers', () => {
         expect(merged.stats.pending).toBe(1);
         expect(merged.models[0].provider_status.status).toBe('installed');
         expect(merged.models[0].provider_status.storage_path).toBe('models/checkpoints/test.safetensors');
-    });
-
-    it('normalizes modal stats updates from provider.stats_update events', () => {
-        const payload = {
-            data: {
-                provider_id: 'provider-1',
-                stats: {
-                    total: 5,
-                    by_directory: {
-                        checkpoints: 3,
-                    },
-                },
-            },
-        };
-
-        expect(normalizeModalStats(payload)).toEqual({
-            provider_id: 'provider-1',
-            total: 5,
-            by_directory: {
-                checkpoints: 3,
-            },
-        });
-    });
-
-    it('merges modal stats updates without losing directory breakdowns', () => {
-        const merged = mergeModalStats(
-            {
-                provider_id: 'provider-1',
-                total: 2,
-                by_directory: {
-                    checkpoints: 1,
-                },
-            },
-            {
-                data: {
-                    provider_id: 'provider-1',
-                    stats: {
-                        by_directory: {
-                            loras: 2,
-                        },
-                    },
-                },
-            }
-        );
-
-        expect(merged.total).toBe(2);
-        expect(merged.by_directory).toEqual({
-            checkpoints: 1,
-            loras: 2,
-        });
     });
 
     it('aliases normalized reconciliation storage totals for old and new field names', () => {

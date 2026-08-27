@@ -303,7 +303,6 @@ export function useProviderReconciliationState(providerId, { realtime = true } =
         queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers,
         queryFn: fetchProvidersList,
         staleTime: PROVIDERS_STALE_TIME,
-        refetchOnWindowFocus: true,
         enabled: Boolean(providerId),
         select: (providers) => {
             const provider = providers.find((entry) => entry.id === providerId);

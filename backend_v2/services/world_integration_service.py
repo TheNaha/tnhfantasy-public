@@ -61,6 +61,7 @@ async def _handle_impersonation(job_data: dict[str, Any]):
                     select(Message)
                     .where(Message.chat_id == imp_chat_id)
                     .order_by(Message.created_at)
+                    .limit(200)
                 ).all()
                 from services.context_builder import chat_context_kwargs
 
@@ -448,8 +449,8 @@ async def _handle_story_parse(job_data: dict[str, Any]):
     try:
         import json
         parsed = json.loads(text)
-    except Exception:
-        logger.warning("story_parse_invalid_json", job_id=job_data.get("id"))
+    except Exception as exc:
+        logger.warning("story_parse_invalid_json", job_id=job_data.get("id"), error=str(exc))
         return
     if not isinstance(parsed, dict):
         return

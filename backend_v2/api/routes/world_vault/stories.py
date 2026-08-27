@@ -189,8 +189,8 @@ def _chapter_panel_images(ch: StoryChapter, story_asset_paths: list[str], asset_
 
 
 @router.get("", response_model=list[Story])
-def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):
-    return story_repo.list_active()
+def list_stories(session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo), limit: int = 100, offset: int = 0):
+    return story_repo.list_active(limit=limit, offset=offset)
 
 @router.post("", response_model=Story)
 def create_story(req: CreateStoryRequest, session: Session = Depends(get_session), story_repo: StoryRepository = Depends(get_story_repo)):

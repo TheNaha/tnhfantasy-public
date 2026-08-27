@@ -258,7 +258,8 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
     """Classify an LLM job into a single semantic type.
 
     Returns one of: "chat_reply", "story_continue", "narrator",
-    "story_illustrate_prompt", "impersonation", "suggest_reply".
+    "story_illustrate_prompt", "impersonation", "suggest_reply",
+    "memory_extraction".
     """
     workflow_type = (job.workflow or {}).get("type") if isinstance(job.workflow, dict) else None
     result_type = final_result.get("type")
@@ -268,6 +269,8 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
         return "story_illustrate_prompt"
     if (job.metadata_ or {}).get("is_impersonation") is True or metadata_source == "impersonation":
         return "impersonation"
+    if metadata_source == "auto_memory" or workflow_type == "memory_extraction":
+        return "memory_extraction"
 
     for candidate in (result_type, workflow_type):
         if candidate in {"chat_reply", "story_continue", "narrator", "suggest_reply", "story_parse"}:
@@ -377,6 +380,28 @@ async def _finalize_llm_job(
             "chat_id": chat_id,
             "content": assistant_content,
         }
+    elif job_type == "memory_extraction":
+        from services.memory_extraction import parse_extraction_result, create_memories_from_extraction
+        text = extract_first_text(final_result) or ""
+        memories = parse_extraction_result(text)
+        character_id = job.metadata_.get("character_id") if job.metadata_ else None
+        if memories and character_id:
+            create_memories_from_extraction(job_service.session, character_id, memories)
+        await finalize_persisted_job_outputs(
+            job_service=job_service,
+            job_id=job_id,
+            outputs=[],
+            provider_id=provider_id,
+            load_balancer=load_balancer,
+            process_image_background_fn=None,
+            event_extra={
+                "type": "memory_extraction",
+                "metadata": {"character_id": character_id, "type": "memory_extraction"},
+                "character_id": character_id,
+                "count": len(memories),
+            },
+        )
+        return
     elif job_type in ("chat_reply", "story_continue"):
         assistant_content = ""
         assistant_output: dict[str, Any] = {}
@@ -410,7 +435,7 @@ async def _finalize_llm_job(
             if metadata.get("agentic") and metadata.get("orchestrator_depth", 0) < max_depth:
                 allowed_tools = {
                     t.get("function", {}).get("name")
-                    for t in (job.workflow.get("tools") or [])
+                    for t in ((job.workflow or {}).get("tools") or [])
                     if isinstance(t, dict) and t.get("function", {}).get("name")
                 }
                 if not allowed_tools:
@@ -521,6 +546,21 @@ async def _finalize_llm_job(
         process_image_background_fn=None,
         event_extra=event_extra,
     )
+
+    if job_type == "chat_reply":
+        chat_id = job.metadata_.get("chat_id") if job.metadata_ else None
+        character_id = job.metadata_.get("character_id") if job.metadata_ else None
+        if chat_id and character_id:
+            try:
+                from services.memory_extraction import enqueue_memory_extraction
+                await enqueue_memory_extraction(
+                    session=job_service.session if hasattr(job_service, "session") else None,
+                    chat_id=chat_id,
+                    character_id=character_id,
+                    job_service=job_service,
+                )
+            except Exception as exc:
+                logger.debug("memory_extraction_hook_failed", job_id=job_id, error=str(exc))
 
 
 async def _finalize_image_job(

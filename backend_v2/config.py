@@ -165,6 +165,7 @@ class Settings(BaseSettings):
     output_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/output"))
     input_dir: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/input"))
     character_avatar_dir: str = "/data/characters"
+    location_image_dir: str = "/data/location_images"
 
     @model_validator(mode="before")
     @classmethod

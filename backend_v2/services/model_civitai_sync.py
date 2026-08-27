@@ -173,31 +173,18 @@ class ModelCivitaiSyncService:
                     existing_images_by_version.setdefault(img.version_id, []).append(img)
 
 
+            civitai_by_id = {lv.civitai_version_id: lv for lv in local_versions if lv.civitai_version_id}
+            civitai_by_name = {lv.name.lower(): lv for lv in local_versions}
+            unlinked_v1 = next((lv for lv in local_versions if lv.name == "v1.0" and not lv.civitai_version_id), None)
+
             for civitai_version in civitai_versions:
-                matched_version = None
+                civ_id = civitai_version.get("id")
+                civ_name = civitai_version.get("name", "").lower()
 
-                # Try matching by CivitAI version ID first
-                for lv in local_versions:
-                    if lv.civitai_version_id == civitai_version.get("id"):
-                        matched_version = lv
-                        break
-
-                # Fall back to name matching
-                if not matched_version:
-                    for lv in local_versions:
-                        if lv.name.lower() == civitai_version.get("name", "").lower():
-                            matched_version = lv
-                            break
-
-                # Fall back to reusing the auto-discovered "v1.0" version if it's unlinked
-                if not matched_version:
-                    for lv in local_versions:
-                        if lv.name == "v1.0" and not lv.civitai_version_id:
-                            matched_version = lv
-                            matched_version.name = civitai_version.get("name", "v1.0")
-                            break
-
-                if not matched_version:
+                matched_version = civitai_by_id.get(civ_id) or civitai_by_name.get(civ_name) or unlinked_v1
+                if matched_version is unlinked_v1:
+                    matched_version.name = civitai_version.get("name", "v1.0")
+                    unlinked_v1 = None
                     # Create a new ModelVersion for unmatched CivitAI versions
                     new_version = ModelVersion(
                         model_id=model.id,
