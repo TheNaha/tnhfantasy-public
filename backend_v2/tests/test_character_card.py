@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+from unittest.mock import patch
 
 import pytest
 from PIL import Image, PngImagePlugin
@@ -116,23 +117,27 @@ class TestCharacterCardExport:
 
 
 class TestCharacterCardImport:
-    def test_import_creates_character(self, client, session):
+    def test_import_creates_character(self, client, session, tmp_path):
         png_bytes = _create_card_png("Elven Archer")
-        response = client.post(
-            "/api/v2/characters/import",
-            files={"file": ("test.png", png_bytes, "image/png")},
-        )
-        assert response.status_code == 200
+        with patch("api.routes.world_vault.characters.app_config") as mock_cfg:
+            mock_cfg.settings.character_avatar_dir = str(tmp_path)
+            response = client.post(
+                "/api/v2/characters/import",
+                files={"file": ("test.png", png_bytes, "image/png")},
+            )
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["name"] == "Elven Archer"
 
-    def test_import_character_persists_to_db(self, client, session):
+    def test_import_character_persists_to_db(self, client, session, tmp_path):
         png_bytes = _create_card_png("Forest Elf")
-        response = client.post(
-            "/api/v2/characters/import",
-            files={"file": ("test.png", png_bytes, "image/png")},
-        )
-        assert response.status_code == 200
+        with patch("api.routes.world_vault.characters.app_config") as mock_cfg:
+            mock_cfg.settings.character_avatar_dir = str(tmp_path)
+            response = client.post(
+                "/api/v2/characters/import",
+                files={"file": ("test.png", png_bytes, "image/png")},
+            )
+        assert response.status_code == 200, response.text
         char_id = response.json()["id"]
 
         char = session.get(Character, char_id)

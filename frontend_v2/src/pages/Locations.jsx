@@ -35,7 +35,7 @@ export default function Locations() {
     const [searchParams, setSearchParams] = useSearchParams();
     const searchQuery = searchParams.get('q') || '';
     const imageInputRef = useRef(null);
-    const [uploadingImage, setUploadingImage] = false;
+    const [uploadingImage, setUploadingImage] = useState(false);
 
     const setSearchQuery = (query) => {
         if (query) {

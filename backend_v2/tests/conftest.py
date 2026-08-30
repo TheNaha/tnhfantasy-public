@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from api.deps import get_session
+from api.deps import get_session, get_session_sync
 from api.main import app
 import infrastructure.database as _infra_db
 
@@ -37,18 +37,28 @@ def session_fixture(engine):
 
 
 @pytest.fixture(name="client")
-def client_fixture(session: Session):
+def client_fixture(session: Session, engine):
     """Create test client with overridden database session."""
     def get_session_override():
         return session
 
+    def get_session_sync_override():
+        return Session(engine)
+
     app.dependency_overrides[get_session] = get_session_override
     original_get_session = _infra_db.get_session
     _infra_db.get_session = get_session_override
+    original_get_session_sync = _infra_db.get_session_sync
+    _infra_db.get_session_sync = get_session_sync_override
+    original_api_get_session_sync = get_session_sync
+    import api.deps as _api_deps
+    _api_deps.get_session_sync = get_session_sync_override
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
     _infra_db.get_session = original_get_session
+    _infra_db.get_session_sync = original_get_session_sync
+    _api_deps.get_session_sync = original_api_get_session_sync
 
 
 @pytest.fixture
