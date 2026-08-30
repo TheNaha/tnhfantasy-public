@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
     useSendMessage, useCreateChat, useDeleteChat, useRenameChat, useUpdateChat,
     useSuggestReply, useEditMessage, useRollbackChat, useRegenerateReply,
@@ -34,7 +35,7 @@ export function useChatWorkspaceMutations() {
     const generateSceneMutation = useGenerateScene();
     const suggestReplyMutation = useSuggestReply();
 
-    return {
+    return useMemo(() => ({
         sendMessageMutation,
         createChatMutation,
         exportJsonlMutation,
@@ -55,5 +56,11 @@ export function useChatWorkspaceMutations() {
         illustrateMutation,
         generateSceneMutation,
         suggestReplyMutation,
-    };
+    }), [
+        sendMessageMutation, createChatMutation, exportJsonlMutation, importChatMutation,
+        deleteChatMutation, renameChatMutation, updateChatMutation, editMessageMutation,
+        rollbackMutation, regenerateMutation, patchCharacterMutation, deleteMessageMutation,
+        impersonateMutation, pinMessageMutation, swipeMessageMutation, generateSwipeMutation,
+        narrateMutation, illustrateMutation, generateSceneMutation, suggestReplyMutation,
+    ]);
 }

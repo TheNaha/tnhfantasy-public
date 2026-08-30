@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
     useChats, useChat, useMessages, useSearchChats, useLorebooks, useCharacters, usePersonas,
     useLLMAvailableModels, useLLMDefaultProvider, useChatSystemPrompt,
@@ -40,7 +41,7 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
         .filter(item => item.jobData?.status === 'running')
         .map(item => ({ _key: `stream-${item.jobId}`, jobId: item.jobId, jobData: item.jobData }));
 
-    return {
+    return useMemo(() => ({
         CHAT_PAGE_SIZE,
         chats,
         isChatsLoading,
@@ -60,5 +61,10 @@ export function useChatWorkspaceData({ activeChatId, activeBranch, chatSearchQue
         chatJobs,
         activeStreamEntries,
         activeStreams,
-    };
+    }), [
+        chats, isChatsLoading, searchResults, messagesData, activeChat,
+        lorebooks, characters, personas, availableModels, defaultLlmConfig,
+        systemPromptData, chatCollection, chatImages, collectionsMap,
+        voices, chatJobs, activeStreamEntries, activeStreams,
+    ]);
 }

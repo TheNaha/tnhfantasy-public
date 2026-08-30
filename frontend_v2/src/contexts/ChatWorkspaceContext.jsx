@@ -148,13 +148,21 @@ export function ChatWorkspaceProvider({ children }) {
         narrateMutation, illustrateMutation, generateSceneMutation, suggestReplyMutation,
     } = cwMutations;
 
-    const activeChatList = chatSearchQuery.trim() ? (searchResults || []) : chats;
-    const hasMoreChats = chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim();
+    const activeChatList = useMemo(
+        () => chatSearchQuery.trim() ? (searchResults || []) : chats,
+        [chatSearchQuery, searchResults, chats]
+    );
+    const hasMoreChats = useMemo(
+        () => chats?.length === CHAT_PAGE_SIZE && !chatSearchQuery.trim(),
+        [chats, chatSearchQuery]
+    );
 
     const messages = messagesData;
     const lastLoadedPageFull = messagesData.length === messagePageCount * MESSAGE_PAGE_SIZE;
     const hasMoreMessages = messagePageCount < MAX_MESSAGE_PAGES && lastLoadedPageFull;
-    const loadOlderMessages = () => setMessagePageCount(c => Math.min(c + 1, MAX_MESSAGE_PAGES));
+        const loadOlderMessages = useCallback(() => {
+        setMessagePageCount(c => Math.min(c + 1, MAX_MESSAGE_PAGES));
+    }, [setMessagePageCount]);
 
     const collectionsList = useMemo(
         () => Object.values(collectionsMap).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
@@ -402,9 +410,9 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [handleSendMessage, message, activeCommand]);
 
-    const canSend = (message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending;
+        const canSend = useCallback(() => (message.trim() || pendingAttachment || activeCommand?.noArgs) && !sendMessageMutation.isPending, [message, pendingAttachment, activeCommand, sendMessageMutation]);
 
-    const handleGenerateScene = async () => {
+    const handleGenerateScene = useCallback(async () => {
         if (!activeChatId) return;
         setIsGeneratingScene(true);
         toast.success('Generating scene...', { icon: '📸' });
@@ -419,9 +427,9 @@ export function ChatWorkspaceProvider({ children }) {
             toast.error('Failed to generate scene');
             setIsGeneratingScene(false);
         }
-    };
+    }, [activeChatId, generateSceneMutation, queryClient]);
 
-    const handleIllustrate = async () => {
+    const handleIllustrate = useCallback(async () => {
         if (!activeChatId || illustrateMutation.isPending) return;
         const prompt = message.trim();
         try {
@@ -431,7 +439,7 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to start illustration');
         }
-    };
+    }, [activeChatId, message, illustrateMutation]);
 
     const handleSaveImageToCollection = useCallback(async (collectionId, path) => {
         if (!collectionId || !path) return;
@@ -447,7 +455,7 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [queryClient, activeChat?.character_id]);
 
-    const triggerAutoTitle = async () => {
+    const triggerAutoTitle = useCallback(async () => {
         if (!activeChatId) return;
         titlePollCancelledRef.current = false;
         setIsGeneratingTitle(true);
@@ -477,13 +485,13 @@ export function ChatWorkspaceProvider({ children }) {
         } finally {
             setIsGeneratingTitle(false);
         }
-    };
+    }, [activeChatId, messages, defaultLlmConfig, renameChatMutation, runLLMJob, activeChat?.llm_model]);
 
-    const handleCreateChat = () => {
+    const handleCreateChat = useCallback(() => {
         setShowNewChatModal(true);
-    };
+    }, []);
 
-    const confirmCreateChat = (config) => {
+    const confirmCreateChat = useCallback((config) => {
         if (createChatMutation.isPending) return;
         setShowNewChatModal(false);
         const { chatName, characterId, personaName, personaId, storyTime, storyLocation, selectedLorebooks: newSelectedLorebooks } = config;
@@ -528,9 +536,9 @@ export function ChatWorkspaceProvider({ children }) {
                 }
             );
         }
-    };
+    }, [createChatMutation, characters, setActiveChatId, setMobileTab, setGreetingModal, setShowNewChatModal]);
 
-    const handleAttachmentChange = async (e) => {
+    const handleAttachmentChange = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         e.target.value = '';
@@ -547,9 +555,9 @@ export function ChatWorkspaceProvider({ children }) {
         } finally {
             setIsUploading(false);
         }
-    };
+    }, [setIsUploading]);
 
-    const handleDeleteChat = async (chat) => {
+    const handleDeleteChat = useCallback(async (chat) => {
         const ok = await confirm({
             title: 'Delete Chat',
             message: `Are you sure you want to delete "${chat.name || 'this chat'}"? All messages will be permanently lost.`,
@@ -567,10 +575,10 @@ export function ChatWorkspaceProvider({ children }) {
         } catch {
             toast.error('Failed to delete chat');
         }
-    };
+    }, [activeChatId, chats, confirm, deleteChatMutation, setActiveChatId]);
 
-    const startRename = (chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); };
-    const finishRename = async () => {
+    const startRename = useCallback((chat) => { setRenamingChatId(chat.id); setRenameValue(chat.name || ''); }, []);
+    const finishRename = useCallback(async () => {
         if (renamingChatId && renameValue.trim()) {
             try {
                 await renameChatMutation.mutateAsync({ chatId: renamingChatId, name: renameValue.trim() });
@@ -578,7 +586,7 @@ export function ChatWorkspaceProvider({ children }) {
             } catch { toast.error('Failed to rename'); }
         }
         setRenamingChatId(null);
-    };
+    }, [renamingChatId, renameValue, renameChatMutation]);
 
     const handleChatUpdate = useCallback((updates) => {
         if (!activeChatId) return;
@@ -681,7 +689,7 @@ export function ChatWorkspaceProvider({ children }) {
         }
     }, [activeChatId, deleteMessageMutation]);
 
-    const handleExportChatJsonl = async () => {
+    const handleExportChatJsonl = useCallback(async () => {
         if (!activeChatId) { toast.error('No active chat to export'); return; }
         try {
             const { blob, filename } = await exportJsonlMutation.mutateAsync({
@@ -700,10 +708,10 @@ export function ChatWorkspaceProvider({ children }) {
         } catch (err) {
             toast.error(err.message || 'Failed to export JSONL');
         }
-    };
+    }, [activeChatId, activeChat?.name, exportJsonlMutation]);
 
     const isImportingChat = importChatMutation.isPending;
-    const handleImportChatFile = async (file) => {
+    const handleImportChatFile = useCallback(async (file) => {
         if (!file) return;
         const formData = new FormData();
         formData.append('file', file);
@@ -715,9 +723,11 @@ export function ChatWorkspaceProvider({ children }) {
         } catch (err) {
             toast.error(err.message || 'Failed to import chat');
         }
-    };
+    }, [importChatMutation, queryClient, setActiveChatId]);
 
-    const handleExportChat = () => {
+    const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
+
+    const handleExportChat = useCallback(() => {
         if (!messages.length) { toast.error('No messages to export'); return; }
         const charName = linkedCharacter?.name || 'AI';
         const userName = activeChat?.persona_name || 'You';
@@ -740,7 +750,6 @@ export function ChatWorkspaceProvider({ children }) {
 
         for (const msg of messages) {
             const meta = msg.message_metadata || {};
-            // Skip world-state UI dividers in the export
             if (meta.source === 'world_state') {
                 const parts = [];
                 if (meta.location) parts.push(`📍 ${meta.location}`);
@@ -763,11 +772,9 @@ export function ChatWorkspaceProvider({ children }) {
         a.click();
         URL.revokeObjectURL(url);
         toast.success('Chat exported as Markdown');
-    };
+    }, [messages, linkedCharacter, activeChat]);
 
-    const linkedCharacter = characters.find(c => c.id === activeChat?.character_id);
-
-    const contextValue = {
+    const contextValue = useMemo(() => ({
         CHAT_PAGE_SIZE,
         MAX_MESSAGE_PAGES,
         MESSAGE_PAGE_SIZE,
@@ -927,7 +934,58 @@ export function ChatWorkspaceProvider({ children }) {
         updateChatMutation,
         urlChatId,
         voices
-    };
+    }), [
+        CHAT_PAGE_SIZE, MAX_MESSAGE_PAGES, MESSAGE_PAGE_SIZE,
+        activeBranch, activeChat, activeChatId, activeChatList,
+        activeCommand, activeStreamEntries, activeStreams,
+        agenticMode, availableModels, avatarModalSrc,
+        canSend, characters, chatCollection, personas,
+        chatImages, chatJobs, chatOffset, chatSearchQuery,
+        chats, chatsCollapsed, collectionsList,
+        confirm, confirmCreateChat, contextCollapsed,
+        createChatMutation, defaultLlmConfig,
+        deleteChatMutation, deleteMessageMutation, editMessageMutation,
+        emptyLorebooks, fileInputRef, finishRename,
+        generateSceneMutation, generateSwipeMutation,
+        greetingModal, handleAttachmentChange, handleAvatarClick,
+        handleChatUpdate, handleCreateChat, handleDeleteChat,
+        handleDeleteMessage, handleEditMessage, handleExportChat,
+        handleExportChatJsonl, handleImportChatFile,
+        isImportingChat, handleGenerateScene, handleGenerateSwipe,
+        handleGenerateTTS, handleIllustrate, handleImpersonate,
+        handleKeyDown, handleMessageIllustrate, handlePinMessage,
+        handleRegenerate, handleRollback, handleSaveImageToCollection,
+        handleSendMessage, handleSuggestClick, handleSwipe,
+        handleTextChange, hasCreatedChatRef, hasMoreChats,
+        hasMoreMessages, illustrateMutation, impersonateMutation,
+        isChatsLoading, isGeneratingScene, isGeneratingTitle,
+        isUploading, lastLoadedPageFull, linkedCharacter,
+        listContainerRef, listItems, loadOlderMessages,
+        location, lorebooks, message, messagePageCount,
+        messageSearch, messages, messagesEndRef, messagesData,
+        mobileTab, narrateMode, narrateMutation, navigate,
+        patchCharacterMutation, pendingAttachment, pinMessageMutation,
+        queryClient, regenerateMutation, renameChatMutation,
+        renameValue, renamingChatId, rollbackMutation, rowVirtualizer,
+        runLLMJob, sceneJobId, sceneJobIdRef, sceneTab,
+        searchResults, selectedLorebooks, sendMessageMutation,
+        setActiveBranch, setActiveChatId, setActiveCommand,
+        setAgenticMode, setAvatarModalSrc, setChatOffset,
+        setChatSearchQuery, setChatsCollapsed, setContextCollapsed,
+        setGreetingModal, setIsGeneratingScene, setIsGeneratingTitle,
+        setIsUploading, setMessage, setMessagePageCount, setMessageSearch,
+        setMobileTab, setNarrateMode, setPendingAttachment,
+        setRenameValue, setRenamingChatId, setSceneJobId,
+        setSceneTab, setShowCharacterDetails, setShowMoreTools,
+        setShowNewChatModal, setShowScenesModal, setSuggestJobId,
+        setTargetCharacterId, setTimelineVisible, settings,
+        showCharacterDetails, showMoreTools, showNewChatModal,
+        showScenesModal, startRename, subscribe, suggestJobId,
+        suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
+        swipeMessageMutation, systemPromptData, targetCharacterId,
+        textareaRef, timelineVisible, titlePollCancelledRef,
+        triggerAutoTitle, updateChatMutation, urlChatId, voices
+    ]);
 
     return (
         <ChatWorkspaceContext.Provider value={contextValue}>

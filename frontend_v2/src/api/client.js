@@ -132,6 +132,9 @@ async function request(endpoint, options = {}) {
             if (!response.ok) {
                 throw new ApiError('Request failed', response.status);
             }
+            if (options.responseType === 'blob') {
+                return await response.blob();
+            }
             return response;
         }
 

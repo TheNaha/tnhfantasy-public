@@ -73,13 +73,10 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
 
         const edgeSet = new Set(edges.map(e => `${e.source}→${e.target}`));
 
-        // The simulation produces no visible output until it finishes (final
-        // positions are committed once), so run several physics steps per
-        // animation frame and bail out early once the layout has settled —
-        // this keeps large graphs from stalling for hundreds of frames.
         let step = 0;
         const stepsTotal = iterations;
         const stepsPerFrame = nodes.length > 100 ? 2 : 6;
+        let rafId = 0;
 
         const simulateStep = () => {
             for (let i = 0; i < nodes.length; i++) {
@@ -153,8 +150,6 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
             for (let s = 0; s < stepsPerFrame && step < stepsTotal; s++) {
                 step++;
                 const energy = simulateStep();
-                // Settled layouts stay put — stop burning frames once motion
-                // is negligible regardless of remaining iteration budget.
                 if (energy < 0.05) {
                     settled = true;
                     break;
@@ -164,11 +159,13 @@ function useForceDirectedLayout(nodes, edges, iterations = 300, savedPositions =
             if (settled || step >= stepsTotal) {
                 setPositions(new Map(pos));
             } else {
-                requestAnimationFrame(animate);
+                rafId = requestAnimationFrame(animate);
             }
         };
 
-        requestAnimationFrame(animate);
+        rafId = requestAnimationFrame(animate);
+
+        return () => cancelAnimationFrame(rafId);
     }, [nodes, edges, savedPositions, iterations]);
 
     const updatePosition = useCallback((nodeId, x, y) => {

@@ -10,6 +10,7 @@ Works as a post-completion processor inside job_processing.py:
 
 import asyncio
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -28,7 +29,7 @@ MAX_AGENTIC_DEPTH = 5
 # enforce its own timeout cannot hang the agentic loop indefinitely. Inner
 # per-call timeouts (call_llm_provider, wait_for_job_completion) are still
 # kept; this is a safety net above them.
-TOOL_TIMEOUT = 120
+TOOL_TIMEOUT = int(os.getenv("COMFY_TOOL_TIMEOUT", "360"))
 
 NARRATOR_SYSTEM_PROMPT = (
     "You are the Narrator of an interactive story — a separate role from the characters. "

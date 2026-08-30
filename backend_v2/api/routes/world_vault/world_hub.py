@@ -62,13 +62,19 @@ def get_entity_dashboard(session: Session = Depends(get_session)):
 
 
 @router.get("/relationships")
-def get_relationships(session: Session = Depends(get_session)):
+def get_relationships(
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+):
     """Return entity relationship graph data."""
     # Character → Chats
     char_chat_links = [
         tuple(row) for row in session.exec(
             select(Character.id, Character.name, Chat.id, Chat.name)
             .join(Chat, Chat.character_id == Character.id)
+            .limit(limit)
+            .offset(offset)
         ).all()
     ]
 

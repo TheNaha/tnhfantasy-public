@@ -213,21 +213,23 @@ def prune_context(
     # Actually preserve original relative order for pinned messages
     result = []
     result.extend(system_msgs)
-    # Merge back preserving original order using a stable, collision-resistant key.
+    # Merge back preserving original order using a collision-resistant key.
     # Prefer the message's `_id` (a UUID propagated from the DB or dict) so that
     # two messages with identical role+content-prefix never silently merge.
-    def _msg_key(m: dict) -> tuple:
+    # Fallback includes the message's original list position as a tiebreaker.
+    def _msg_key(m: dict, idx: int = 0) -> tuple:
         mid = m.get("_id")
         if mid is not None:
             return ("_id", mid)
-        return (m.get("role"), m.get("content", "")[:200])
+        return (m.get("role"), m.get("content", "")[:200], idx)
 
-    pinned_keys = {_msg_key(m) for m in pinned_msgs}
-    unpinned_keys = {_msg_key(m) for m in unpinned_msgs}
-    for m in messages:
+    msg_index = {id(m): i for i, m in enumerate(messages)}
+    pinned_keys = {_msg_key(m, msg_index[id(m)]) for m in pinned_msgs}
+    unpinned_keys = {_msg_key(m, msg_index[id(m)]) for m in unpinned_msgs}
+    for i, m in enumerate(messages):
         if _is_exempt_system(m):
             continue
-        key = _msg_key(m)
+        key = _msg_key(m, i)
         if key in unpinned_keys or key in pinned_keys:
             result.append(m)
     return result
