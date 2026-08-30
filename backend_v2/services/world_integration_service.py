@@ -17,7 +17,7 @@ from core.entities import (
     LorebookEntry,
     Location,
 )
-from core.events import event_bus, EventType
+from core.events import event_bus, Event, EventType
 from infrastructure.deps import get_session_context
 from infrastructure.logging import get_logger
 from sqlmodel import select
@@ -663,5 +663,7 @@ async def _handle_avatar_animate(job_data: dict[str, Any]):
         session.add(character)
         session.commit()
         
-        from core.events import broadcast_event
-        await broadcast_event("character_avatar_updated", {"character_id": character_id, "path": new_avatar_path})
+        await event_bus.publish(Event(type=EventType.JOB_COMPLETED, data={
+            "job": job_data,
+            "character_avatar_updated": {"character_id": character_id, "path": new_avatar_path}
+        }))

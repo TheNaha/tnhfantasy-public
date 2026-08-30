@@ -478,8 +478,11 @@ def get_avatar(character_id: str, session: Session = Depends(get_session), chara
     character = character_repo.get(character_id)
     if not character or not character.avatar_path or not os.path.exists(character.avatar_path):
         raise NotFoundError("Avatar", character_id)
-        
-    return FileResponse(character.avatar_path)
+    
+    media_type = "video/webp" if character.avatar_path.lower().endswith(".webp") else None
+    response = FileResponse(character.avatar_path, media_type=media_type)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @router.post("/{character_id}/clone", response_model=Character)

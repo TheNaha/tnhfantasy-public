@@ -20,7 +20,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParam
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
 import Layout from './components/Layout';
 import ConfirmationHost from './components/ConfirmationHost';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -31,6 +31,7 @@ import { migrateLegacyCollections } from './hooks/useCollections';
 import { useViewportHeight } from './hooks/useViewportHeight';
 import { useJobsRealtime } from './hooks/useJobsRealtime';
 import { providersApi } from './api/providers';
+import * as ws from './api/websocket';
 // Lazy-loaded pages to minimise initial JS bundle
 const FantasyHub = lazy(() => import('./pages/FantasyHub'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -134,11 +135,38 @@ function AnimatedRoutes() {
 
 function GlobalHooks() {
     // Initialize dynamic viewport height for iOS Safari
-    // This sets --vh CSS variable that works correctly with address bar
     useViewportHeight();
     
     // Initialize global job notifications and WebSocket sync
     useJobsRealtime();
+
+    // Subscribe to backend events that have no dedicated page-level handler
+    // yet (download progress, model sync progress). Show a toast for terminal
+    // states so the user has at least a minimal signal that the operation
+    // completed or failed.
+    useEffect(() => {
+        const unsubs = [];
+        const toastFor = (label, event) => {
+            if (event.type?.endsWith('.completed')) {
+                toast.success(`${label} completed`);
+            } else if (event.type?.endsWith('.failed')) {
+                toast.error(`${label} failed`);
+            } else if (event.type?.endsWith('.started')) {
+                toast.loading(`${label} started...`, { id: label });
+            }
+        };
+
+        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_STARTED, (e) => toastFor('Download', e)));
+        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_COMPLETED, (e) => toastFor('Download', e)));
+        unsubs.push(ws.on(ws.EventTypes.DOWNLOAD_FAILED, (e) => toastFor('Download', e)));
+        unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_STARTED, (e) => toastFor('Model sync', e)));
+        unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_COMPLETED, (e) => toastFor('Model sync', e)));
+        unsubs.push(ws.on(ws.EventTypes.MODEL_SYNC_FAILED, (e) => toastFor('Model sync', e)));
+
+        return () => {
+            unsubs.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
+        };
+    }, []);
 
     // One-time legacy localStorage -> API collections migration (runs at most
     // once; flag-gated inside). Kept out of the query path so collection

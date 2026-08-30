@@ -167,6 +167,12 @@ async function request(endpoint, options = {}) {
  */
 export const API_V2_BASE = '/api/v2';
 
+/**
+ * Base path prefix for legacy (pre-V2) endpoints.
+ * Generation, jobs, files, nodes, statistics remain on the unversioned /api/ prefix.
+ */
+export const API_BASE = '/api';
+
 export const api = {
     get: (endpoint, options) => request(endpoint, { method: 'GET', ...options }),
 
